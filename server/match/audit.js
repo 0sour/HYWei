@@ -29,14 +29,18 @@
 //                 after a win when hiddenEligible() holds
 //   result        each title ≤ once, ≤ 1 title per player, onlyOnWin titles only on a win, roundsPassed per player,
 //                 Σ alive players' LP = the merged team LP after the Final Assault
-//   deadlines     every timed phase's m.public deadline equals its configured duration × timerScale (a solo match
-//                 runs BATTLE_CHECK / ROUND_START / SETTLE silently: deadline 0, Match.soloUntimed)
+//   deadlines     every timed phase's m.public deadline equals its configured duration × timerScale; the co-op
+//                 strategy draft has one countdown: the deadline is the current turn's (Match.BAND_TURN_SECONDS). A match
+//                 with a single human (solo, or a 同盟 room with AI teammates only: Match.soloUntimed) times nothing
+//                 outside its battles — no INFO_CHECK / draft / 机变 / prep deadline, BATTLE_CHECK / ROUND_START / SETTLE
+//                 silent (deadline 0)
 // Checks never throw into the match: an exception inside a check is itself recorded as a violation.
 
 import { PHASE } from '../../shared/constants.js';
 import { collectViolations } from './invariants.js';
 import { pairPlayers, bossPoolHp, hiddenEligible } from './finalAssault.js';
 import { helperOrder } from './unite.js';
+import { BAND_TURN_SECONDS } from './Match.js';
 
 /**
  * @param {import('./Match.js').Match} m
@@ -236,7 +240,8 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
   wrap(m, 'enterInfoCheck', function (orig) {
     const r = orig();
     runInvariants();
-    if (m.phase === PHASE.INFO_CHECK && m.deadline) expectDeadline(gd.timer('infoCheck'), 'INFO_CHECK');
+    if (m.phase === PHASE.INFO_CHECK && m.soloUntimed) check('briefing', () => { if (m.deadline) fail('untimed briefing is timed'); });
+    else if (m.phase === PHASE.INFO_CHECK && m.deadline) expectDeadline(gd.timer('infoCheck'), 'INFO_CHECK');
     return r;
   });
   wrap(m, 'enterBandDraft', function (orig) {
@@ -247,7 +252,11 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
       const d = m.draft;
       const ids = m.order.map((p) => p.playerId).sort();
       if (JSON.stringify(d.order.slice().sort()) !== JSON.stringify(ids)) fail(`draft order ${d.order} != seats ${ids}`);
-      if (m.isSolo) { if (m.deadline) fail('solo band draft is timed'); } else expectDeadline(gd.timer('bandDraft'), 'BAND_DRAFT');
+      // one countdown (user playtest #4 item 4): the step's deadline IS the current turn's, BAND_TURN_SECONDS long
+      if (m.soloUntimed) { if (m.deadline || d.turnDeadline) fail('untimed band draft is timed'); } else {
+        if (m.deadline !== d.turnDeadline) fail(`BAND_DRAFT: deadline ${m.deadline} is not the turn's ${d.turnDeadline}`);
+        expectDeadline(BAND_TURN_SECONDS, 'BAND_DRAFT turn');
+      }
     });
     return r;
   });
@@ -280,7 +289,7 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
       if (m.phase !== PHASE.SP_DRAFT || !m.sp) return;
       const s = m.sp;
       if (s.idx >= s.order.length) return;
-      if (m.isSolo) { if (m.deadline) fail('solo 机变 is timed'); } else expectDeadline(s.idx === 0 ? gd.timer('spFirst') : gd.timer('spTurn'), `SP_DRAFT turn ${s.idx}`);
+      if (m.soloUntimed) { if (m.deadline) fail('untimed 机变 is timed'); } else expectDeadline(s.idx === 0 ? gd.timer('spFirst') : gd.timer('spTurn'), `SP_DRAFT turn ${s.idx}`);
     });
     return res;
   });
@@ -306,7 +315,7 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
     runInvariants();
     check('prep', () => {
       if (m.phase !== PHASE.PREP) return;
-      if (m.isSolo) { if (m.deadline) fail('solo prep is timed'); } else if (!m._prepEndQueued) expectDeadline(gd.prepTime(m.round), 'PREP');
+      if (m.soloUntimed) { if (m.deadline) fail('untimed prep is timed'); } else if (!m._prepEndQueued) expectDeadline(gd.prepTime(m.round), 'PREP');
     });
     return res;
   });

@@ -1,7 +1,8 @@
 // server/sim/skills.js — skill runtime: SP, charges, trigger rules, kinds, SkillSpec interpretation (DESIGN §5.6).
 //
 // SP types: 'time' (+spRecovery/s), 'attack' (+1 per attack), 'hurt' (+1 per hit taken), 'none'.
-// No SP gain while a duration/ammo/toggle skill is active, while stunned, or while the unit has the noSp flag.
+// No SP gain while a duration/ammo/toggle skill is active, while stunned, or while the unit has the noSp flag (阻回: no SP
+// gain of any kind — time, attack, hurt or granted).
 // Charges (maxCharges > 1): SP fills to spCost → +1 charge (SP restarts) until charges == max (SP stays full).
 // Trigger rules: DEFAULT (ready + about to attack/heal + enemy / injured ally in the INITIAL range — or, checked every
 //   tick, an enemy inside one of the content trigger ranges added with addTriggerRange: 海嗣, 流形),
@@ -176,6 +177,8 @@ export class SkillRuntime {
   gainSp(amount, reason = 'time', silent = false) {
     if (this.noSkill || this.kind === 'passive' || !(amount > 0)) return 0;
     if (this.active && this.isTimed && reason !== 'init') return 0;
+    // 阻回 (the operators' 凋亡 burst, damage.js): "停止并阻止任意形式的技力回复" — no SP of any kind (time, attack, hurt, gifts)
+    if (reason !== 'init' && this.unit.s.flags.noSp) return 0;
     let cost = this.spCost;
     if (this.charges >= this.maxCharges && this.sp >= cost) return 0;
     let amt = amount;

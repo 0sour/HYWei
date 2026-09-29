@@ -8,28 +8,26 @@
 //   view.enterBattle(fieldMeta)                 m.field { fieldId, kind, rect, stageId, units: [UnitInfo] }
 //   view.pushSnapshot(snap); view.pushEvents(ev | { ev, gt })  b.snap / b.ev wire frames as received (game time in
 //                                               `gt`; a numeric `t` is accepted for raw Battle snapshots / recordings)
-//                                               — 100 ms interpolation buffer
+//                                               — 100 ms interpolation buffer; b.snap `down` keeps knocked-out
+//                                               operators on the field under a redeploy ring and `elem` draws the
+//                                               element gauges (user playtest #4 items 8 / 9, render/units.js)
 //   view.setLocalFeed({ on, speed })            frames come from the local sim every frame (client-side combat):
 //                                               ~2-frame buffer at the battle's game speed
 //   view.highlightTiles(tiles, style)           [[r,c]] | [{row,col}]; style 'legal'|'illegal'|'range'|'rangeStand'|
 //                                               'hover'|'target'|{color,fill,line,group}; highlightTiles(null) clears all
 //   view.on(name, fn) → unsubscribe ; view.off(name, fn)
-//        pieceDragStart { uid, piece, from } · pieceDrop { uid, piece, from, target, over } · pieceDragEnd {uid, dropped, over}
-//        pieceDragOver { uid, over, clientX, clientY } — while an item is dragged: `over` = uid of the own operator /
-//          summon under the dragged plate (null: none), sent when it changes, BEFORE the drag asks canPlace
+//        pieceDragStart { uid, piece, from } · pieceDrop { uid, piece, from, target } · pieceDragEnd {uid, dropped}
 //        pieceClick { uid, piece, button, detail, clientX, clientY } (battle units: { unitId, uid, unit, … })
 //        pieceDetail (right-click / long-press) · pieceHover { uid } | { uid: null } (battle: + unitId, unit)
-//        tileHover { row, col, area, idx } | null (while dragging: the drop target, the tile under the ghost's feet)
-//   view.pieceScreenRect(uid) → { left, top, right, bottom, width, height, x, y, shape } (client px) | null;
-//        `shape` = the body for render/pick.js (ui/gameLogic.js pickPieceAt)
-// Picking (user playtest #3 item 7): every "which unit is under the pointer" — prep press / drag start / detail
-// (pieceAt), battle clicks and hover (battleUnitAt), the pen (penUnitAt), the operator under a dragged item
-// (pieceUnder) — is render/pick.js pickBody over the views' drawn bodies (UnitView.pickShape) and the tile under the
-// pointer, with a pixel probe (drawnAt: a view rendered alone into a 1×1 target) wherever bodies overlap: the front-most
-// unit whose model draws the pixel under the pointer wins; elsewhere the face / torso of a unit is its own, then the
-// unit standing on the pressed tile. A dragged
-// piece's ghost stands on its drop point — the pointer (mouse / pen) or TOUCH_LIFT_TILES above the finger (touch) —
-// and the drop target is the tile under it (render/drag.js dropPoint).
+//        tileHover { row, col, area, idx } | null (while dragging: the drop target — the tile under the pointer)
+//   view.pieceScreenRect(uid) → { left, top, right, bottom, width, height, x, y } (client px: the drawn body) | null
+// Picking (user playtest #4 item 1: the ground is drawn as tiles — a press on a tile is a press on the unit standing
+// there): every "which unit is under the pointer" — prep press / click / detail / drag start / hover (pieceAt), battle
+// clicks and hover (battleUnitAt), the pen (penUnitAt) — is render/pick.js over the tile under the pointer (groundTile:
+// raised tops first); battle enemies, which walk between tiles, by their ground position (flying ones by their drawn
+// body). A dragged piece is held under the pointer — a unit with its drawn feet DRAG_HOLD_TILES below it (the pointer
+// on its body), an item plate centred on it — and drops on the tile under the pointer (render/drag.js); an item
+// dropped on a unit's tile equips that unit.
 //   Direction step (ui/facingWheel.js, research 09 §1.2):
 //   view.tileScreen(row, col) → { x, y, s, poly: [[x,y]×4] } (client px: tile-top centre, px per tile, corners) | null
 //   view.holdPiece(uid, {row,col} | null)       keep a dropped prep piece standing on a tile while its direction is
@@ -95,7 +93,7 @@ import { BoardScene } from './board3d/scene.js';
 import { AREAS, areaFor, unionAreas } from './board3d/layout.js';
 import { layoutPen, penSignature } from './pen.js';
 import { IDENTITY, bossPrepField, tilesToDisp } from './prepfield.js';
-import { pickBody } from './pick.js';
+import { pickOnTile, pickBattle } from './pick.js';
 
 const VENDOR = { pixi: '/vendor/pixi.min.js', spine: '/vendor/pixi-spine.js' };
 const PIECE_DIRS = new Set(['UP', 'RIGHT', 'DOWN', 'LEFT']);
@@ -112,20 +110,26 @@ const RANGE_GROUPS = new Set(['facing', 'range', 'rangeStand', 'select', 'sel', 
 /** atk projectile kinds whose first id is the previous bounce target (sim ai.js), not the attacker. */
 const CHAIN_KINDS = new Set(['chain', 'chainHeal']);
 const DROP_PENDING_MS = 1300;
-/** A touch drag holds its ghost — and so its drop point — this many tiles above the finger (neither is hidden). */
-export const TOUCH_LIFT_TILES = 0.6;
+/**
+ * A dragged unit is held with its drawn feet this many tiles below the pointer — the pointer on its body, the model
+ * under the finger / mouse (user playtest #4 item 1: as in v2.1; mouse and touch alike). An item plate is centred on it.
+ */
+export const DRAG_HOLD_TILES = 0.45;
 
-/** The display tile a view stands on (its drawn position). */
-const viewTile = (v) => ({ row: Math.round(v.y), col: Math.round(v.x) });
-/** A view's body for render/pick.js, or null when it cannot be picked (gone, faded out, dead). */
-function pickShapeOf(v, tile) {
-  if (!v || v.destroyed || typeof v.pickShape !== 'function' || v.alive === false) return null;
+/**
+ * A view as a render/pick.js unit, or null when it cannot be picked (gone, faded out, dead): standing on the display
+ * tile it is drawn on, or — `walks` (battle enemies) — by its ground position and its drawn body (feet to head, on
+ * screen; a flying one by its body alone).
+ */
+function pickUnitOf(v, walks = false) {
+  // a knocked-out operator lying on its tile waiting to redeploy (b.snap `down`, user playtest #4 item 9) is on that tile
+  // too: a press there selects it; other dead / dying views are gone
+  if (!v || v.destroyed || (v.alive === false && !v.down)) return null;
   if (Number.isFinite(v.alpha) && v.alpha < 0.05) return null;
-  const b = v.pickShape();
-  if (!b) return null;
-  b.tile = tile === undefined ? viewTile(v) : tile;
-  b.ref = v;
-  return b;
+  const sc = v.screen;
+  const body = walks && sc && sc.s > 0 && !v.culled ? { x: sc.x, top: Number.isFinite(sc.top) ? sc.top : sc.y, feet: sc.y, s: sc.s } : null;
+  const tile = walks ? null : { row: Math.round(v.y), col: Math.round(v.x) };
+  return { tile, x: v.x, y: v.y, fly: walks && !!v.flying, body, depth: v.root && !v.root.destroyed ? v.root.zIndex : 0, ref: v };
 }
 
 let pixiPromise = null;
@@ -921,12 +925,12 @@ export async function createFieldView(host, options = {}) {
     penList = null;
   }
 
-  /** The pen enemy under a canvas point (render/pick.js; the figures idle on their pen tiles). */
+  /** The pen enemy under a canvas point: a figure on the tile under it (render/pick.js; ≤ 3 idle per pen tile). */
   function penUnitAt(x, y) {
     if (penHidden) return null;
-    const bodies = [];
-    for (const v of penViews.values()) { const b = pickShapeOf(v); if (b) bodies.push(b); }
-    const hit = pickBody(bodies, x, y, groundTile(x, y), probeAt(x, y));
+    const units = [];
+    for (const v of penViews.values()) { const u = pickUnitOf(v); if (u) units.push(u); }
+    const hit = pickOnTile(units, groundTile(x, y));
     return hit ? hit.ref : null;
   }
 
@@ -937,100 +941,28 @@ export async function createFieldView(host, options = {}) {
 
   // ---- drag & pointer ----------------------------------------------------------------------------------------
 
-  /** The display tile under a canvas point (raised tops first), or null off the grid. */
+  /** The display tile under a canvas point (raised tops first) and the point on its top (world x, y), or null. */
   function groundTile(x, y) {
     const t = pickTile(cam, x, y, heightAt, tiles.levels);
-    return t ? { row: t.row, col: t.col } : null;
+    return t ? { row: t.row, col: t.col, x: t.x, y: t.y } : null;
   }
 
-  // pixel probe of render/pick.js: one view's display tree rendered alone into a 1×1 target over the canvas pixel
-  let probeRT = null;
-  let probeM = null;
-  /**
-   * Does view `v` draw an opaque pixel at canvas point (x, y) — as last rendered (its world transforms of the last
-   * frame: what the player sees)? null when it cannot tell (no WebGL readback, lost context…). Only asked where two or
-   * more bodies overlap (render/pick.js probeBodies), i.e. a few 1-px renders per press / hover move there.
-   */
-  function drawnAt(v, x, y) {
-    const root = v && v.root;
-    if (!root || root.destroyed) return false;
-    if (!root.visible || !(root.worldAlpha > 0.02)) return false;
-    try {
-      const R = app.renderer;
-      if (!R || !R.extract || typeof R.extract.pixels !== 'function' || !P.RenderTexture || !P.Matrix) return null;
-      if (!probeRT) probeRT = P.RenderTexture.create({ width: 1, height: 1, resolution: 1 });
-      if (!probeM) probeM = new P.Matrix();
-      probeM.set(1, 0, 0, 1, 0.5 - x, 0.5 - y); // the pixel centred on the point
-      R.render(root, { renderTexture: probeRT, clear: true, transform: probeM, skipUpdateTransform: true });
-      const px = R.extract.pixels(probeRT);
-      return px && px.length >= 4 ? px[3] > 40 : null;
-    } catch { return null; }
-  }
-  const probeAt = (x, y) => (b) => drawnAt(b.ref, x, y);
-  // Hover picks (mouse moves over the field, item drags) probe at most once per frame: every readback waits for the
-  // GPU and a mouse reports up to 1000 moves per second, so a second hover pick in the same frame gets the shape rule
-  // alone (it only moves a highlight). Presses, releases and drops always probe.
-  let hoverProbeFrame = -1;
-  const hoverProbeAt = (x, y) => {
-    if (hoverProbeFrame === frameNo) return null;
-    hoverProbeFrame = frameNo;
-    return probeAt(x, y);
-  };
-
-  /** The prep piece entry under a canvas point (render/pick.js), among the entries `accept` lets through. */
-  function prepEntryAt(x, y, accept = null, hover = false) {
-    const bodies = [];
-    for (const e of prepPieces) {
-      if (accept && !accept(e)) continue;
-      const b = pickShapeOf(views.get(e.key));
-      if (b) { b.entry = e; bodies.push(b); }
-    }
-    const hit = pickBody(bodies, x, y, groundTile(x, y), hover ? hoverProbeAt(x, y) : probeAt(x, y));
-    return hit ? hit.entry : null;
-  }
-
-  function pieceAt(x, y, hover = false) {
+  /** The prep piece under a canvas point: the one on the tile under it (render/pick.js; board, bench and temp rows). */
+  function pieceAt(x, y) {
     if (mode !== 'prep') return null;
-    const best = prepEntryAt(x, y, null, hover);
+    const units = [];
+    for (const e of prepPieces) {
+      const u = pickUnitOf(views.get(e.key));
+      if (u) { u.entry = e; units.push(u); }
+    }
+    const best = pickOnTile(units, groundTile(x, y))?.entry;
     if (!best) return null;
     return { uid: best.uid, kind: best.piece.kind, id: best.piece.id, area: best.area, idx: best.idx, row: best.row, col: best.col, piece: best.piece, draggable: true };
   }
 
-  /** uid of the own operator / summon under a canvas point (not `exceptUid`): where a dragged item would go. */
-  function pieceUnder(x, y, exceptUid, hover = false) {
-    if (mode !== 'prep') return null;
-    const e = prepEntryAt(x, y, (en) => en.uid !== exceptUid && (en.piece.kind === 'chess' || en.piece.kind === 'token'), hover);
-    return e ? e.uid : null;
-  }
-
-  // the current drag's drop point and the own unit under it (items): { uid, over, x, y }
-  let dragHit = null;
-  /**
-   * Drop point of a dragged piece (render/drag.js dropPoint): the pointer, or TOUCH_LIFT_TILES above a finger. For an
-   * item it also finds the operator under the plate and tells the UI (pieceDragOver) before the drag asks canPlace
-   * (a move is a hover pick; the release (`final`) always probes).
-   */
-  function dropPoint(e, piece, final = false) {
-    let x = e.x, y = e.y;
-    if (e.pointerType === 'touch') {
-      const g = cam.unproject(x, y, 0);
-      y -= TOUCH_LIFT_TILES * (g ? cam.scaleAt(g.x, g.y, 0) : cam.scale);
-    }
-    const uid = piece ? piece.uid : null;
-    const over = piece && piece.kind === 'item' ? pieceUnder(x, y, uid, !final) : null;
-    const changed = !dragHit || dragHit.uid !== uid || dragHit.over !== over;
-    dragHit = { uid, over, x, y };
-    if (changed && piece && piece.kind === 'item') {
-      const r = canvas.getBoundingClientRect();
-      emit('pieceDragOver', { uid, over, clientX: r.left + x, clientY: r.top + y });
-    }
-    return { x, y };
-  }
-
   const drag = createDragController({
-    hitPiece: (x, y, hover) => pieceAt(x, y, !!hover),
+    hitPiece: (x, y) => pieceAt(x, y),
     pickTile: (x, y) => pickBoardTile(x, y),
-    dropPoint: (e, piece, final) => dropPoint(e, piece, !!final),
     isOverCanvas: (cx, cy) => {
       try { const el = document.elementFromPoint(cx, cy); return !el || el === canvas; } catch { return true; }
     },
@@ -1044,10 +976,8 @@ export async function createFieldView(host, options = {}) {
 
   function onDragEvent(name, payload) {
     const out = payload && payload.piece ? { ...payload, piece: publicPiece(payload.piece) } : payload;
-    // the own unit under a dropped item (render/pick.js at the drop point; null for units / nothing there)
-    if ((name === 'pieceDrop' || name === 'pieceDragEnd') && out && typeof out === 'object') out.over = dragHit && dragHit.uid === payload.uid ? dragHit.over : null;
     switch (name) {
-      case 'pieceDragStart': dragHit = null; startDragVisual(payload); break;
+      case 'pieceDragStart': startDragVisual(payload); break;
       case 'pieceDragMove': moveDragVisual(payload); return; // internal
       case 'pieceDrop': dropDragVisual(payload); break;
       case 'pieceDragEnd': if (!payload.dropped) endDragVisual(true); else clearHl('dragTarget'); break;
@@ -1111,11 +1041,18 @@ export async function createFieldView(host, options = {}) {
   function moveDragVisual(p) {
     if (!dragState) return;
     const v = dragState.view;
-    // the ghost stands (an item: floats centred) on its drop point — the tile the drop goes to is the one under it
-    const hx = Number.isFinite(p.hx) ? p.hx : p.x, hy = Number.isFinite(p.hy) ? p.hy : p.y;
-    const t = pickTile(cam, hx, hy, heightAt, tiles.levels);
+    // held under the pointer: a unit with its drawn (lifted) feet DRAG_HOLD_TILES of its own px per tile below it (the
+    // scale at the pointer's ground, refined once at the feet), an item plate centred on it; the drop target
+    // (p.target, highlighted below) is the tile under the pointer
+    const item = v instanceof ItemView;
+    const g = cam.unproject(p.x, p.y, 0);
+    const hold = item ? 0 : DRAG_HOLD_TILES;
+    const s0 = g ? cam.scaleAt(g.x, g.y, 0) : cam.scale;
+    const t = pickTile(cam, p.x, p.y + hold * s0, heightAt, tiles.levels);
     const z = t ? heightAt(t.row, t.col) : 0;
-    const w = cam.unproject(hx, hy, z);
+    const up = item ? z : z + (v.lift || 0) + (v.hover || 0);
+    let w = cam.unproject(p.x, p.y + hold * s0, up);
+    if (w && hold) w = cam.unproject(p.x, p.y + hold * cam.scaleAt(w.x, w.y, up), up) || w;
     if (w) {
       v.x = Math.max(-1, Math.min(21, w.x));
       v.y = Math.max(-1, Math.min(19, w.y));
@@ -1167,15 +1104,15 @@ export async function createFieldView(host, options = {}) {
     return { pointerId: e.pointerId, pointerType: e.pointerType, button: e.button, x: p.x, y: p.y, clientX: e.clientX, clientY: e.clientY };
   }
 
-  /** The battle unit under a canvas point (render/pick.js; allies stand on their tiles, enemies walk: no tile). */
-  function battleUnitAt(x, y, hover = false) {
-    const bodies = [];
+  /** The battle unit under a canvas point (render/pick.js: an ally on the tile under it, an enemy near its ground). */
+  function battleUnitAt(x, y) {
+    const units = [];
     for (const v of views.values()) {
       if (!v.info || v.info.kind === 'device') continue;
-      const b = pickShapeOf(v, v.info.side === 'ally' ? viewTile(v) : null);
-      if (b) bodies.push(b);
+      const u = pickUnitOf(v, v.info.side !== 'ally');
+      if (u) units.push(u);
     }
-    const hit = pickBody(bodies, x, y, groundTile(x, y), hover ? hoverProbeAt(x, y) : probeAt(x, y));
+    const hit = pickBattle(units, groundTile(x, y), x, y);
     return hit ? hit.ref : null;
   }
 
@@ -1206,7 +1143,7 @@ export async function createFieldView(host, options = {}) {
     const ev = evPayload(e);
     if (mode === 'battle') {
       if (e.pointerType === 'touch') return;
-      const v = battleUnitAt(ev.x, ev.y, true);
+      const v = battleUnitAt(ev.x, ev.y);
       if (v !== hoverUnit) {
         hoverUnit = v;
         const info = v ? infos.get(v.id) || v.info : null;
@@ -1220,12 +1157,18 @@ export async function createFieldView(host, options = {}) {
   const onPointerCancel = (e) => { if (!destroyed) drag.pointerCancel(evPayload(e)); };
   const onPointerLeave = (e) => { if (!destroyed && !drag.dragging) drag.pointerLeave(evPayload(e)); if (hoverUnit) { hoverUnit = null; emit('pieceHover', { uid: null, unitId: null }); } };
   const onContext = (e) => e.preventDefault();
+  // A finger is handled through the pointer events above only. The compatibility mouse events + click of a tap come
+  // after touchend, hit-tested at the finger again — where the tap may just have opened DOM UI: a tap on a unit's tile
+  // selects it and its underframe opens over the tile (clamped under the top bar on a phone), and the click pressed
+  // 撤退 / 出售 (user playtest #4 item 1 on a phone). Cancelling touchend drops them.
+  const onTouchEnd = (e) => { if (e.cancelable) e.preventDefault(); };
   canvas.addEventListener('pointerdown', onPointerDown);
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('pointercancel', onPointerCancel);
   canvas.addEventListener('pointerleave', onPointerLeave);
   canvas.addEventListener('contextmenu', onContext);
+  canvas.addEventListener('touchend', onTouchEnd, { passive: false });
 
   // ---- battle ---------------------------------------------------------------------------------------------
 
@@ -1436,6 +1379,7 @@ export async function createFieldView(host, options = {}) {
   }
 
   let renderT0Battle = null;   // game time of the first rendered battle frame (spawn puffs skip the initial wave)
+  let downSeq = 0;             // syncBattle pass counter: a view still marked down after a pass left the `down` list
   function syncBattle(renderT) {
     if (renderT0Battle == null) renderT0Battle = renderT;
     interp.sample(renderT, sample);
@@ -1448,13 +1392,36 @@ export async function createFieldView(host, options = {}) {
       if (!v) v = battleView(id) || createUnknown(id, s);
       if (!v) continue;
       if (!v._seen) { v._seen = true; v.fadeIn = 0; }
-      if (v.alive || v.info?.kind === 'device') v.sync(s);
+      if (v.alive || v.info?.kind === 'device') v.sync(s, renderT);
       else if (v.dying > 0) { v.x = s.x; v.y = s.y; }
-      else if (s.anim !== ANIM.DIE && s.hp > 0) { v.revive?.(); v.sync(s); }
+      else if (s.anim !== ANIM.DIE && s.hp > 0) { v.revive?.(); v.sync(s, renderT); }
+    }
+    // knocked-out operators waiting to redeploy (b.snap `down`, user playtest #4 item 9): their view stays on the
+    // field knocked down under a redeploy ring (UnitView.setDown) — made on the spot for one already down when this
+    // field was entered; one that leaves the list without a redeploy fades out
+    const down = interp.downAt(renderT);
+    downSeq++;
+    if (down) {
+      for (const d of down) {
+        let v = views.get(d[0]);
+        let fresh = false;
+        if (!v) {
+          const info = infos.get(d[0]);
+          if (!info || info.side !== 'ally' || info.kind === 'device') continue;
+          gone.delete(d[0]);
+          v = battleView(d[0]);
+          fresh = true;
+        }
+        if (!v || typeof v.setDown !== 'function') continue;
+        v._seen = true;
+        v.setDown(d, renderT, fresh);
+        v._downSeq = downSeq;
+      }
     }
     const now = performance.now();
     for (const [id, v] of views) {
-      if (sample.has(id)) continue;
+      if (v.down && v._downSeq !== downSeq) v.setDown(null, renderT);
+      if (sample.has(id) || v.down) continue;
       if (v._seen) {
         // left the snapshot: removed (leaked / hidden / died and its DIE window passed)
         if (v.alive) { v.alive = false; v.dying = 0.25; v.dieDur = 0.25; }
@@ -1654,14 +1621,7 @@ export async function createFieldView(host, options = {}) {
       const b = v.bounds();
       const r = canvas.getBoundingClientRect();
       const left = r.left + b.x, top = r.top + b.y;
-      // the drawn body in client px (render/pick.js, ui/gameLogic.js pickPieceAt)
-      let shape = null;
-      if (typeof v.pickShape === 'function') {
-        const s = v.pickShape();
-        const hud = s.hud ? { x0: s.hud.x0 + r.left, y0: s.hud.y0 + r.top, x1: s.hud.x1 + r.left, y1: s.hud.y1 + r.top } : null;
-        shape = { ...s, x: s.x + r.left, y: s.y + r.top, hud };
-      }
-      return { left, top, right: left + b.width, bottom: top + b.height, width: b.width, height: b.height, x: left, y: top, shape };
+      return { left, top, right: left + b.width, bottom: top + b.height, width: b.width, height: b.height, x: left, y: top };
     },
     /**
      * Screen geometry of a BOARD-space tile (in the Final Assault prep: where that board tile is drawn on the boss
@@ -1736,6 +1696,7 @@ export async function createFieldView(host, options = {}) {
       canvas.removeEventListener('pointercancel', onPointerCancel);
       canvas.removeEventListener('pointerleave', onPointerLeave);
       canvas.removeEventListener('contextmenu', onContext);
+      canvas.removeEventListener('touchend', onTouchEnd);
       app.ticker.remove(frame);
       app.ticker.remove(preRender);
       app.ticker.remove(postRender);
@@ -1746,8 +1707,6 @@ export async function createFieldView(host, options = {}) {
       try { fx.destroy(); } catch { /* ignore */ }
       try { tiles.destroy(); } catch { /* ignore */ }
       try { impostors.destroy(); } catch { /* ignore */ }
-      try { probeRT?.destroy(true); } catch { /* ignore */ }
-      probeRT = null;
       listeners.clear();
       try { board3d?.destroy(); } catch { /* ignore */ }
       board3d = null;
@@ -1768,8 +1727,8 @@ export async function createFieldView(host, options = {}) {
     /** Dev hooks (demo / tests). */
     debug: {
       app, get cam() { return cam; }, get board3d() { return board3d; }, tiles, views, penViews, interp, fx, ctx, drag, get camKind() { return viewKind(camKind, camOpts); },
-      // picking (render/pick.js) at canvas px: the prep piece / battle view / pen view / own unit under a dragged item
-      pick: { pieceAt, battleUnitAt, penUnitAt, pieceUnder, groundTile, drawnAt }, get dragHit() { return dragHit; },
+      // picking (render/pick.js) at canvas px: the prep piece / battle view / pen view there, the ground tile under it
+      pick: { pieceAt, battleUnitAt, penUnitAt, groundTile },
     },
   };
   return view;

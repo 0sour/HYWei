@@ -1032,11 +1032,16 @@ function buildTokens(ctx, chess, tokenOwners, enemies) {
       }
     }
     const first = variants[owners[0].chessId];
+    // Hand cards placed during the prep phase (`placeable`) are the summons of a TALENT shown by the shop state
+    // (tokenDisplayType DEFAULT: 浊心斯卡蒂 海嗣, 伺夜 狼群, 缪尔赛思 流形). A summon only a SKILL makes ("获得一个医疗无人机"
+    // 赫默 S2, "获得一个诅咒娃娃" 巫恋 S2) appears when that skill fires — its kit places it — never at battle start
+    // (user playtest #4: "赫默的无人机…是赫默开技能释放一次，不是开局直接就部署了").
+    const talentMade = owners.some((o) => o.sources.includes('talent') || (o.skillAlts || []).some((a) => a.sources.includes('talent')));
     out[tokenId] = {
       tokenId, kind: 'summon', name: char.name, appellation: char.appellation || null,
       desc: stripRich(first.trait.desc), descRaw: first.trait.descRaw,
       profession: char.profession, subProfessionId: char.subProfessionId, position: char.position,
-      displayType: displayType(tokenId), placeable: displayType(tokenId) === 'DEFAULT',
+      displayType: displayType(tokenId), placeable: displayType(tokenId) === 'DEFAULT' && talentMade,
       owners: owners.map((o) => o.chessId),
       // Defaults = first owner's variant; per-owner data in variants[chessId].
       stats: first.stats, rangeGrid: first.rangeGrid, dmgType: first.dmgType, attackKind: first.attackKind,
@@ -1054,7 +1059,7 @@ function buildTokens(ctx, chess, tokenOwners, enemies) {
   if (loon) {
     out['enemy_9012_acloon'] = {
       tokenId: 'enemy_9012_acloon', kind: 'bondSummon', bondId: 'yanShip', name: loon.name, appellation: null,
-      desc: '【炎】6名成员激活时召唤的友方单位；攻击力/生命值在开战时替换为【炎】干员总和的30%（见 bonds.json yanShip）',
+      desc: '【炎】6名成员激活时召唤的友方单位；开战时攻击力/生命值增加【炎】干员攻击力/生命值总和的30%（见 bonds.json yanShip）',
       descRaw: null, profession: 'TOKEN', subProfessionId: null, position: 'NONE', motion: loon.stats.motion,
       displayType: null, placeable: false, owners: [],
       stats: enemyAsTokenStats(loon), rangeGrid: null, dmgType: loon.stats.dmgType, attackKind: 'ranged',
@@ -1271,6 +1276,27 @@ function buildGarrisons(ctx, chess) {
 // ===== items ====================================================================================
 
 /**
+ * Items the official shop (调度中心) never sells although trapShopChessDatas lists them with `hideInShop` false: they
+ * only come from effects (user playtest #4, first-hand: "几个特殊的维式重锤是干员洛洛或者维多利亚阵营获得的，商店是不卖的。
+ * 变异针…也是有一个策略自带的，商店不卖"). The official shop pool is server-side (no client table tells), so the list is
+ * explicit, by normal item id → where the item comes from. items.json marks both qualities `shopExcluded` (+
+ * `shopExcludedBy`), and every draw of "shop items" skips them (sim/simdata.js isShopItem: the shop item slot, the
+ * 道具补给 / 机密商店 cards, pool_equip_normal / _shop_1 / _kathe / _narant):
+ *   战栗 / 坚固 / 加速 / 灼燃维式重锤 — 维多利亚 <每叠加25层> "获得一件带有随机特殊效果的维式重锤" (pool_equip_vict) and
+ *     洛洛 特质 "<获得时>随机制造1件洛洛的定制品" (pool_equip_rockr)
+ *   突变细胞 — strategy 昆图斯 【不稳定要素】 "第3回合获得1件特殊装备<突变细胞>" (band_quintus)
+ * Every other effect-granted item stays sold: the plain 维式重锤 is (user), and 变形同构体 / 骑士储蓄罐 (strategy items)
+ * appear in the official 机密商店 supply (Bahamut bsn=33651 snA=12294 screenshot i.meee.com.tw/Mb2mtd9.png).
+ */
+const SHOP_EXCLUDED_ITEMS = Object.freeze({
+  chess_item_2_03_e_a: '维多利亚盟约每25层 / 洛洛的定制品', // 战栗维式重锤
+  chess_item_3_09_e_a: '维多利亚盟约每25层 / 洛洛的定制品', // 坚固维式重锤
+  chess_item_3_10_e_a: '维多利亚盟约每25层 / 洛洛的定制品', // 加速维式重锤
+  chess_item_4_09_e_a: '维多利亚盟约每25层 / 洛洛的定制品', // 灼燃维式重锤
+  chess_item_5_08_e_a: '策略【不稳定要素】（昆图斯）', // 突变细胞
+});
+
+/**
  * Build data/items.json: every item chess (EQUIP normal + golden, MAGIC Arts), keyed by chessId.
  */
 function buildItems(ctx, effects) {
@@ -1294,12 +1320,14 @@ function buildItems(ctx, effects) {
     const ri = researchItems.get(baseId);
     const isGolden = !!t.isGolden;
     const upgradeNum = t.upgradeNum;
+    const excluded = Object.hasOwn(SHOP_EXCLUDED_ITEMS, baseId) ? SHOP_EXCLUDED_ITEMS[baseId] : null;
     out[chessId] = {
       id: chessId, baseId, goldenId: shop?.goldenItemId || null, isGolden,
       trapId: t.charId, iconId: t.charId, identifier: t.identifier,
       name: trap?.name || eff?.name || chessId,
       itemType: t.itemType, tier: shop?.itemLevel ?? null, shopSortId: shop?.shopLevelSortId ?? null,
       price: t.purchasePrice, hideInShop: !!shop?.hideInShop,
+      shopExcluded: !!excluded, shopExcludedBy: excluded,
       mergeable: !isGolden && upgradeNum > 0 && upgradeNum < 100,
       upgradeNum, upgradeChessId: t.upgradeChessId || null,
       duration: t.trapDuration,
@@ -1590,6 +1618,8 @@ function buildEnemies(ctx) {
       abilities,
       talents: { bb: talents.bb, bbStr: talents.bbStr },
       skills: enemySkills(data.skills, `enemy ${key}`),
+      // SP pool of SP-cost skills (e.g. 假想敌：黑云 技力上限 3 = 全弹发射 hits); only when the database has one
+      ...(data.spData ? { sp: { type: data.spData.spType ?? null, maxSp: data.spData.maxSp ?? 0, initSp: data.spData.initSp ?? 0, increment: data.spData.increment ?? 0 } } : {}),
       notCountInTotal: !!mv(data.notCountInTotal, false),
       tags: mv(data.enemyTags) || [],
       be, beFactor, attrPower: enemyAttrPower(ctx, key, wantLevel), isFlyEnemy: rand ? !!rand.isFlyEnemy : stats.motion === 'FLY',
@@ -2273,9 +2303,13 @@ function buildChoices(ctx, effects, items, chess) {
       pool_equip_shop_1: { kind: 'equip', rule: 'shopEligible', tiers: [1], assumed: true },
       pool_equip_kathe: { kind: 'equip', rule: 'shopEligible', maxTier: 'shopLevel', assumed: true },
       pool_equip_narant: { kind: 'equip', rule: 'shopEligible', maxTier: 'shopLevel', assumed: true },
+      // "获得一件带有随机特殊效果的维式重锤": the 4 hammers with a special effect (never sold, SHOP_EXCLUDED_ITEMS); the
+      // weights are server-side (PRTS 11-25 note: "装备【灼燃维式重锤】的出现概率调整") — uniform [ASSUMED]
       pool_equip_vict: { kind: 'equip', items: ['灼燃维式重锤', '坚固维式重锤', '加速维式重锤', '战栗维式重锤'].map(itemByName), assumed: true },
       pool_equip_pepe: { kind: 'equip', weighted: [['盟约之币', 45], ['萨尔贡浓茶', 45], ['黄沙罗盘', 10]].map(([n, w]) => [itemByName(n), w]), goldenWeights: [40, 40, 20], assumed: true },
-      pool_equip_rockr: { kind: 'equip', items: ['有限加速器', '激光发射器', '护盾无人机', '双模机械臂', '蜂鸣器'].map(itemByName), assumed: true },
+      // 洛洛的定制品 = the same 4 special hammers (user playtest #4, first-hand: "几个特殊的维式重锤是干员洛洛或者维多利亚
+      // 阵营获得的"); uniform [ASSUMED]
+      pool_equip_rockr: { kind: 'equip', items: ['灼燃维式重锤', '坚固维式重锤', '加速维式重锤', '战栗维式重锤'].map(itemByName), assumed: true },
       pool_chess_glady: { kind: 'chess', items: ['斯卡蒂', '幽灵鲨', '深巡'].map(chessByName), assumed: true },
       pool_char_pinus: { kind: 'chess', weighted: [['野鬃', 45], ['灰毫', 45], ['远牙', 10]].map(([n, w]) => [chessByName(n), w]), assumed: true },
       pool_char_later: { kind: 'chess', bond: 'lateranoShip', minTier: 4, golden: true, rule: 'shopEligible', assumed: true },
@@ -2459,7 +2493,9 @@ function buildConfig(ctx, waves, stages, bands) {
     finalAssault: { pairing: 'seatOrderPairs', oddPlayerAlone: true, movableBossPerAlivePlayerSide: true, layerGainsEnabled: false },
     timers: {
       infoCheck: step('INFO_CHECK')?.time ?? 25, infoCheckHint: step('INFO_CHECK')?.hintTime ?? 5,
-      bandDraft: step('BAND_CHECK')?.time ?? 50, bandDraftHint: step('BAND_CHECK')?.hintTime ?? 15, bandTurn: 12,
+      // bandTurn: one turn of the co-op strategy draft = its only countdown (server/match/Match.js BAND_TURN_SECONDS,
+      // [ASSUMED] — user playtest #4 item 4; the official data only has the whole step's 50 s, kept for reference)
+      bandDraft: step('BAND_CHECK')?.time ?? 50, bandDraftHint: step('BAND_CHECK')?.hintTime ?? 15, bandTurn: 30,
       battleCheck: step('BATTLE_CHECK')?.time ?? 3,
       spFirst: 30, spTurn: act.modeDataDict.mode_multi_normal?.specialPhaseTime ?? 16,
       soloPrepTimeData: 300, soloSpTimeData: act.modeDataDict.mode_single_normal?.specialPhaseTime ?? 150,
@@ -2592,6 +2628,7 @@ function validateAll(f) {
   for (const [pid, p] of Object.entries(choices.pools)) {
     for (const id of [...(p.items || []), ...(p.weighted || []).map((x) => x[0])]) if (!id || !(items[id] || chess[id])) err(`pool ${pid}: unresolved entry ${id}`);
   }
+  for (const id of Object.keys(SHOP_EXCLUDED_ITEMS)) if (!items[id] || items[id].itemType !== 'EQUIP' || items[id].isGolden) err(`SHOP_EXCLUDED_ITEMS: ${id} is not a normal EQUIP item`);
   for (const t of Object.values(tokens)) {
     if (!t.stats) err(`token ${t.tokenId}: no stats`);
     for (const [o, v] of Object.entries(t.variants || {})) if (!Array.isArray(v.sources) || !v.sources.length) err(`token ${t.tokenId}@${o}: no sources`);

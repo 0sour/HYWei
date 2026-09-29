@@ -404,3 +404,53 @@ test('live leaks: a boss field is not counted (the merged team LP moves through 
   assert.deepEqual(r2.store.get().match.battle.leaks, {}, 'only normal fields');
   r2.runner.dispose();
 });
+
+test('live unit stats (user playtest #4 item 7): unitStats(id) reads the battle on screen — the sim\'s last computed stats, never unit.s (no recompute from the UI)', async () => {
+  const start = realStart(7305);
+  const r = rig();
+  r.net.emit('b.start', start);
+  await r.settle();
+  const e = r.runner._entries.get(start.battleId);
+  r.advance(2000);
+  const ally = e.battle.allyUnits.find((u) => u.alive && u.deployed && u.kind === 'op');
+  assert.ok(ally, 'a deployed operator');
+  // a trap on the lazy getter: reading the live stats must not recompute them (it would move the sim's floats)
+  const s = ally._s;
+  Object.defineProperty(ally, 's', { configurable: true, get() { throw new Error('unit.s read by the UI'); } });
+  const got = r.runner.unitStats(ally.id);
+  delete ally.s;
+  assert.ok(got, 'the unit of the battle on screen');
+  assert.equal(got.id, ally.id);
+  assert.equal(got.uid, ally.uid);
+  assert.equal(got.defId, ally.defId);
+  assert.equal(got.atk, Math.round(s.atk));
+  assert.equal(got.maxHp, Math.round(s.maxHp));
+  assert.equal(got.def, Math.round(s.def));
+  assert.equal(got.interval, Math.round(s.interval * 100) / 100);
+  assert.equal(got.blockCnt, s.blockCnt);
+  assert.equal(got.hp, Math.round(ally.hp));
+  assert.equal(got.base.atk, Math.round(ally.base.atk));
+  assert.equal(got.base.maxHp, Math.round(ally.base.maxHp));
+  assert.equal(r.runner.unitStats(ally.id, start.fieldId)?.id, ally.id, 'on the named field');
+  assert.equal(r.runner.unitStats(ally.id, 'n:someone_else'), null, 'another field: nothing');
+  assert.equal(r.runner.unitStats(999999), null, 'unknown unit');
+  // an own board piece's card left open into the battle: its unit by uid and owner
+  assert.equal(r.runner.unitIdOf(ally.uid, ally.ownerId), ally.id);
+  assert.equal(r.runner.unitIdOf(ally.uid, ally.ownerId, start.fieldId), ally.id);
+  assert.equal(r.runner.unitIdOf(ally.uid, 'someone_else'), null, 'another player\'s piece');
+  assert.equal(r.runner.unitIdOf(ally.uid, ally.ownerId, 'n:someone_else'), null, 'another field');
+  assert.equal(r.runner.unitIdOf(null, ally.ownerId), null);
+  assert.equal(r.runner.unitStats('x'), null);
+  // enemies too, once one is out
+  for (let i = 0; i < 60 && !e.battle.enemies.some((x) => x.alive); i++) r.advance(500, 50);
+  const foe = e.battle.enemies.find((x) => x.alive);
+  if (foe) {
+    const fs = r.runner.unitStats(foe.id);
+    assert.ok(fs && fs.maxHp > 0 && fs.base.maxHp > 0, 'an enemy\'s live stats');
+    assert.equal(fs.moveSpeed, Math.round((foe._s || foe.base).moveSpeed * 100) / 100);
+  }
+  r.runner.clear();
+  assert.equal(r.runner.unitStats(ally.id), null, 'nothing on screen after the battles were dropped');
+  assert.equal(r.runner.unitIdOf(ally.uid, ally.ownerId), null);
+  r.runner.dispose();
+});

@@ -103,6 +103,10 @@ const BOOM_SPIN = 22, BOOM_BOW = 0.35, BOOM_MAX_T = 6;
  * S3: ammo grants / reloads lock far more than the 5 base shots, ≤ 33 shells).
  */
 const LOCK_T = 5, LOCK_FADE = 0.2, MAX_LOCKS = 48;
+// 炎佑 fire jet: real s a jet burns past its tick's `dur` (the next 1 game s tick re-aims and extends it before it fades:
+// one continuous stream), its fade-out, the most jets at once, the fire colours
+const FLAME_TAIL = 0.2, FLAME_FADE = 0.15, MAX_FLAMES = 8;
+const FLAME_TINTS = Object.freeze([0xffd27a, 0xffa94d, 0xff8a3d, 0xff5a2a]);
 /** Bombard shell: share of its flight spent rising from the shooter, and the height it climbs / falls from (tiles). */
 const SHELL_RISE = 0.34, SHELL_UP = 5.5;
 /** 蕾缪安 S3 shell (fx 'bombardShell'); `look` 'mortar' is its own flight (_stepMortar). */
@@ -198,7 +202,9 @@ export const FX_KINDS = Object.freeze({
   knack: { a: 'buff', c: 0xffd45a }, bloodBattle: { a: 'buff', c: 0xff4b3e }, sword: { a: 'buff', c: 0xdfe8ff }, equip: { a: 'buff', c: 0x4ed8af },
   garrisonGrant: { a: 'buff', c: 0x4ed8af }, extraAttack: { a: 'buff', c: 0xffe066 }, soul: { a: 'buff', c: 0xb36bff }, jungleSoul: { a: 'buff', c: 0x7fd37a },
   candle: { a: 'buff', c: 0xffb347 }, mote: { a: 'buff', c: 0xfff0a8 }, ember: { a: 'buff', c: 0xff7a33 }, ignite: { a: 'buff', c: 0xff6a2a },
-  flame: { a: 'buff', c: 0xff6a2a }, yanyouFlame: { a: 'buff', c: 0xff8a3d }, grow: { a: 'buff', c: 0x7fd37a }, weightlessBuff: { a: 'buff', c: 0xcfe0ff },
+  flame: { a: 'buff', c: 0xff6a2a }, grow: { a: 'buff', c: 0x7fd37a }, weightlessBuff: { a: 'buff', c: 0xcfe0ff },
+  // 炎佑 祛恶之焰: a continuous jet from the dragon (`id`) onto its locked target (`target`) + a burning disc (_flame)
+  yanyouFlame: { a: 'flame', c: 0xff8a3d, r: 1 },
   // states
   takeoff: { a: 'lift', c: 0xcfe0ff }, levitate: { a: 'lift', c: 0xcfe0ff }, weightless: { a: 'lift', c: 0xcfe0ff },
   sleep: { a: 'sleep', c: 0xa8b6ff }, crit: { a: 'crit', c: 0xffe066 },
@@ -310,6 +316,7 @@ export class FxSystem {
     this.beams.blendMode = P.BLEND_MODES.ADD;
     ctx.layers.fxAdd.addChild(this.beams);
     this.beamList = [];
+    this.flames = [];         // fire jets (炎佑 祛恶之焰) { src, tgt, x, y, z, r, col, t, end, disc, edge, … }
     this.nums = [];
     this._numPools = new Map();   // bitmap font → free number records
     this.auras = new Map();   // unit id → { sprite, ring, t }
@@ -925,6 +932,128 @@ export class FxSystem {
     this.beamList.length = w;
   }
 
+  // ---- fire jets (炎佑 祛恶之焰) ---------------------------------------------------------------------------------
+
+  /**
+   * fx 'yanyouFlame' (sim/content/tokens.js yanyouKit; user playtest #4 item 12 "一段持续时间的喷火"): the sim emits one
+   * event per game second of the channel; each keeps the jet of dragon `srcId` burning for `dur` real s + FLAME_TAIL
+   * onto its locked target `tgtId` (else the spot (x, y)), so the 1 s ticks join into ONE continuous stream, with a
+   * burning disc of radius `r` tiles following the target. One jet per dragon (a new tick re-aims and extends it).
+   */
+  _flame(srcId, tgtId, x, y, r, col, dur) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    let F = srcId != null ? this.flames.find((f) => f.src === srcId) : null;
+    if (!F) {
+      const P = this.P;
+      const disc = new P.Sprite(this.tex.soft);
+      disc.anchor.set(0.5); disc.blendMode = P.BLEND_MODES.ADD; disc.alpha = 0;
+      const edge = new P.Sprite(this.tex.ring);
+      edge.anchor.set(0.5); edge.blendMode = P.BLEND_MODES.ADD; edge.alpha = 0;
+      F = { src: srcId, disc, edge, t: 0, end: 0, jet: 0, fire: 0, smoke: 0, seed: Math.random() * 100 };
+      this.flames.push(F);
+      if (this.flames.length > MAX_FLAMES) this._freeFlame(this.flames.shift());
+    }
+    F.tgt = tgtId; F.x = x; F.y = y; F.z = this._groundZ(x, y); F.r = r; F.col = col;
+    F.end = Math.max(F.end, F.t + dur + FLAME_TAIL);
+    F.disc.tint = F.edge.tint = col;
+  }
+
+  _freeFlame(F) { F.disc.destroy(); F.edge.destroy(); }
+
+  _updateFlames(dt) {
+    if (!this.flames.length) return;
+    const cam = this.ctx.cam();
+    const g = this.beams;          // drawn after _updateBeams cleared it
+    const p = this._p, q = this._q, m = this._g;
+    const low = this.quality === 'low';
+    let w = 0;
+    for (const F of this.flames) {
+      F.t += dt;
+      const sv = this._viewOf(F.src);
+      // the channel is over (no tick kept it going) or the dragon is gone
+      if (F.t >= F.end || (F.src != null && this.ctx.view && (!sv || sv.alive === false))) { this._freeFlame(F); continue; }
+      const tv = this._viewOf(F.tgt);
+      if (tv && tv.alive !== false && Number.isFinite(tv.x) && Number.isFinite(tv.y)) { F.x = tv.x; F.y = tv.y; F.z = tv.z || 0; }
+      const fade = Math.min(1, F.t / 0.12, (F.end - F.t) / FLAME_FADE);
+      const flick = 0.82 + 0.18 * Math.sin(F.t * 23 + F.seed) * Math.sin(F.t * 7.3);
+      // burning disc on the ground around the target
+      this._onGround(F.disc, F.y, F.z); this._onGround(F.edge, F.y, F.z);
+      cam.project(F.x, F.y, F.z + 0.02, p);
+      cam.project(F.x, F.y + F.r, F.z + 0.02, q);
+      const cx = p.x, cy = p.y, s = p.s;
+      const rx = s * F.r, ry = Math.max(1, cy - q.y);
+      F.disc.position.set(cx, cy); F.disc.scale.set((rx * 2) / 128, (ry * 2) / 128); F.disc.alpha = 0.5 * fade * flick;
+      F.edge.position.set(cx, cy); F.edge.scale.set((rx * 2.05) / 128, (ry * 2.05) / 128); F.edge.alpha = 0.7 * fade * flick;
+      // flame tongues and embers rising from the disc
+      F.fire += dt * (low ? 14 : 34) * fade;
+      while (F.fire >= 1) {
+        F.fire -= 1;
+        if (!this._room()) { F.fire = 0; break; }
+        const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * 0.9;
+        const px = cx + Math.cos(a) * rx * d, py = cy + Math.sin(a) * ry * d;
+        const ember = Math.random() < 0.3;
+        const po = this._o();
+        po.tint = ember ? 0xffd27a : FLAME_TINTS[(Math.random() * FLAME_TINTS.length) | 0];
+        po.vx = (Math.random() - 0.5) * s * 0.3; po.vy = -s * (ember ? 1.6 : 0.9 + Math.random() * 0.6); po.drag = ember ? 0.5 : 1.5;
+        po.life = ember ? 0.7 : 0.35 + Math.random() * 0.25;
+        po.s0 = (s / 128) * (ember ? 0.06 : 0.28 + Math.random() * 0.12); po.s1 = (s / 128) * (ember ? 0.02 : 0.08);
+        po.a0 = 0.9; po.a1 = 0; po.fadeIn = 0.05;
+        this.particle(ember ? 'dot' : 'soft', px, py, po);
+      }
+      if (this.rich) {
+        F.smoke += dt * 5 * fade;
+        while (F.smoke >= 1) {
+          F.smoke -= 1;
+          if (!this._room()) { F.smoke = 0; break; }
+          const po = this._o();
+          po.add = false; po.tint = 0x3a3430; po.vx = (Math.random() - 0.5) * s * 0.2; po.vy = -s * 0.5; po.drag = 1;
+          po.life = 0.9; po.s0 = (s / 128) * 0.35; po.s1 = (s / 128) * 0.8; po.a0 = 0.32; po.a1 = 0; po.fadeIn = 0.15;
+          this.particle('smoke', cx + (Math.random() - 0.5) * rx, cy - s * 0.2, po);
+        }
+      }
+      // the jet: from the dragon's chest onto the target (its chest; the disc centre without a target view)
+      if (sv) {
+        this._chest(sv, m);
+        const mx = m.x, my = m.y;
+        if (tv && tv.alive !== false) this._chest(tv, q); else { q.x = cx; q.y = cy - s * 0.15; }
+        const tx = q.x, ty = q.y;
+        const segs = 6;
+        for (let pass = 0; pass < 3; pass++) {
+          const col = pass === 2 ? 0xfff2c0 : pass === 1 ? 0xffb347 : F.col;
+          const alpha = (pass === 0 ? 0.3 : pass === 1 ? 0.55 : 0.8) * fade * flick;
+          let x0 = mx, y0 = my;
+          for (let i = 1; i <= segs; i++) {
+            const f = i / segs;
+            // widens towards the target (a cone of fire), wobbling
+            const wd = s * (pass === 0 ? 0.1 + 0.22 * f : pass === 1 ? 0.05 + 0.1 * f : 0.02 + 0.03 * f);
+            const j = i < segs ? Math.sin(F.seed + i * 3.1 + F.t * 30) * s * 0.05 * f : 0;
+            const x1 = mx + (tx - mx) * f + j, y1 = my + (ty - my) * f - j * 0.5;
+            g.lineStyle(Math.max(1, wd), col, alpha);
+            g.moveTo(x0, y0); g.lineTo(x1, y1);
+            x0 = x1; y0 = y1;
+          }
+        }
+        // fire puffs streaming along it
+        F.jet += dt * (low ? 18 : 42) * fade;
+        const T = 0.2;
+        while (F.jet >= 1) {
+          F.jet -= 1;
+          if (!this._room()) { F.jet = 0; break; }
+          const a = Math.random() * Math.PI * 2, d = Math.random() * 0.5;
+          const gx = tx + Math.cos(a) * rx * d, gy = ty + Math.sin(a) * ry * d;
+          const po = this._o();
+          po.tint = FLAME_TINTS[(Math.random() * FLAME_TINTS.length) | 0];
+          po.vx = (gx - mx) / T; po.vy = (gy - my) / T;
+          po.life = T * (0.9 + Math.random() * 0.3);
+          po.s0 = (s / 128) * 0.1; po.s1 = (s / 128) * (0.38 + Math.random() * 0.2); po.a0 = 0.85; po.a1 = 0.15;
+          this.particle('soft', mx, my, po);
+        }
+      }
+      this.flames[w++] = F;
+    }
+    this.flames.length = w;
+  }
+
   // ---- lock-on reticles (蕾缪安) -------------------------------------------------------------------------------
 
   /**
@@ -1508,10 +1637,10 @@ export class FxSystem {
   /**
    * b.ev 'fx': every kind the sim / content emits has a visual (FX_KINDS archetypes: blast, shell, zone, telegraph,
    * heal, sp, shield, shatter, summon, vanish, blink, move, wave, mark, reticle, buff, lift, sleep, crit, dodge,
-   * counter, dp, coin, crate, down, beam, bolt, strike, volley, pillar, lp, chill, element); unknown kinds get a generic
-   * sparkle. `extra` keys used: id (anchor unit — or the shooter of a `pt` kind), r | radius, dur | duration, t (shell
-   * flight, game s), src / from / to / targets (unit ids), fx, fy / fromX, fromY / tx, ty (positions), element, n,
-   * scale, kind, tiles.
+   * counter, dp, coin, crate, down, beam, bolt, strike, volley, pillar, lp, chill, element, flame); unknown kinds get a
+   * generic sparkle. `extra` keys used: id (anchor unit — or the shooter of a `pt` kind), r | radius, dur | duration,
+   * t (shell flight, game s), src / from / to / target / targets (unit ids), fx, fy / fromX, fromY / tx, ty (positions),
+   * element, n, scale, kind, tiles.
    */
   simFx(kind, x, y, extra) {
     const ex = extra && typeof extra === 'object' ? extra : {};
@@ -1718,6 +1847,12 @@ export class FxSystem {
         const b = this._viewOf(ex.to ?? ex.target) || (a === at.v ? null : at.v);
         if (a && b && a !== b) this._beam(a, b, col, spec.a === 'bolt' ? 0.28 : 0.4, spec.a === 'bolt' ? 1 : 0.4);
         else this.strike(at.x, at.y, at.z, col);
+        break;
+      }
+      case 'flame': {
+        // at the event's spot (the locked target), not snapped onto the dragon hovering 0.25 tile from it
+        const fx0 = Number(x), fy0 = Number(y);
+        this._flame(ex.id ?? ex.src ?? null, ex.target ?? ex.to ?? null, fx0, fy0, r, col, Math.max(0.2, dur || 0.5));
         break;
       }
       case 'strike': case 'pillar': this.strike(at.x, at.y, at.z, col, spec.a === 'pillar'); break;
@@ -1938,9 +2073,17 @@ export class FxSystem {
       glow.anchor.set(0.5); glow.tint = tint; glow.blendMode = P.BLEND_MODES.ADD; glow.scale.set(0.9);
       const sp = new P.Sprite(icon);
       sp.anchor.set(0.5);
-      const k = 46 / Math.max(1, Math.max(icon.width, icon.height));
-      sp.scale.set(k);
       sp.tint = tint;
+      // 46 px along its longer side. A bond icon (app.js 'layer': PIXI.Texture.from(url)) is a 1×1 placeholder until
+      // its image has loaded: sized from that it was drawn 46× too big, ~5000 px over the whole screen for the pop's
+      // 1.4 s (user playtest #4 item 13) — so it is sized once its texture is valid, and hidden until then.
+      const fit = () => {
+        if (sp.destroyed) return;
+        sp.scale.set(46 / Math.max(1, icon.width, icon.height));
+        sp.visible = true;
+      };
+      if (icon.valid) fit();
+      else { sp.visible = false; icon.once('update', fit); }
       c.addChild(glow, sp);
     }
     if (label) {
@@ -1989,6 +2132,8 @@ export class FxSystem {
     this.pops.length = 0;
     this.beamList.length = 0;
     this.beams.clear();
+    for (const F of this.flames) this._freeFlame(F);
+    this.flames.length = 0;
     this.vigT = 0;
     this.vignette.alpha = 0;
     for (const zn of this.zones) this._freeZone(zn);
@@ -2006,6 +2151,7 @@ export class FxSystem {
     this._updateProjs(dt);
     this._updateLocks(dt);
     this._updateBeams(dt);
+    this._updateFlames(dt);
     this._updateNums(dt);
     this._updateRings(dt);
     this._updateAuras(dt);
@@ -2028,7 +2174,7 @@ export class FxSystem {
   }
 
   get counts() {
-    return { particles: this.parts.length, projectiles: this.projs.length, numbers: this.nums.length, rings: this.rings.length, auras: this.auras.size, locks: this.locks.length };
+    return { particles: this.parts.length, projectiles: this.projs.length, numbers: this.nums.length, rings: this.rings.length, auras: this.auras.size, locks: this.locks.length, flames: this.flames.length };
   }
 
   destroy() {

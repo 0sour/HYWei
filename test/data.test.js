@@ -416,10 +416,16 @@ test('chess/tokens: talent tokens resolve and every token variant says where it 
   assert.deepEqual(tokens.token_10057_svash2_eagle1.variants.chess_char_5_14_a.sources, ['display']);
   // 夕's skill "cnt" is a charge count, not a token count.
   assert.equal(tokens.token_10015_dusk_drgn.variants.chess_char_5_12_a.count, null);
-  // Every placeable (hand) token is produced by the chess's default skill or a talent.
-  for (const t of Object.values(tokens)) if (t.placeable) {
-    for (const v of Object.values(t.variants)) assert.ok(v.sources.some((s) => s !== 'display'), `${t.tokenId}: placeable display-only token`);
+  // Placeable (hand) tokens = the TALENT summons the shop state shows (tokenDisplayType DEFAULT); a skill's summon
+  // ("获得一个医疗无人机" 赫默, "获得一个诅咒娃娃" 巫恋) appears when the skill fires, never at battle start (user
+  // playtest #4 item 11).
+  for (const t of Object.values(tokens)) {
+    if (t.kind !== 'summon') continue;
+    const talent = Object.values(t.variants).some((v) => v.sources.includes('talent') || Object.values(v.bySkill || {}).some((b) => b.sources.includes('talent')));
+    assert.equal(t.placeable, t.displayType === 'DEFAULT' && talent, `${t.tokenId} (${t.name}): placeable`);
   }
+  assert.deepEqual(Object.values(tokens).filter((t) => t.placeable).map((t) => t.name).sort(), ['斯卡蒂的海嗣', '流形', '狼群'].sort());
+  for (const id of ['token_10000_silent_healrb', 'token_10006_vodfox_doll']) assert.equal(tokens[id].placeable, false, `${id}: skill summon`);
   assert.equal(tokens.enemy_9012_acloon.stats.deployLimit, tokens.enemy_9012_acloon.deployLimit);
 });
 

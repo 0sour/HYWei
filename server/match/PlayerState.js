@@ -28,8 +28,9 @@
 //     absent; equipped items are otherwise locked: g.destroy refuses them),
 //     2 identical normal items (hand/temp/equipped) merge into the golden item in the hand, items are never sold
 //     (destroy for 0). consume-on-equip items resolve through the effect registry and never take a slot.
-//   * Tokens: placing an owner with placeable summons (tokens.json displayType DEFAULT) sends one stack
-//     (deployLimit copies) to the hand; withdrawing/selling/merging the owner removes its tokens.
+//   * Tokens: placing an owner with placeable summons (tokens.json `placeable`: the talent summons 海嗣 / 狼群 / 流形)
+//     sends one stack (deployLimit copies) to the hand; withdrawing/selling/merging the owner removes its tokens. A
+//     skill's summon (赫默 医疗无人机, 巫恋 诅咒娃娃) is never a hand card: it appears in battle when the skill fires.
 //   * Facing (DESIGN §3, research 09 §1.2): every board piece has `dir` ∈ UP|RIGHT|DOWN|LEFT (server/sim/dir.js), set
 //     by g.move {…, dir} (absent ⇒ RIGHT) and kept across rounds. g.move onto the piece's OWN tile re-orients it in
 //     place; a swap keeps the occupant's dir; pieces put on the board by effects (a merge elite taking a consumed
@@ -39,8 +40,7 @@
 //     equal to the defaults dropped) is re-checked against this match's data (shared/protocol.js checkLoadout; a
 //     mismatch falls back to the defaults) and kept frozen; bots always use the defaults. Match.setLoadout may replace
 //     it during INFO_CHECK only. battleInput() resolves every chess unit to `skillIndex` + `moduleId` (resolveLoadout:
-//     normal chess → moduleId null, elite → uniEquipId | 'none'); m.private exposes `loadout`. A placeable summon of a
-//     skill (赫默 S2 医疗无人机) is granted only with that skill equipped (grantTokensFor).
+//     normal chess → moduleId null, elite → uniEquipId | 'none'); m.private exposes `loadout`.
 
 import { ERR, GEO, PHASE } from '../../shared/constants.js';
 import { checkLoadout, resolveLoadout } from '../../shared/protocol.js';
@@ -345,18 +345,13 @@ export class PlayerState {
   }
 
   /**
-   * Owner placed on the board: send its placeable summons to the hand (one stack per token type). A summon that comes
-   * from a skill (SkillRecord.overrideTokenKey, e.g. 赫默 S2 医疗无人机 "获得一个医疗无人机") is granted only while that
-   * skill is the one equipped under the player's loadout (DESIGN §16) — 赫默 on S1 has no drone.
+   * Owner placed on the board: send its placeable summons to the hand (one stack per token type). Only talent summons
+   * are placeable (gamedata.placeableTokens / tokens.json `placeable`); a summon a skill makes ("获得一个医疗无人机",
+   * 赫默 S2) appears in battle when that skill fires (user playtest #4: not on the field from the start).
    */
   grantTokensFor(owner) {
-    const rec = this.gd.chess(owner.id);
-    const skills = rec && Array.isArray(rec.skills) ? rec.skills.filter(Boolean) : [];
-    const sel = skills.length ? this.loadoutFor(rec).skillIndex : null;
     for (const { tokenId, count } of this.gd.placeableTokens(owner.id)) {
       if (this._hasTokensOf(owner.uid, tokenId)) continue;
-      const bySkill = skills.filter((s) => s.overrideTokenKey === tokenId);
-      if (bySkill.length && !bySkill.some((s) => s.index === sel)) continue;
       const t = this.newPiece('token', tokenId, { count, ownerUid: owner.uid });
       this.stow(t, { allowTemp: true });
     }

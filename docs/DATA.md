@@ -119,7 +119,7 @@ Top level: `{ season, seasonName, modes, economy, lpCapPerRound, bossOvertimeAft
 | `dp` | `{"init":10,"perSec":1,"max":99}` | |
 | `unite` | `{"maxHelpers":2,"helperOrder":"unitsOnField>activeBond>undownedUnits; pair: unitsOnField>activeBond>activeLayers>undownedUnits, first = right field (PRTS 帮助)","layerGainsEnabled":false,"templates":{"1":"act1autochess_escaped_single","2":"act1autochess_escaped_multi"},…}` | 联防; `helperOrder` documents the rule `server/match/unite.js helperOrder` implements (research 08 §5; ties → seat) |
 | `finalAssault` | `{"pairing":"seatOrderPairs","oddPlayerAlone":true,"movableBossPerAlivePlayerSide":true,"layerGainsEnabled":false}` | |
-| `timers` | `{"infoCheck":25,"infoCheckHint":5,"bandDraft":50,"bandDraftHint":15,"bandTurn":12,"battleCheck":3,"spFirst":30,"spTurn":16,"soloPrepTimeData":300,"soloSpTimeData":150,"chatCd":1,"chatBubble":3,"broadcastDelay":1,"enterSteps":[…]}` | seconds |
+| `timers` | `{"infoCheck":25,"infoCheckHint":5,"bandDraft":50,"bandDraftHint":15,"bandTurn":30,"battleCheck":3,"spFirst":30,"spTurn":16,"soloPrepTimeData":300,"soloSpTimeData":150,"chatCd":1,"chatBubble":3,"broadcastDelay":1,"enterSteps":[…]}` | seconds |
 | `bans[difficulty]` | `{"core":3,"addon":4}` (FUNNY `{0,1}`) + `rule` | per-match disabled-bond draw (research 01 A2) |
 | `bandDraft` | `{"skipsPerPlayer":1,"order":"random","duplicatesAllowed":true,"timeoutBandId":"band_bldsk"}` | |
 | `titles[]` | `{"id":"comment_1","picId":"comment_icon_1","name":"卫戍之星","stat":"bossDamage","rule":"max","onlyOnWin":true,"text":"…"}` | 评语 + [ASSUMED] criteria; `titleRule` explains assignment |
@@ -272,6 +272,7 @@ everything needed to resolve a unit for `(chessId, skillIndex, moduleId)` (`simd
 | `name` | `"维式重锤"` | |
 | `itemType` | `"EQUIP"` | `EQUIP` (equipped, max 2) / `MAGIC` (Arts, dropped on a tile) |
 | `tier`, `price`, `hideInShop` | `1`, `1`, `false` | golden price 5 (never sold in shop) |
+| `shopExcluded`, `shopExcludedBy` | `false`, `null` / `true`, `"维多利亚盟约每25层 / 洛洛的定制品"` | effect-only items the shop never sells although the official table does not hide them (`tools/build-data.mjs SHOP_EXCLUDED_ITEMS`, sourced: the 4 special 维式重锤 — 战栗 / 坚固 / 加速 / 灼燃 — and 突变细胞; user playtest #4 item 5), normal and golden. `sim/simdata.js isShopItem` (non-golden EQUIP, not `hideInShop`, not `shopExcluded`) is the one predicate of every shop-item draw (the shop's item slot, 道具补给 / 机密商店 cards, `pool_equip_normal` / `_shop_1` / `_kathe` / `_narant`, `Match.rollItemId`): 51 of the 56 normal items; the item card shows `shopExcludedBy` as the source |
 | `mergeable`, `upgradeNum`, `upgradeChessId` | `true`, `2`, `"chess_item_1_01_e_b"` | 2 copies → golden; `upgradeNum` 100 = never merges |
 | `duration` | `-1` | trapDuration |
 | `giveBondId`, `givePowerId`, `canGiveBond` | `"victoriaShip"`, `null`, `false` | 变形同构体 (`canGiveBond`) grants the `giveBondId` of the *other* equipped item |
@@ -315,7 +316,7 @@ Types: `BAND_INITIAL` 41, `BOND` 23, `EQUIP` 115, `ENEMY_GAIN` 129 (悬赏), `BU
 | `cards.bounty[]` | `{"effectId":"enemyeffect_10_4","name":"悬赏·飞行I","tier":1,"coin":1,"payout":"kill","rounds":2,"multiRound":false,"enemyKey":"enemy_1005_yokai","count":1,"adds":[…]}` | `payout` `kill` (killer gets coins, 联防 helpers too) / `perfect` (chooser's own phase perfect); `rounds` = battles affected (99 = all remaining); `tier` from the I/II/III suffix (else coin value) |
 | `cards.tactic[]` | `{"effectId":"map_m01_1","name":"模拟战场演变·模式一","kind":"terrain","stageId":"act1autochess_m01","team":false}` | `kind` `ally` / `enemyDebuff` / `terrain` (only for the match stage); `team` = also given to teammates |
 | `schedule[modeId]` | `{"spRounds":[3,6,9],"rounds":{"3":{"families":[{"family":"bounty","weight":50},…],"cards":6,"supplyTiers":[1,4],"bountyTiers":[1,2],"events":{"bounty":[…],"supply":[…],"shop":[…],"tactic":[…]},"assumed":true}}}` | research 01 A4 defaults: pick a family by weight; `supplyTiers` = item tier window for 道具补给; 机密商店 draws any tier; `events` = official event ids usable as the phase header |
-| `pools[poolId]` | `{"kind":"equip","items":[…]}` / `{"kind":"chess","tier":2,"rule":"shopEligible"}` | server-side reward pools referenced by effects (`pool_equip_*`, `pool_chess_shop_N_reward`, `pool_char_later`, …), all [ASSUMED]; `rule:"shopEligible"` = visible/non-hidden entries, `maxTier:"shopLevel"` = ≤ current shop level, `weighted` = `[[id, weight]]` |
+| `pools[poolId]` | `{"kind":"equip","items":[…]}` / `{"kind":"chess","tier":2,"rule":"shopEligible"}` | server-side reward pools referenced by effects (`pool_equip_*`, `pool_chess_shop_N_reward`, `pool_char_later`, …), all [ASSUMED]; `rule:"shopEligible"` = visible/non-hidden entries, `maxTier:"shopLevel"` = ≤ current shop level, `weighted` = `[[id, weight]]`. `pool_equip_vict` (维多利亚, every 25 layers: "获得一件带有随机特殊效果的维式重锤") and `pool_equip_rockr` (洛洛's 定制品; user playtest #4 — the research 04 §8 guess 有限加速器 / 激光发射器 / 护盾无人机 / 双模机械臂 / 蜂鸣器 is superseded) = the 4 special 维式重锤, uniform |
 
 ## 9. `enemies.json` — `{ [enemyKey]: Enemy }` (249 keys that can appear)
 
@@ -332,6 +333,7 @@ blackboards (transitively). Level = `randomEnemyAttributeDict[key].level` (0 for
 | `abilities[]` | `{"text":"位于源石污染区内时，攻击造成法术伤害","textRaw":"…","format":"NORMAL"}` | handbook ability list |
 | `talents` | `{"bb":{"1.hp_ratio":0.2,"1.damage_scale":0.5},"bbStr":{}}` | talentBlackboard |
 | `skills[]` | `{"prefabKey":"2","priority":0,"cooldown":50,"initCooldown":0,"spCost":0,"bb":{"hp_ratio":0.02},"bbStr":{"branch_id":"boss_summon_enemy","enemy_key":"enemy_1005_yokai"}}` | `branch_id` → `waves[t].branches` |
+| `sp` | `{"type":"INCREASE_WHEN_ATTACK","maxSp":3,"initSp":0,"increment":1}` | enemy_database `spData` of the 22 enemies with SP skills (e.g. 假想敌：黑云 `enemy_9009_acfort`: `INCREASE_WITH_TIME`, `maxSp` 3 = its ammo cap); absent otherwise |
 | `notCountInTotal`, `tags` | `false`, `["sarkaz"]` | |
 | `be`, `beFactor`, `attrPower`, `isFlyEnemy` | `6620`, `1`, `6620`, `false` | `attrPower` = the official float32 attribute power `P = atk·5 + maxHp + def·3 + res·3` of the **enemy_database** record (season override NOT applied: 灼藤 / 元核孽生者 count with their database ATK) — the input of the replacement count (§10); `beFactor` = `randomEnemyAttributeDict.enemyBattleEffectivenessFactor`; `be` = round(P'/f) on the spawned stats (informative); `isFlyEnemy` = the official movement class |
 | `tokenOnly` | `false` | only ever spawned by other enemies (summons / blackboards / level refs) — a token for 联防 routing (research 08 §5) |
@@ -442,7 +444,7 @@ Glyph legend (`rows`):
 |---|---|---|
 | `tokenId`, `kind`, `name`, `appellation`, `desc`, `descRaw` | …, `"summon"`, `"狼群"` | |
 | `profession`, `subProfessionId`, `position` | `"TOKEN"`, `"notchar1"`, `"MELEE"` | |
-| `displayType`, `placeable` | `"DEFAULT"`, `true` | `shopStateTokenDict`: DEFAULT = hand-placeable piece; HIDDEN = battle-only |
+| `displayType`, `placeable` | `"DEFAULT"`, `true` | `shopStateTokenDict` DEFAULT / HIDDEN (battle-only). `placeable` (a prep hand piece) = DEFAULT **and** a talent summon (海嗣, 狼群, 流形); skill summons (赫默's 医疗探机, 巫恋's 诅咒娃娃) are never hand pieces — their kits place them when the skill fires (user playtest #4 item 11) |
 | `owners[]` | `["chess_char_3_19_a","chess_char_3_19_b"]` | |
 | `stats`, `rangeGrid`, `dmgType`, `attackKind`, `projectile`, `canHitFly` | first owner's values | defaults |
 | `skill` | `{"skillId":"sktok_vigil_wolf_3","bb":{…}}` | default token skill (same slot as the owner's skill) |
@@ -452,7 +454,7 @@ Glyph legend (`rows`):
 | `variants[o].byModule[m]` | `{"stats":{…},"immunities":{…},"trait":{…},"talents":[…]}` | golden owner with another module `m` or `'none'`: the token as that module makes it (module `tokenAttributeBlackboard`, `isToken` trait/talent parts) |
 | `assets` | `{"avatar":"token_10028_vigil_wolf","spine":"token_10028_vigil_wolf"}` | |
 | mapChar extras | `phase`, `level`, `trait`, `talents`, `positions:[{"alias":"char_613_acmedc#2_multi_only","pos":[10,10],"dir":"RIGHT","multiOnly":true}]`, `source` | |
-| bondSummon extras | `bondId`, `motion`, `skills`, `talents`, `assets.isEnemyModel` | 炎佑 base template; ATK/HP are **replaced** at battle start by 30 % of the 炎 operators' sums (bonds.yanShip) |
+| bondSummon extras | `bondId`, `motion`, `skills`, `talents`, `assets.isEnemyModel` | 炎佑 base template (600 ATK / 12000 HP); at battle start 30 % of the 炎 operators' ATK / HP sums are **added** to it (PRTS "（最终加算）", bonds.yanShip; the 9-炎 ATK ×1.5 on the whole ATK [ASSUMED]) |
 
 ---
 
@@ -489,7 +491,8 @@ Glyph legend (`rows`):
 16. Research-only fields (null without `docs/research`): stage `name`, item `category/kind/family/implFormula/
     requiresBondId/rangeGrid/flavor`, bond `spec`, E2 art availability (falls back to "char has an E2 phase").
 17. [ASSUMED] content (flagged in data): 机变 family schedule and server pools, the solo leader pool factor
-    (`bossHpScale.solo` 0.25), title criteria, income cap 12, per-turn band-draft timer 12 s. The special-enemy
+    (`bossHpScale.solo` 0.25), title criteria, income cap 12, per-turn band-draft timer 30 s (`timers.bandTurn`, the
+    step's only countdown — user playtest #4), the shop-only item list (`SHOP_EXCLUDED_ITEMS`, from play). The special-enemy
     generator, the co-op leader pool (`bloodPoint`, no alive-player scaling) and the 联防 timing are official.
 18. **Module parts flagged `isToken`** (伺夜, 浊心斯卡蒂, 缪尔赛思, 耀骑士临光 golden) upgrade the summon only; they are
     applied to `tokens.json` variants, never to the operator's talents/trait.

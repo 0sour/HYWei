@@ -12,6 +12,7 @@
 // that still carries them is ignored).
 
 import { getConfig, getMode } from '../data.js';
+import { isShopItem } from '../sim/simdata.js';
 
 const own = (map, id) => (map && typeof map === 'object' && typeof id === 'string' && Object.hasOwn(map, id) && map[id] && typeof map[id] === 'object' ? map[id] : null);
 const numOr = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -44,7 +45,7 @@ export const DEFAULTS = Object.freeze({
   hiddenCore: { single: 350, multi: 1200, minTeamLpExclusive: 1, difficulties: ['NORMAL', 'HARD', 'ABYSS'] },
   dp: { init: 10, perSec: 1, max: 99 },
   unite: { maxHelpers: 2, templates: { 1: 'act1autochess_escaped_single', 2: 'act1autochess_escaped_multi' } },
-  timers: { infoCheck: 25, bandDraft: 50, bandTurn: 12, battleCheck: 3, spFirst: 30, spTurn: 16 },
+  timers: { infoCheck: 25, bandDraft: 50, bandTurn: 30, battleCheck: 3, spFirst: 30, spTurn: 16 },
   bans: { FUNNY: { core: 0, addon: 1 }, NORMAL: { core: 3, addon: 4 }, HARD: { core: 3, addon: 4 }, ABYSS: { core: 3, addon: 4 } },
   bandDraft: { skipsPerPlayer: 1, timeoutBandId: 'band_bldsk' },
   leftoverFundsKeptByBands: ['band_cannot'],
@@ -76,10 +77,14 @@ export class GameData {
       const c = chess[id];
       return c && c.visible && !c.isGolden && !c.isDiy && !c.isHidden && Number.isInteger(c.tier);
     }).sort();
-    /** shop-eligible normal EQUIP item ids by tier */
+    /**
+     * Shop item ids by tier (sim/simdata.js isShopItem: normal EQUIP, not hidden, not effect-only — the special
+     * 维式重锤 and 突变细胞 are never sold). Every "shop item" draw uses it: the shop item slot (pool.js), the 道具补给 /
+     * 机密商店 cards (choices.js) and the shop-eligible item pools (Match.rollItemId).
+     */
     this.shopItemsByTier = {};
     for (const [id, it] of Object.entries(this._items)) {
-      if (!it || it.isGolden || it.hideInShop || it.itemType !== 'EQUIP' || !Number.isInteger(it.tier)) continue;
+      if (!isShopItem(it)) continue;
       (this.shopItemsByTier[it.tier] ||= []).push(id);
     }
     for (const k of Object.keys(this.shopItemsByTier)) this.shopItemsByTier[k].sort();
@@ -434,7 +439,11 @@ export class GameData {
     return b && Number.isInteger(b.totalHp) && b.totalHp > 0 ? b.totalHp : this.defaultStartLp;
   }
 
-  /** Placeable (hand) tokens a chess sends to the hand when placed on the board: [{ tokenId, count }]. */
+  /**
+   * Placeable (hand) tokens a chess sends to the hand when placed on the board: [{ tokenId, count }] — its TALENT
+   * summons (tokens.json `placeable`: 海嗣 / 狼群 / 流形); a skill's summon (赫默's drone, 巫恋's doll) only appears in
+   * battle when the skill fires (tools/build-data.mjs buildTokens).
+   */
   placeableTokens(chessId) {
     const c = this.chess(chessId);
     if (!c || !Array.isArray(c.tokens)) return [];

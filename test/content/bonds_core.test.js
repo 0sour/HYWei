@@ -55,9 +55,12 @@ test('炎: members ATK ×(1+0.23+0.009L), 调和 enjoys it, non-members unchange
   checkInvariants(h.b);
 });
 
-test('炎 6 / 9: one / two 炎佑 with 30 % of the real 炎 sums; 9: ATK ×1.5, damage taken ×0.1', () => {
+test('炎 6 / 9: one / two 炎佑 with their template stats + 30 % of the real 炎 sums; 9: ATK ×1.5, damage taken ×0.1', () => {
   assert.equal(yanyouShare(), 0.3);
   const bb = bondBb('yanShip');
+  // PRTS: "登场时使自身攻击力、生命值增加…所有【炎】盟约干员攻击力、生命值的30%（最终加算）" — added to the template
+  const tpl = DATA.tokens.enemy_9012_acloon.stats;
+  assert.deepEqual([tpl.atk, tpl.maxHp], [600, 12000], 'enemy_9012_acloon template');
   for (const n of [6, 9]) {
     const list = [];
     for (let i = 0; i < n - 1; i++) list.push([`y${i}_a`, ['yanShip']]);
@@ -72,8 +75,8 @@ test('炎 6 / 9: one / two 炎佑 with 30 % of the real 炎 sums; 9: ATK ×1.5, 
     const sumAtk = (n - 1) * 1000 * (1 + bb.base_atk);            // 调和 excluded from the sums
     const sumHp = (n - 1) * 10000;
     for (const y of yy) {
-      close(y.s.atk, sumAtk * 0.3 * (n === 9 ? bb.atk : 1), 1e-6, `炎佑 ATK @${n}`);
-      close(y.s.maxHp, sumHp * 0.3, 1e-6, `炎佑 HP @${n}`);
+      close(y.s.atk, (tpl.atk + sumAtk * 0.3) * (n === 9 ? bb.atk : 1), 1e-6, `炎佑 ATK @${n}`);
+      close(y.s.maxHp, tpl.maxHp + sumHp * 0.3, 1e-6, `炎佑 HP @${n}`);
       close(y.s.dmgTakenMul, n === 9 ? 1 - bb.damage_resistance : 1, 1e-9, `炎佑 dmgTaken @${n}`);
     }
     checkInvariants(h.b);

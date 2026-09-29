@@ -249,8 +249,11 @@ export function buildPlan({ assets07, ops03, enemies05, maps05, audio, modelsDat
     const back = fexliModel(`op:${id}:back`, 'op', `spine/op/${id}/back/`, o.battleSpine?.back, idx);
     if (back) c.spine.back = back;
     chars[id] = c;
-    // skill icons (+ skill SFX) of every skill index
-    const sfx = pickUnitSfx(audio.unitBanks.get(id));
+    // skill icons (+ skill SFX) of every skill index; normal-mode attack / impact sounds only (a ranged operator's own
+    // projectile banks projectile_chr_<name> as fallbacks — user playtest #4 item 6, audio.mjs pickUnitSfx)
+    const short = id.replace(/^char_\d+_/, '');
+    const sfx = pickUnitSfx(audio.unitBanks.get(id), { operator: true, projectile: {
+      born: audio.bank(`battle.ON_PROJECTILE_BORN.projectile_chr_${short}`), hit: audio.bank(`battle.ON_PROJECTILE_HIT.projectile_chr_${short}`) } });
     const u = {};
     for (const r of ['attack', 'hit', 'die', 'born']) if (sfx[r]) u[r] = soundLeaf(sfx[r]);
     const skillSfx = {};

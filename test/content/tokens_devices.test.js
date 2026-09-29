@@ -463,9 +463,9 @@ test('炎佑: spawnYanyou — flying ally, bond stats, 3 targets with burn + ele
   assert.equal(ys.length, 2);
   const y = ys[0];
   assert.equal(y.motion, 'FLY');
-  approx(y.s.atk, 1500, 1e-9);
-  assert.equal(y.s.maxHp, 6000);
-  assert.equal(y.hp, 6000);
+  approx(y.s.atk, (600 + 1000) * 1.5, 1e-9, 'template 600 + the bond share, ×1.5');
+  assert.equal(y.s.maxHp, 12000 + 6000);
+  assert.equal(y.hp, 18000);
   approx(y.s.dmgTakenMul, 0.1, 1e-9);
   assert.equal(y.s.blockCnt, 0);
   const x0 = y.x, y0 = y.y;

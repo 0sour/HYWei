@@ -1,0 +1,175 @@
+// test/render/downring.test.js — user playtest #4 items 8 and 9, client side: render/interp.js carries b.snap `elem`
+// (the element gauge a unit shows) and `down` (knocked-out operators waiting to redeploy); render/units.js keeps a
+// knocked-out operator on its tile in its held Die pose under a redeploy ring (countdown → "DP" / "!" → redeploy)
+// and draws the official element icon beside the bars (headless fake PIXI, test/render/fakepixi.js).
+
+import { test, describe, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { installFakePixi, fakeViewCtx } from './fakepixi.js';
+import { presetCamera } from '../../public/js/render/projection.js';
+import { SnapshotBuffer, normalizeSnapshot, TUPLE } from '../../public/js/render/interp.js';
+
+let fake, UnitView, DOWN_STATE, DOWN_LOOK, T;
+before(async () => {
+  fake = installFakePixi();
+  ({ UnitView, DOWN_STATE, DOWN_LOOK } = await import('../../public/js/render/units.js'));
+  T = await import('../../public/js/render/textures.js');
+});
+after(() => fake.restore());
+
+const cam = () => presetCamera('normal', { width: 1280, height: 720 });
+const tuple = (id, x = 5, y = 10, hp = 1000) => [id, x, y, hp, 1000, 0, 0, 0, 0];
+
+describe('interp: b.snap `elem` and `down`', () => {
+  test('`elem` entries are appended to their unit tuple and sampled as el / elFill / elUntil / elDur', () => {
+    const s = normalizeSnapshot({ t: 3, units: [tuple(1), tuple(2), tuple(3)], elem: [[1, 'burn', 0.4, 0, 0], [2, 'neural', 1, 12.5, 10], [9, 'burn', 0.5, 0, 0], [3, 'lava', 0.5, 0, 0], 'x'] });
+    assert.deepEqual(s.units.get(1).slice(TUPLE.EL), ['burn', 0.4, 0, 0]);
+    assert.deepEqual(s.units.get(2).slice(TUPLE.EL), ['neural', 1, 12.5, 10]);
+    assert.equal(s.units.get(3).length, 9, 'unknown element dropped');
+    assert.equal(s.down, null);
+    const buf = new SnapshotBuffer({ delay: 0 });
+    buf.push({ t: 1, units: [tuple(1)], elem: [[1, 'apoptosis', 0.2, 0, 0]] }, 0);
+    buf.push({ t: 1.1, units: [tuple(1)] }, 0.05);
+    const out = buf.sample(1.02);
+    assert.equal(out.get(1).el, 'apoptosis');
+    assert.equal(out.get(1).elFill, 0.2);
+    buf.sample(1.1, out);
+    assert.equal(out.get(1).el, null, 'cleared once the gauge is gone');
+    assert.equal(out.get(1).elFill, 0);
+  });
+
+  test('`down` is kept per snapshot; downAt(time) reads the snapshot shown at that time', () => {
+    const buf = new SnapshotBuffer({ delay: 0 });
+    buf.push({ t: 1, units: [] }, 0);
+    buf.push({ t: 1.1, units: [], down: [[7, 20.5, 18, 0], ['bad'], [8, 'x', -3, 1.7]] }, 0.05);
+    buf.push({ t: 1.2, units: [] }, 0.1);
+    assert.equal(buf.downAt(1.05), null);
+    assert.deepEqual(buf.downAt(1.15), [[7, 20.5, 18, 0], ['bad', 0, 0, 0], [8, 0, 0, 1]]);
+    assert.equal(buf.downAt(1.25), null);
+  });
+});
+
+function view(info = {}) {
+  const ctx = fakeViewCtx(fake.P, { cam });
+  return new UnitView(ctx, { id: 1, side: 'ally', kind: 'chess', defId: 'char_x', tier: 3, x: 5, y: 10, maxHp: 1000, dir: 'RIGHT', ...info });
+}
+const frames = (v, n, dt = 1 / 60, gameT = null) => { for (let i = 0; i < n; i++) { if (gameT) v.gameT = gameT(i); v.update(dt, cam(), i * dt); } };
+
+describe('knocked-down operator (UnitView.setDown)', () => {
+  test('stays on its tile greyed under a redeploy ring counting down, then "DP", then redeploys', () => {
+    const v = view();
+    frames(v, 3);
+    v.setDown([1, 30, 20, DOWN_STATE.COUNTING], 10);
+    assert.equal(v.alive, false, 'knocked down');
+    assert.ok(v.down);
+    frames(v, 400, 1 / 60, () => 10);   // 6.7 s: a dying view would long be gone
+    assert.equal(v.remove, false, 'never removed while down');
+    assert.ok(v.alpha > 0.85, `drawn (alpha ${v.alpha})`);
+    const r = v._downRing;
+    assert.ok(r && r.root.visible, 'ring shown');
+    assert.equal(r.text.text, '20', 'seconds left (game s)');
+    assert.equal(r.arc.tint, DOWN_LOOK.ring[DOWN_STATE.COUNTING]);
+    assert.equal(r.arc.texture, T.ringArc(0), 'nothing elapsed yet');
+    v.setDown([1, 30, 20, DOWN_STATE.COUNTING], 25);
+    frames(v, 1, 1 / 60, () => 25);
+    assert.equal(r.text.text, '5');
+    assert.equal(r.arc.texture, T.ringArc(0.75), 'three quarters elapsed');
+    v.setDown([1, 30, 20, DOWN_STATE.WAIT_DP], 31);
+    frames(v, 1, 1 / 60, () => 31);
+    assert.equal(r.text.text, 'DP');
+    assert.equal(r.arc.tint, DOWN_LOOK.ring[DOWN_STATE.WAIT_DP]);
+    assert.equal(r.arc.texture, T.ringArc(1), 'full ring while it waits');
+    v.setDown([1, 30, 20, DOWN_STATE.WAIT_TILE], 32);
+    frames(v, 1);
+    assert.equal(r.text.text, '!');
+    const kids = v.hud.children.length;
+    frames(v, 30);
+    assert.equal(v.hud.children.length, kids, 'no per-frame allocation');
+    v.onDeploy();                        // the redeploy (b.ev 'deploy')
+    assert.equal(v.alive, true);
+    assert.equal(v.down, null);
+    frames(v, 2);
+    assert.equal(r.root.visible, false, 'ring gone');
+  });
+
+  test('a view made for a unit already down starts on the held end of the Die clip', () => {
+    const v = view();
+    v.setDown([1, 30, 20, DOWN_STATE.COUNTING], 12, true);
+    assert.equal(v.alive, false);
+    assert.ok(v.dieT >= 30);
+    frames(v, 2, 1 / 60, () => 12);
+    assert.ok(v._downRing.root.visible);
+    assert.equal(v._downRing.text.text, '18');
+  });
+
+  test('leaving the `down` list without a redeploy fades the view out; a normal death still fades', () => {
+    const v = view();
+    v.setDown([1, 30, 20, DOWN_STATE.COUNTING], 10);
+    frames(v, 10);
+    v.setDown(null, 11);
+    frames(v, 60);
+    assert.equal(v.remove, true);
+    const w = view({ id: 2 });
+    frames(w, 2);
+    w.die();
+    frames(w, 200);
+    assert.equal(w.remove, true, 'a summon / enemy death is unchanged');
+  });
+});
+
+describe('element gauge ring', () => {
+  const sample = (o = {}) => ({ x: 5, y: 10, hp: 1000, maxHp: 1000, sp: 0, spMax: 0, flags: 0, anim: 0, vx: 0, vy: 0, el: null, elFill: 0, elUntil: 0, elDur: 0, ...o });
+
+  test('operators: the element disc with its glyph in a white ring of the remaining 元素值', () => {
+    const v = view();
+    v.sync(sample(), 5);
+    frames(v, 2);
+    assert.equal(v._elRing, null, 'nothing built without a gauge');
+    v.sync(sample({ el: 'burn', elFill: 0.25 }), 5);
+    frames(v, 1);
+    const r = v._elRing;
+    assert.ok(r.root.visible);
+    assert.equal(r.disc.texture, T.hudRings().disc.burn);
+    assert.equal(r.arc.texture, T.ringArc(0.75), 'remaining EP = 1 − fill');
+    v.sync(sample({ el: 'neural', elFill: 0.6 }), 5);
+    frames(v, 1);
+    assert.equal(r.disc.texture, T.hudRings().disc.neural);
+    assert.equal(r.arc.texture, T.ringArc(0.4));
+    v.sync(sample(), 6);
+    frames(v, 1);
+    assert.equal(r.root.visible, false, 'hidden once the gauges are empty');
+  });
+
+  test('enemies: a smaller plain disc; during a 爆发冷却 the ring refills over the cooldown', () => {
+    const e = view({ id: 3, side: 'enemy', kind: 'enemy', defId: 'enemy_x', dir: undefined });
+    e.sync(sample({ el: 'apoptosis', elFill: 1, elUntil: 25, elDur: 15 }), 10);
+    frames(e, 1);
+    const r = e._elRing;
+    assert.equal(r.disc.texture, T.hudRings().discEnemy.apoptosis);
+    assert.equal(r.arc.texture, T.ringArc(0), 'empty at the burst');
+    e.sync(sample({ el: 'apoptosis', elFill: 1, elUntil: 25, elDur: 15 }), 17.5);
+    frames(e, 1);
+    assert.equal(r.arc.texture, T.ringArc(0.5), 'half refilled halfway through');
+    const op = view({ id: 4 });
+    op.sync(sample({ el: 'apoptosis', elFill: 0.5 }), 1);
+    frames(op, 1);
+    assert.ok(r.root.scale.x < op._elRing.root.scale.x, 'the enemy icon is smaller');
+  });
+
+  test('a burst lock status (爆发冷却) is not repeated in the status row while the element icon shows it', () => {
+    const e = view({ id: 5, side: 'enemy', kind: 'enemy', defId: 'enemy_x', dir: undefined });
+    e.onStatus('burnBurst', true);
+    e.onStatus('fragile', true);
+    assert.deepEqual([...e._iconKeys()], ['burn', 'fragile'], 'no gauge in the feed: the status shows the burst');
+    e.sync(sample({ el: 'burn', elFill: 1, elUntil: 20, elDur: 10 }), 12);
+    assert.deepEqual([...e._iconKeys()], ['fragile'], 'the element icon carries the 爆发冷却');
+  });
+
+  test('the atlas: one frame per step, every element in both styles', () => {
+    const R = T.hudRings();
+    assert.equal(R.arcs.length, T.RING_STEPS + 1);
+    for (const el of ['neural', 'erosion', 'burn', 'apoptosis', 'necrosis']) { assert.ok(R.disc[el]); assert.ok(R.discEnemy[el]); }
+    assert.equal(T.ringArc(0.001), R.arcs[1], 'a sliver never shows as empty');
+    assert.equal(T.ringArc(2), R.arcs[T.RING_STEPS]);
+  });
+});

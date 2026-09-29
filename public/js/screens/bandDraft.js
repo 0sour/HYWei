@@ -3,15 +3,19 @@
 // for the mode type (icon, name, LP); a band a teammate already picked carries the picker's avatar and is marked
 // 队友已选 — it cannot be chosen again (research 09 §5, guidebook 策略与轮选; the server refuses it too); right =
 // detail pane (icon, 初始生命值, name, effect name + rich description) with 跳过 (co-op, once) and 确认选择.
-// A timeout assigns 「华法琳」, or — when a teammate already holds it — the first free strategy (timeoutBand; the tip
-// under the order list names the one I would get). Solo: free pick, no timer.
+// One countdown (user playtest #4 item 4): every turn has the same clock (Match BAND_TURN_SECONDS, m.public.draft
+// turnSeconds) and the step header counts it down — m.public.deadline IS the turn's end, the same number as the
+// current picker's row. The highlighted band (the detail pane's) is what a turn that runs out takes: every change of it
+// is reported (g.bandFocus) and the server assigns it while it is free, else 「华法琳」, else the first free strategy
+// (timeoutBand). It starts on that default, so the tip under the order list always names what a timeout gives.
+// Solo, and a co-op match with a single human (the server's soloUntimed: draft.untimed): no clock at all.
 
-import { useEffect, useMemo, useState } from '../../vendor/hooks.module.js';
+import { useEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
 import { html, Button, Icon, MicroLabel, useTicker, secondsLeft } from '../ui/components.js';
 import { useGameData, BandIcon, RichText, PlayerAvatar, LpTower, Sprite } from '../ui/gameComponents.js';
 import { StepHeader, ExitModal } from '../ui/matchChrome.js';
-import { actions } from '../ui/gameActions.js';
-import { normalizeDraft, sortedPlayers, phaseTotalSeconds } from '../ui/gameLogic.js';
+import { actions, act } from '../ui/gameActions.js';
+import { normalizeDraft, sortedPlayers } from '../ui/gameLogic.js';
 import { useStore } from '../store.js';
 import { audio } from '../audio.js';
 
@@ -64,17 +68,60 @@ export function teammateBands(picks, myId) {
 }
 
 /**
- * The band the detail pane shows: the current one, else my pick, else the first band no teammate took. When it is my
- * turn and the shown band was taken meanwhile (队友已选), the first free one instead (confirm would be disabled).
+ * The band the detail pane shows (= the highlighted band a turn that runs out takes): the current one, else my pick,
+ * else the band a timeout would give me (timeoutBand: 「华法琳」 while free, else the first free one). When it is my
+ * turn and the shown band was taken meanwhile (队友已选), that default instead (confirm would be disabled).
  * @param {string|null} sel
- * @param {{ bands: any[], taken: Map<string, any>, myPick: string|null, myTurn: boolean }} o
+ * @param {{ bands: any[], taken: Map<string, any>, myPick: string|null, myTurn: boolean, defaultId?: string }} o
  */
-export function draftSelection(sel, { bands, taken, myPick, myTurn }) {
+export function draftSelection(sel, { bands, taken, myPick, myTurn, defaultId = DEFAULT_TIMEOUT_BAND }) {
   if (!Array.isArray(bands) || !bands.length) return sel;
-  const free = (bands.find((b) => !taken.has(b.bandId)) || bands[0]).bandId;
+  const free = timeoutBand(bands, taken, defaultId) || bands[0].bandId;
   if (!sel) return myPick || free;
   if (!myPick && myTurn && taken.has(sel)) return free;
   return sel;
+}
+
+/**
+ * The strategy a turn that runs out assigns me (server Match.timeoutBand): the highlighted band while it is one of
+ * the mode's and no teammate holds it, else timeoutBand. Null after my pick.
+ * @param {string|null} sel the highlighted band
+ * @param {{ bands: any[], taken: Map<string, any>, myPick?: string|null, defaultId?: string }} o
+ */
+export function autoPickBand(sel, { bands, taken, myPick = null, defaultId = DEFAULT_TIMEOUT_BAND }) {
+  if (myPick) return null;
+  const list = Array.isArray(bands) ? bands : [];
+  const has = (id) => !!(taken && typeof taken.has === 'function' && taken.has(id));
+  if (sel && !has(sel) && list.some((b) => b.bandId === sel)) return sel;
+  return timeoutBand(list, taken, defaultId);
+}
+
+/**
+ * The tip under the co-op draft order: the one skip, the turn clock and what a turn that runs out assigns me (the
+ * highlighted band while free — autoPickBand). Untimed drafts (a single human) name no clock.
+ * @param {{ timed: boolean, turnSeconds?: number|null, autoName?: string|null, selected?: boolean }} o
+ *   selected: the auto pick is the highlighted band (not the default standing in for a band a teammate holds)
+ */
+export function draftTip({ timed, turnSeconds = null, autoName = null, selected = true }) {
+  const skip = '联合模拟在选择策略时可以进行一次跳过';
+  if (!timed) return `${skip}；本局不限时`;
+  const clock = Number(turnSeconds) > 0 ? `每位博士有 ${Math.round(turnSeconds)} 秒` : '每位博士限时决策';
+  if (!autoName) return `${skip}；${clock}`;
+  return `${skip}；${clock}，超时将自动选择${selected ? '当前选中的' : ''}「${autoName}」`;
+}
+
+/**
+ * The step header's countdown during the draft: the current turn's (m.public.deadline = draft.turnDeadline) with a
+ * turn's length as the gauge total — null when the draft is untimed.
+ * @param {any} pub m.public
+ * @returns {{ deadline: number, total: number|null } | null}
+ */
+export function draftClock(pub) {
+  const d = pub && typeof pub.draft === 'object' ? pub.draft : null;
+  if (!d || d.untimed) return null;
+  const deadline = Number(pub.deadline) > 0 ? Number(pub.deadline) : Number(d.turnDeadline) || 0;
+  if (!(deadline > 0)) return null;
+  return { deadline, total: Number(d.turnSeconds) > 0 ? Number(d.turnSeconds) : null };
 }
 
 /** BAND_DRAFT screen. */
@@ -106,21 +153,31 @@ export function BandDraftScreen() {
     pickers.get(bid).push(p || { playerId: pid, name: '?' });
   }
 
-  // default selection: my pick, else the first band nobody else took; when my turn comes while the selected band has
-  // been taken by a teammate meanwhile (队友已选), move the selection to the first free one
+  // default selection: my pick, else what a timeout gives me (华法琳 while free); when my turn comes while the selected
+  // band has been taken by a teammate meanwhile (队友已选), move the selection back to that default
+  const defaultId = gd.config?.bandDraft?.timeoutBandId || DEFAULT_TIMEOUT_BAND;
   const takenKey = [...taken.keys()].sort().join(',');
   useEffect(() => {
-    const next = draftSelection(sel, { bands, taken, myPick, myTurn });
+    const next = draftSelection(sel, { bands, taken, myPick, myTurn, defaultId });
     if (next !== sel) setSel(next);
   }, [bands.length, myPick, myTurn, takenKey]);
   // "your turn" cue
   useEffect(() => { if (myTurn && !solo) audio.sfx('yourTurn'); }, [myTurn]);
 
-  // what a timeout gives me (the server never assigns a strategy a teammate holds — Match.js defaultBand)
-  const defaultId = gd.config?.bandDraft?.timeoutBandId || DEFAULT_TIMEOUT_BAND;
-  const autoId = myPick ? null : timeoutBand(bands, taken, defaultId);
-  const defaultName = gd.band(defaultId)?.name || '华法琳';
-  const autoName = (autoId && gd.band(autoId)?.name) || defaultName;
+  // one countdown (user playtest #4 item 4): the current turn's — m.public.deadline, the same clock as the picker's row
+  const clock = solo ? null : draftClock(pub);
+  // the highlighted band is what a turn that runs out takes (Match.timeoutBand): report every change before my pick
+  const timed = !solo && !!pub?.draft && !pub.draft.untimed;
+  const focusSent = useRef(null);
+  useEffect(() => {
+    if (!timed || myPick || !sel || focusSent.current === sel) return;
+    focusSent.current = sel;
+    act('g.bandFocus', { bandId: sel }, { sfx: false, quiet: true });
+  }, [sel, timed, myPick]);
+
+  // what a timeout gives me: the highlighted band while free, else the default (never 队友已选 — Match.js timeoutBand)
+  const autoId = autoPickBand(sel, { bands, taken, myPick, defaultId });
+  const autoName = (autoId && gd.band(autoId)?.name) || gd.band(defaultId)?.name || '华法琳';
 
   const band = sel ? gd.band(sel) : null;
   const selTaken = !!band && taken.has(band.bandId);
@@ -137,14 +194,15 @@ export function BandDraftScreen() {
     setBusy(null);
   };
   const turnName = players.find((p) => p.playerId === draft.turnPid)?.name;
-  const turnDeadline = Number(pub?.draft?.turnDeadline) || 0;
-  useTicker(!solo && turnDeadline > 0 ? 250 : 0);
-  const turnSecs = !solo && turnDeadline > 0 ? secondsLeft(turnDeadline) : null;
+  useTicker(clock ? 250 : 0);
+  // the picker's row shows the step header's number (both read the one turn deadline)
+  const turnSecs = clock ? secondsLeft(clock.deadline) : null;
+  const turnLen = Number(pub?.draft?.turnSeconds) > 0 ? Math.round(pub.draft.turnSeconds) : null;
 
   return html`<div class="screen draft">
     <div class="brief__bg" aria-hidden="true"></div>
-    <${StepHeader} step=${2} of=${2} title="选择策略" micro="STRATEGY // BAND CHECK" pub=${pub}
-      total=${phaseTotalSeconds(pub, gd.config)} onExit=${() => setExit(true)} />
+    <${StepHeader} step=${2} of=${2} title="选择策略" micro="STRATEGY // BAND CHECK" pub=${clock ? { ...pub, deadline: clock.deadline } : { ...pub, deadline: 0 }}
+      total=${clock ? clock.total : null} onExit=${() => setExit(true)} />
     <main class="draft__main">
       <aside class="draft-order">
         <h3 class="brief-h"><span>${solo ? '独立模拟' : '决策顺序'}</span><${MicroLabel}>${solo ? 'FREE PICK' : 'RANDOM ORDER'}</${MicroLabel}></h3>
@@ -168,7 +226,7 @@ export function BandDraftScreen() {
             </span>
           </div>`;
         })}
-        ${!solo ? html`<p class="draft-order__tip">联合模拟在选择策略时可以进行一次跳过；超时将自动选择「${autoName}」${autoId && autoId !== defaultId ? `（「${defaultName}」已被队友选择）` : ''}</p>` : null}
+        ${!solo ? html`<p class="draft-order__tip" data-testid="draft-tip">${draftTip({ timed, turnSeconds: turnLen, autoName: myPick ? null : autoName, selected: autoId === sel })}</p>` : null}
       </aside>
 
       <section class="draft-grid" role="listbox" aria-label="策略">

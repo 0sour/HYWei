@@ -14,6 +14,17 @@
 // plane). `setDir(dir)` re-orients a live view (swapping Front ⇄ Back without a fallback flash). Enemies flip by the
 // sign of their horizontal velocity (with hysteresis).
 //
+// Knocked-out operators (user playtest #4 item 9, b.snap `down`): `setDown([id, respawnAt, respawnTime, state])`
+// keeps a dead operator on its tile in its knocked-down pose — the Spine Die clip played once and held on its last
+// frame (the collapsed / kneeling pose with closed eyes), slightly greyed — with a redeploy ring above its head:
+// a dark disc, a mint arc filling as the respawn timer runs and the seconds left; once the timer is done and it still
+// waits, a full amber ring with "DP" (not enough DP) or a red ring with "!" (its tile is taken). `onDeploy` (the
+// redeploy) plays the deploy clip and restores the normal look; `setDown(null)` on a dead view lets it fade out.
+// Element gauges (item 8, b.snap `elem` → sample `el` / `elFill` / `elUntil` / `elDur`): the official element icon
+// beside the bars (PRTS 元素: operators the element's disc with its glyph, enemies a smaller plain disc of the
+// element's colour) inside a white ring of the remaining 元素值 (1 − fill); during a 爆发冷却 the ring refills over
+// the cooldown. Both rings are sprites of one atlas (textures.js hudRings), created on first use and hidden when idle.
+//
 // ItemView renders hand items as a floating icon plate; DeviceView renders battle devices (crates) as 3D boxes
 // with an HP bar once damaged.
 //
@@ -23,17 +34,15 @@
 // (`ctx.loadLevel()` 1–3, app.js) small / far units (< ~56 px per tile) animate every 2nd frame, and from level 2 on
 // every unit does.
 //
-// Picking (user playtest #3 item 7): `pickShape()` describes the body as drawn — feet, px per tile, the model's own
-// height (measured once from the posed skeleton's bounds; the median chibi until then), facing, draw order and the
-// HUD it shows (tier chip / bars) — for the shared rule of render/pick.js; `bounds()` / `hitTest()` use the same shape.
-// A dragged (lifted) item plate is drawn centred on its ground point, i.e. on the pointer (render/app.js).
+// Picking is by tile (render/pick.js, user playtest #4 item 1): views carry no hit shapes; `bounds()` is the drawn body's
+// screen rect for tooltips and overlays (view.pieceScreenRect). A dragged (lifted) item plate is drawn centred on its
+// ground point, i.e. on the pointer (render/app.js).
 
 import { UF, ANIM } from '../../../shared/constants.js';
 import { SpineActor } from './spine.js';
-import { diamondTexture, shadowTexture, fxAtlas, tierChip, statusTexture, itemTexture } from './textures.js';
+import { diamondTexture, shadowTexture, fxAtlas, tierChip, statusTexture, itemTexture, hudRings, ringArc } from './textures.js';
 import { COLORS, TIER_COLORS, ENEMY_FRAME, UNIT, statusIconKey } from './style.js';
 import { drawCrate, rowDepthKey, ROW_KEY, deviceBoxOf, DEVICE_BOX } from './tiles.js';
-import { BODY_H, bodyBounds, hitBody } from './pick.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const DIRS = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
@@ -53,6 +62,17 @@ const PIC_WAIT_MS = 400;
 const RAISED_Z = 0.12;
 /** Flying units hover this many tiles above the ground they cross. */
 export const FLY_HOVER = 0.32;
+
+/** b.snap `down` entry states (server/sim/constants.js DOWN_STATE). */
+export const DOWN_STATE = Object.freeze({ COUNTING: 0, WAIT_DP: 1, WAIT_TILE: 2 });
+/** Knocked-down look: model tint and alpha; redeploy ring colours per state; ring size (tiles) and height. */
+export const DOWN_LOOK = Object.freeze({
+  tint: 0xb4b4b4, alpha: 0.92,
+  ring: Object.freeze({ [DOWN_STATE.COUNTING]: 0x4ed8af, [DOWN_STATE.WAIT_DP]: 0xffc600, [DOWN_STATE.WAIT_TILE]: 0xff4b3e }),
+  size: 0.42, height: 1.02,
+});
+/** Element ring diameter in tiles (operators; enemies ×0.8) and its pixel clamp. */
+const EL_RING = 0.3;
 
 /**
  * Keep `obj` in the right layer: the surface container of block row round(y) when it lies on a raised top at
@@ -132,8 +152,13 @@ export class UnitView {
     this.statuses = new Set();
     this.alive = true;
     this.dying = 0;               // seconds left of the death fade (0 = not dying)
-    this.dieT = 0;
+    this.dieT = 0;                // seconds since die() (the Die clip's clock; a late Spine model catches up)
     this.remove = false;          // set when the death fade ended (owner removes the view)
+    this.down = null;             // knocked out, waiting to redeploy: { until, total, state } (setDown) — no fade meanwhile
+    this.gameT = 0;               // battle game time of the frame (render clock), for the rings' countdowns
+    this.el = null; this.elFill = 0; this.elUntil = 0; this.elDur = 0;   // shown element gauge (sync)
+    this._elRing = null;          // { track, disc, arc } sprites, built on first use
+    this._downRing = null;        // { disc, track, arc, text } sprites, built on first use
     this.alpha = 1; this.fadeIn = this.prep ? 1 : 0;
     this.lunge = 0; this.lungeDir = { x: 1, y: 0 };
     this.flash = 0;
@@ -143,9 +168,6 @@ export class UnitView {
     this.shake = 0;
     this.screen = { x: 0, y: 0, s: 1, top: 0 };
     this.destroyed = false;
-    this._bodyH = null;           // model height (tiles above the feet), measured once per Spine model (pickShape)
-    this._hudBox = null;          // screen rect of the HUD shown this frame (tier chip / bars), or null
-    this._flip = this.visFacing;  // drawn facing (±1) of the model
 
     // --- display objects
     this.shadow = new P.Sprite(ctx.shadowTex || shadowTexture());
@@ -253,9 +275,12 @@ export class UnitView {
       this.spineReady = true;
       this.swapT = swap ? 1 : 0;
       this.actor.spine.alpha = swap ? 1 : 0;
-      // replay current state
-      if (!this.alive) this.actor.die();
-      else {
+      // replay current state (a dead model resumes its Die clip where it would be — a knocked-down one holds its end)
+      if (!this.alive) {
+        const d = this.actor.die();
+        const at = Math.min(d, this.dieT * (this.ctx.animRate?.() || 1));
+        if (at > 0) this.actor.update(at);
+      } else {
         if (this.flags & UF.SKILL) this.actor.setSkill(true);
         this.actor.setBase(this._baseFromAnim());
       }
@@ -339,9 +364,13 @@ export class UnitView {
     return 'idle';
   }
 
-  /** Apply an interpolated sample (render/interp.js). */
-  sync(s) {
+  /** Apply an interpolated sample (render/interp.js); `t` = the render clock's game time (ring countdowns). */
+  sync(s, t) {
     if (!s) return;
+    if (Number.isFinite(t)) this.gameT = t;
+    // the element gauge shown (b.snap `elem`): element, fill 0..1, cooldown end (game s) and length
+    this.el = typeof s.el === 'string' ? s.el : null;
+    this.elFill = this.el ? s.elFill || 0 : 0; this.elUntil = this.el ? s.elUntil || 0 : 0; this.elDur = this.el ? s.elDur || 0 : 0;
     this.x = s.x; this.y = s.y;
     this.flying = !!(s.flags & UF.FLYING) || this.info.motion === 'FLY';
     // ground enemies only ever walk low tiles (a rounding step onto a block edge must not pop them up)
@@ -406,7 +435,6 @@ export class UnitView {
       this.imp = null;
     }
     this._box = null;
-    this._bodyH = null; // the next model is measured again
     const old = this.actor;
     this.actor = null;
     this.spineReady = false;
@@ -480,8 +508,36 @@ export class UnitView {
   revive() {
     this.alive = true;
     this.dying = 0; this.remove = false; this.alpha = 1;
+    this.down = null;
     this.hp = this.maxHp; this.ghostHp = this.hp;
     if (this.actor) this.actor.revive();
+  }
+
+  /**
+   * Knocked-out state (b.snap `down` entry `[id, respawnAt, respawnTime, state]`, render/interp.js downAt) or null;
+   * `t` = the render clock's game time. A living view is knocked down first (its Die clip plays; `instant`: a view made
+   * for a unit that is already down — a field joined mid-battle — starts on the held end of the clip). While down the
+   * view never fades: the Die clip's last frame stays on the tile under the redeploy ring. null on a view still down
+   * (it left for good) starts the fade; the redeploy itself comes through onDeploy / revive.
+   */
+  setDown(d, t, instant = false) {
+    if (Number.isFinite(t)) this.gameT = t;
+    if (!d) {
+      if (!this.down) return;
+      this.down = null;
+      if (!this.alive) { this.dying = 0.55; this.dieDur = 0.55; }
+      return;
+    }
+    if (this.alive) {
+      this.die();
+      if (instant) { this.dieT = 30; if (this.actor) this.actor.update(30); }
+    }
+    if (this.zTarget == null) this.z = this.zTarget = groundZ(this.ctx, this.x, this.y); // never synced: its tile top
+    this.dying = 0; // no death fade while down
+    const dn = this.down || (this.down = { until: 0, total: 0, state: DOWN_STATE.COUNTING });
+    dn.until = Number(d[1]) || 0;
+    dn.total = Math.max(0, Number(d[2]) || 0);
+    dn.state = d[3] | 0;
   }
 
   // ---- per frame -------------------------------------------------------------------------------------------
@@ -501,7 +557,11 @@ export class UnitView {
     // fades
     if (this.fadeIn < 1) this.fadeIn = Math.min(1, this.fadeIn + dt * 4);
     let alpha = this.fadeIn;
-    if (this.dying > 0) {
+    if (this.down) {
+      // knocked down: the Die clip ends and holds its last frame (the actor keeps its clock), no fade
+      this.dieT += dt;
+      alpha *= DOWN_LOOK.alpha;
+    } else if (this.dying > 0) {
       this.dieT += dt;
       this.dying -= dt;
       const tail = 0.55;
@@ -524,7 +584,6 @@ export class UnitView {
     // off-screen: nothing to animate or draw (bounds / hit-testing still follow `screen`)
     if (this._cull(bx, by, s, dt)) return;
     const flip = this.isEnemy ? (ENEMY_MODEL_FACES_LEFT ? -this.visFacing : this.visFacing) : this.visFacing;
-    this._flip = flip;
 
     // shadow (on a raised top it is drawn with that block row, else in the shadow layer under everything)
     placeOnGround(this.ctx, this.shadow, this.ctx.layers.shadow, this.y, this.z);
@@ -543,7 +602,8 @@ export class UnitView {
       const sc = s * UNIT.modelScale;
       const flashK = this.flash > 0 ? this.flash : 0;
       let tint = 0xffffff;
-      if (this.flags & UF.FROZEN) tint = 0x9fd4ff;
+      if (this.down) tint = DOWN_LOOK.tint;
+      else if (this.flags & UF.FROZEN) tint = 0x9fd4ff;
       else if (this.flags & UF.COLD) tint = 0xcfe6ff;
       if (flashK > 0) tint = mixTint(tint, 0xff8a80, flashK * 0.8);
       let animDt = dt * (this.ctx.animRate?.() || 1);
@@ -569,8 +629,6 @@ export class UnitView {
         this.actor.update(animDt);
         if (this._tint !== tint) { this._tint = tint; this.actor.spine.tint = tint; }
       }
-      // the model's own height for picking: once, from its first resting pose (not a deploy / skill clip)
-      if (this._bodyH == null && this.actor.clock > 0 && this.actor.mode === 'base') this._bodyH = this._measureBody();
     }
     // the diamond is only needed while no model shows (a cross-fade keeps whatever diamond was already up)
     if (!spineShown) this._ensurePicture();
@@ -579,7 +637,7 @@ export class UnitView {
       const bob = this.alive ? Math.sin(t * 2.4 + this.bob) * s * 0.03 : 0;
       this.fallback.scale.set(size / 160);
       this.fallback.position.set(0, -s * 0.08 + bob);
-      this.fallback.tint = this.flash > 0 ? mixTint(0xffffff, 0xff8a80, this.flash) : (this.flags & UF.FROZEN ? 0x9fd4ff : 0xffffff);
+      this.fallback.tint = this.down ? DOWN_LOOK.tint : this.flash > 0 ? mixTint(0xffffff, 0xff8a80, this.flash) : (this.flags & UF.FROZEN ? 0x9fd4ff : 0xffffff);
       if (!this.alive) this.fallback.alpha = Math.max(0, this.fallback.alpha);
     }
     this.flash = Math.max(0, this.flash - dt * 6);
@@ -656,7 +714,8 @@ export class UnitView {
     const showHp = showBars && (!this.isEnemy || damaged || this.isBoss);
     const bw = clamp(s * (this.isBoss ? UNIT.bossBarWidth : UNIT.barWidth), 24, this.isBoss ? 260 : 96);
     const bh = clamp(s * (this.isBoss ? 0.12 : 0.075), 3, this.isBoss ? 12 : 7);
-    this.hud.alpha = this.dying > 0 ? 0 : alpha;
+    // a knocked-down operator's HUD is its redeploy ring alone, drawn at full strength over the greyed model
+    this.hud.alpha = this.down ? this.fadeIn : this.dying > 0 ? 0 : alpha;
     let sx = this.shake > 0 ? Math.sin(t * 90) * this.shake * 10 : 0;
     this.shake = Math.max(0, this.shake - dt);
     const x0 = x - bw / 2 + sx;
@@ -706,16 +765,6 @@ export class UnitView {
       if (prep) this.chip.position.set(x, y - this.chip.height / 2 + 2);
       else this.chip.position.set(x0 - this.chip.width / 2 - 1, cy + (showSp ? spH / 2 : 0));
     }
-    // the HUD's screen rect (drawn above every unit: a press on a unit's chip / bars is on that unit, render/pick.js)
-    let hx0 = Infinity, hy0 = Infinity, hx1 = -Infinity, hy1 = -Infinity;
-    const hudAdd = (ax, ay, bx2, by2) => { hx0 = Math.min(hx0, ax); hy0 = Math.min(hy0, ay); hx1 = Math.max(hx1, bx2); hy1 = Math.max(hy1, by2); };
-    if (showHp) hudAdd(x0 - 1, cy - bh / 2 - 1, x0 + bw + 1, cy + bh / 2 + 1);
-    if (showSp) hudAdd(x0 - 1, cy, x0 + bw + 1, this._spY + spH / 2 + 1);
-    if (this.chip && this.chip.visible) {
-      const cw = this.chip.width / 2, ch = this.chip.height / 2;
-      hudAdd(this.chip.position.x - cw, this.chip.position.y - ch, this.chip.position.x + cw, this.chip.position.y + ch);
-    }
-    this._hudBox = hx1 > hx0 && hy1 > hy0 && this.hud.alpha > 0.05 ? { x0: hx0, y0: hy0, x1: hx1, y1: hy1 } : null;
     // status icons row above the bars
     const icons = this._iconKeys();
     const isz = clamp(s * 0.26, 12, 26);
@@ -731,6 +780,9 @@ export class UnitView {
       ic.width = ic.height = isz;
       ic.position.set(x - ((icons.length - 1) * (isz + 2)) / 2 + i * (isz + 2), iy);
     }
+    // element gauge right of the bars (b.snap `elem`); redeploy ring above a knocked-down operator (b.snap `down`)
+    this._updateElementRing(showBars && !!this.el, x0 + bw, cy + (showSp ? spH / 2 : 0), s);
+    this._updateDownRing(!prep && !!this.down && !this.alive, x, this.screen.y - DOWN_LOOK.height * s, s, t);
     // blocked marker at the feet (enemies held by a blocker)
     const blocked = !prep && this.alive && this.isEnemy && (this.flags & UF.BLOCKED);
     this.blockIcon.visible = !!blocked;
@@ -752,6 +804,72 @@ export class UnitView {
       pip.position.set(this.screen.x - s * 0.36 + i * (ps + 1), this.screen.y - s * 0.05);
       pip.visible = this.alive;
     }
+  }
+
+  /**
+   * Element gauge icon (see header): the element's disc — operators with its glyph, enemies plain and smaller — in a
+   * white ring of the remaining 元素值 (1 − fill), which refills over a 爆发冷却; left edge at `xl`, centred on `cy`.
+   * Sprites of the hudRings atlas, built on the first gauge and hidden while there is none.
+   */
+  _updateElementRing(show, xl, cy, s) {
+    let r = this._elRing;
+    if (!show) { if (r) r.root.visible = false; return; }
+    const tex = hudRings();
+    if (!r) {
+      const P = this.P;
+      const root = new P.Container();
+      const mk = (tx) => { const sp = new P.Sprite(tx); sp.anchor.set(0.5); root.addChild(sp); return sp; };
+      r = this._elRing = { root, track: mk(tex.track), disc: mk(tex.disc.burn), arc: mk(tex.arcs[0]) };
+      this.hud.addChild(root);
+    }
+    const cooling = this.elDur > 0 && this.elUntil > 0;
+    const frac = cooling ? clamp(1 - (this.elUntil - this.gameT) / this.elDur, 0, 1) : clamp(1 - this.elFill, 0, 1);
+    r.disc.texture = (this.isEnemy ? tex.discEnemy : tex.disc)[this.el] || tex.disc.burn;
+    r.arc.texture = ringArc(frac);
+    const d = clamp(s * EL_RING * (this.isEnemy ? 0.8 : 1), 13, 32);
+    r.root.scale.set(d / tex.size);
+    r.root.position.set(xl + d / 2 + 2, cy);
+    r.root.visible = true;
+  }
+
+  /**
+   * Redeploy ring above a knocked-down operator (see header), centred on (cx, cy): a mint arc filling as its respawn
+   * timer runs with the seconds left; a full pulsing amber ring with "DP" / red ring with "!" once it only waits.
+   */
+  _updateDownRing(show, cx, cy, s, t) {
+    let r = this._downRing;
+    if (!show) { if (r) r.root.visible = false; return; }
+    const tex = hudRings();
+    if (!r) {
+      const P = this.P;
+      const root = new P.Container();
+      const mk = (tx) => { const sp = new P.Sprite(tx); sp.anchor.set(0.5); root.addChild(sp); return sp; };
+      const disc = mk(tex.downDisc), track = mk(tex.track), arc = mk(tex.arcs[0]);
+      const text = new P.Text('', { fontFamily: 'Bender, Oxanium, "Noto Sans SC", sans-serif', fontSize: 32, fontWeight: '700', fill: '#ffffff', stroke: '#0b0f0e', strokeThickness: 6 });
+      text.anchor.set(0.5);
+      root.addChild(text);
+      r = this._downRing = { root, disc, track, arc, text, label: null };
+      this.hud.addChild(root);
+    }
+    const dn = this.down;
+    const counting = dn.state === DOWN_STATE.COUNTING;
+    const left = Math.max(0, dn.until - this.gameT);
+    r.arc.texture = ringArc(counting ? (dn.total > 0 ? clamp(1 - left / dn.total, 0, 1) : 1) : 1);
+    const color = DOWN_LOOK.ring[dn.state] ?? DOWN_LOOK.ring[DOWN_STATE.COUNTING];
+    r.arc.tint = color;
+    const label = counting ? String(Math.ceil(left - 1e-6)) : dn.state === DOWN_STATE.WAIT_DP ? 'DP' : '!';
+    if (r.label !== label) {
+      r.label = label;
+      r.text.text = label;
+      r.text.style.fill = counting ? '#ffffff' : '#' + color.toString(16).padStart(6, '0');
+    }
+    const d = clamp(s * DOWN_LOOK.size, 22, 52);
+    const k = d / tex.size;
+    r.disc.scale.set(k); r.track.scale.set(k); r.arc.scale.set(k);
+    r.text.scale.set((d * (label.length > 2 ? 0.34 : 0.44)) / 32);
+    r.root.position.set(cx, cy);
+    r.root.alpha = counting ? 1 : 0.72 + 0.28 * Math.sin(t * 5);
+    r.root.visible = true;
   }
 
   // ---- impostor mode (crowded fields, clipped skeletons): the skeleton is rendered into a slot of the shared
@@ -872,6 +990,9 @@ export class UnitView {
     for (const k of this.statuses) {
       if (out.length >= 4) break;
       if (k === 'skill') continue;
+      // a burst's lock ('burnBurst', 'neuralBurst' … — the 爆发冷却) is shown by the element icon beside the bars
+      // (b.snap `elem`); only a feed without gauges (an older recording) shows it as a status
+      if (this.el && k.endsWith('Burst')) continue;
       const icon = statusIconKey(k);
       // flag-driven states are authoritative (a stale 'stun' status must not outlive the flag)
       if (!icon || icon === 'stun' || icon === 'freeze' || icon === 'sleep' || icon === 'stealth' || icon === 'invuln') continue;
@@ -881,39 +1002,13 @@ export class UnitView {
     return out;
   }
 
-  /** Model height (tiles above the feet) of the posed Spine model: its local bounds' top, clamped per kind. */
-  _measureBody() {
-    let b = null;
-    try { b = this.actor.spine.getLocalBounds(); } catch { b = null; }
-    const top = b && Number.isFinite(b.y) && b.height > 1 ? -b.y * UNIT.modelScale : NaN;
-    const [lo, hi] = this.isEnemy ? (this.isBoss ? [0.6, 3.2] : [0.45, 2.4]) : [1.0, 1.55];
-    if (Number.isFinite(top) && top > 0.2) return clamp(top, lo, hi);
-    return this.isEnemy ? clamp(this._headTiles || BODY_H, lo, hi) : BODY_H;
-  }
-
-  /**
-   * The body as drawn, for render/pick.js (canvas CSS px): the Spine chibi (feet, px per tile, its height — measured,
-   * else the median chibi / the enemy's bounds —, width factor, facing, draw order, HUD) or the avatar diamond shown
-   * until the model is there.
-   * @returns {import('./pick.js').PickBody}
-   */
-  pickShape() {
-    const sc = this.screen;
-    const depth = this.root && !this.root.destroyed ? this.root.zIndex : 0;
-    const hud = this.culled ? null : this._hudBox; // a culled unit's HUD box is where it was last drawn: stale
-    if (!(this.actor && this.spineReady)) return { kind: 'diamond', x: sc.x, y: sc.y, s: sc.s || 1, d: UNIT.diamond * (this.isBoss ? 1.5 : 1), depth, hud };
-    const h = this._bodyH || (this.isEnemy ? clamp(this._headTiles || BODY_H, 0.45, this.isBoss ? 3.2 : 2.4) : BODY_H);
-    return { kind: 'chibi', x: sc.x, y: sc.y, s: sc.s || 1, h, w: this.isEnemy ? clamp(h / 1.2, 0.75, 2.2) : 1, flip: this._flip === -1 ? -1 : 1, depth, hud };
-  }
-
-  /** Canvas-space bounds (CSS px) of the drawn body (the outline of pickShape, without the HUD). */
+  /** Canvas-space bounds (CSS px) of the body: 0.7 tile wide, from its head (UNIT.headroom; enemies: their model) down
+   * to just below the feet — tooltips and overlays (view.pieceScreenRect), not picking (render/pick.js is by tile). */
   bounds() {
-    return bodyBounds({ ...this.pickShape(), hud: null });
-  }
-
-  hitTest(x, y) {
-    if (!this.alive || this.alpha < 0.05) return false;
-    return hitBody(this.pickShape(), x, y) > 0;
+    const s = this.screen.s || 1;
+    const h = (this._headTiles || UNIT.headroom) * s;
+    const w = s * 0.7;
+    return { x: this.screen.x - w / 2, y: this.screen.y - h, width: w, height: h + s * 0.1 };
   }
 
   setHover(on) { this.hovered = !!on; }
@@ -967,7 +1062,7 @@ function defaultInterval(ctx, info) {
 
 /**
  * Hand item: icon plate floating above its slot. While dragged (`lift` > 0) the plate is centred on its ground point —
- * the pointer (render/app.js moveDragVisual) — so the item lands, and equips, where it is drawn.
+ * the pointer (render/app.js moveDragVisual); it drops on (and equips the unit on) the tile under the pointer.
  */
 export class ItemView {
   constructor(ctx, info) {
@@ -1008,14 +1103,11 @@ export class ItemView {
     this.shadow.alpha = 0.35;
     this.screen.top = lifted ? p.y - size / 2 : p.y - size;
   }
-  /** The plate on screen for render/pick.js: a square centred on the icon. */
-  pickShape() {
-    const s = this.screen.s || 1;
-    const cy = this.lift > 0 ? this.screen.y : this.screen.y - s * 0.31;
-    return { kind: 'plate', x: this.screen.x, y: cy, s, r: 0.31, depth: this.root && !this.root.destroyed ? this.root.zIndex : 0, hud: null };
+  /** Canvas-space bounds (CSS px) of the plate (centred on the pointer while dragged). */
+  bounds() {
+    const w = (this.screen.s || 1) * 0.62;
+    return { x: this.screen.x - w / 2, y: this.lift > 0 ? this.screen.y - w / 2 : this.screen.y - w, width: w, height: w };
   }
-  bounds() { return bodyBounds(this.pickShape()); }
-  hitTest(x, y) { return hitBody(this.pickShape(), x, y) > 0; }
   setHover() {}
   destroy() { if (this.destroyed) return; this.destroyed = true; this.shadow.destroy(); this.root.destroy({ children: true }); }
 }

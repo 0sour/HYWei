@@ -227,24 +227,22 @@ describe('user playtest #2 — UI fixes (mock harness, headless Chrome)', { skip
   test('8: a top-row unit under the bond strip is tappable; on a notched phone the underframe stays on its unit', { skip: skipUnless('reach'), timeout: 5 * 60 * 1000 }, async () => {
     for (const [name, w, h] of [['16x9', 1920, 1080], ['21x9', 2560, 1080], ['720p', 1280, 720], ['phone', 844, 390]]) {
       const { page, problems } = await open('phase=PREP', { w, h });
-      // the mock's row-12 unit (col 4, behind the row-11 one): its body stands under the bond strip at these sizes
+      // the mock's row-12 unit (col 4, behind the row-11 one): its body reaches under the bond strip at these sizes; a
+      // press on its tile selects it (picking is by tile, user playtest #4 item 1), so the tile must be free of the strip
       const top = await page.evaluate(() => {
         const b = globalThis.__MOCK__.S().priv.board.filter((p) => p.row === 12).sort((a, c) => a.col - c.col)[0];
         const r = globalThis.__SP_VIEW__.pieceScreenRect(b.uid);
+        const t = globalThis.__SP_VIEW__.raw.tileScreen(b.row, b.col);
         const strip = document.querySelector('.gm__bonds').getBoundingClientRect();
-        // points of the sprite's upper half (the lower half is behind the unit in front of it)
-        const pts = [0.12, 0.25, 0.38].map((f) => ({ x: r.left + r.width / 2, y: r.top + r.height * f }));
+        const pts = [-0.3, 0, 0.3].map((dx) => ({ x: t.x + dx * t.s, y: t.y }));
         const hits = pts.map((p) => { const el = document.elementFromPoint(p.x, p.y); return el.tagName === 'CANVAS' ? 'canvas' : el.closest('.bslot') ? 'disc' : `${el.tagName}.${el.className}`; });
-        return { uid: b.uid, pts, hits, underStrip: pts.some((p) => p.y >= strip.top && p.y <= strip.bottom) };
+        return { uid: b.uid, pts, hits, bodyUnderStrip: r.top < strip.bottom };
       });
-      assert.ok(top.underStrip, `${name}: the row-12 unit stands under the bond strip (test premise)`);
-      // only the bond discs may take the pointer there — never the strip's empty box
-      for (const hit of top.hits) assert.ok(hit === 'canvas' || hit === 'disc', `${name}: over the row-12 unit: ${hit}`);
-      const free = top.pts[top.hits.indexOf('canvas')];
-      assert.ok(free, `${name}: some of the unit's body is free of bond discs (${top.hits})`);
-      await page.mouse.click(free.x, free.y);
+      assert.ok(top.bodyUnderStrip, `${name}: the row-12 unit's body reaches under the bond strip (test premise)`);
+      for (const hit of top.hits) assert.equal(hit, 'canvas', `${name}: the row-12 unit's tile is free of the bond strip`);
+      await page.mouse.click(top.pts[1].x, top.pts[1].y);
       await sleep(350);
-      assert.ok(await page.$(`.uframe[data-uid="${top.uid}"]`), `${name}: a tap on the row-12 unit's body under the strip selects it`);
+      assert.ok(await page.$(`.uframe[data-uid="${top.uid}"]`), `${name}: a tap on the row-12 unit's tile selects it`);
       await page.keyboard.press('Escape');
       await page.mouse.click(5, Math.round(h / 2));
       await sleep(150);

@@ -75,6 +75,10 @@
 // Live LP (user playtest #3 item 2): during COMBAT / 联防 m.public players[].pendingLp = min(lpCapPerRound, the counted
 // leaks of the player's own battle so far) (_pendingLpView; omitted when 0) — the teammates' rows of the team panel
 // show lp − pendingLp; the settlement lands with the SETTLE view, where it is gone.
+// User playtest #4: a match with a single human (独立模拟, or a 同盟 room started alone / with AI teammates) times no
+// phase outside its battles (soloUntimed); the co-op strategy draft has ONE countdown — BAND_TURN_SECONDS per turn,
+// published as m.public.deadline — AI seats pick at once and a turn that runs out takes the highlighted strategy
+// (g.bandFocus → timeoutBand); g.unitStats answers m.unitStats: the stats the board's units start their next battle with.
 //   opts.clientCombat  default true (env SP_COMBAT=server → false: the legacy server-run + snapshot streaming mode)
 //   opts.verify        'off' | 'sample' | 'all' (env SP_VERIFY, default 'off'): re-simulate accepted client results
 //                      ('sample': ~1 in 8, in a later callback, mismatches logged; 'all': before accepting — the
@@ -108,7 +112,7 @@
 //     pairing and the boss pool; its own running normal battle is force-ended. The seat shows status 'left'. When no
 //     human is left at all the match ends ('abandoned'); when nobody alive is left it ends as 'eliminated'.
 
-import { C2S } from '../../shared/protocol.js';
+import { C2S, unitStatsEntry } from '../../shared/protocol.js';
 import { PHASE, ERR, EMOTES, EMOTE_COOLDOWN_MS, GEO, modeIdFor } from '../../shared/constants.js';
 import { Battle } from '../sim/Battle.js';
 import { DataSource } from '../sim/simdata.js';
@@ -181,6 +185,14 @@ export const DELAYS = Object.freeze({
   BOT_STAGGER: 350,
   PUBLIC_THROTTLE: 100,
 });
+
+/**
+ * Seconds of one turn of the co-op strategy draft (user playtest #4 item 4: the old 12 s per turn — research 06 §724,
+ * itself [ASSUMED] — inside the 50 s step was far too little and counted apart from the header's 50 s). [ASSUMED]: the
+ * official data only gives the whole BAND_CHECK step (autoChessData.enterStepList: 50 s, hint 15 s); the turn clock is
+ * the remake's. It is also the step's only countdown (m.public.deadline = draft.turnDeadline). × timerScale.
+ */
+export const BAND_TURN_SECONDS = 30;
 
 const dsCache = new WeakMap();
 function dataSourceFor(data) {
@@ -270,6 +282,12 @@ export class Match {
     }
     if (!this.players.size) throw new TypeError('Match: seats required');
     this.order = [...this.players.values()].sort((a, b) => a.seat - b.seat);
+    /**
+     * Exactly one human seat at the start (独立模拟, or a 同盟 room started alone / with AI teammates only): nobody waits
+     * on anybody, so no phase outside a battle is timed — soloUntimed (user playtest #4 item 3). The mode's own rules
+     * (draft order and skip, 6 机变 cards, 联防 …) stay.
+     */
+    this.loneHuman = this.order.filter((p) => !p.isBot).length === 1;
 
     // per-match setup (DESIGN §6.5)
     const setup = setupMatchWaves(this.gd, this.rngSetup);
@@ -559,9 +577,11 @@ export class Match {
    * Solo timers (research 01 §843 / 06 §3: 下半 独立模拟 has no time limit on 休整期 / 机变 — "休整期及机变阶段没有时间
    * 限制"; the strategy draft is free too): a solo match publishes a deadline ONLY for its battles. INFO_CHECK waits
    * for 准备就绪 (co-op keeps the official 25 s guard), BAND_DRAFT / SP_DRAFT / PREP are untimed, and the fixed
-   * presentation steps (BATTLE_CHECK, ROUND_START, SETTLE) run silently (no countdown).
+   * presentation steps (BATTLE_CHECK, ROUND_START, SETTLE) run silently (no countdown). The same holds for any match
+   * with a single human (loneHuman: a 同盟 room started alone or with AI teammates only — user playtest #4 item 3):
+   * the timers only ever made humans wait on each other; AI seats act at once.
    */
-  get soloUntimed() { return this.isSolo; }
+  get soloUntimed() { return this.isSolo || this.loneHuman; }
 
   nextUid() { return ++this.uidSeq; }
 
@@ -772,7 +792,11 @@ export class Match {
     if (this.bossPool) v.bossHp = { hp: Math.max(0, Math.round(this.bossPool.hp)), max: Math.round(this.bossPool.maxHp) };
     if (this.phase === PHASE.BAND_DRAFT && this.draft) {
       const d = this.draft;
-      v.draft = { order: d.order.slice(), turn: this.draftTurn(), picks: { ...d.picks }, skipsLeft: { ...d.skipsLeft }, turnDeadline: d.turnDeadline || 0, untimed: !!d.untimed };
+      // turnSeconds: the length of a turn (the countdown gauge's total; 0 when untimed) — deadline = turnDeadline
+      v.draft = {
+        order: d.order.slice(), turn: this.draftTurn(), picks: { ...d.picks }, skipsLeft: { ...d.skipsLeft }, turnDeadline: d.turnDeadline || 0,
+        turnSeconds: d.untimed ? 0 : this.bandTurnMs() / 1000, untimed: !!d.untimed,
+      };
     }
     if (this.phase === PHASE.SP_DRAFT && this.sp) {
       const s = this.sp;
@@ -856,6 +880,8 @@ export class Match {
         return OK;
       case 'g.band': return this.pickBand(ps, msg.bandId);
       case 'g.bandSkip': return this.skipBand(ps);
+      // the strategy highlighted in the draft screen (what a timed-out turn takes, timeoutBand)
+      case 'g.bandFocus': return this.bandFocus(ps, msg.bandId ?? null);
       case 'g.buy': return ps.buy(msg.slot);
       case 'g.refresh': return ps.refresh();
       case 'g.freeze': return ps.freeze();
@@ -873,6 +899,8 @@ export class Match {
       case 'g.watch': return this.watch(ps, msg.fieldId);
       case 'g.autoplay': return this.setAutoplay(ps, !!msg.on);
       case 'g.pause': return this.setPause(ps, !!msg.on);
+      // the stats the board's units start their next battle with (the detail card in prep, user playtest #4 item 7)
+      case 'g.unitStats': return this.unitStats(ps, msg.seq ?? null);
       case 'g.leave': this.onLeave(ps.playerId); return OK;
       case 'b.progress': return this._onProgress(ps, msg);
       case 'b.result': return this._onResult(ps, msg);
@@ -922,6 +950,55 @@ export class Match {
     this.markPublic();
     if (on) this.kickBot(ps);
     return OK;
+  }
+
+  /**
+   * g.unitStats { seq? } (user playtest #4 item 7: the detail card showed fixed record stats): the stats every unit of
+   * the player's board will fight with at the start of its next battle — equipment, bonds and their layers, 特质, the
+   * band and 机变 effects — computed exactly by the shared sim. The player's battle input after the onBattleStart meta
+   * handlers (`ev.preview: true`, no enemies — those handlers must not change the match for a preview) builds a Battle
+   * of the battle's options that is started (initial deployment + battleStart hooks), read and dropped: it is never
+   * stepped, so skills and timed effects do not show. Pushed to the player as `m.unitStats { seq, round, units }`
+   * (units: shared/protocol.js unitStatsEntry, board operators and summons by uid); cached per input (a build costs
+   * ≈ 0.3–0.7 ms). Prep phases only (ROUND_START, 机变, PREP); a battle's live stats come from the browser's own sim.
+   * @param {PlayerState} ps @param {number|null} seq echoed (the client keeps the newest answer)
+   */
+  unitStats(ps, seq = null) {
+    if (!ps.alive) return fail(ERR.ELIMINATED);
+    if (this.phase !== PHASE.ROUND_START && this.phase !== PHASE.SP_DRAFT && this.phase !== PHASE.PREP) return fail(ERR.WRONG_PHASE);
+    const units = this._unitStatsOf(ps);
+    this.sendTo(ps.playerId, { t: 'm.unitStats', seq: Number.isInteger(seq) ? seq : null, round: this.round, units });
+    return OK;
+  }
+
+  /** The start-of-battle stats of a player's board units (see unitStats); [] when the preview battle cannot be built. */
+  _unitStatsOf(ps) {
+    const input = ps.battleInput({ side: 'L', colOffset: 0 });
+    const ev = { input, kind: 'normal', round: this.round, preview: true };
+    this.dispatch(ps, 'onBattleStart', ev);
+    const players = [ev.input && typeof ev.input === 'object' ? ev.input : input];
+    let key = null;
+    try { key = JSON.stringify([this.round, this.stageId, this.battleContent, players]); } catch { key = null; }
+    if (!this._unitStatsCache) this._unitStatsCache = new WeakMap(); // PlayerState → { key, units } (the last preview)
+    const cached = this._unitStatsCache.get(ps);
+    if (key && cached && cached.key === key) return cached.units;
+    const units = [];
+    // the flags of the battle it previews: a normal round gains IN_BATTLE layers from its start (a <战斗开始时> layer gain
+    // raises bond stats at t = 0 there too); the Final Assault / Hidden Core fight without (previewed as a normal field)
+    const bossRound = this.round === this.gd.bossRound || this.round === this.gd.hiddenRound;
+    const b = this.newBattle({
+      seed: deriveSeed(this.seed, `preview:${this.round}:${ps.seat}`), kind: 'normal', modeId: this.modeId, round: this.round,
+      stageId: this.stageId, rect: { ...GEO.NORMAL_RECT }, timeLimit: 60, players, spawns: [], routes: this.wave ? this.wave.routes : [],
+      sharedBoss: null, flags: { layerGainsEnabled: !bossRound, ...this.gd.dp }, fieldId: `n:${ps.playerId}`, recordEvents: false,
+    });
+    try {
+      if (typeof b.start === 'function') b.start();
+      for (const u of Array.isArray(b.allyUnits) ? b.allyUnits : []) {
+        if (u && Number.isInteger(u.uid) && (u.kind === 'op' || u.kind === 'token')) units.push(unitStatsEntry(u, u.s));
+      }
+    } catch (e) { this.reportError('unitStats', e); }
+    this._unitStatsCache.set(ps, { key, units });
+    return units;
   }
 
   /**
@@ -1022,20 +1099,26 @@ export class Match {
   // ===================================================================================================
   // BAND_DRAFT
 
+  /**
+   * The strategy draft (user playtest #4 item 4): ONE countdown — every turn has the same clock, BAND_TURN_SECONDS, and
+   * m.public.deadline is the current turn's end (= draft.turnDeadline; the step header and the turn indicator show the
+   * same number). No separate step cap: the turns bound the step (≤ (seats + skips) × turn). AI seats pick at once. A
+   * turn that runs out takes the strategy the player has highlighted (g.bandFocus) while it is free, else the default
+   * (timeoutBand). Solo, and any single-human match (soloUntimed): untimed. Solo also keeps seat order and has no skip.
+   */
   enterBandDraft() {
     if (this.phase !== PHASE.INFO_CHECK) return;
     this.phase = PHASE.BAND_DRAFT;
     const order = this.order.map((p) => p.playerId);
-    const untimed = this.isSolo;
-    if (!untimed) this.rngDraft.shuffle(order);
-    const skips = this.gd.bandDraft.skipsPerPlayer;
-    this.draft = { order, idx: 0, picks: {}, skipsLeft: Object.fromEntries(order.map((pid) => [pid, untimed ? 0 : skips])), untimed, turnDeadline: 0 };
-    if (!untimed) {
-      // overall step cap (50 s): everyone still unpicked gets the default
-      this.setDeadline(this.gd.timer('bandDraft'), () => this.finishBandDraft(true));
-    } else {
-      this.setDeadline(0);
-    }
+    if (!this.isSolo) this.rngDraft.shuffle(order);
+    const skips = this.isSolo ? 0 : this.gd.bandDraft.skipsPerPlayer;
+    const untimed = this.soloUntimed;
+    this.draft = {
+      order, idx: 0, picks: {}, skipsLeft: Object.fromEntries(order.map((pid) => [pid, skips])), untimed, turnDeadline: 0,
+      /** playerId → the strategy highlighted in the draft screen (g.bandFocus) */
+      focus: new Map(),
+    };
+    this.setDeadline(0);
     this.startDraftTurn();
     this.markPublic();
   }
@@ -1046,30 +1129,44 @@ export class Match {
     return d.order[d.idx] ?? null;
   }
 
+  /** Real ms of one strategy-draft turn (BAND_TURN_SECONDS × timerScale). */
+  bandTurnMs() { return this.scaled(BAND_TURN_SECONDS * 1000); }
+
   startDraftTurn() {
     const d = this.draft;
     this.cancel(this._turnTimer);
     this._turnTimer = null;
     while (d.idx < d.order.length && d.picks[d.order[d.idx]]) d.idx++;
-    if (d.idx >= d.order.length) { this.later(0, () => this.finishBandDraft(false)); return; }
+    if (d.idx >= d.order.length) {
+      d.turnDeadline = 0;
+      this.deadline = 0;
+      this.later(0, () => this.finishBandDraft(false));
+      return;
+    }
     const token = ++this._turnToken;
     if (!d.untimed) {
-      const ms = this.scaled(this.gd.timer('bandTurn') * 1000);
+      const ms = this.bandTurnMs();
       d.turnDeadline = this.sched.now() + ms;
+      // the step's countdown IS the turn's (one number everywhere)
+      this.deadline = d.turnDeadline;
       this._turnTimer = this.later(ms, () => {
         if (this.phase !== PHASE.BAND_DRAFT || token !== this._turnToken) return;
         const pid = this.draftTurn();
-        if (pid) this._applyBand(this.players.get(pid), this.defaultBand(pid));
+        if (pid) this._applyBand(this.players.get(pid), this.timeoutBand(pid));
       });
+    } else {
+      d.turnDeadline = 0;
+      this.deadline = 0;
     }
     const cur = this.players.get(this.draftTurn());
     if (cur && cur.botControlled) this.scheduleBandBot();
     this.markPublic();
   }
 
+  /** An AI seat's (or an AI 托管 seat's) turn: it picks at once (user playtest #4 item 4 — nobody waits on the AI). */
   scheduleBandBot() {
     const token = this._turnToken;
-    this.later(this.scaled(DELAYS.BOT_ACTION), () => {
+    this.later(0, () => {
       if (this.phase !== PHASE.BAND_DRAFT || token !== this._turnToken) return;
       const ps = this.players.get(this.draftTurn());
       if (!ps || !ps.botControlled) return;
@@ -1084,7 +1181,7 @@ export class Match {
   /**
    * Whether `bandId` was already picked by another player of this draft. Research 09 §5 / DESIGN §14 corrections:
    * the strategy draft marks a teammate's pick as 队友已选 and it cannot be chosen again (co-op). The automatic
-   * assignments — the 12 s turn timeout, the 50 s step cap and a departing seat — obey the same rule: see defaultBand.
+   * assignments — a turn that runs out and a departing seat — obey the same rule: see timeoutBand / defaultBand.
    */
   bandTaken(bandId, playerId) {
     const picks = this.draft?.picks || {};
@@ -1093,16 +1190,44 @@ export class Match {
   }
 
   /**
-   * The strategy an automatic assignment gives `playerId` (12 s turn timeout, 50 s step cap, departing seat): the official
-   * default 「华法琳」 (bandDraft.timeoutBandId) while no teammate holds it, else the first strategy of the mode (sortId
-   * order, gd.bandIds) that nobody else picked — never a duplicate (队友已选; the client shows the same choice:
-   * public/js/screens/bandDraft.js timeoutBand). Solo drafts have no teammates, so it is always the default.
+   * The strategy an automatic assignment gives `playerId` (a departing seat; a timed-out turn without a usable
+   * highlight, timeoutBand): the official default 「华法琳」 (bandDraft.timeoutBandId) while no teammate holds it, else the
+   * first strategy of the mode (sortId order, gd.bandIds) that nobody else picked — never a duplicate (队友已选; the
+   * client shows the same choice: public/js/screens/bandDraft.js timeoutBand). Solo drafts have no teammates, so it is
+   * always the default.
    * @param {string} playerId
    */
   defaultBand(playerId) {
     const def = this.gd.bandDraft.timeoutBandId;
     if (!this.bandTaken(def, playerId)) return def;
     return this.gd.bandIds().find((b) => !this.bandTaken(b, playerId)) || def;
+  }
+
+  /**
+   * What a turn that runs out assigns (user playtest #4 item 4): the strategy the player has highlighted in the draft
+   * screen (g.bandFocus — the detail pane's band, the one 确认选择 would take) while it is allowed and no teammate holds
+   * it, else defaultBand.
+   * @param {string} playerId
+   */
+  timeoutBand(playerId) {
+    const f = this.draft && this.draft.focus instanceof Map ? this.draft.focus.get(playerId) : null;
+    if (typeof f === 'string' && this.gd.bandAllowed(f) && !this.bandTaken(f, playerId)) return f;
+    return this.defaultBand(playerId);
+  }
+
+  /**
+   * g.bandFocus { bandId? }: the strategy the player highlights in the draft screen (any time before its pick; also
+   * while waiting for its turn). A missing / null bandId clears it. Only a timed-out turn reads it (timeoutBand).
+   */
+  bandFocus(ps, bandId) {
+    if (this.phase !== PHASE.BAND_DRAFT || !this.draft) return fail(ERR.WRONG_PHASE);
+    const d = this.draft;
+    if (d.picks[ps.playerId]) return fail(ERR.ALREADY);
+    if (!(d.focus instanceof Map)) d.focus = new Map();
+    if (bandId == null) { d.focus.delete(ps.playerId); return OK; }
+    if (typeof bandId !== 'string' || !this.gd.bandAllowed(bandId)) return fail(ERR.BAD_TARGET);
+    d.focus.set(ps.playerId, bandId);
+    return OK;
   }
 
   pickBand(ps, bandId) {
@@ -1131,7 +1256,7 @@ export class Match {
   skipBand(ps) {
     if (this.phase !== PHASE.BAND_DRAFT || !this.draft) return fail(ERR.WRONG_PHASE);
     const d = this.draft;
-    if (d.untimed) return fail(ERR.WRONG_PHASE, 'no skip in solo');
+    if (this.isSolo) return fail(ERR.WRONG_PHASE, 'no skip in solo');
     if (d.picks[ps.playerId]) return fail(ERR.ALREADY);
     if (this.draftTurn() !== ps.playerId) return fail(ERR.NOT_YOUR_TURN);
     if (!(d.skipsLeft[ps.playerId] > 0)) return fail(ERR.ALREADY, 'no skip left');
@@ -1218,8 +1343,9 @@ export class Match {
     if (!draft || !alive.length) { this.enterPrep(); return; }
     this.phase = PHASE.SP_DRAFT;
     const order = alive.map((p) => p.playerId);
-    const untimed = this.isSolo;
-    if (!untimed) this.rngDraft.shuffle(order);
+    if (!this.isSolo) this.rngDraft.shuffle(order);
+    // untimed: solo and any single-human match (soloUntimed); the co-op order / 6 cards stay
+    const untimed = this.soloUntimed;
     this.sp = { ...draft, order, idx: 0, picks: {}, taken: {}, untimed, turnDeadline: 0 };
     this.setDeadline(0);
     this.startSpTurn();
@@ -1404,7 +1530,8 @@ export class Match {
       this.dispatch(ps, 'onPrepStart', { round: this.round });
       ps.recompute();
     }
-    const secs = this.isSolo ? null : this.gd.prepTime(this.round);
+    // solo / single-human matches: untimed (soloUntimed); co-op: the round's prepTime
+    const secs = this.soloUntimed ? null : this.gd.prepTime(this.round);
     this.setDeadline(secs, () => this.prepDeadline());
     let i = 0;
     for (const ps of alive) if (ps.botControlled) this.scheduleBotPrep(ps, i++);

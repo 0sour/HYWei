@@ -69,8 +69,14 @@ const ACBUNN_TARGETS = 3;
 const ACPUPP_AURA_RADIUS = 2;
 /** 重弩突袭者 直击 reach along a row/column [ASSUMED]. */
 const CROSS_REACH = 6;
-/** 暴鸰 bomb splash radius [ASSUMED]. */
-const BOMB_RADIUS = 1;
+/** 暴鸰 投弹: the target's tile and its 8 neighbours (PRTS "对目标及其周围八格的我方单位造成100%物理伤害"). */
+const BOMB_REACH = 1;
+/** 帝国炮火先兆者 shell (PRTS "普通攻击向目标所在位置发射一枚于3秒后命中的弹道，弹道对半径1.2范围内的所有我方单位造成攻击力
+ *  100%的无来源物理伤害 … ※弹道始终使用缓存攻击力"): flight time and blast radius. */
+const SHELL_FLIGHT = 3, SHELL_RADIUS = 1.2;
+/** 假想敌：黑云 抓取: the blackboard radius counts ×2.5 (PRTS "2.5倍可变半径": range_radius 1.5 → 3.75), at most 3 prey,
+ *  "短暂延迟后" the 延迟吞噬 lands (delay [ASSUMED] 0.5 s); its SP (= 全弹发射 hits) caps at the data's spData.maxSp. */
+const GRAB_RADIUS_SCALE = 2.5, GRAB_MAX_PREY = 3, GRAB_DELAY = 0.5;
 /** 源石污染区 aura radius of an activated 奇美拉 [ASSUMED]. */
 const CHIMERA_AURA_RADIUS = 1;
 /** Bombardments per 自行炮 Cannon cast ("数次") [ASSUMED]. */
@@ -616,8 +622,9 @@ const selfFear = (ab) => ({
     a.done = true;
     const fear = T(ab, 'SelfFear.fear') ?? 0;
     if (fear > 0) b.applyStatus(e, 'fear', { duration: fear, source: e });
+    // PRTS “萨科塔之翼/之眼”: "在5s内移动速度最终提升至150%" — move_speed 1.5 is the final multiplier
     const ms = T(ab, 'SelfFear.move_speed') ?? 0, sd = T(ab, 'SelfFear.speed_duration') ?? 0;
-    if (ms > 0 && sd > 0) b.addBuff(e, { key: 'ab:fearRun', duration: sd, mods: { moveMul: 1 + ms }, flags: { unblockable: true } });
+    if (ms > 0 && sd > 0) b.addBuff(e, { key: 'ab:fearRun', duration: sd, mods: { moveMul: ms }, flags: { unblockable: true } });
   },
 });
 
@@ -1226,25 +1233,50 @@ function kitBoneSpike() {
   }];
 }
 
+/**
+ * 假想敌：黑云 (PRTS): 抓取 (KillOthers, cd 10 / icd 5) "仅半径3.75范围内存在未持有【延迟吞噬】的敌方飞行普通单位时可触发：
+ * 选择至多3名满足上述条件的目标，短暂延迟后对其施加4秒【延迟吞噬】：束缚，效果结束时令给予方+1SP，随后强制击杀受予方 ※技能
+ * 持续4秒，期间持有束缚" (the nearest prey first [ASSUMED]); 全弹发射 (FireWeapon, cd 10 / icd 5, SP cost 1) "仅全场范围内存在
+ * 我方单位时可触发：清空自身SP，进行一次多连击，每击选择全场范围内的1名随机我方单位，对其造成攻击力130%的物理伤害 ※多连击的
+ * 连击次数等于本技能消耗的SP数量" — SP (技力上限 spData.maxSp 3) only comes from the grabs.
+ */
 function kitBlackCloud(ab, e) {
   const k = ab.sk.KillOthers, f = ab.sk.FireWeapon;
+  const maxAmmo = Math.max(1, num(e.def.raw && e.def.raw.sp && e.def.raw.sp.maxSp, 3));
+  const grabR = (k ? num(k.bb.range_radius, 1.5) : 1.5) * GRAB_RADIUS_SCALE;
+  const dur = k ? num(k.bb.duration, 4) : 4;
+  const isPrey = (b, e2, o) => o !== e2 && o.alive && !o.hidden && o.isFlying && o.def.rank === 'NORMAL' && !o.isBoss && !o.findBuff('ab:devoured');
+  const prey = (b, e2) => b.enemiesInRadius(e2.x, e2.y, grabR).filter((o) => isPrey(b, e2, o));
   return [
-    skill(k, (b, e2, a) => {
-      const prey = b.enemiesInRadius(e2.x, e2.y, k.bb.range_radius ?? 1.5).filter((o) => o !== e2 && o.isFlying && o.def.rank === 'NORMAL' && !o.isBoss);
-      for (const o of prey) {
-        b.addBuff(o, { key: 'ab:devoured', duration: k.bb.duration ?? 0, flags: { bind: true, noMove: true, disarm: true } });
-        b.after(k.bb.duration ?? 0, () => { if (o.alive && e2.alive) { b.kill(o, null); e2.mem.ab.ammo = (e2.mem.ab.ammo ?? 0) + (k.bb.sp ?? 1); } }, { owner: e2 });
-      }
-      if (prey.length) b.fx('beam', { x: e2.x, y: e2.y, from: e2.id, to: prey[0].id, kind: 'devour' });
-    }, { sil: true }),
+    skill(k, (b, e2) => {
+      const list = prey(b, e2).sort((p, q) => Math.hypot(p.x - e2.x, p.y - e2.y) - Math.hypot(q.x - e2.x, q.y - e2.y)).slice(0, GRAB_MAX_PREY);
+      if (!list.length) return;
+      b.addBuff(e2, { key: 'ab:grabbing', duration: dur, flags: { bind: true, noMove: true } });   // 技能持续4秒，期间持有束缚
+      b.fx('beam', { x: e2.x, y: e2.y, from: e2.id, to: list[0].id, kind: 'devour' });
+      b.after(GRAB_DELAY, () => {
+        if (!e2.alive) return;
+        for (const o of list) {
+          if (!o.alive) continue;
+          b.addBuff(o, { key: 'ab:devoured', duration: dur, visible: true, flags: { bind: true, noMove: true, disarm: true } });
+          b.after(dur, () => {
+            if (!o.alive || !e2.alive) return;
+            e2.mem.ab.ammo = Math.min(maxAmmo, (e2.mem.ab.ammo ?? 0) + num(k.bb.sp, 1));
+            b.kill(o, null);
+          }, { owner: e2 });
+        }
+      }, { owner: e2 });
+    }, { sil: true, cond: (b, e2) => prey(b, e2).length > 0 }),
     skill(f, (b, e2) => {
-      const t = byPriority(e2, targetsNear(b, e2, f.bb.range_radius ?? e2.base.rangeRadius))[0];
-      const ammo = e2.mem.ab.ammo ?? 0;
-      if (!t || !(ammo > 0)) return;
+      const hits = Math.floor(e2.mem.ab.ammo ?? 0);
+      if (!(hits > 0)) return;
       e2.mem.ab.ammo = 0;
-      b.fx('beam', { x: e2.x, y: e2.y, from: e2.id, to: t.id, kind: 'fireWeapon', n: ammo });
-      hurt(b, e2, t, e2.s.atk * (f.bb.atk_scale ?? 1) * ammo, 'phys');
-    }, { sil: true, cond: (b, e2) => (e2.mem.ab.ammo ?? 0) > 0 && targetsNear(b, e2, f.bb.range_radius ?? e2.base.rangeRadius).length > 0 }),
+      for (let i = 0; i < hits; i++) {
+        const t = b.rng.pick(allTargets(b, e2));
+        if (!t) break;
+        b.fx('beam', { x: e2.x, y: e2.y, from: e2.id, to: t.id, kind: 'fireWeapon' });
+        hurt(b, e2, t, e2.s.atk * num(f.bb.atk_scale, 1), 'phys');
+      }
+    }, { sil: true, cond: (b, e2) => (e2.mem.ab.ammo ?? 0) >= Math.max(1, num(f.sp, 1)) && allTargets(b, e2).length > 0 }),
   ];
 }
 
@@ -1263,6 +1295,12 @@ function kitRegen(ab) {
 function kitSteal(ab) {
   const n = T(ab, 'DamageOrBullet.attack@minus_bullet') ?? 1;
   return [selfFear(ab), {
+    // PRTS “萨科塔之眼”: "不会攻击飞行单位" (the 炎佑 is one) — its next ground target in range instead
+    before(c, b, e) {
+      if (!c.targets || !c.targets.some((t) => t.isFlying)) return;
+      const l = targetsNear(b, e, e.base.rangeRadius).filter((t) => !t.isFlying);
+      c.targets = byPriority(e, l).slice(0, 1);
+    },
     hitOut(c, b, e) {
       if (!c.dmg.isAttack) return;
       const t = c.target;
@@ -1287,13 +1325,48 @@ function kitRoar(ab) {
   }, { sil: true })];
 }
 
+/**
+ * 暴鸰 (PRTS): "不进行普通攻击"; 投弹 (boomb, cooldown / initCooldown 1) "仅攻击范围内存在我方单位时可触发：对目标及其周围八格
+ * 的我方单位造成100%物理伤害（对主目标造成物理普通伤害，对溅射目标造成物理溅射伤害，伤害无视迷彩）技能结束后移速最终提升至200%
+ * ※此技能仅能触发一次，不可沉默" — one bomb on the ranged target (engine priority), then move speed ×boomb.move_speed.
+ */
 function kitBombd(ab) {
-  const ms = (ab.sk.boomb && ab.sk.boomb.bb.move_speed) || 0;
+  const s = ab.sk.boomb;
+  const ms = (s && s.bb.move_speed) || 0;
+  const reach = (e) => e.base.rangeRadius || 2;
+  return [
+    { spawn(b, e) { e.profile.noAttack = true; } },
+    skill(s, (b, e, a) => {
+      const t = byPriority(e, targetsNear(b, e, reach(e)))[0];
+      if (!t) return;
+      a.cd = Infinity; a.left = Infinity;                               // 仅能触发一次
+      b.fx('explode', { x: t.x, y: t.y, r: BOMB_REACH + 0.5, kind: 'bomb', tiles: 'box', id: e.id });
+      hurt(b, e, t, e.s.atk, 'phys');
+      for (const u of alliesInTiles(b, t.tileR, t.tileC, 'box', BOMB_REACH)) if (u !== t) hurt(b, e, u, e.s.atk, 'phys', { tags: ['splash'] });
+      if (ms > 0) b.addBuff(e, { key: 'ab:bombRun', mods: { moveMul: ms }, persist: true });   // 移速最终提升至200%
+    }, { cond: (b, e) => targetsNear(b, e, reach(e)).length > 0 }),
+  ];
+}
+
+/**
+ * 帝国炮火先兆者 / 中枢先兆者 (PRTS): every normal attack fires a shell at the target's position that lands SHELL_FLIGHT s
+ * later and deals 100 % of the ATK at launch as physical damage without a source to every ally within SHELL_RADIUS
+ * (it may miss the target that moved away; camouflage does not matter). The attack itself is the engine's (cooldown,
+ * pause, 'atk' event of kind 'mortar'); the damage is the shell's (ai.js `profile.deferHit`).
+ */
+function kitShell() {
   return [{
-    dealt(c, b, e, a) {
-      b.fx('explode', { x: c.target.x, y: c.target.y, r: BOMB_RADIUS, kind: 'bomb' });
-      for (const u of b.alliesInRadius(c.target.x, c.target.y, BOMB_RADIUS)) if (u !== c.target) hurt(b, e, u, e.s.atk, 'phys');
-      if (!a.fast && ms > 0) { a.fast = true; b.addBuff(e, { key: 'ab:bombRun', mods: { moveMul: 1 + ms }, persist: true }); } // 投掷之后移动速度大幅度提升
+    spawn(b, e) { e.profile.deferHit = true; e.profile.shot = 'mortar'; },
+    attack(c, b, e) {
+      const atk = e.s.atk * (e.profile.atkScale ?? 1);
+      for (const t of c.targets) {
+        const x = t.x, y = t.y;
+        b.fx('bombardShell', { x, y, id: e.id, r: SHELL_RADIUS, t: SHELL_FLIGHT });
+        b.after(SHELL_FLIGHT, () => {
+          b.fx('bombard', { x, y, r: SHELL_RADIUS, kind: 'emppnt' });
+          for (const u of b.alliesInRadius(x, y, SHELL_RADIUS)) hurt(b, null, u, atk, 'phys', { isSkill: false, tags: ['shell'] });
+        });
+      }
     },
   }];
 }
@@ -2026,12 +2099,14 @@ export const KITS = Object.freeze({
   enemy_1355_mrfly: (ab, e) => [enemyAura(e.base.rangeRadius || 2.5, 'ab:mrfly', { resFlat: T(ab, 'magdef_add.magic_resistance') ?? 0 })], // 护障 · RES aura
   enemy_1355_mrfly_2: (ab, e) => [enemyAura(e.base.rangeRadius || 2.5, 'ab:mrfly', { resFlat: T(ab, 'magdef_add.magic_resistance') ?? 0 })], // 护障·P · RES aura
   enemy_1042_frostd: (ab) => [allyAura(T(ab, 'defup.range_radius') ?? 2.5, 'ab:frost', { aspd: (T(ab, 'atkSpeedDown.attack_speed') ?? 0) * 100 })], // 寒霜 · ASPD −50 aura on operators
-  enemy_1040_bombd: kitBombd,                                        // 暴鸰 · bomb splash; speeds up after throwing
+  enemy_1040_bombd: kitBombd,                                        // 暴鸰 · no normal attack: ONE bomb (target + 8 tiles), then ×2 speed
   enemy_10083_hlbird: kitSelfFear,                                   // “萨科塔之翼” · fear + flee below half HP
   enemy_10084_hlegle: kitSteal,                                      // “萨科塔之眼” · fear below half; steals 1 ammo instead of hitting
   enemy_10085_hllevi_2: kitRoar,                                     // “萨科塔昂首” · fear below half; 祈祷邀约 global ASPD −30
   enemy_1407_hummbd: kitExposeOnDeath,                               // 远眺 · death: exposes operators around (damage taken ×1.2)
-  enemy_9009_acfort: kitBlackCloud,                                  // 假想敌：黑云 · devours normal flyers for ammo, fires it all at once
+  enemy_9009_acfort: kitBlackCloud,                                  // 假想敌：黑云 · devours ≤ 3 normal flyers for ammo, fires it all at random allies
+  enemy_1112_emppnt: kitShell,                                       // 帝国炮火先兆者 · attacks are shells landing 3 s later (r 1.2)
+  enemy_1112_emppnt_2: kitShell,                                     // 帝国炮火中枢先兆者 · same
   enemy_1321_wdarft: (ab) => [skill(ab.sk.BornBugs, (b, e) => spawnChildren(b, e, 'enemy_1269_nhfly', BUGS_PER_CAST))], // 枯朽萃聚使徒 · spawns 枯朽之种
   enemy_1269_nhfly: () => [{                                         // 枯朽之种 · no normal attack: dives onto a nearby operator and self-destructs
     spawn(b, e) { e.profile.noAttack = true; },
@@ -2288,8 +2363,8 @@ export const STATS_ONLY = Object.freeze({
   enemy_1006_shield_2: 'heavy defender', enemy_1006_shield_3: 'heavy defender', enemy_1007_slime: 'plain',
   enemy_1010_demon: 'plain', enemy_1010_demon_2: 'plain', enemy_1041_lazerd: 'FLY arts (engine)', enemy_1041_lazerd_2: 'FLY arts (engine)',
   enemy_1043_zomsbr: 'regen is data (hpRecoveryPerSec 80)', enemy_1061_zomshd: 'regen is data (hpRecoveryPerSec 200)',
-  enemy_1046_agent: 'plain', enemy_1071_dftman: 'plain', enemy_1092_mdgint: 'plain (bounty)', enemy_1112_emppnt: 'FLY ranged (engine)',
-  enemy_1112_emppnt_2: 'FLY ranged (engine)', enemy_1251_lysyta: 'R-series armour interaction absent', enemy_1251_lysyta_2: 'same',
+  enemy_1046_agent: 'plain', enemy_1071_dftman: 'plain', enemy_1092_mdgint: 'plain (bounty)',
+  enemy_1251_lysyta: 'R-series armour interaction absent', enemy_1251_lysyta_2: 'same',
   enemy_1252_lysytb_2: 'same', enemy_1254_lypa_2: 'no listed ability', enemy_1325_cbgpro: 'plain', enemy_1325_cbgpro_2: 'plain',
   enemy_1367_dseed: 'altar pulse absent (骸骨拷打者 leaves them inert, uncounted, in place)',
   enemy_1381_winman: 'plain', enemy_1381_winman_2: 'plain', enemy_1387_winshd: '封冻/供暖器 zones absent', enemy_1415_mmkabi_2: 'chains absent',

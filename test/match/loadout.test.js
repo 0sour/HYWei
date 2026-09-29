@@ -256,7 +256,8 @@ test('solo: no deadline outside combat (INFO_CHECK, strategy draft, 机变, prep
 });
 
 test('co-op keeps its guards: INFO_CHECK 25 s, prep timer, transition deadlines', () => {
-  const h = makeMatch({ mode: 'coop', humans: 1, bots: 1, seed: 12 }).start();
+  // two humans: a single human is untimed like solo (Match.soloUntimed, user playtest #4 item 3)
+  const h = makeMatch({ mode: 'coop', humans: 2, bots: 1, seed: 12 }).start();
   const m = h.m;
   const pub = h.lastBc('m.public');
   assert.equal(pub.phase, PHASE.INFO_CHECK);
@@ -268,13 +269,15 @@ test('co-op keeps its guards: INFO_CHECK 25 s, prep timer, transition deadlines'
 
 // ---- review fixes -----------------------------------------------------------------------------------------------------------
 
-test('a skill summon comes only with that skill: 赫默 S2 (default) gets the 医疗无人机 token, 赫默 on S1 does not', async () => {
+test('a skill summon is never a hand card (user playtest #4): 赫默 on any skill gets no 医疗无人机 token in the prep phase', async () => {
   const { give } = await import('./harness.js');
   const SILENCE = 'chess_char_2_02_a';
   const DRONE = 'token_10000_silent_healrb';
   assert.equal(chess(SILENCE).skills.find((s) => s.overrideTokenKey === DRONE)?.isDefault, true, 'fixture: the drone is the default S2 summon');
-  const tokensIn = (ps) => [...ps.hand, ...ps.temp, ...ps.board.values()].filter((p) => p && p.kind === 'token' && p.id === DRONE);
-  for (const [skill, want] of [[null, 1], [0, 0], [1, 1]]) {
+  // "获得一个医疗无人机": the drone appears in battle when S2 fires (test/content/tokens_devices.test.js), never before
+  const tokensIn = (ps, id = DRONE) => [...ps.hand, ...ps.temp, ...ps.board.values()].filter((p) => p && p.kind === 'token' && p.id === id);
+  assert.equal(DATA.tokens[DRONE].placeable, false, 'tokens.json: a skill summon is not placeable');
+  for (const skill of [null, 0, 1]) {
     const lo = skill == null ? null : checkLoadout({ [SILENCE]: { skill } }, chess).loadout;
     const h = makeMatch({ mode: 'solo', seats: seatsWith(lo), seed: 5 }).start();
     h.toPrep(1);
@@ -283,11 +286,16 @@ test('a skill summon comes only with that skill: 赫默 S2 (default) gets the �
     ps.board.clear();
     ps.hand.fill(null);
     give(h.m, ps, SILENCE, 'board', [9, 3]);
-    assert.equal(tokensIn(ps).length, want, `normal 赫默, skill ${skill ?? 'default'}`);
+    assert.equal(tokensIn(ps).length, 0, `normal 赫默, skill ${skill ?? 'default'}`);
     ps.board.clear();
     ps.hand.fill(null);
     give(h.m, ps, chess(SILENCE).goldenId, 'board', [9, 4]);
-    assert.equal(tokensIn(ps).length, want, `elite 赫默, skill ${skill ?? 'default'}`);
+    assert.equal(tokensIn(ps).length, 0, `elite 赫默, skill ${skill ?? 'default'}`);
+    // a talent summon still is a hand card: 伺夜 → 狼群
+    ps.board.clear();
+    ps.hand.fill(null);
+    give(h.m, ps, 'chess_char_3_19_a', 'board', [9, 5]);
+    assert.equal(tokensIn(ps, 'token_10028_vigil_wolf').length, 1, '伺夜 sends its 狼群 to the hand');
     h.m.dispose();
   }
 });

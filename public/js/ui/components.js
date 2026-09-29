@@ -342,6 +342,9 @@ export function secondsLeft(deadline) {
 
 /**
  * 7-segment countdown with "COUNTDOWN" micro label and a 5-bar gauge; turns orange ≤ warnAt s.
+ * Untimed (no `seconds` and no deadline — the server sends deadline 0 for every phase outside the battles of a solo
+ * match, Match.soloUntimed): renders nothing at all. It used to draw a "--" placeholder with the COUNTDOWN label,
+ * which reads as a timer (user playtest #4 item 3; css/screens/loadout.css keeps hiding the old placeholder).
  * @param {{ deadline?: number, seconds?: number, total?: number, warnAt?: number, label?: string,
  *   size?: 'sm'|'md'|'lg', gauge?: boolean, onExpire?: Function, class?: string }} props
  *   deadline: server epoch ms (live); seconds: static value (overrides deadline); total: seconds for the gauge.
@@ -364,6 +367,8 @@ export function Countdown({ deadline, seconds, total, warnAt = 10, label = 'COUN
     }
   });
 
+  // untimed phase: no timer on screen (hooks above run unconditionally, so the component may toggle freely)
+  if (remain == null) return null;
   return html`<div class=${cx('countdown', `countdown--${size}`, warn && 'is-warn', cls)} role="timer" aria-label=${remain == null ? '无倒计时' : `剩余${remain}秒`}>
     <div class="countdown__main">
       <${SevenSeg} text=${text} tone=${warn ? 'orange' : 'mint'} flicker=${warn && remain > 0} />

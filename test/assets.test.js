@@ -319,6 +319,18 @@ describe('audio banks and plan id sets', () => {
     assert.deepEqual(pickUnitSfx(banks), { hit: ['e/hit.mp3'] });
   });
 
+  test('operators: normal-mode sounds only, their own projectile banks as fallbacks (user playtest #4 item 6)', () => {
+    // 纯烬艾雅法拉: the numbered ability variant attack.2 is her S3 impact (_s) — never the normal hit
+    const banks = new Map([['ON_ABILITY_START.attack', ['p/p_atk_x_n.mp3']], ['ON_ABILITY_HIT.attack.2', ['p/p_imp_x_s.mp3']]]);
+    assert.deepEqual(pickUnitSfx(banks, { operator: true, projectile: { hit: ['p/p_imp_x_n.mp3'] } }), { attack: ['p/p_atk_x_n.mp3'], hit: ['p/p_imp_x_n.mp3'] });
+    assert.deepEqual(pickUnitSfx(banks), { attack: ['p/p_atk_x_n.mp3'], hit: ['p/p_imp_x_s.mp3'] }, 'enemies / tokens unchanged');
+    // a skill-mode plain bank (_d / _h / _s) is skipped; the plain ability wins over any numbered variant
+    const b2 = new Map([['ON_ABILITY_START.attack', ['p/p_atk_y_h.mp3']], ['ON_ABILITY_START.attack.0', ['p/p_atk_y_n.mp3']], ['ON_ABILITY_ON.attack', ['p/p_atk_y_n2.mp3']]]);
+    assert.deepEqual(pickUnitSfx(b2, { operator: true }).attack, ['p/p_atk_y_n2.mp3']);
+    assert.deepEqual(pickUnitSfx(new Map([['ON_ABILITY_START.attack.1', ['p/p_atk_z_s.mp3']]]), { operator: true }), {}, 'only skill-mode files: no attack sound');
+    assert.deepEqual(pickUnitSfx(undefined, { operator: true, projectile: { born: ['p/b.mp3'] } }), { attack: ['p/b.mp3'] }, 'no unit banks: the projectile bank');
+  });
+
   test('enemy set covers 07 list, bosses and their summons', () => {
     const assets07 = readJson('docs/research/07-assets.json');
     const ids = new Set(collectEnemyIds({ assets07, enemies05: readJson('docs/research/05-enemies.json'), maps05: readJson('docs/research/05-maps.json'), ops03: readJson('docs/research/03-operators.json') }));

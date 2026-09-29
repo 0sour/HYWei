@@ -18,7 +18,6 @@ import { GEO, PHASE, UF } from '../../../shared/constants.js';
 import { resolveLoadout, loadoutOptions, MODULE_NONE } from '../../../shared/protocol.js';
 import { resolveRecordLoadout, loadoutRecord } from '../../../shared/loadoutRecord.js';
 import { layoutPen } from '../render/pen.js';
-import { pickBody } from '../render/pick.js';
 import { bossLevelSeconds } from './matchStatus.js';
 
 // ---- small helpers -------------------------------------------------------------------------------
@@ -148,7 +147,8 @@ export function phaseTotalSeconds(pub, config, myId = null) {
   const num = (v) => (Number.isFinite(v) && v > 0 ? v : null);
   switch (pub.phase) {
     case PHASE.INFO_CHECK: return num(timers.infoCheck) ?? 25;
-    case PHASE.BAND_DRAFT: return num(timers.bandTurn) ?? 12;
+    // one countdown: the current turn's (m.public.draft.turnSeconds = Match.BAND_TURN_SECONDS; user playtest #4 item 4)
+    case PHASE.BAND_DRAFT: return num(pub.draft?.turnSeconds) ?? num(timers.bandTurn) ?? 30;
     case PHASE.BATTLE_CHECK: return num(timers.battleCheck) ?? 3;
     case PHASE.SP_DRAFT: {
       const sp = normalizeSp(pub.sp, pub.players);
@@ -869,56 +869,6 @@ export function dropIntent(ctx, uid, target) {
   }
   const to = target.area === 'hand' ? { area: 'hand', idx: target.idx } : { area: 'board', row: target.row, col: target.col };
   return { t: 'g.move', fields: { uid, to } };
-}
-
-/**
- * The piece under a screen point (user playtest #3 item 7). Rects of the render engine carry the drawn body
- * (`shape`, view.pieceScreenRect) and are picked by the shared rule of render/pick.js — the face / torso of a unit is
- * its own; elsewhere the piece standing on the tile under the pointer (`tile`, same space as the rects' `tile`) wins.
- * Plain rects (the DOM fallback) go to the one whose centre is nearest relative to its size (a unit standing in front
- * no longer takes the whole overlap), ties → the front-most (largest bottom).
- * @param {Array<{uid:number, left:number, top:number, right:number, bottom:number, shape?:object, tile?:{row:number,col:number}}|null>} rects
- * @param {number} x
- * @param {number} y
- * @param {{row:number, col:number}|null} [tile] the tile under the point
- * @returns {number|null} uid
- */
-export function pickPieceAt(rects, x, y, tile = null) {
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  const list = (Array.isArray(rects) ? rects : []).filter((r) => isObj(r) && Number.isInteger(r.uid));
-  const shaped = list.filter((r) => isObj(r.shape) && r.shape.s > 0);
-  if (shaped.length && shaped.length === list.length) {
-    const hit = pickBody(shaped.map((r) => ({ ...r.shape, tile: r.tile || null, uid: r.uid })), x, y, tile);
-    return hit ? hit.uid : null;
-  }
-  let best = null, bestD = Infinity;
-  for (const r of list) {
-    if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;
-    const hw = Math.max(1, (r.right - r.left) / 2), hh = Math.max(1, (r.bottom - r.top) / 2);
-    const d = Math.hypot((x - (r.left + r.right) / 2) / hw, (y - (r.top + r.bottom) / 2) / hh);
-    if (d < bestD - 1e-9 || (Math.abs(d - bestD) <= 1e-9 && r.bottom > best.bottom)) { best = r; bestD = d; }
-  }
-  return best ? best.uid : null;
-}
-
-/**
- * An equipment item released over an operator's sprite goes to that operator. The sprite stands about a tile taller
- * than its own tile, so the tile under the pointer (the drop target of render/drag.js) is often the one behind it.
- * @param {ReturnType<typeof placementContext>} ctx
- * @param {number} uid the dragged piece
- * @param {any} target the tile target (board / hand / outside / null)
- * @param {number|null} hitUid the own unit piece whose sprite is under the pointer (pickPieceAt)
- * @returns {any} the target to use: the hit unit's tile / slot, or `target` unchanged
- */
-export function equipRetarget(ctx, uid, target, hitUid) {
-  const src = ctx?.pieces?.get(uid);
-  if (!src || src.piece.kind !== 'item' || !Number.isInteger(hitUid) || hitUid === uid) return target;
-  if (ctx.getItem(src.piece.id)?.itemType === 'MAGIC') return target; // Arts are used on the tile itself
-  const hit = ctx.pieces.get(hitUid);
-  if (!hit || (hit.piece.kind !== 'chess' && hit.piece.kind !== 'token')) return target;
-  if (hit.area === 'board') return { area: 'board', row: hit.row, col: hit.col };
-  if (hit.area === 'hand') return { area: 'hand', idx: hit.idx };
-  return target;
 }
 
 /**

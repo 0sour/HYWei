@@ -411,8 +411,10 @@ test('audited FakeBattle matches (all phases incl. 联防, 机变, Final Assault
     const h = makeMatch({
       mode: 'coop', difficulty: 'NORMAL', humans: 1, bots: n - 1, seed, fake: true,
       script: (b) => (b.kind === 'boss' ? { bossDps: 5000 } : { leaks: Object.fromEntries(b.players.map((p, i) => [p, (b.round + i + seed) % 3])) }),
-    }).start();
-    h.autoHumans();
+    });
+    // AI-played before the start: a single human's briefing is untimed (Match.soloUntimed, user playtest #4 item 3) and
+    // waits for 准备就绪, which only an autoplaying seat gives by itself
+    h.autoHumans().start();
     const audit = attachAudit(h.m);
     for (const ps of h.m.players.values()) ps.lp = 200;
     h.runToEnd({ maxSteps: 3e6 });

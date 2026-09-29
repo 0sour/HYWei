@@ -87,38 +87,54 @@ function abilityOrder(a, b) {
   return a.localeCompare(b, 'en', { numeric: true });
 }
 
-function firstMatching(banks, event, abilities) {
+function firstMatching(banks, event, abilities, ok = () => true) {
   const keys = [...banks.keys()].filter((k) => k.startsWith(event + '.'));
   for (const ab of abilities) {
     const exact = `${event}.${ab}`;
-    if (banks.get(exact)?.length) return banks.get(exact);
+    if (banks.get(exact)?.length && ok(banks.get(exact))) return banks.get(exact);
     const numbered = keys.filter((k) => k.startsWith(exact + '.')).sort(abilityOrder);
-    for (const k of numbered) if (banks.get(k)?.length) return banks.get(k);
+    for (const k of numbered) if (banks.get(k)?.length && ok(banks.get(k))) return banks.get(k);
   }
   return null;
 }
+
+/** Official operator sound files of a skill mode end in `_d` / `_h` / `_s` (+ digits); the normal attack's in `_n`. */
+const SKILL_MODE_FILE = /_(d|h|s)\d*\.mp3$/i;
+/** A bank of an operator's normal attack: none of its files belongs to a skill mode. */
+export const normalModeBank = (paths) => Array.isArray(paths) && paths.length > 0 && !paths.some((p) => SKILL_MODE_FILE.test(p));
 
 /**
  * Pick role → candidate sound paths for one unit.
  * @param {Map<string,string[]>|undefined} banks unit bank table (from indexAudio().unitBanks)
  * @returns {{ attack?: string[], hit?: string[], die?: string[], born?: string[] }}
  */
-export function pickUnitSfx(banks) {
+export function pickUnitSfx(banks, opts = {}) {
   const out = {};
-  if (!banks || !banks.size) return out;
+  const proj = opts.projectile || {};
+  if ((!banks || !banks.size) && !proj.born?.length && !proj.hit?.length) return out;
+  banks = banks || new Map();
+  // operators (user playtest #4 item 6): numbered ability variants (attack.1, attack.2 …) are usually the attacks of a
+  // skill mode, whose files end in _d / _h / _s — never the normal attack's (纯烬艾雅法拉's S3 impact rang on every hit);
+  // a ranged operator's normal attack / impact is its own projectile's bank (projectile_chr_<name>)
+  const ok = opts.operator ? normalModeBank : () => true;
   // Looser pass: abilities whose name mentions attack/combat (PowerAttack, StunCombat, CrossAttack…).
   // Other abilities (skills, talents 'T.*', mode switches) are not normal attacks.
   const attackLike = (event) => {
     const keys = [...banks.keys()]
       .filter((k) => k.startsWith(event + '.') && /attack|combat/i.test(k.slice(event.length + 1).split('.')[0]))
       .sort(abilityOrder);
-    for (const k of keys) if (banks.get(k)?.length) return banks.get(k);
+    for (const k of keys) if (banks.get(k)?.length && ok(banks.get(k))) return banks.get(k);
     return null;
   };
-  const attack = firstMatching(banks, 'ON_ABILITY_START', ['attack', 'combat'])
-    ?? firstMatching(banks, 'ON_ABILITY_ON', ['attack', 'combat'])
-    ?? attackLike('ON_ABILITY_START') ?? attackLike('ON_ABILITY_ON');
-  const hit = firstMatching(banks, 'ON_ABILITY_HIT', ['attack', 'combat']) ?? attackLike('ON_ABILITY_HIT');
+  const exact = (event) => ['attack', 'combat'].map((ab) => banks.get(`${event}.${ab}`)).find((p) => p?.length && ok(p)) ?? null;
+  const own = (p) => (p?.length && ok(p) ? p : null);
+  // operators: the plain ability of either event before any numbered variant
+  const plain = opts.operator ? exact('ON_ABILITY_START') ?? exact('ON_ABILITY_ON') : null;
+  const attack = plain
+    ?? firstMatching(banks, 'ON_ABILITY_START', ['attack', 'combat'], ok)
+    ?? firstMatching(banks, 'ON_ABILITY_ON', ['attack', 'combat'], ok)
+    ?? own(proj.born) ?? attackLike('ON_ABILITY_START') ?? attackLike('ON_ABILITY_ON');
+  const hit = firstMatching(banks, 'ON_ABILITY_HIT', ['attack', 'combat'], ok) ?? own(proj.hit) ?? attackLike('ON_ABILITY_HIT');
   if (attack) out.attack = attack;
   if (hit) out.hit = hit;
   if (banks.get('ON_UNIT_DEAD')?.length) out.die = banks.get('ON_UNIT_DEAD');

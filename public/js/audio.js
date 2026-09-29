@@ -11,8 +11,17 @@
 // - Channels: master → { bgm, sfx } gains; volumes from settings (0..1) + mute. Tab hidden ⇒ suspend.
 // - BGM: `intro` then `loop` (1 s crossfade); switching tracks fades out/in (0.8 s). The same loop URL
 //   keeps playing across phases (prep and combat share a track).
-// - Battle SFX from `b.ev` tuples (`handleBattleEvents`): at most MAX_VOICES concurrent unit sounds,
-//   a per-unit cooldown and a per-URL minimum gap (SfxLimiter), so a 60-unit fight stays listenable.
+// - Battle SFX from `b.ev` tuples (`handleBattleEvents`): at most MAX_VOICES concurrent unit sounds, at most
+//   MAX_PER_URL overlapping copies of one sound (the official banks' maxSoundAllowed 2), a per-unit cooldown and a
+//   per-URL minimum gap (SfxLimiter), so a 60-unit fight stays listenable.
+// - Impact sounds (user playtest #4 item 6): a 'dmg' plays the `hit` sound of the unit whose hostile attack ('atk' on a
+//   unit of the other side) aimed at the target — once, within IMPACT_WINDOW_MS, and only for phys / arts / true damage.
+//   A heal "attack" ('atk' of a healer on an ally, chain heals) never makes the healer the author of the next damage
+//   on that ally (纯烬艾雅法拉's heals made every later hit on a healed ally ring her impact sound), element gauge fills
+//   and DoTs play none, and a chain bounce ('chain' / 'chainHeal': its first id is the previous target) plays no attack
+//   sound of that target. An operator's attack / hit sound that is a skill-mode file of its own (official names end in
+//   `_n` for the normal attack, `_d` / `_h` / `_s` for its skill modes — the manifest picked 纯烬艾雅法拉's S3 impact
+//   p_imp_gtshpbrnch_s as her `hit`) never plays for a normal attack (normalAttackSfx).
 // - Deaths/deployments follow the official per-class defaults (unitSoundClass): only operators play the
 //   operator-knocked-down sound; summons use the token sounds; a summon used up by its own effect (fx `consumed`,
 //   香槟炸弹) plays its impact sound instead of a death sound.
@@ -26,9 +35,18 @@ import { PHASE } from '../../shared/constants.js';
 const MAX_VOICES = 8;
 const UNIT_COOLDOWN_MS = 160;
 const URL_GAP_MS = 45;
+const MAX_PER_URL = 2;
 const BUFFER_CACHE = 180;
 const XFADE_S = 1;
 const FADE_S = 0.8;
+/** 'atk' projectile kinds whose first id is the previous bounce target (sim ai.js), not the attacker. */
+const CHAIN_KINDS = new Set(['chain', 'chainHeal']);
+/** 'dmg' types that are an attack's impact (element gauge fills / 元素伤害 carry the element's name instead). */
+const IMPACT_TYPES = new Set(['phys', 'arts', 'true']);
+/** A 'dmg' later than this (real ms) after the attack aimed at the target is not that attack's impact. */
+const IMPACT_WINDOW_MS = 2500;
+/** Official operator sound files of a skill mode: `…_d` / `…_h` / `…_s` (+ digits) — the normal attack's end in `_n`. */
+const SKILL_MODE_FILE = /_(d|h|s)\d*\.mp3$/i;
 
 // ---- pure helpers (unit-tested) -----------------------------------------------------------------------
 
@@ -133,29 +151,45 @@ export function deploySfxUrl(manifest, info) {
   return typeof url === 'string' ? url : null;
 }
 
+/**
+ * Whether a unit's manifest `attack` / `hit` sound may play for its normal attacks: an operator's (`char_*`) sound file
+ * of one of its skill modes (`_d` / `_h` / `_s`, see header) may not. Enemy files use `_h` for heavy weapons (always
+ * allowed), and so may summons.
+ * @param {string} defId the unit's model id (sfx.units key)
+ * @param {string} url
+ */
+export function normalAttackSfx(defId, url) {
+  return typeof url === 'string' && !(typeof defId === 'string' && defId.startsWith('char_') && SKILL_MODE_FILE.test(url));
+}
+
 /** Concurrency + cooldown gate for battle SFX. Pure (time is passed in). */
 /** Gestures that may unlock audio: iOS Safari only accepts touchend / click / keydown; pointerdown covers the rest. */
 const UNLOCK_EVENTS = ['pointerdown', 'touchend', 'click', 'keydown'];
 
 export class SfxLimiter {
-  /** @param {{ maxVoices?: number, unitCooldownMs?: number, urlGapMs?: number }} [o] */
+  /** @param {{ maxVoices?: number, unitCooldownMs?: number, urlGapMs?: number, maxPerUrl?: number }} [o] */
   constructor(o = {}) {
     this.maxVoices = o.maxVoices ?? MAX_VOICES;
     this.unitCooldownMs = o.unitCooldownMs ?? UNIT_COOLDOWN_MS;
     this.urlGapMs = o.urlGapMs ?? URL_GAP_MS;
+    // the official battle banks (attack, impact, heal, born, dead…) allow at most 2 overlapping copies of a sound
+    // (audio_data maxSoundAllowed 2): a heal / impact heard on every tick of a crowd never piles up
+    this.maxPerUrl = o.maxPerUrl ?? MAX_PER_URL;
     this.active = 0;
     this.lastByUnit = new Map();
     this.lastByUrl = new Map();
+    this.activeByUrl = new Map();
   }
 
   /**
-   * Whether a sound may start now; records it when allowed (call `release()` when it ends).
+   * Whether a sound may start now; records it when allowed (call `release(url)` when it ends).
    * @param {number} now ms
    * @param {string|number|null} unitKey e.g. `${unitId}:atk`
    * @param {string} url
    */
   tryAcquire(now, unitKey, url) {
     if (this.active >= this.maxVoices) return false;
+    if ((this.activeByUrl.get(url) || 0) >= this.maxPerUrl) return false;
     if (unitKey != null) {
       const t = this.lastByUnit.get(unitKey);
       if (t != null && now - t < this.unitCooldownMs) return false;
@@ -167,10 +201,16 @@ export class SfxLimiter {
     if (this.lastByUnit.size > 600) this.lastByUnit.clear();
     if (this.lastByUrl.size > 400) this.lastByUrl.clear();
     this.active += 1;
+    this.activeByUrl.set(url, (this.activeByUrl.get(url) || 0) + 1);
     return true;
   }
 
-  release() { this.active = Math.max(0, this.active - 1); }
+  /** A sound started by tryAcquire ended. */
+  release(url) {
+    this.active = Math.max(0, this.active - 1);
+    const n = this.activeByUrl.get(url) || 0;
+    if (n <= 1) this.activeByUrl.delete(url); else this.activeByUrl.set(url, n - 1);
+  }
 }
 
 // ---- manager -----------------------------------------------------------------------------------------------
@@ -195,7 +235,7 @@ export class AudioManager {
     this.bgm = null;          // { key, loopUrl, nodes: [{src, gain}], gain }
     this.bgmToken = 0;
     this.units = new Map();   // battle unit id → defId
-    this.lastAttacker = new Map(); // target id → attacker defId
+    this.lastAttacker = new Map(); // target id → { def, at } of the hostile attack last aimed at it (its impact sound)
     this.consumed = new Set();     // summons used up by their own effect (香槟炸弹 exploded): no death sound
     this.installed = false;
     this._unlock = this._unlock.bind(this);
@@ -454,7 +494,7 @@ export class AudioManager {
     if (limited) { if (!this.limiter.tryAcquire(now, unitKey, url)) return; }
     else if (this.uiVoices >= 12) return;
     else this.uiVoices += 1;
-    const release = () => { if (limited) this.limiter.release(); else this.uiVoices = Math.max(0, this.uiVoices - 1); };
+    const release = () => { if (limited) this.limiter.release(url); else this.uiVoices = Math.max(0, this.uiVoices - 1); };
     this._buffer(url).then((buf) => {
       if (!buf || !this.ctx) { release(); return; }
       try {
@@ -507,6 +547,7 @@ export class AudioManager {
       const own = kind === 'skill' && Number.isInteger(skillIndex) && u?.skills ? u.skills[skillIndex] : null;
       const url = typeof own === 'string' ? own : u?.[kind];
       if (typeof url !== 'string') return false;
+      if ((kind === 'attack' || kind === 'hit') && !normalAttackSfx(defId, url)) return false;
       this._play(url, { volume: kind === 'attack' || kind === 'hit' ? 0.55 : 0.8, limited: true, unitKey: `${unitId}:${kind}` });
       return true;
     } catch { return false; }
@@ -542,18 +583,25 @@ export class AudioManager {
   handleBattleEvents(ev) {
     if (!this.ctx || !Array.isArray(ev)) return;
     try {
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
       for (const e of ev) {
         if (!Array.isArray(e)) continue;
         const kind = e[0];
         if (kind === 'spawn') { this._track(e[1]); continue; }
         if (kind === 'atk') {
+          // a chain bounce: its first id is the previous target, whose attack sound this is not (see header)
+          if (CHAIN_KINDS.has(e[3])) { this.lastAttacker.delete(e[2]); continue; }
           const src = this.units.get(e[1]);
           if (!src) continue;
-          this.lastAttacker.set(e[2], src.def);
+          // only a hostile attack authors the target's next impact (a heal — an ally aiming at an ally — never does)
+          const tgt = this.units.get(e[2]);
+          if (tgt && tgt.side !== src.side) this.lastAttacker.set(e[2], { def: src.def, at: now });
           if (!this.unit(src.def, 'attack', e[1]) && src.side === 'enemy') this.battle('enemyHit', { unitKey: `${e[1]}:atk`, volume: 0.35 });
         } else if (kind === 'dmg') {
           const by = this.lastAttacker.get(e[1]);
-          if (by) this.unit(by, 'hit', `h${e[1]}`);
+          if (!by || !IMPACT_TYPES.has(e[3])) continue;
+          this.lastAttacker.delete(e[1]); // one impact per attack
+          if (now - by.at <= IMPACT_WINDOW_MS) this.unit(by.def, 'hit', `h${e[1]}`);
         } else if (kind === 'heal') {
           this.battle('heal', { unitKey: `heal:${e[1]}`, volume: 0.35 });
         } else if (kind === 'skill' && e[2]) {

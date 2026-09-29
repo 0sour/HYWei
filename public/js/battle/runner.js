@@ -32,12 +32,19 @@
 //   battleRunner.on('snap' | 'ev' | 'field' | 'state', fn) → off
 //   battleRunner.state()  → { battleId, fieldId, kind, authoritative, watch, done, own, members, loading, paused, leaks } | null
 //   battleRunner.stats()  → { ticks, stepMs, avgTickMs, maxFrameMs, catchups, errors, battles }
+//   battleRunner.unitStats(unitId, fieldId?) → the live stats of a unit of the battle on screen (shared/protocol.js
+//                           unitStatsEntry: current HP, effective max HP / ATK / DEF / RES / interval / block / move
+//                           speed next to its base) | null — the detail card reads it a few times a second (user
+//                           playtest #4 item 7). Read-only: it takes the stats the sim computed last (`unit._s`) and
+//                           never makes the unit recompute them, so looking never changes the battle's floats.
+//   battleRunner.unitIdOf(uid, ownerId, fieldId?) → the id of an own board piece's unit in that battle | null
 //
 // createBattleRunner(deps) builds an instance with injectable net / store / clock / frame scheduler / sim loader
 // (test/match/runner.test.js drives it under Node).
 
 import { net as appNet } from '../net.js';
 import { store as appStore } from '../store.js';
+import { unitStatsEntry } from '../../../shared/protocol.js';
 
 const TICK = 1 / 30;
 /** Fast-forward budget per frame (ticks) when far behind. */
@@ -560,6 +567,32 @@ export function createBattleRunner(deps) {
     state,
     stats() {
       return { ...stats, avgTickMs: stats.ticks ? stats.stepMs / stats.ticks : 0, entries: entries.size, loadingSim: !!simP };
+    },
+    /**
+     * Live stats of unit `unitId` of the battle on screen (null: no such battle / unit, or `fieldId` names another
+     * field). Reads the sim's last computed stats (`unit._s`, falling back to the base) — never `unit.s`, whose lazy
+     * recompute would run earlier than the sim itself would run it.
+     * @param {number} unitId @param {string|null} [fieldId]
+     */
+    unitStats(unitId, fieldId = null) {
+      const e = cur;
+      if (!e || !Number.isInteger(unitId) || (fieldId != null && e.fieldId !== fieldId)) return null;
+      let u = null;
+      try { u = typeof e.battle.unitById === 'function' ? e.battle.unitById(unitId) : null; } catch { u = null; }
+      if (!u) return null;
+      try { return unitStatsEntry(u, u._s || null); } catch { return null; }
+    },
+    /**
+     * The unit id of the board piece `uid` owned by `ownerId` in the battle on screen (an own operator's card opened in
+     * prep and left open into the battle turns live); null when that battle has no such unit.
+     * @param {number} uid @param {string} ownerId @param {string|null} [fieldId]
+     */
+    unitIdOf(uid, ownerId, fieldId = null) {
+      const e = cur;
+      if (!e || !Number.isInteger(uid) || (fieldId != null && e.fieldId !== fieldId)) return null;
+      const list = Array.isArray(e.battle.allyUnits) ? e.battle.allyUnits : [];
+      const u = list.find((x) => x && x.uid === uid && x.ownerId === ownerId);
+      return u && Number.isInteger(u.id) ? u.id : null;
     },
     /** Re-show the current battle (the game screen remounted). */
     reshow() { if (cur) show(cur); },

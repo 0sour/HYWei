@@ -39,6 +39,9 @@ export const ELEMENTS = Object.freeze(['burn', 'neural', 'necrosis', 'apoptosis'
  *   `ally` = an operator/summon hit by enemy damage (ba.dt.burning / neural / apoptosis / erosion),
  *   `enemy` = an enemy hit by operators (the "·我方" terms ba.dt.burning2 / neural2 / apoptosis2 / erosion2;
  *   `elemDamage` is 元素伤害: HP damage ignoring DEF/RES, × elemTakenMul).
+ * `duration` = the burst's 爆发冷却 (PRTS 元素 table "持续时间": 10 s, 凋亡 15 s, 侵蚀 on enemies 8 s — the operators'
+ * 侵蚀 burst has its 10 s cooldown too): while it runs NO element of the unit fills or recovers, and when it ends every
+ * gauge of the unit resets (damage.js).
  * `necrosis` keeps the engine's earlier invented burst (no official counterpart) for legacy content.
  */
 export const ELEMENT = Object.freeze({
@@ -58,11 +61,16 @@ export const ELEMENT = Object.freeze({
     enemy: Object.freeze({ elemDps: 800, weaken: 0.5, duration: 15 }),
   }),
   erosion: Object.freeze({
-    ally: Object.freeze({ damage: 800, type: 'phys', defDown: 100, duration: 0 }),
+    ally: Object.freeze({ damage: 800, type: 'phys', defDown: 100, duration: 10 }),
     enemy: Object.freeze({ elemDamage: 5000, defDown: 120, duration: 8 }),
   }),
   necrosis: Object.freeze({ dps: 100, duration: 12, atkDownPct: 0.2 }),
 });
+/**
+ * Official element order (PRTS 元素: SANITY 1 神经, WATER 2 侵蚀, FIRE 3 灼燃, DARK 4 凋亡; the legacy `necrosis` last):
+ * the tie-break of the "当前损伤元素" a unit shows — the fullest gauge, then the lower id (damage.js elementView).
+ */
+export const ELEMENT_ORDER = Object.freeze(['neural', 'erosion', 'burn', 'apoptosis', 'necrosis']);
 /** 麻痹 (ba.palsy): each stack cancels one normal attack of an enemy; at most 3 stacks, lasts until consumed. */
 export const PALSY_MAX = 3;
 
@@ -79,6 +87,12 @@ export const FREEZE_RES_DOWN = 15;
 
 /** Default DP rules (DESIGN §5.5), overridable by Battle opts.flags. */
 export const DP_DEFAULTS = Object.freeze({ dpInit: 10, dpPerSec: 1, dpMax: 99 });
+/**
+ * State of a knocked-out operator waiting to redeploy on its own tile (b.snap `down` entries, Battle.snapshot): its
+ * respawn timer runs (COUNTING), then it waits for the player's DP to reach its cost (WAIT_DP) or for its tile to be
+ * free (WAIT_TILE). render/units.js mirrors these codes.
+ */
+export const DOWN_STATE = Object.freeze({ COUNTING: 0, WAIT_DP: 1, WAIT_TILE: 2 });
 
 /** Safety cap for battles with an infinite time limit (boss rounds are force-ended by the match). */
 export const MAX_BATTLE_TIME = 3600;

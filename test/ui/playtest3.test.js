@@ -37,7 +37,7 @@ const { rowLp } = await import('../../public/js/ui/teamPanel.js');
 const { LpTower, GAME_FILES } = await import('../../public/js/ui/gameComponents.js');
 const { tempRowFrame, tempRowRule } = await import('../../public/js/ui/underframe.js');
 const { ChessDetail, CHESS_SECTIONS, garrisonTypeIconKey } = await import('../../public/js/ui/detailPanel.js');
-const { ChoiceOverlay, pickBusy } = await import('../../public/js/ui/choiceOverlay.js');
+const { ChoiceView, pickBusy } = await import('../../public/js/ui/choiceOverlay.js');
 const { Button, Spinner } = await import('../../public/js/ui/components.js');
 const { data, createDataStore, RETRY_DELAYS_MS } = await import('../../public/js/data.js');
 
@@ -366,14 +366,15 @@ describe('9: busy indicators and data loading', () => {
     assert.equal(pickBusy(0, { idx: 0 }, 0), false, 'index 0 too');
     assert.equal(pickBusy(2, { idx: 2, takenBy: 'p_1' }, null), false);
     const sp = { family: 'tactic', name: '战术决策', desc: '', cards: [{ idx: 0, name: 'A', desc: 'a' }, { idx: 1, name: 'B', desc: 'b' }], order: ['me'], turnPid: 'me', pickOf: new Map(), untimed: true };
-    const v = ChoiceOverlay({ pub: { players: [{ playerId: 'me', seat: 0, name: 'Me' }] }, sp, myId: 'me', solo: true, onPick() {}, busyIdx: 1 });
+    // (ChoiceView: the overlay's pure view — ChoiceOverlay keeps the two-tap selection, user playtest #4 item 2)
+    const v = ChoiceView({ pub: { players: [{ playerId: 'me', seat: 0, name: 'Me' }] }, sp, myId: 'me', solo: true, busyIdx: 1 });
     const nodes = [...walk(v)];
     const busyCards = nodes.filter((n) => hasClass(n, 'spcard') && hasClass(n, 'is-busy'));
     assert.equal(busyCards.length, 1);
     assert.equal(textOf(nodes.find((n) => hasClass(n, 'spcard__busy'))), '选择中');
     assert.ok(!nodes.some((n) => n.type === Spinner), 'no spinner over the card text');
     // the pick landed (m.public) while the request still waits for its reply
-    const landed = ChoiceOverlay({ pub: { players: [] }, sp: { ...sp, pickOf: new Map([['me', 1]]), cards: [sp.cards[0], { ...sp.cards[1], takenBy: 'me' }] }, myId: 'me', solo: true, onPick() {}, busyIdx: 1 });
+    const landed = ChoiceView({ pub: { players: [] }, sp: { ...sp, pickOf: new Map([['me', 1]]), cards: [sp.cards[0], { ...sp.cards[1], takenBy: 'me' }] }, myId: 'me', solo: true, busyIdx: 1 });
     assert.ok(![...walk(landed)].some((n) => hasClass(n, 'spcard__busy')));
   });
 

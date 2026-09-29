@@ -195,65 +195,22 @@ describe('field view teardown (app.js releaseGl)', () => {
   });
 });
 
-// user playtest #3 item 7: the body as drawn, for render/pick.js (the shared picking rule)
-describe('pickShape / bounds / hitTest', () => {
-  test('the avatar diamond until the Spine model shows, then the chibi at its own measured height', async () => {
-    const v = view({ defId: 'char_p1', avatar: 'char_p1' }, { prep: true }, store({ spine: true, imageDelay: 50 }));
+// user playtest #4 item 1: picking is by tile (render/pick.js); bounds() is the body's screen rect for tooltips / overlays
+describe('bounds (view.pieceScreenRect)', () => {
+  test('a unit: 0.7 tile wide, from its head (UNIT.headroom) to just below its feet; an enemy by its model height', async () => {
+    const v = view({ defId: 'char_p1', avatar: 'char_p1' }, { prep: true });
     v.update(1 / 60, cam(), 0);
-    assert.equal(v.pickShape().kind, 'diamond', 'no model yet');
-    await tick(); await tick();
-    assert.ok(v.spineReady);
-    // the posed skeleton's bounds: 425.6 units above the feet = 1.33 tiles (UNIT.modelScale 1/320)
-    v.actor.spine.getLocalBounds = () => ({ x: -60, y: -425.6, width: 120, height: 430 });
-    v.update(1 / 60, cam(), 1 / 60);
-    const b = v.pickShape();
-    assert.equal(b.kind, 'chibi');
-    assert.ok(Math.abs(b.h - 1.33) < 1e-6, `measured height ${b.h}`);
-    assert.equal(b.w, 1, 'operators: the measured width profile');
-    assert.equal(b.x, v.screen.x); assert.equal(b.y, v.screen.y); assert.equal(b.s, v.screen.s);
-    assert.equal(b.depth, v.root.zIndex);
-    // measured once: a later pose (a raised weapon) does not move the outline
-    v.actor.spine.getLocalBounds = () => ({ x: -60, y: -700, width: 120, height: 700 });
-    v.update(1 / 60, cam(), 2 / 60);
-    assert.ok(Math.abs(v.pickShape().h - 1.33) < 1e-6);
-    // the outline tops out at the model; the tier chip (prep) is part of the pick shape, not of bounds()
+    const { x, y, s } = v.screen;
     const r = v.bounds();
-    assert.ok(Math.abs(r.y - (v.screen.y - 1.33 * v.screen.s)) < 1, 'bounds top = model top');
-    assert.ok(Math.abs(r.y + r.height - (v.screen.y + 0.08 * v.screen.s)) < 1, 'bounds bottom = just below the feet');
-    assert.ok(b.hud && b.hud.y1 < v.screen.y - v.screen.s, 'the chip is up at the head (UNIT.headroom)');
-    assert.ok(v.hitTest(v.screen.x, v.screen.y - 0.5 * v.screen.s), 'the torso');
-    assert.ok(!v.hitTest(v.screen.x + 0.6 * v.screen.s, v.screen.y - 0.5 * v.screen.s), 'beside it');
-    // a new model (Front ⇄ Back swap, _dropActor) is measured again
-    v._dropActor();
-    assert.equal(v._bodyH, null);
-  });
-
-  test('implausible skeleton bounds are clamped; enemies scale their width with their size', async () => {
-    const op = view({ defId: 'char_p2', avatar: 'char_p2' }, { prep: true }, store({ spine: true }));
-    await tick(); await tick();
-    op.actor.spine.getLocalBounds = () => ({ x: -500, y: -1200, width: 1000, height: 1200 }); // an effect in the idle pose
-    op.update(1 / 60, cam(), 0);
-    assert.equal(op.pickShape().h, 1.55, 'operators ≤ 1.55 tiles');
+    assert.ok(Math.abs(r.x - (x - 0.35 * s)) < 1e-6 && Math.abs(r.width - 0.7 * s) < 1e-6);
+    assert.ok(Math.abs(r.y - (y - 1.18 * s)) < 1e-6 && Math.abs(r.y + r.height - (y + 0.1 * s)) < 1e-6);
+    assert.equal(typeof v.pickShape, 'undefined', 'no hit shapes any more');
     const foe = view({ side: 'enemy', kind: 'enemy', defId: 'enemy_big' }, {}, store({ spine: true }));
     await tick(); await tick();
-    foe.actor.spine.getLocalBounds = () => ({ x: -300, y: -640, width: 600, height: 640 });
+    foe.actor.entry.bounds = { height: 640 }; // setup-pose bounds: 2 tiles (UNIT.modelScale 1/320) × 0.92
     foe.update(1 / 60, cam(), 0);
-    const b = foe.pickShape();
-    assert.ok(Math.abs(b.h - 2) < 1e-6);
-    assert.ok(Math.abs(b.w - 2 / 1.2) < 1e-6, 'width factor from the height');
-    assert.equal(b.hud, null, 'an undamaged enemy shows no bar');
-  });
-
-  test('a battle unit\'s bars are its HUD rect; a dead unit is not hit', async () => {
-    const v = view({ defId: 'char_p3', avatar: 'char_p3' }, {}, store({ spine: true }));
-    await tick(); await tick();
-    v.sync({ x: 5, y: 12, hp: 500, maxHp: 1000, sp: 3, spMax: 10, flags: 0, anim: 0, vx: 0 });
-    v.update(1 / 60, cam(), 0);
-    const hud = v.pickShape().hud;
-    assert.ok(hud && hud.x1 > hud.x0 && hud.y1 > hud.y0, 'HP / SP bars and chip');
-    assert.ok(hud.y1 < v.screen.y - v.screen.s, 'above the head');
-    v.die();
-    assert.equal(v.hitTest(v.screen.x, v.screen.y - 0.5 * v.screen.s), false);
+    const fr = foe.bounds();
+    assert.ok(Math.abs(fr.y - (foe.screen.y - foe._headTiles * foe.screen.s)) < 1e-6 && foe._headTiles > 1.5, 'its own height');
   });
 
   test('item plates: floating above the slot; centred on the pointer while dragged (lifted)', async () => {
@@ -262,16 +219,14 @@ describe('pickShape / bounds / hitTest', () => {
     const it = new ItemView(ctx, { id: 'p:9', uid: 9, defId: 'item_x', x: 3, y: 7 });
     it.setWorld(3, 7, 0.16);
     it.update(1 / 60, cam(), 0);
-    let b = it.pickShape();
-    assert.equal(b.kind, 'plate');
-    assert.ok(Math.abs(b.y - (it.screen.y - 0.31 * it.screen.s)) < 1e-6, 'resting: the plate above its anchor');
+    let r = it.bounds();
+    assert.ok(Math.abs(r.y + r.height - it.screen.y) < 1e-6, 'resting: the plate above its anchor');
     it.lift = 0.3;
     it.update(1 / 60, cam(), 0);
-    b = it.pickShape();
+    r = it.bounds();
     const g = cam().project(3, 7, 0.16);
-    assert.ok(Math.abs(b.x - g.x) < 1e-6 && Math.abs(b.y - g.y) < 1e-6, 'dragged: centred on its ground point (the pointer)');
+    assert.ok(Math.abs(r.x + r.width / 2 - g.x) < 1e-6 && Math.abs(r.y + r.height / 2 - g.y) < 1e-6, 'dragged: centred on its ground point (the pointer)');
     assert.equal(it.plate.anchor.y, 0.5);
-    assert.ok(it.hitTest(g.x, g.y));
   });
 });
 

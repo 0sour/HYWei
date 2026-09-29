@@ -123,7 +123,10 @@ the enemy (untargetable, not in snapshots), `wait` pauses, `appear` teleports.
 attack allies within the radius (a MELEE enemy only ever hits its blocker — data/enemies.json already zeroes their
 `rangeRadius`, the engine enforces it for any source; content may set `enemy.profile.melee = false`) (blocker → highest taunt → latest deployed; stealthed and `untargetable` allies are skipped for ranged shots)
 and pause `ATTACK_PAUSE` (0.35 s) after each unblocked attack; `fear`/`disarm` stop attacks; `dmgType 'none'` enemies
-never attack; `dmgType 'heal'` enemies heal the lowest-HP% enemy in their radius instead. Crates (stage devices with
+never attack; `dmgType 'heal'` enemies heal the lowest-HP% enemy in their radius instead. Content can take over an
+enemy's attack: `enemy.profile.deferHit` = the engine makes the attack (target, timing, the `'atk'` event) but deals no
+damage — the content's `attack` handler resolves it (帝国炮火先兆者's shells landing 3 s later, `content/enemies.js
+kitShell`); `enemy.profile.shot` = the `'atk'` event's projectile kind (`'mortar'`: no projectile drawn). Crates (stage devices with
 role `crate`, 100 HP) are ground obstacles; an enemy forced through one is blocked by it and destroys it. A device is
 present when data/stages.json says `active: true` (this wins over the level file's `hidden`: act1 m02's crates);
 research stages without `active` use `!hidden`. Active platforms/mounds (射击台, act1 m03) [ASSUMED, DATA §15.11] are
@@ -274,22 +277,26 @@ a custom buff with `flags.sleep` also blocks nothing and is untargetable/invulne
 
 **Element gauges** (`unit.elem = {burn, neural, apoptosis, erosion, necrosis}`; capacity `unit.gaugeMax` = 1000, enemy
 leaders (rank BOSS / boss units) 2000): deal `{ type:'element', element, amount }` (fires `elementHit` first; the gauge
-gain is × `elemTakenMul` × (1 − target `epDamageResistance`)). A full gauge bursts with the official effects, which
-depend on the side hit (constants.js `ELEMENT`):
+gain is × `elemTakenMul` × (1 − 损伤抵抗 / 100), 损伤抵抗 = the target's data `epResistance` — PRTS 元素 "受到的元素损伤 =
+损伤值 × (1 − 损伤抵抗 × 0.01)"). A full gauge bursts with the official effects, which depend on the side hit
+(constants.js `ELEMENT`):
 
 | element | operator hit by enemies (ba.dt.*) | enemy hit by operators ("·我方" ba.dt.*2) |
 |---|---|---|
 | `burn` 灼燃 | 1200 arts + RES −20, 10 s lock | 7000 元素伤害 + RES −20, 10 s lock |
-| `neural` 神经 | 1000 true + stun 10 s (10 s lock) | 6000 元素伤害 + 3 `palsy`, 10 s lock |
-| `apoptosis` 凋亡 | 15 s: no skill activation, −1 SP/s, 100 arts/s | 15 s: 50 % weaken recovering over the burst, 800 元素伤害/s |
-| `erosion` 侵蚀 | permanent DEF −100 (stacking `erosionDown`) then 800 phys; no lock | permanent DEF −120 then 5000 元素伤害, 8 s lock |
+| `neural` 神经 | stun 10 s, then 1000 true (10 s lock) | 3 `palsy`, then 6000 元素伤害, 10 s lock |
+| `apoptosis` 凋亡 | 15 s: 阻回 (`noSp`: no SP gain of any kind, skills.js) + 静默 (no skill activation), −1 SP/s, 100 arts/s | 15 s: 50 % weaken recovering over the burst, 800 元素伤害/s |
+| `erosion` 侵蚀 | permanent DEF −100 (stacking `erosionDown`) then 800 phys, 10 s lock | permanent DEF −120 then 5000 元素伤害, 8 s lock |
 | `necrosis` (legacy spare gauge) | 12 s: 100 true/s, ATK −20 % | same |
 
-The gauge stays full during the lock (`<el>Burst` buff) and resets when it ends. A burst that is still resolving counts
-as locked too (`unit.burstPending[el]`, `burstLocked(unit, el)` in damage.js): the `elementBurst` hook fires before the
-lock buff exists (and operator erosion has no lock), so same-element fills of that unit are refused until the burst has
-resolved — an `elementBurst` handler that spreads the element to neighbours (淤困 parasite) cannot bounce it back into
-a second burst. `battle.reduceElement(unit, amount, el?)` skips locked gauges.
+The lock (`<el>Burst` buff, flag `burstLock`) is the official **爆发冷却**: while it runs NO element of the unit fills or
+can be recovered (`battle.reduceElement(unit, amount, el?)` removes nothing) and the bursting gauge shows full; when it
+ends EVERY gauge of the unit resets to 0. A burst that is still resolving counts as locked too (`unit.burstPending[el]`,
+`burstLocked(unit)` in damage.js — it takes no element): the `elementBurst` hook fires before the lock buff exists, so
+fills of that unit are refused until the burst has resolved — an `elementBurst` handler that spreads the element to
+neighbours (淤困 parasite) cannot bounce it back into a second burst. `elementView(u, now)` (damage.js) is the one gauge
+a unit shows (b.snap `elem`, §9): the fullest one, ties by the official element id (`constants.js ELEMENT_ORDER`: 神经,
+侵蚀, 灼燃, 凋亡, then the legacy `necrosis`); during a 爆发冷却 the bursting element with fill 1 and the cooldown's end.
 **元素伤害** (element HP damage, e.g. "每秒受到…元素伤害") is the DamageInfo type `'elemental'` (+ optional `element` for the
 client colour): no DEF/RES/dodge, × source `dmgDealtMul` × target `dmgTakenMul` × `elemTakenMul`, shields absorb it.
 
@@ -407,7 +414,8 @@ or guard with a per-unit flag while dealing it. When the guard trips, the logged
   `NEVER` (alias `MANUAL`) — never auto-casts: the kit calls `unit.skill.activate(reason)` itself;
   `GDGLOW_SKILL_2`, `MLYSS_WTRMAN` and any unknown rule behave like DEFAULT. Units that never attack (bard, phalanx,
   librator) check DEFAULT every tick. Silence blocks activation. `gainSp` is ignored while a duration/ammo/toggle skill
-  runs (its bar shows the skill), whatever the reason.
+  runs (its bar shows the skill), whatever the reason, and — any reason but `'init'` — while the unit has the `noSp`
+  flag (阻回: "停止并阻止任意形式的技力回复"; the operators' 凋亡 burst, §3).
 - Kinds: `duration` (mods for `duration` s), `ammo` (mods until `ammo` attacks were made, optional duration cap),
   `instant` (onStart + optional one-shot attack override applied to the next attack), `charges` (instant with charges),
   `passive` (always on from deployment, no SP), `toggle` (stays on until death once activated).
@@ -705,11 +713,17 @@ Unknown subprofessions fall back to the profession default (test `professions.te
 
 ## 9. Wire format (snapshot.js, DESIGN §8.2)
 
-- `snapshot()` → `{ fieldId, t, units: [[id, x, y, hp, maxHp, sp, spMax, flags, anim]], dp, killed, total, dps?, boss? }`.
+- `snapshot()` → `{ fieldId, t, units: [[id, x, y, hp, maxHp, sp, spMax, flags, anim]], dp, killed, total, dps?, boss?, down?, elem? }`.
   `sp/spMax` show remaining duration/ammo as a draining bar while a timed skill is active. Units in DIE state stay 0.8 s.
+  `down: [[id, respawnAt, respawnTime, state]]` (only when non-empty) = knocked-out operators waiting to redeploy
+  (`Battle.isDown(u)`: reason `'killed'`, deployed at least once, a finite respawn timer; `state` = constants.js
+  `DOWN_STATE`: 0 counting, 1 timer done / DP short, 2 timer done / own tile taken); `elem: [[id, element, fill,
+  cooldownEnd, cooldown]]` (only when non-empty) = `elementView` of every unit with a gauge or a running 爆发冷却 (§3).
+  `fieldMeta()` lists the knocked-out operators too (a client joining mid-battle shows them; DESIGN §18.3).
 - `drainEvents()` tuples: `['spawn', UnitInfo]` (first appearance), `['deploy', id]` (every (re)deploy), `['atk', src, tgt, projKind]`
   (`none|arrow|bolt|bomb|lob|orb|drone|enemy|boomerang|chain|chainHeal`; a boomerang's way back has no event — the
-  renderer flies it back to the thrower at `BOOMERANG_RETURN_SPEED`), `['dmg', tgt, amount, type]` (`phys|arts|true|burn|neural|necrosis|apoptosis`),
+  renderer flies it back to the thrower at `BOOMERANG_RETURN_SPEED`; an enemy's `profile.shot` may name another kind,
+  e.g. `mortar` for 帝国炮火先兆者, which the renderer does not draw — its fx `bombardShell` is the shell), `['dmg', tgt, amount, type]` (`phys|arts|true|burn|neural|necrosis|apoptosis`),
   `['heal', tgt, amount]`, `['skill', id, 1|0]`, `['die', id, reason]`, `['leak', id]`, `['status', id, key, 1|0]`,
   `['fx', kind, x, y, extra]`, `['layer', playerId, bondId, n]`, `['bounty', playerId, coins]`.
 - `UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?, skillIndex? }` (`skillIndex`: an ally's equipped skill, DESIGN §16)

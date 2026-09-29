@@ -175,13 +175,13 @@ test('联防: an operator dead at the end of the helper\'s own combat stays out 
   const m = h.m;
   h.toPrep(1);
   const helper = h.ps('p_1');
-  // 赫默 (placeable summon) is knocked out in p_1's own combat; a second operator survives it
-  const t0 = legalTileFor(m, helper, 'chess_char_2_02_a');
-  const hemo = give(m, helper, 'chess_char_2_02_a', 'board', t0);
+  // 伺夜 (placeable talent summon 狼群) is knocked out in p_1's own combat; a second operator survives it
+  const t0 = legalTileFor(m, helper, 'chess_char_3_19_a');
+  const hemo = give(m, helper, 'chess_char_3_19_a', 'board', t0);
   const other = chessOfTier(1, (c) => c.position === 'RANGED').find((x) => m.pool.has(x));
   const alive = give(m, helper, other, 'board', legalTileFor(m, helper, other));
   const stack = helper.hand.find((p) => p && p.kind === 'token' && p.ownerUid === hemo.uid);
-  assert.ok(stack, '赫默 brought its summon stack');
+  assert.ok(stack, '伺夜 brought its summon stack');
   let placed = null;
   for (const [k] of helper.deployMap()) {
     const [r, c] = k.split(',').map(Number);

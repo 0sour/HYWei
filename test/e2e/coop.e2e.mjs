@@ -74,7 +74,12 @@ async function checkHud(c, where) {
   if (r.count != null) assert.equal(r.boardChess, r.count, `${tag}: deployCount = chess on board`);
   if (r.round > 0 && r.round <= r.lastRound) assert.equal(r.domRound, String(r.round), `${tag}: top bar round`);
   assert.equal(r.teamRows, r.players, `${tag}: one team row per player`);
-  if (r.domLp != null && !['FINAL_ASSAULT', 'HIDDEN_CORE'].includes(r.phase)) assert.equal(r.domLp, String(r.lp), `${tag}: top bar LP`);
+  if (r.domLp != null && ['COMBAT', 'UNITE'].includes(r.phase)) {
+    // live LP (DESIGN §17.5): while the own battle's enemies enter the blue gate the top bar already shows lp − the
+    // pending loss (≤ 10 a round), settled at SETTLE
+    const shown = Number(r.domLp);
+    assert.ok(shown <= r.lp && shown >= Math.max(0, r.lp - 10), `${tag}: top bar LP ${r.domLp} within the round's pending loss of ${r.lp}`);
+  } else if (r.domLp != null && !['FINAL_ASSAULT', 'HIDDEN_CORE'].includes(r.phase)) assert.equal(r.domLp, String(r.lp), `${tag}: top bar LP`);
   if (r.shopShown) {
     assert.equal(r.domFunds, String(r.funds), `${tag}: funds card`);
     assert.equal(r.domRemain, String(Math.max(0, r.cap - r.count)), `${tag}: 剩余可放置角色`);
@@ -962,7 +967,9 @@ describe('browser E2E against the real server', { skip: !ENABLED && 'needs Chrom
       for (let round = 1; round <= 3; round++) {
         const s0 = await c.waitFor((s) => (s.phase === 'PREP' && s.round === round && !s.ready) || (s.phase === 'SP_DRAFT' && s.round === round), `prep ${round}`, 90000);
         if (s0.phase === 'SP_DRAFT') {
+          // two taps (user playtest #4 item 2): select, then confirm on the selected card
           await c.click('.spcard.is-pickable');
+          await c.click('.spcard.is-armed');
           await c.waitFor((s) => s.phase === 'PREP' && !s.ready, `prep ${round} after 机变`, 30000);
         }
         await sleep(1800);
@@ -1126,6 +1133,7 @@ describe('browser E2E against the real server', { skip: !ENABLED && 'needs Chrom
             if (!seen.has(`sp-${c.label}-${s.round}`)) { seen.add(`sp-${c.label}-${s.round}`); await sleep(2000); await c.shot(`sp-r${s.round}`); }
             if (s.sp?.turn === s.me && (await c.exists('.spcard.is-pickable'))) {
               await c.click('.spcard.is-pickable');
+              await c.click('.spcard.is-armed');
               await c.waitFor((x) => x.sp?.turn !== x.me || x.phase !== 'SP_DRAFT', '机变 pick', 8000);
               did.sp += 1;
               c.note(`机变 picked (round ${s.round})`);
@@ -1238,6 +1246,7 @@ describe('browser E2E against the real server', { skip: !ENABLED && 'needs Chrom
           await sleep(2000);
           await solo.shot(`sp-r${round}`);
           await solo.click('.spcard.is-pickable');
+          await solo.click('.spcard.is-armed');
           await solo.waitFor((s) => s.phase === 'PREP' && !s.ready, `prep ${round} after 机变`, 30000);
           solo.note(`solo 机变 picked (round ${round})`);
         }
@@ -1314,6 +1323,7 @@ describe('browser E2E against the real server', { skip: !ENABLED && 'needs Chrom
           await ready(c);
         } else if (s.phase === 'SP_DRAFT' && (await c.exists('.spcard.is-pickable'))) {
           await c.click('.spcard.is-pickable', null, { optional: true, timeout: 2000 });
+          await c.click('.spcard.is-armed', null, { optional: true, timeout: 2000 });
         } else if ((s.phase === 'FINAL_ASSAULT' || s.phase === 'HIDDEN_CORE') && !bossShot) {
           await waitUnits(c, 8000);
           await sleep(1200);

@@ -1149,7 +1149,7 @@ const KITS = {
   },
 
   // ---- 3_15 巫恋 · 削弱者 (hidden) — S2 诅咒娃娃: places the doll (auto-placed on the tile of the range covering most
-  //      enemies; replaces any doll of hers still standing, the prep-phase board piece included) whose 3×3 aura lowers
+  //      enemies; replaces any doll of hers still standing — the doll is never a prep hand card) whose 3×3 aura lowers
   //      enemy ATK/DEF, gone after 15 s; 溃败暗示: low-HP enemies fragile
   chess_char_3_15_a: (bb, chess, def) => {
     const d = defOf(chess, def);
@@ -1171,8 +1171,8 @@ const KITS = {
           const life = num(tok?.skill?.duration, 0) > 0 ? tok.skill.duration : textNum(d.skill?.description, /(\d+)秒后自动销毁/, 15);
           const grid = tok?.rangeGrid ?? NINE;
           const reach = Math.max(1, ...grid.map((p) => Math.max(Math.abs(p[0]), Math.abs(p[1]))));
-          // "最多可库存1个" / deploy limit 1: the new doll replaces any doll of hers still standing (the board piece
-          // placed in the prep phase included) — withdrawn first so its tile is available again
+          // "最多可库存1个" / deploy limit 1: the new doll replaces any doll of hers still standing — withdrawn first
+          // so its tile is available again
           for (const t of tokensOf(battle, unit, tokenId)) if (t.alive) battle.retreat(t, { reason: 'expired', permanent: true });
           const foes = battle.aliveEnemies().filter((e) => !e.hidden);
           let best = null, bs = -1, bd = Infinity;

@@ -1,8 +1,12 @@
-// INFO_CHECK, band draft (order / skip / timeouts / 队友已选) and 机变 SP drafts (order / timers / auto-assign / effects).
+// INFO_CHECK, band draft (order / skip / one turn clock / timeouts / highlighted band / 队友已选) and 机变 SP drafts (order /
+// timers / auto-assign / effects); a single human (solo or co-op with AI teammates) is never timed outside battles.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ERR, PHASE } from '../../shared/constants.js';
 import { DATA, makeMatch, checkInvariants } from './harness.js';
+import { BAND_TURN_SECONDS } from '../../server/match/Match.js';
+
+const TURN_MS = BAND_TURN_SECONDS * 1000;
 
 test('INFO_CHECK: ends when every human confirmed (bots/departed count as ready) or at the 25 s deadline', () => {
   const h = makeMatch({ mode: 'coop', humans: 2, bots: 1, seed: 1 }).start();
@@ -61,16 +65,27 @@ test('band draft (co-op): random order, one pick per turn, NOT_YOUR_TURN, one sk
   m.dispose();
 });
 
-test('band draft timers: 12 s per turn → 华法琳; the 50 s step cap assigns the rest; bots pick by themselves', () => {
+test('band draft timers (user playtest #4 item 4): one countdown of BAND_TURN_SECONDS per turn → the highlighted band or 华法琳; AI seats pick at once; no step cap', () => {
   const h = makeMatch({ mode: 'coop', humans: 2, bots: 2, seed: 9 }).start();
   const m = h.m;
   m.handle('p_0', { t: 'g.infoReady' });
   m.handle('p_1', { t: 'g.infoReady' });
   h.sched.advance(1);
   assert.equal(m.phase, PHASE.BAND_DRAFT);
-  // humans never act: each human turn times out after 12 s; bots pick within ~1 s
-  h.run(() => m.phase !== PHASE.BAND_DRAFT, { maxTime: 60000 });
+  // humans never act: each human turn times out after BAND_TURN_SECONDS; bots pick at once (no bot turn is timed out)
+  const t0 = h.sched.now();
+  const seen = [];
+  h.onBroadcast.push((msg) => { if (msg.t === 'm.public' && msg.phase === PHASE.BAND_DRAFT && msg.draft) seen.push(msg); });
+  h.run(() => m.phase !== PHASE.BAND_DRAFT, { maxTime: 10 * TURN_MS });
   assert.equal(m.phase, PHASE.BATTLE_CHECK);
+  const took = h.sched.now() - t0;
+  assert.ok(took >= 2 * TURN_MS - 5 && took <= 2 * TURN_MS + 50, `two human turns of ${BAND_TURN_SECONDS} s each (${took} ms)`);
+  // every published draft view: the step's deadline IS the current turn's
+  assert.ok(seen.length > 0);
+  for (const pub of seen) {
+    assert.equal(pub.deadline, pub.draft.turnDeadline, 'one countdown');
+    assert.equal(pub.draft.turnSeconds, BAND_TURN_SECONDS);
+  }
   // a timeout gives 华法琳 while no teammate holds it, else the first free strategy by sortId — never 队友已选
   // (Match.defaultBand): replay the assignments in draft order
   const taken = new Set();
@@ -83,17 +98,22 @@ test('band draft timers: 12 s per turn → 华法琳; the 50 s step cap assigns 
   }
   assert.equal(new Set(Object.values(m.draft.picks)).size, 4, 'no duplicate strategies');
   m.dispose();
-  // overall cap: with 4 humans × 12 s > 50 s the last one is assigned at the cap
+  // 4 humans idle: 4 whole turns (the old 50 s step cap would have cut the last ones short)
   const h2 = makeMatch({ mode: 'coop', humans: 4, seed: 9 }).start();
   for (const ps of h2.m.players.values()) h2.m.handle(ps.playerId, { t: 'g.infoReady' });
   h2.sched.advance(1);
-  const t0 = h2.sched.now();
-  h2.run(() => h2.m.phase !== PHASE.BAND_DRAFT, { maxTime: 120000 });
-  assert.ok(h2.sched.now() - t0 <= 50000 + 5, `ended by the 50 s cap (${h2.sched.now() - t0} ms)`);
   const first = h2.m.draft.order[0];
-  assert.equal(h2.ps(first).bandId, 'band_bldsk', 'the first timeout gets 华法琳');
+  assert.deepEqual(h2.m.handle(first, { t: 'g.bandFocus', bandId: 'band_amiya' }), { ok: true });
+  const s0 = h2.sched.now();
+  h2.run(() => h2.m.phase !== PHASE.BAND_DRAFT, { maxTime: 10 * TURN_MS });
+  const took2 = h2.sched.now() - s0;
+  assert.ok(took2 >= 4 * TURN_MS - 5 && took2 <= 4 * TURN_MS + 50, `four turns (${took2} ms)`);
+  assert.equal(h2.ps(first).bandId, 'band_amiya', 'the first timeout takes the highlighted strategy');
+  assert.equal(h2.ps(h2.m.draft.order[1]).bandId, 'band_bldsk', 'the next one the official default');
   assert.equal(new Set([...h2.m.players.values()].map((ps) => ps.bandId)).size, 4, 'the rest get distinct free strategies');
   h2.m.dispose();
+  // data and code say the same: data/config.json timers.bandTurn (tools/build-data.mjs) = Match.BAND_TURN_SECONDS
+  assert.equal(DATA.config.timers.bandTurn, BAND_TURN_SECONDS);
 });
 
 test('band draft (solo): free pick, no timer, no skip; mode-restricted bands rejected', () => {
@@ -214,3 +234,43 @@ test('机变 tactic defaults: team cards reach teammates; layers / funds / free 
 });
 
 const awaitImport = await import('../../server/match/choices.js');
+
+test('a single human (a 同盟 room started alone or with AI teammates only) is never timed outside battles — user playtest #4 item 3', () => {
+  for (const bots of [0, 3]) {
+    const h = makeMatch({ mode: 'coop', difficulty: 'NORMAL', humans: 1, bots, seed: 12, fake: true, instant: false }).start();
+    const m = h.m;
+    assert.equal(m.soloUntimed, true);
+    assert.equal(m.isSolo, false, 'the co-op mode rules stay');
+    const seen = new Map(); // phase → deadlines published
+    const note = (pub) => { if (!seen.has(pub.phase)) seen.set(pub.phase, []); seen.get(pub.phase).push(pub.deadline); };
+    for (const msg of h.bc) if (msg.t === 'm.public') note(msg);
+    h.onBroadcast.push((msg) => { if (msg.t === 'm.public') note(msg); });
+    assert.equal(m.phase, PHASE.INFO_CHECK);
+    h.sched.advance(10 * 60_000);
+    assert.equal(m.phase, PHASE.INFO_CHECK, `briefing waits (${bots} AI)`);
+    m.handle('p_0', { t: 'g.infoReady' });
+    h.sched.advance(1);
+    h.run(() => m.draftTurn() === 'p_0', { maxTime: 1000 });
+    h.sched.advance(10 * 60_000);
+    assert.equal(m.phase, PHASE.BAND_DRAFT, 'the strategy draft waits');
+    assert.ok(h.drive(() => m.phase === PHASE.PREP && m.round === 2), 'reached PREP R2');
+    h.sched.advance(60 * 60_000);
+    assert.equal(m.phase, PHASE.PREP, 'prep waits');
+    assert.ok(h.drive(() => m.phase === PHASE.PREP && m.round === 4), 'past the R3 机变');
+    h.flushAll();
+    for (const ph of [PHASE.INFO_CHECK, PHASE.BAND_DRAFT, PHASE.BATTLE_CHECK, PHASE.ROUND_START, PHASE.SP_DRAFT, PHASE.PREP, PHASE.SETTLE]) {
+      assert.ok(seen.has(ph), `saw ${ph}`);
+      assert.ok(seen.get(ph).every((d) => d === 0), `${ph}: no countdown with a single human (${bots} AI): ${seen.get(ph)}`);
+    }
+    assert.ok(seen.get(PHASE.COMBAT).some((d) => d > 0), 'the battles keep their clock');
+    m.dispose();
+  }
+  // two humans: the co-op timers stay
+  const h = makeMatch({ mode: 'coop', humans: 2, bots: 1, seed: 12 }).start();
+  assert.equal(h.m.soloUntimed, false);
+  const pub = h.lastBc('m.public');
+  assert.equal(pub.deadline - pub.serverNow, 25000, 'INFO_CHECK 25 s');
+  h.toPrep(1);
+  assert.ok(h.m.deadline > 0, 'co-op prep is timed');
+  h.m.dispose();
+});

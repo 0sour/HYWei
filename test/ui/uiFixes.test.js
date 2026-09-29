@@ -1,6 +1,6 @@
 // Regression tests for in-match UI defects (round-1 hunt): terrain 机变 cards in the client placement mirror, the
 // result screen (hidden medal, rounds on a Hidden Core clear, remaining LP after the Final Assault), briefing bond
-// labels, watch targets, the view-switcher label, equipment dropped on an operator's sprite, illegal-drop reasons,
+// labels, watch targets, the view-switcher label, equipment dropped on an operator's tile, illegal-drop reasons,
 // full-hand shop cards, the solo exit text and htm's static vnode cache.
 
 import { test, describe } from 'node:test';
@@ -10,7 +10,7 @@ import { buildDeployMap } from '../../server/match/board.js';
 import { applyCard } from '../../server/match/choices.js';
 import {
   placementContext, canPlace, deploySets, stageOverrides, deployMap, effectiveStage, normalizeResult, disabledBondSets,
-  briefingBondTip, watchTarget, switcherLabel, pickPieceAt, equipRetarget, dropIntent, dropFailureReason, shopBlockReason,
+  briefingBondTip, watchTarget, switcherLabel, dropIntent, dropFailureReason, shopBlockReason,
   completesMerge, handFull, tileKey,
 } from '../../public/js/ui/gameLogic.js';
 import { PHASE, GEO } from '../../shared/constants.js';
@@ -202,27 +202,12 @@ describe('equipment dropped on an operator', () => {
   };
   const ctx = placementContext({ priv, stage: DATA.stages.act2autochess_m01, editable: true, getChess, getToken, getItem });
 
-  test('pickPieceAt: the rect whose centre is nearest (overlap → the nearer unit)', () => {
-    const rects = [
-      { uid: 1, left: 100, right: 160, top: 400, bottom: 520 }, // row 9 (nearer the camera: lower on screen)
-      { uid: 2, left: 100, right: 160, top: 350, bottom: 470 }, // row 10, behind
-    ];
-    assert.equal(pickPieceAt(rects, 130, 450), 1, 'overlap: the nearer unit');
-    assert.equal(pickPieceAt(rects, 130, 360), 2);
-    assert.equal(pickPieceAt(rects, 10, 10), null);
-    assert.equal(pickPieceAt(rects, NaN, 10), null);
-  });
-
-  test('an item released over the upper body (tile behind the unit) equips the unit', () => {
-    const elsewhere = { area: 'board', row: 10, col: 4 };
+  test('an item dropped on the unit\'s own tile equips it; the tile behind it (where its head is drawn) does not (user playtest #4 item 1: the tile decides)', () => {
     const head = { area: 'board', row: 11, col: 3 }; // the empty tile behind unit 2 (10,3), where its head is drawn
-    assert.equal(canPlace(ctx, 3, head).ok, false, 'the tile itself is empty');
-    const t = equipRetarget(ctx, 3, head, 2);
-    assert.deepEqual(t, { area: 'board', row: 10, col: 3 });
-    assert.deepEqual(dropIntent(ctx, 3, t), { t: 'g.equip', fields: { itemUid: 3, targetUid: 2 }, confirmReplace: false });
-    assert.deepEqual(equipRetarget(ctx, 3, elsewhere, null), elsewhere, 'no sprite under the pointer: unchanged');
-    assert.deepEqual(equipRetarget(ctx, 1, head, 2), head, 'units are not retargeted');
-    assert.deepEqual(equipRetarget(ctx, 3, null, 1), { area: 'board', row: 9, col: 3 }, 'a release off the grid over a unit');
+    assert.equal(canPlace(ctx, 3, head).ok, false, 'the tile itself is empty: nothing to equip there');
+    assert.equal(dropIntent(ctx, 3, head), null);
+    assert.deepEqual(dropIntent(ctx, 3, { area: 'board', row: 10, col: 3 }), { t: 'g.equip', fields: { itemUid: 3, targetUid: 2 }, confirmReplace: false });
+    assert.deepEqual(dropIntent(ctx, 3, { area: 'board', row: 9, col: 3 }), { t: 'g.equip', fields: { itemUid: 3, targetUid: 1 }, confirmReplace: false });
   });
 });
 

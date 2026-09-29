@@ -111,6 +111,19 @@
 .dstat__row { display: flex; align-items: baseline; min-width: 0; white-space: nowrap; }
 .dstat__v { font-size: .17rem; line-height: 1.15; color: #fff; }
 .dstat small { font-size: .11rem; color: var(--text-dim); margin-left: .04rem; }
+/* live stats (user playtest #4 item 7): buffed values green, debuffed red (the official card), the difference beside
+   them; a 实时 (battle) / 开战时 (prep preview) tag over the grid's right edge */
+.dstats.is-live, .dstats-wrap.is-live { margin-top: .14rem; }
+.dstats.is-live, .dstats-wrap.is-live .dstats { position: relative; }
+.dstat.is-up .dstat__v { color: #6dfa9c; text-shadow: 0 0 .08rem rgba(80, 240, 140, .35); }
+.dstat.is-up small { color: #56e08a; }
+.dstat.is-down .dstat__v { color: var(--red-premium); text-shadow: 0 0 .08rem rgba(255, 84, 84, .3); }
+.dstat.is-down small { color: #ff8a80; }
+.dstats__tag {
+  position: absolute; right: -1px; bottom: 100%; padding: .01rem .08rem; font-size: .11rem; font-weight: 700; letter-spacing: .1em;
+  color: var(--text-on-mint); background: var(--mint-500); pointer-events: auto; cursor: help;
+}
+.dstats__tag.is-battle { background: var(--orange); color: #1d0c00; }
 .drange { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .06rem; padding: .06rem .1rem; background: #0f1311; border: 1px solid var(--line); min-width: 1.1rem; }
 .rgrid { --rg: .14rem; display: grid; gap: 2px; }
 .rgrid i { width: var(--rg); height: var(--rg); border: 1px solid rgba(255, 255, 255, .06); }
@@ -370,6 +383,23 @@
   font-size: .14rem; font-weight: 700; letter-spacing: .2em; color: var(--mint-400); background: rgba(8, 11, 10, .85);
 }
 .spcard__busy::after { content: ''; position: absolute; left: 0; bottom: 0; width: 40%; height: 2px; background: var(--mint-400); animation: btn-busy 1.1s var(--ease-in-out) infinite; }
+/* two-tap pick (user playtest #4 item 2 — the shop's confirm language, game-shop.css .scard.is-armed): the selected card
+   lifts with a gold frame and a 确认选择 · 再次点击 strip; the others dim; the header shows 确认选择 */
+.spcard.is-armed, .spcard.is-armed:hover {
+  z-index: 2; transform: translateY(-.1rem) scale(1.03); border-color: var(--gold);
+  background: linear-gradient(180deg, rgba(255, 198, 0, .16), rgba(255, 198, 0, .04));
+  box-shadow: 0 0 0 2px var(--gold), 0 .14rem .32rem rgba(0, 0, 0, .6), 0 0 .3rem rgba(255, 198, 0, .35);
+}
+.spov.has-armed .spcard.is-pickable:not(.is-armed) { filter: brightness(.7); }
+.spov.has-armed .spcard.is-pickable:not(.is-armed):hover { filter: none; }
+.spcard__confirm {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; display: flex; flex-direction: column; align-items: center;
+  padding: .05rem 0 .05rem; background: linear-gradient(0deg, var(--gold), #e0a800); color: #1d1400; pointer-events: none;
+  animation: confirm-in var(--t-fast) var(--ease-out);
+}
+.spcard__confirm b { font-size: .18rem; font-weight: 900; letter-spacing: .22em; padding-left: .22em; }
+.spcard__confirm small { font-size: .11rem; letter-spacing: .1em; opacity: .75; }
+.spov__confirm { animation: pulse-gold 1.2s var(--ease-in-out) infinite; }
 
 /* Grid image boxes: definite 100% tracks so `height: 100%` images resolve against the box (an auto track would
    let non-square art overflow its frame). */

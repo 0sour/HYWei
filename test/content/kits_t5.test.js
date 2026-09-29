@@ -973,21 +973,27 @@ test('圣约送葬人 T1 受选之人: the extra attack consumes no ammo and nev
 });
 
 test('元素伤害 uses the engine elemental type: × elemTakenMul, never × trueTakenMul (烛煌 熔点引爆, 妮芙 失魂)', () => {
-  const h = makeBattle({
-    defs: { enemies: { enemy_dummy: dummy() } },
-    units: [{ chessId: 'chess_char_5_03_a', row: 9, col: 3 }, { chessId: 'chess_char_5_22_a', row: 11, col: 3 }],
-    enemies: [{ key: 'enemy_dummy', pos: [10, 5] }], hooks: ['damaged'], captureNoisy: true, autoFinish: false, timeLimit: 30,
-  });
-  const blaze = h.unit('chess_char_5_03_a'), nymph = h.unit('chess_char_5_22_a');
-  h.step();
-  const e = h.enemy('enemy_dummy');
-  h.b.addBuff(e, { key: 't:true', mods: { trueTakenMul: 2 } });
-  h.b.addBuff(e, { key: 't:elem', mods: { elemTakenMul: 1.5 } });
-  h.b.dealDamage(null, e, { type: 'element', element: 'burn', amount: 1000 });
-  const melt = tagged(h, 'blazeMelt', e);
+  // one battle per burst: after a burst the enemy's gauges stay locked for its 爆发冷却 (damage.js)
+  const arena = () => {
+    const h = makeBattle({
+      defs: { enemies: { enemy_dummy: dummy() } },
+      units: [{ chessId: 'chess_char_5_03_a', row: 9, col: 3 }, { chessId: 'chess_char_5_22_a', row: 11, col: 3 }],
+      enemies: [{ key: 'enemy_dummy', pos: [10, 5] }], hooks: ['damaged'], captureNoisy: true, autoFinish: false, timeLimit: 30,
+    });
+    h.step();
+    const e = h.enemy('enemy_dummy');
+    h.b.addBuff(e, { key: 't:true', mods: { trueTakenMul: 2 } });
+    h.b.addBuff(e, { key: 't:elem', mods: { elemTakenMul: 1.5 } });
+    return { h, e, blaze: h.unit('chess_char_5_03_a'), nymph: h.unit('chess_char_5_22_a') };
+  };
+  const a = arena();
+  a.h.b.dealDamage(null, a.e, { type: 'element', element: 'burn', amount: 1000 });
+  const melt = tagged(a.h, 'blazeMelt', a.e);
   assert.equal(melt.length, 1);
   assert.equal(melt[0].type, 'elemental');
-  approx(melt[0].amount, blaze.s.atk * tal(blaze, 0).ep_damage_scale * 1.5, 1e-6, 'meltdown × elemTakenMul only');
+  approx(melt[0].amount, a.blaze.s.atk * tal(a.blaze, 0).ep_damage_scale * 1.5, 1e-6, 'meltdown × elemTakenMul only');
+  clean(a.h);
+  const { h, e, nymph } = arena();
   h.b.dealDamage(null, e, { type: 'element', element: 'apoptosis', amount: 1000 });
   assert.ok(h.runUntil(() => tagged(h, 'nymphSoul', e).length > 0, 6));
   const soul = tagged(h, 'nymphSoul', e)[0];

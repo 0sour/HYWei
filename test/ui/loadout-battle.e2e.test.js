@@ -102,7 +102,10 @@ describe('user playtest #2 item 1 — loadout chosen in the UI fights in the loc
           tag: !!document.querySelector('.dpanel .dskill__name .dtag-loadout'),
           module: document.querySelector('.dpanel .dmodule')?.textContent || '',
           none: !!document.querySelector('.dpanel .dmodule.is-none'),
-          stats: Object.fromEntries([...document.querySelectorAll('.dpanel .dstat')].map((el) => [el.querySelector('.dstat__k')?.textContent, el.querySelector('.dstat__v')?.textContent])),
+          // the record (base) value: with live stats (user playtest #4 item 7: the start-of-battle preview) it is the
+          // cell's title "基础 N", else the value itself
+          stats: Object.fromEntries([...document.querySelectorAll('.dpanel .dstat')].map((el) => [el.querySelector('.dstat__k')?.textContent,
+            (el.getAttribute('title') || '').replace(/^基础 /, '') || el.querySelector('.dstat__v')?.textContent])),
           trait: document.querySelector('.dpanel .dtrait')?.textContent || '',
         })), () => null);
         if (detail) break;

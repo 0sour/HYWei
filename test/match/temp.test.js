@@ -201,7 +201,8 @@ test('a bot clears the temp contents it finds at the start of its prep and readi
       for (let i = 0; i < 12; i++) ctx.grantItem(PLAIN[i % PLAIN.length]);
     },
   });
-  const h = makeMatch({ mode: 'coop', difficulty: 'NORMAL', humans: 1, bots: 1, seed: 1507, fake: true, registry: reg }).start();
+  // two humans: the prep stays timed (a single human is untimed, Match.soloUntimed — user playtest #4 item 3)
+  const h = makeMatch({ mode: 'coop', difficulty: 'NORMAL', humans: 2, bots: 1, seed: 1507, fake: true, registry: reg }).start();
   const audit = attachAudit(h.m);
   const m = h.m;
   h.toPrep(2);

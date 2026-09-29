@@ -39,6 +39,9 @@
 // state().leaks → ui/hud.js liveLp → top bar + own team row; teammates' rows from m.public players[].pendingLp); while
 // the temp overflow row (临时整备区) holds pieces it is framed and labelled on the board (ui/underframe.js
 // TempRowNotice) and 准备就绪 / Space say why they are refused (item 3).
+// User playtest #4: the detail card shows live stats (item 7) — in battle the local sim's unit (battle/runner.js
+// unitStats), in prep an own board unit's start-of-battle stats (g.unitStats → m.unitStats); 机变 cards take two taps
+// (item 2, ui/choiceOverlay.js).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
 import { PHASE, GEO } from '../../../shared/constants.js';
@@ -70,7 +73,7 @@ import { pieceTile } from '../render/drag.js';
 import {
   phaseMode, phaseBanner, isCombatPhase, showDeadPill, isBossPhase, placementContext, canPlace, boardTargets, dropIntent,
   snapHud, activeBubbles, shortcutFor, shortcutBlocked, closesOnFieldPress, phaseTotalSeconds, homeFieldId, ownFieldId, normalizeSp, sortedPlayers,
-  countdownState, shopBlockReason, stageOverrides, effectiveStage, watchTarget, pickPieceAt, equipRetarget, dropFailureReason,
+  countdownState, shopBlockReason, stageOverrides, effectiveStage, watchTarget, dropFailureReason,
   previewEnemyKey, prepCamera, panelSide, panelSlots, bondPopupPlace, chessLoadout, unitLoadout,
 } from '../ui/gameLogic.js';
 import { toast } from '../ui/toasts.js';
@@ -312,8 +315,6 @@ function MatchScreen() {
   }, [view, ownView, ownStage, baseStage]);
   const staleFieldRef = useRef(null);
   const enteredFieldRef = useRef(null);
-  // drop target adjustment while dragging (equipment released over an operator's sprite → that operator)
-  const retargetRef = useRef((uid, target) => target);
   const pressSel = useRef(null);                         // the selected piece when the current field press began
   useEffect(() => {
     if (!view) return;
@@ -331,7 +332,7 @@ function MatchScreen() {
         setHud(null);
       }
       if (priv) {
-        view.setPrep(priv, { editable, canPlace: (uid, target) => canPlace(live.current.placeCtx, uid, retargetRef.current(uid, target)).ok });
+        view.setPrep(priv, { editable, canPlace: (uid, target) => canPlace(live.current.placeCtx, uid, target).ok });
         // stored facings (m.private board `dir`); the piece in the direction step shows the wheel's preview instead
         syncPieceDirs(view, priv, live.current.facing?.uid ?? null);
       }
@@ -590,46 +591,10 @@ function MatchScreen() {
   useEffect(() => {
     if (!view) return undefined;
     let moveOff = null;
-    // `over`: the render engine's own pick of the unit under the dragged item (pieceDragOver / pieceDrop `over`, the
-    // shared rule of render/pick.js at the plate) — undefined while the view does not report it (DOM fallback)
-    const ptr = { x: NaN, y: NaN, released: false, tile: null, unit: null, over: undefined };
-    const insideBar = (x, y) => {
-      const el = barRef.current;
-      if (!el || !Number.isFinite(x)) return false;
-      const r = el.getBoundingClientRect();
-      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
-    };
+    // the drop target is the tile under the pointer (render/drag.js; an item dropped on a unit's tile equips that unit —
+    // user playtest #4 item 1); `tile` = the last target tile (tileHover), `released` = the pointer went up (not a cancel)
+    const ptr = { released: false, tile: null };
     const lookups = { getChess: gd.chess, getToken: gd.token, getItem: gd.item, chessRecord: (rec) => chessLoadout(rec, live.current.priv?.loadout ?? null, gd.chess)?.record };
-    // own operator / summon under the dragged item (not the dragged piece): the engine's report, else the pieces'
-    // screen shapes at the pointer (ui/gameLogic.js pickPieceAt — the same rule; the tile under the pointer decides
-    // where no face / torso is hit)
-    const unitUnderPointer = (uid) => {
-      if (ptr.over !== undefined) return ptr.over === uid ? null : ptr.over;
-      const L = live.current;
-      if (typeof view.pieceScreenRect !== 'function' || !L.placeCtx || !Number.isFinite(ptr.x)) return null;
-      const rects = [];
-      for (const en of L.placeCtx.pieces.values()) {
-        if (en.piece.uid === uid || (en.area !== 'board' && en.area !== 'hand') || (en.piece.kind !== 'chess' && en.piece.kind !== 'token')) continue;
-        let r = null;
-        try { r = view.pieceScreenRect(en.piece.uid); } catch { r = null; }
-        if (r) rects.push({ uid: en.piece.uid, left: r.left, top: r.top, right: r.right, bottom: r.bottom, shape: r.shape || null, tile: pieceTile(en) });
-      }
-      const at = ptr.tile && Number.isInteger(ptr.tile.row) ? { row: ptr.tile.row, col: ptr.tile.col } : null;
-      return pickPieceAt(rects, ptr.x, ptr.y, at);
-    };
-    const retarget = (uid, target) => {
-      const L = live.current;
-      if (L.placeCtx?.pieces.get(uid)?.piece.kind !== 'item' || insideBar(ptr.x, ptr.y)) return target;
-      return equipRetarget(L.placeCtx, uid, target, unitUnderPointer(uid));
-    };
-    retargetRef.current = retarget;
-    /** Light the tile of the operator a dragged item would equip (the drop target highlight follows the plate). */
-    const markItemTarget = (uid) => {
-      const t = retarget(uid, null);
-      const unit = t && t.area === 'board' ? [[t.row, t.col]] : t && t.area === 'hand' ? [[GEO.HAND_ROW, t.idx]] : [];
-      const key = JSON.stringify(unit);
-      if (key !== ptr.unit) { ptr.unit = key; view.highlightTiles(unit, 'target'); }
-    };
     const runIntent = async (intent) => {
       const L = live.current;
       if (intent.confirmReplace) {
@@ -654,7 +619,6 @@ function MatchScreen() {
     };
     const endDrag = () => {
       moveOff?.(); moveOff = null;
-      ptr.over = undefined; // (a drop / drag end hands its own `over` in again)
       setDrag(null);
       view.highlightTiles(null, null);
     };
@@ -680,36 +644,20 @@ function MatchScreen() {
         const { legal } = boardTargets(L.placeCtx, entry.piece.uid);
         view.highlightTiles(null, null);
         view.highlightTiles(legal, 'legal');
-        ptr.released = false; ptr.tile = null; ptr.unit = null; ptr.over = undefined;
-        const isItem = entry.piece.kind === 'item';
-        // capture phase: the pointer position is current before the drag controller (canvas listener) asks canPlace
-        const onMove = (ev) => {
-          ptr.x = ev.clientX; ptr.y = ev.clientY;
-          if (isItem && ptr.over === undefined) markItemTarget(entry.piece.uid); // the engine reports via pieceDragOver
-        };
-        const onUp = (ev) => { ptr.x = ev.clientX; ptr.y = ev.clientY; ptr.released = true; };
-        window.addEventListener('pointermove', onMove, { passive: true, capture: true });
+        ptr.released = false; ptr.tile = null;
+        // capture phase: marked before the drag controller (canvas listener) ends the drag
+        const onUp = () => { ptr.released = true; };
         window.addEventListener('pointerup', onUp, { passive: true, capture: true });
-        moveOff = () => {
-          window.removeEventListener('pointermove', onMove, { capture: true });
-          window.removeEventListener('pointerup', onUp, { capture: true });
-        };
+        moveOff = () => window.removeEventListener('pointerup', onUp, { capture: true });
       }),
       view.on('tileHover', (t) => { ptr.tile = t && typeof t === 'object' ? t : null; }),
-      // the render engine's pick of the unit under a dragged item (sent before the drag asks canPlace)
-      view.on('pieceDragOver', (e) => {
-        if (!e || !live.current.placeCtx?.pieces.get(e.uid)) return;
-        ptr.over = Number.isInteger(e.over) ? e.over : null;
-        markItemTarget(e.uid);
-      }),
       view.on('pieceDrop', async (e) => {
         endDrag();
         const L = live.current;
         if (!e || !L.editable) return;
         const entry = L.placeCtx?.pieces.get(e.uid);
         if (!entry) return;
-        if ('over' in e) ptr.over = Number.isInteger(e.over) ? e.over : null;
-        const t = retarget(e.uid, e.target || {});
+        const t = e.target || {};
         if (t.area === 'outside') return; // no drag-to-sell (research 09 §5): the piece goes back
         const res = canPlace(L.placeCtx, e.uid, t);
         if (needsFacing(L.placeCtx, e.uid, t, res)) { openFacing(entry, t); return; }
@@ -720,8 +668,9 @@ function MatchScreen() {
         }
         await runIntent(intent);
       }),
-      view.on('pieceDragEnd', async (e) => {
-        // a cancelled drag (no pieceDrop) must not leave the sell zone / highlights behind
+      view.on('pieceDragEnd', (e) => {
+        // a cancelled drag (no pieceDrop) must not leave the highlights behind; a release on a tile that takes nothing
+        // (the drag controller found no legal target there) says why
         const released = ptr.released;
         const tile = ptr.tile;
         endDrag();
@@ -732,17 +681,6 @@ function MatchScreen() {
         const onOwnSlot = !!tile && ((src.area === 'board' && tile.area === 'board' && tile.row === src.row && tile.col === src.col)
           || (src.area !== 'board' && tile.area === src.area && (tile.idx ?? tile.col) === src.idx));
         if (onOwnSlot) return; // put back where it was
-        // released where the drag controller found no target: equipment over an operator's sprite still equips it,
-        // anything else says why it was refused
-        if ('over' in e) ptr.over = Number.isInteger(e.over) ? e.over : null;
-        const t = retarget(e.uid, null);
-        if (t) {
-          const res = canPlace(L.placeCtx, e.uid, t);
-          if (needsFacing(L.placeCtx, e.uid, t, res)) { openFacing(src, t); return; }
-          const intent = dropIntent(L.placeCtx, e.uid, t);
-          if (intent) { await runIntent(intent); return; }
-          if (res.code && res.code !== 'ALREADY') { refuse(res.reason); return; }
-        }
         const reason = dropFailureReason(L.placeCtx, e.uid, tile);
         if (reason) refuse(reason);
       }),
@@ -921,6 +859,45 @@ function MatchScreen() {
     const id = resolved?.unitId;
     const t = id != null ? snapUnitsRef.current.get(id) : null;
     return t ? { hp: t[3], max: t[4] } : null;
+  })();
+
+  // ---- live stats of the detail card (user playtest #4 item 7) ------------------------------------------------------
+  // battle: the local sim's unit (battle/runner.js unitStats — a getter the panel re-reads 4× a second; any unit of the
+  // battle on screen: own, a teammate's, an enemy). Prep: an own board unit's stats at the start of its next battle,
+  // asked from the server (g.unitStats → m.unitStats; only the newest request's answer counts) whenever m.private or the
+  // phase changes while such a card is open — the last answer stays on show until the next one lands
+  const [unitStats, setUnitStats] = useState(null);      // m.unitStats: { seq, round, units: Map<uid, entry> }
+  const statsSeqRef = useRef(0);
+  useEffect(() => net.on('m.unitStats', (msg) => {
+    if (!msg || msg.seq !== statsSeqRef.current || !Array.isArray(msg.units)) return;
+    setUnitStats({ seq: msg.seq, round: msg.round, units: new Map(msg.units.filter((u) => u && Number.isInteger(u.uid)).map((u) => [u.uid, u])) });
+  }), []);
+  const prepStatsUid = (phase === PHASE.PREP || phase === PHASE.SP_DRAFT || phase === PHASE.ROUND_START) && showPrep && alive
+    && !!resolved?.piece && (resolved.type === 'chess' || resolved.type === 'token') && placeCtx.pieces.get(resolved.piece.uid)?.area === 'board'
+    ? resolved.piece.uid : null;
+  useEffect(() => {
+    if (prepStatsUid == null) return undefined;
+    const t = setTimeout(() => {
+      statsSeqRef.current = (statsSeqRef.current % 1e9) + 1;
+      try { Promise.resolve(net.request('g.unitStats', { seq: statsSeqRef.current })).catch(() => {}); } catch { /* offline */ }
+    }, 120);
+    return () => clearTimeout(t);
+  }, [prepStatsUid, priv, phase]);
+  const liveStats = (() => {
+    if (prepStatsUid != null) {
+      const e = unitStats && unitStats.round === pub?.round ? unitStats.units.get(prepStatsUid) : null;
+      return e ? { ...e, src: 'prep' } : null;
+    }
+    // a battle unit's card, or an own board piece's card left open into the battle (its unit found by uid)
+    const id = resolved?.unitId;
+    const pieceUid = id == null && Number.isInteger(resolved?.piece?.uid) ? resolved.piece.uid : null;
+    if ((id == null && pieceUid == null) || !cc || !battleRunner || !field?.local || showPrep) return null;
+    const fid = field.fieldId;
+    return () => {
+      const uid = id ?? battleRunner.unitIdOf(pieceUid, myId, fid);
+      const e = uid != null ? battleRunner.unitStats(uid, fid) : null;
+      return e ? { ...e, src: 'battle' } : null;
+    };
   })();
 
   // ---- keyboard ---------------------------------------------------------------------------------------------
@@ -1102,7 +1079,7 @@ function MatchScreen() {
         onClose=${() => setBondOpen(null)} onMember=${(id) => setDetail({ kind: 'chess', id })} />` : null}
 
       ${resolved ? html`<${DetailPanel} detail=${resolved} snapHp=${snapHp} onClose=${() => { setDetail(null); setSel(null); }}
-        bonds=${stripBonds} loadout=${detailLoadout} side=${dSide} shopOpen=${shopOpen}
+        bonds=${stripBonds} loadout=${detailLoadout} side=${dSide} shopOpen=${shopOpen} live=${liveStats}
         onBond=${(id) => { setBondOpen((b) => (b === id ? null : id)); audio.sfx('click', { volume: 0.4 }); }} />` : null}
 
       ${selEntry && editable && !facing && !drag && showPrep ? html`<${Underframe} key=${sel.uid} view=${view} uid=${sel.uid}

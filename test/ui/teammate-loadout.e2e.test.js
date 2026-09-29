@@ -23,7 +23,9 @@ const readCard = (c, timeout = 2500) => c.page.waitForSelector('.dpanel .dskill_
   tag: !!document.querySelector('.dpanel .dskill__name .dtag-loadout'),
   module: document.querySelector('.dpanel .dmodule')?.textContent || '',
   none: !!document.querySelector('.dpanel .dmodule.is-none'),
-  stats: Object.fromEntries([...document.querySelectorAll('.dpanel .dstat')].map((el) => [el.querySelector('.dstat__k')?.textContent, el.querySelector('.dstat__v')?.textContent])),
+  // the record (base) value: a live card (user playtest #4 item 7) carries it as the cell's title "基础 N"
+  stats: Object.fromEntries([...document.querySelectorAll('.dpanel .dstat')].map((el) => [el.querySelector('.dstat__k')?.textContent,
+    (el.getAttribute('title') || '').replace(/^基础 /, '') || el.querySelector('.dstat__v')?.textContent])),
 }))).catch(() => null);
 
 describe('DESIGN §16 — a teammate\'s unit shows its owner\'s loadout (real server)', { skip: !ENABLED && 'set SP_E2E=1 (Chrome + public/assets)' }, () => {
@@ -80,6 +82,9 @@ describe('DESIGN §16 — a teammate\'s unit shows its owner\'s loadout (real se
       assert.deepEqual(await loOf(guest), { [BASE]: { skill: 0, module: 'none' } }, 'the guest\'s match loadout');
       assert.deepEqual(await loOf(host), {}, 'the host fights with the defaults');
       for (const c of [host, guest]) await c.click('.brief__foot .btn--primary', '准备就绪');
+      // the draft first (a client still in the briefing would count as done without picking: its turn then runs out —
+      // Match.BAND_TURN_SECONDS, 30 s each since user playtest #4 item 4)
+      for (const c of [host, guest]) await c.waitFor((s) => s.phase !== 'INFO_CHECK', 'band draft', 40000);
       const picked = new Set();
       const t0 = Date.now();
       while (picked.size < 2 && Date.now() - t0 < 120000) {

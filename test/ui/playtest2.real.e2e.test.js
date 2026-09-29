@@ -185,6 +185,22 @@ function battleViewState(c) {
   });
 }
 
+/**
+ * Wait for a prep matching `pred`; a 机变 draft on the way is picked with its two taps (user playtest #4 item 2) —
+ * a single human's 机变 is untimed (Match.soloUntimed, item 3): nothing picks it for them any more.
+ */
+async function untilPrep(c, pred, what, timeout = 90000) {
+  const t0 = Date.now();
+  for (;;) {
+    const left = Math.max(2000, timeout - (Date.now() - t0));
+    const s = await c.waitFor((x) => (x.phase === 'PREP' && pred(x)) || (x.phase === 'SP_DRAFT' && x.sp?.turn === x.me), what, left);
+    if (s.phase === 'PREP') return s;
+    await c.click('.spcard.is-pickable', null, { optional: true, timeout: 4000 });
+    await c.click('.spcard.is-armed', null, { optional: true, timeout: 4000 });
+    await c.waitFor((x) => x.phase !== 'SP_DRAFT' || x.sp?.turn !== x.me, '机变 picked', 15000);
+  }
+}
+
 function assertNoPen(v, tag) {
   assert.deepEqual(v.orphans, [], `${tag}: no stale unit sprite of another field`);
   assert.equal(v.penVisible, 0, `${tag}: no pen figure`);
@@ -216,7 +232,7 @@ describe('user playtest #2 item 6 — 前往查看 → 返回战场 in combat (r
       }
       let observed = false;
       for (let tries = 0; tries < 3 && !observed; tries++) {
-        const s0 = await c.waitFor((s) => s.phase === 'PREP' && !s.ready, 'prep', 90000);
+        const s0 = await untilPrep(c, (s) => !s.ready, 'prep');
         await sleep(1500);
         // the own field fights with everything the deploy cap allows: it clears its wave long before the idle AI's
         // enemies have walked their whole path
@@ -268,7 +284,7 @@ describe('user playtest #2 item 6 — 前往查看 → 返回战场 in combat (r
       }
       assert.ok(observed, `observed a teammate's battle and came back (${c.log.join(' | ')})`);
       // and the next prep: the board without the pen, the pen only with 🔍▶▶
-      const s1 = await c.waitFor((s) => s.phase === 'PREP', 'next prep', 90000);
+      const s1 = await untilPrep(c, () => true, 'next prep');
       await sleep(1500);
       assertNoPen(await battleViewState(c), `R${s1.round} prep after observing`);
       assert.deepEqual(problemsOf([c]), []);
@@ -344,6 +360,9 @@ describe('user playtest #2 item 10 — boss-round prep on the boss field (real s
       await host.click('.room-bar__right button', '开始模拟', { timeout: 20000 });
       for (const c of [host, guest]) await c.waitFor((s) => s.phase === 'INFO_CHECK', 'briefing', 30000);
       for (const c of [host, guest]) await c.click('.brief__foot .btn--primary', '准备就绪');
+      // the draft first (a client still in the briefing would count as done without picking: its turn then runs out —
+      // Match.BAND_TURN_SECONDS, 30 s each since user playtest #4 item 4)
+      for (const c of [host, guest]) await c.waitFor((s) => s.phase !== 'INFO_CHECK', 'band draft', 40000);
       // band draft: whoever's turn it is picks a free strategy
       const picked = new Set();
       const t0 = Date.now();

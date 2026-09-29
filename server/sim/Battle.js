@@ -18,13 +18,13 @@
 // Robustness: every content callback and every step phase is wrapped; errors are logged once per key and the
 // battle continues. After MAX_INTERNAL_ERRORS the battle force-ends as a timeout.
 
-import { TICK, ROWS, COLS, DP_DEFAULTS, MAX_BATTLE_TIME, MAX_INTERNAL_ERRORS, COLD_FREEZE_DURATION, OBSTACLE_DEVICES, EVENT_BUFFER_CAP, BOSS_ROW_OFFSET, MAX_HOOK_DEPTH, MAX_ALIVE_ENEMIES, LEVITATE_HALF_WEIGHT, RESIST_DEFAULT, RESIST_PALSY_DECAY } from './constants.js';
+import { TICK, ROWS, COLS, DP_DEFAULTS, DOWN_STATE, MAX_BATTLE_TIME, MAX_INTERNAL_ERRORS, COLD_FREEZE_DURATION, OBSTACLE_DEVICES, EVENT_BUFFER_CAP, BOSS_ROW_OFFSET, MAX_HOOK_DEPTH, MAX_ALIVE_ENEMIES, LEVITATE_HALF_WEIGHT, RESIST_DEFAULT, RESIST_PALSY_DECAY } from './constants.js';
 import { GEO } from '../../shared/constants.js';
 import { createRng } from './rng.js';
 import { Grid } from './grid.js';
 import { Unit } from './units.js';
 import { makeBuff, STATUS, RESIST_STATUSES } from './buffs.js';
-import { dealDamage as pipeDamage, heal as pipeHeal, applyHpLoss, makeDamageInfo, reduceElement, palsyBuff } from './damage.js';
+import { dealDamage as pipeDamage, heal as pipeHeal, applyHpLoss, makeDamageInfo, reduceElement, palsyBuff, elementView } from './damage.js';
 import { absoluteRangeKeys, canTargetEnemy } from './targeting.js';
 import { normDir, mirrorDir, localOrder, localBefore } from './dir.js';
 import { ProjectileSystem } from './projectiles.js';
@@ -1824,7 +1824,12 @@ export class Battle {
     return ev;
   }
 
-  /** Compact full snapshot of this field (DESIGN §8.2 b.snap). */
+  /**
+   * Compact full snapshot of this field (DESIGN §8.2 b.snap), plus (only when non-empty):
+   *   down: [[id, respawnAt, respawnTime, state]] — knocked-out operators waiting to redeploy on their own tile
+   *         (isDown): the game time their respawn timer ends, its length (s) and constants.js DOWN_STATE;
+   *   elem: [[id, element, fill, cooldownEnd, cooldown]] — the element gauge each unit shows (damage.js elementView).
+   */
   snapshot() {
     const snap = {
       fieldId: this.fieldId,
@@ -1839,14 +1844,51 @@ export class Battle {
       for (const p of this.players) snap.dps[p.playerId] = Math.floor(p.dp);
     }
     if (this.sharedBoss) snap.boss = { hp: Math.max(0, Math.round(this.sharedBoss.hp)), max: Math.round(this.sharedBoss.maxHp) };
+    const r2 = (v) => Math.round(v * 100) / 100;
+    let down = null;
+    for (const u of this.allyUnits) {
+      if (!this.isDown(u)) continue;
+      (down || (down = [])).push([u.id, r2(u.respawnAt), r2(Math.max(0, u.respawnAt - u.deathAt)), this._downState(u)]);
+    }
+    if (down) snap.down = down;
+    let elem = null;
+    for (const u of this.units) {
+      if (!u.alive || !u.deployed || u.hidden) continue;
+      const v = elementView(u, this.time);
+      if (v) (elem || (elem = [])).push([u.id, v[0], v[1], v[2], v[3]]);
+    }
+    if (elem) snap.elem = elem;
     return snap;
   }
 
-  /** Field meta for m.field: { fieldId, kind, rect, stageId, units: UnitInfo[] } */
+  /**
+   * A knocked-out operator waiting to redeploy on its own tile (DESIGN §5.5: after its respawn time, when the tile is
+   * free and DP ≥ cost): killed — not withdrawn, not removed for good — after it was deployed. The client keeps its
+   * model on the field knocked down with a redeploy countdown (b.snap `down`, render/units.js); summons, devices and
+   * enemies simply leave.
+   */
+  isDown(u) {
+    return !!u && u.side === 'ally' && u.kind === 'op' && !u.alive && !u.removed && u.removeReason === 'killed'
+      && u.deploySeq > 0 && Number.isFinite(u.respawnAt);
+  }
+
+  /** constants.js DOWN_STATE of a down operator: its timer runs, or it waits for its tile / the DP (_checkRedeploys). */
+  _downState(u) {
+    if (this.time + 1e-9 < u.respawnAt) return DOWN_STATE.COUNTING;
+    const occ = this._occ[u.homeR * COLS + u.homeC];
+    if (occ && occ.alive && occ !== u) return DOWN_STATE.WAIT_TILE;
+    const ps = this.getPlayer(u.ownerId);
+    return !ps || ps.dp + 1e-9 < u.base.cost ? DOWN_STATE.WAIT_DP : DOWN_STATE.COUNTING;
+  }
+
+  /**
+   * Field meta for m.field: { fieldId, kind, rect, stageId, units: UnitInfo[] } — the units on the field, knocked-out
+   * operators waiting to redeploy included (a client joining mid-battle shows them down).
+   */
   fieldMeta() {
     return {
       fieldId: this.fieldId, kind: this.kind, rect: { ...this.rect }, stageId: this.stageId,
-      units: this.units.filter((u) => u.alive && u.deployed && !u.hidden).map(unitInfo),
+      units: this.units.filter((u) => (u.alive && u.deployed && !u.hidden) || this.isDown(u)).map(unitInfo),
     };
   }
 

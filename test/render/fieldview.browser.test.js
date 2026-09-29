@@ -120,9 +120,9 @@ describe('field view features in headless Chrome', { skip }, () => {
       const clicks = [];
       const off = v.on('pieceClick', (e) => clicks.push(e));
       const pv = [...v.debug.penViews.values()].find((p) => !p.culled);
-      const b = pv.bounds();
       const rect = v.debug.app.view.getBoundingClientRect();
-      out.click = { x: rect.left + b.x + b.width / 2, y: rect.top + b.y + b.height * 0.6, key: pv.info.enemyKey };
+      // picking is by tile (user playtest #4 item 1): a press at the figure's feet, on its own tile
+      out.click = { x: rect.left + pv.screen.x, y: rect.top + pv.screen.y, key: pv.info.enemyKey };
       window.__clicks = clicks; window.__offClick = off;
       return out;
     });

@@ -142,11 +142,16 @@ describe('干员调配 overlay (real server, headless Chrome)', { skip: !ENABLED
   test('co-op briefing (review fix): the overlay shows the INFO_CHECK time left; an edit that misses the lock is told, not lost silently', async () => {
     const { ctx, page, problems } = await open();
     await page.evaluate(() => globalThis.__SP__.net.request('room.create', { mode: 'coop', difficulty: 'NORMAL' }));
-    await waitSt(page, (s) => !!s.room, 'room');
+    const { room } = await waitSt(page, (s) => !!s.room, 'room');
+    // a second human joins: a single human is untimed like solo (Match.soloUntimed, user playtest #4 item 3)
+    const mate = await open();
+    await mate.page.evaluate((code) => globalThis.__SP__.net.request('room.join', { code }), room);
+    await waitSt(mate.page, (s) => s.room === room, 'the teammate in the room');
+    await mate.page.evaluate(() => globalThis.__SP__.net.request('room.ready', { ready: true }));
     await page.evaluate(() => globalThis.__SP__.net.request('room.addBot', {}));
     await page.evaluate(() => globalThis.__SP__.net.request('room.start', {}));
     const brief = await waitSt(page, (s) => s.phase === 'INFO_CHECK', 'briefing');
-    assert.ok(brief.deadline > 0, 'co-op briefing is timed (25 s)');
+    assert.ok(brief.deadline > 0, 'co-op briefing (two humans) is timed (25 s)');
     await clickSel(page, '.brief [data-testid="loadout-open"]');
     await page.waitForSelector('.lo .lo-card', { visible: true, timeout: 15000 });
     // the briefing (and its countdown) is hidden under the overlay: the overlay carries the time left
@@ -156,8 +161,9 @@ describe('干员调配 overlay (real server, headless Chrome)', { skip: !ENABLED
     await page.waitForFunction(() => document.querySelectorAll('.lo-card').length === 1, { timeout: 5000 });
     await page.click('.lo-card');
     await page.waitForSelector('.lo-detail .lo-skill[data-skill="0"]', { visible: true });
-    // edit, and the briefing ends before the debounced send (every human ready: here the request stands in for the timer)
+    // edit, and the briefing ends before the debounced send (every human ready: the requests stand in for the timer)
     await page.click('.lo-detail .lo-skill[data-skill="0"]');
+    await mate.page.evaluate(() => globalThis.__SP__.net.request('g.infoReady', {}));
     await page.evaluate(() => globalThis.__SP__.net.request('g.infoReady', {}));
     await page.waitForFunction(() => !document.querySelector('.lo'), { timeout: 5000 });
     await page.waitForFunction(() => [...document.querySelectorAll('.toast__text')].some((e) => /下一局生效/.test(e.textContent)), { timeout: 5000 });
@@ -166,6 +172,8 @@ describe('干员调配 overlay (real server, headless Chrome)', { skip: !ENABLED
     const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('sp.pref.loadout')));
     assert.deepEqual(stored.entries[INSIDE], { skill: 0 }, 'kept for the next match');
     assert.deepEqual(problems, []);
+    assert.deepEqual(mate.problems, []);
+    await mate.ctx.close();
     await ctx.close();
   });
 

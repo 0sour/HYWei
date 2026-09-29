@@ -12,9 +12,8 @@ import {
   bondMembers, bannedPerBond, priceTone, mergeProgress, shopBlockReason, deploySets, indexPieces, placementContext, canPlace,
   boardTargets, dropIntent, normalizeDraft, normalizeSp, groupEnemies, factionTypes, snapHud, bossFrac, attackInterval, fmtNum,
   rangeGridBox, shortcutFor, sanitizeSettings, DEFAULT_SETTINGS, normalizeResult, cycleField, fieldLabel, homeFieldId,
-  activeBubbles, sortedPlayers, tileKey, prepCapsuleLabel, prepCamera, pickPieceAt, equipRetarget,
+  activeBubbles, sortedPlayers, tileKey, prepCapsuleLabel, prepCamera, dropFailureReason,
 } from '../../public/js/ui/gameLogic.js';
-import { presetCamera } from '../../public/js/render/projection.js';
 import { pairPlayers } from '../../server/match/finalAssault.js';
 import { PHASE, GEO } from '../../shared/constants.js';
 
@@ -101,6 +100,9 @@ describe('countdown', () => {
     assert.equal(phaseTotalSeconds({ phase: PHASE.SP_DRAFT, sp: { cards: [], picks: {} }, players: [] }, config), config.timers.spFirst);
     assert.equal(phaseTotalSeconds({ phase: PHASE.SP_DRAFT, sp: { cards: [{}, {}], picks: { a: 0 } }, players: [{ playerId: 'a' }] }, config), config.timers.spTurn);
     assert.equal(phaseTotalSeconds(null, config), null);
+    // the strategy draft: one countdown, the turn's (m.public.draft.turnSeconds; user playtest #4 item 4)
+    assert.equal(phaseTotalSeconds({ phase: PHASE.BAND_DRAFT, draft: { turnSeconds: 30 } }, config), 30);
+    assert.equal(phaseTotalSeconds({ phase: PHASE.BAND_DRAFT }, config), config.timers.bandTurn);
   });
 });
 
@@ -494,65 +496,21 @@ describe('prepCamera (research 09 §1.2: the Final Assault prep on the own half 
   });
 });
 
-// user playtest #3 item 7: equipment dropped on the operator standing behind another selected the one in front
-describe('pickPieceAt / equipRetarget (the unit under a dragged item)', () => {
-  // two operators in one column on the official prep camera: uid 1 on row 9 (front), uid 2 on row 10 (behind, same
-  // height); `shape` = the drawn body the render engine reports through view.pieceScreenRect
-  const cam = presetCamera('prep', { width: 1920, height: 1080 });
-  const unit = (uid, row, col) => {
-    const p = cam.project(col, row, 0);
-    const shape = { kind: 'chibi', x: p.x, y: p.y, s: p.s, h: 1.27, flip: 1, depth: -cam.depthOf(col, row, 0) * 100 + col * 0.001 };
-    // the pre-fix rect (0.7 × 1.28 tiles) — plain rects are what the DOM fallback reports
-    const rect = { left: p.x - 0.35 * p.s, right: p.x + 0.35 * p.s, top: p.y - 1.18 * p.s, bottom: p.y + 0.1 * p.s };
-    return { uid, row, col, p, shape, rect };
-  };
-  const A = unit(1, 9, 4), B = unit(2, 10, 4);
-  const engine = [A, B].map((u) => ({ uid: u.uid, ...u.rect, shape: u.shape, tile: { row: u.row, col: u.col } }));
-  const plain = [A, B].map((u) => ({ uid: u.uid, ...u.rect }));
-  const up = (u, k, dx = 0) => [u.p.x + dx * u.p.s, u.p.y - k * u.p.s];
-
-  test('engine shapes: the face / torso of each is its own; the lower half of the unit behind is no longer the front one\'s', () => {
-    for (const k of [1.0, 0.6, 0.35]) assert.equal(pickPieceAt(engine, ...up(B, k), { row: 10, col: 4 }), 2, `B ${k} tile up`);
-    for (const k of [0.86, 0.5, 0.1]) assert.equal(pickPieceAt(engine, ...up(A, k), { row: 9, col: 4 }), 1, `A ${k} tile up`);
-    // B's tile showing beside A's head: B (the old front-most rect gave A)
-    const side = up(B, 0, 0.3);
-    assert.equal(pickPieceAt(engine, ...side, { row: 10, col: 4 }), 2);
-    assert.equal(pickPieceAt(plain, ...side), 1, 'plain rects: the overlap still favours the nearer centre');
-    // off both bodies: the tile under the point decides
-    assert.equal(pickPieceAt(engine, ...up(B, 0, 0.47), { row: 10, col: 4 }), 2);
-    assert.equal(pickPieceAt(engine, ...up(B, 0, 0.47), { row: 10, col: 5 }), null);
-  });
-
-  test('plain rects (DOM fallback): the rect whose centre is nearest relative to its size, ties → the front-most', () => {
-    const rects = [
-      { uid: 1, left: 100, right: 160, top: 400, bottom: 520 }, // front (lower on screen)
-      { uid: 2, left: 100, right: 160, top: 350, bottom: 470 }, // behind
-    ];
-    assert.equal(pickPieceAt(rects, 130, 450), 1, 'nearer the front one\'s centre');
-    assert.equal(pickPieceAt(rects, 130, 430), 2, 'nearer the one behind (the front-most rule gave 1)');
-    assert.equal(pickPieceAt(rects, 130, 435), 1, 'equidistant: the front-most');
-    assert.equal(pickPieceAt(rects, 130, 360), 2);
-    assert.equal(pickPieceAt(rects, 10, 10), null);
-    assert.equal(pickPieceAt(rects, NaN, 10), null);
-    assert.equal(pickPieceAt(null, 1, 1), null);
-    assert.equal(pickPieceAt([{ uid: 'x', left: 0, right: 9, top: 0, bottom: 9 }, null], 5, 5), null);
-  });
-
-  test('equipRetarget sends the item to the unit the engine picked (hitUid), Arts never', () => {
-    const priv = {
-      alive: true, ready: false, funds: 10, deployCap: 8, deployCount: 2,
-      board: [piece(RANGED, { row: 9, col: 3 }), piece(RANGED, { row: 10, col: 3 })],
-      hand: [item(EQUIP), item(MAGIC), ...new Array(GEO.HAND_SIZE - 2).fill(null)],
-      temp: new Array(GEO.TEMP_SIZE).fill(null), shop: { slots: [] },
-    };
-    const ctx = placementContext({ priv, stage: STAGE, editable: true, getChess, getToken, getItem });
-    const [front, behind] = priv.board;
-    const [eq, art] = priv.hand;
-    const onFrontTile = { area: 'board', row: 9, col: 3 };
-    assert.deepEqual(equipRetarget(ctx, eq.uid, onFrontTile, behind.uid), { area: 'board', row: 10, col: 3 });
-    assert.deepEqual(dropIntent(ctx, eq.uid, equipRetarget(ctx, eq.uid, onFrontTile, behind.uid)).fields, { itemUid: eq.uid, targetUid: behind.uid });
-    assert.deepEqual(equipRetarget(ctx, art.uid, onFrontTile, behind.uid), onFrontTile, 'an Art is used on its tile');
-    assert.deepEqual(equipRetarget(ctx, eq.uid, onFrontTile, null), onFrontTile);
-    assert.deepEqual(equipRetarget(ctx, front.uid, onFrontTile, behind.uid), onFrontTile, 'units are not retargeted');
+// user playtest #4 item 1: a dragged item drops on the tile under the pointer (render/drag.js) and goes to the unit on
+// that tile — the highlighted tile; nothing is retargeted to a sprite drawn over another tile any more
+describe('equipment dropped on a tile goes to the unit on it', () => {
+  test('the operator on the drop tile (board or bench), not the one whose head is drawn there; an empty tile says why', () => {
+    const front = { ...piece(RANGED), row: 9, col: 3 }, behind = { ...piece(RANGED), row: 10, col: 3 };
+    const onBench = piece(RANGED);
+    const eq = item(EQUIP), art = item(MAGIC);
+    const ctx = ctxFor(privWith({ board: [front, behind], hand: [{ idx: 0, piece: eq }, { idx: 1, piece: art }, { idx: 4, piece: onBench }] }));
+    assert.deepEqual(dropIntent(ctx, eq.uid, { area: 'board', row: 9, col: 3 }).fields, { itemUid: eq.uid, targetUid: front.uid });
+    assert.deepEqual(dropIntent(ctx, eq.uid, { area: 'board', row: 10, col: 3 }).fields, { itemUid: eq.uid, targetUid: behind.uid });
+    assert.deepEqual(dropIntent(ctx, eq.uid, { area: 'hand', idx: 4 }).fields, { itemUid: eq.uid, targetUid: onBench.uid }, 'a bench operator');
+    // the empty tile behind `behind` (where its head is drawn) takes nothing — and the release says why
+    assert.equal(dropIntent(ctx, eq.uid, { area: 'board', row: 11, col: 3 }), null);
+    assert.equal(dropFailureReason(ctx, eq.uid, { row: 11, col: 3, area: 'board' }), '请将装备拖拽至干员身上');
+    // an Art is used on the tile under the pointer itself
+    assert.deepEqual(dropIntent(ctx, art.uid, { area: 'board', row: 11, col: 3 }), { t: 'g.art', fields: { itemUid: art.uid, row: 11, col: 3 } });
   });
 });

@@ -542,7 +542,9 @@ describe('real server + real browsers', { skip: !ENABLED && 'set SP_REAL_E2E=1 (
             const s = await c.st();
             if (s.phase === 'SP_DRAFT' && s.sp?.turn === s.me && (await c.exists('.spcard.is-pickable'))) {
               if (!seen.has(`sp-shot-${s.round}`)) { seen.add(`sp-shot-${s.round}`); await sleep(500); await c.shot(`sp-r${s.round}-${c.label}`); }
+              // two taps (user playtest #4 item 2): select, then tap the selected card again
               await c.click('.spcard.is-pickable');
+              await c.click('.spcard.is-armed');
               await c.waitFor((x) => x.sp?.turn !== x.me || x.phase !== 'SP_DRAFT', 'sp pick', 8000);
               spPicked += 1;
               c.note(`机变 picked (round ${s.round})`);

@@ -256,9 +256,10 @@ describe('client leftovers — real server', { skip: !ENABLED && 'set SP_E2E=1 (
 
       const itemsOf = () => c.page.evaluate((uid) => (globalThis.__SP__.store.get().match.private.board.find((p) => p.uid === uid)?.items || []).map((x) => ({ uid: x.uid, id: x.id })), unit.uid);
       const handItem = async (id) => (await c.handPieces('item')).find((p) => p.id === id) || null;
+      // an item goes to the unit on the tile it is dropped on (user playtest #4 item 1): the operator's own tile
       const dropItem = async (it) => {
-        for (const at of [0.5, 0.35, 0.7]) {
-          await c.drag(await c.piecePoint(it.uid, 0.5), await c.piecePoint(unit.uid, at));
+        for (let i = 0; i < 2; i++) {
+          await c.drag(await c.piecePoint(it.uid, 0.5), await c.tilePoint(tile.row, tile.col));
           await sleep(500);
           if (await c.exists('.eqr') || !(await handItem(it.id))) return;
         }

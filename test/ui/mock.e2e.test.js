@@ -245,11 +245,37 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
     await page.close();
   });
 
-  test('机变 pick, band pick, briefing ready', async () => {
+  test('机变 pick (two taps, user playtest #4 item 2), band pick, briefing ready', async () => {
     let { page, problems } = await open('phase=SP_DRAFT&variant=bounty');
     await page.click('.spcard.is-pickable');
+    await sleep(200);
+    // the first tap only selects: the card lifts with its 确认选择 strip, the header offers 确认选择, nothing was sent
+    assert.ok(await page.$('.spcard.is-armed .spcard__confirm'), 'selected (armed)');
+    assert.ok(await page.$('.spov__confirm'), 'the header confirm');
+    assert.ok(!(await page.$('.spcard.is-mine')), 'not picked yet');
+    assert.ok(!(await page.evaluate(() => globalThis.__MOCK__.S().requests.some(([t]) => t === 'g.choice'))), 'no g.choice after one tap');
+    // another card moves the selection; Esc drops it
+    const pickable = await page.$$('.spcard.is-pickable');
+    await pickable[1].click();
+    await sleep(150);
+    assert.equal(await page.$$eval('.spcard.is-armed', (els) => els.length), 1, 'one selection');
+    await page.keyboard.press('Escape');
+    await sleep(150);
+    assert.ok(!(await page.$('.spcard.is-armed')), 'Esc drops the selection');
+    // select, then tap the same card again: picked
+    await page.click('.spcard.is-pickable');
+    await sleep(150);
+    await page.click('.spcard.is-armed');
     await sleep(300);
     assert.ok(await page.$('.spcard.is-mine'), 'picked card marked');
+    // the header's 确认选择 confirms as well
+    await page.close();
+    ({ page, problems } = await open('phase=SP_DRAFT&variant=supply'));
+    await page.click('.spcard.is-pickable');
+    await sleep(150);
+    await page.click('.spov__confirm');
+    await sleep(300);
+    assert.ok(await page.$('.spcard.is-mine'), 'confirmed from the header');
     assert.deepEqual(problems, []);
     await page.close();
 
@@ -628,11 +654,12 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
     await page.close();
   });
 
-  test('engine: equipment released over an operator\'s upper body equips it', async (t) => {
+  test('engine: equipment dropped on an operator\'s tile equips it — the tile under the pointer decides (user playtest #4 item 1)', async (t) => {
     if (RENDER !== 'engine') { t.skip('SP_RENDER=fallback'); return; }
     const { page, problems } = await open('phase=PREP');
     await sleep(1500); // spine models
     const at = (uid, fy) => page.evaluate((u, f) => { const r = globalThis.__SP_VIEW__?.pieceScreenRect(u); return r && { x: r.left + r.width / 2, y: r.top + r.height * f }; }, uid, fy);
+    const tileAt = (row, col) => page.evaluate((r, c) => { const x = globalThis.__SP_VIEW__?.raw?.tileScreen?.(r, c); return x && { x: x.x, y: x.y }; }, row, col);
     const drag = async (from, to) => {
       await page.mouse.move(from.x, from.y);
       await page.mouse.down();
@@ -646,9 +673,9 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
     const items = s.hand.filter((x) => x && x.kind === 'item');
     assert.ok(targets.length && items.length, 'mock board has an unequipped operator and a hand item');
     const unit = targets[0];
-    await drag(await at(items[0].uid, 0.5), await at(unit.uid, 0.25));
+    await drag(await at(items[0].uid, 0.5), await tileAt(unit.row, unit.col));
     s = await mockState(page);
-    assert.ok(s.board.find((x) => x.uid === unit.uid).items.some((i) => i.uid === items[0].uid), 'equipped from the head');
+    assert.ok(s.board.find((x) => x.uid === unit.uid).items.some((i) => i.uid === items[0].uid), 'equipped: dropped on its tile');
     assert.deepEqual(problems, []);
     await page.close();
   });

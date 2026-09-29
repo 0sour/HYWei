@@ -713,19 +713,22 @@ test(`${nm('enemy_1042_frostd')}: operators within ${tb('enemy_1042_frostd', 'de
   assert.equal(h.unit('t_mage').s.aspd, 100);
 });
 
-test(`${nm('enemy_1040_bombd')}: bombs splash around the target; speeds up after the first throw`, () => {
-  const h = arena({ units: [{ chessId: 't_wall', row: 10, col: 5 }, { chessId: 't_wall2', row: 10, col: 6 }] });
+test(`${nm('enemy_1040_bombd')}: no normal attack; ONE bomb on the target + its 8 tiles, then move speed ×${skb('enemy_1040_bombd', 'boomb').bb.move_speed}`, () => {
+  // PRTS 暴鸰: "不进行普通攻击" · 投弹 "对目标及其周围八格的我方单位造成100%物理伤害 … 技能结束后移速最终提升至200% ※此技能仅能触发一次"
+  const h = arena({ units: [{ chessId: 't_wall', row: 10, col: 5 }, { chessId: 't_wall2', row: 10, col: 6 }, { chessId: 't_wall3', row: 12, col: 6 }] });
   h.step();
   const e = put(h, 'enemy_1040_bombd', [10, 7], { route: 2 });
-  const v0 = E.enemy_1040_bombd.stats.moveSpeed;
-  h.runUntil(() => e.stats.attacks >= 1, 10);
-  h.run(0.5);
-  assert.ok(h.unit('t_wall').stats.taken > 0 && h.unit('t_wall2').stats.taken > 0);
-  assert.equal(e.base.moveSpeed, 0);
-  approx(e.s.moveSpeed, 0);
-  assert.ok(e.findBuff('ab:bombRun'));
-  approx(e.findBuff('ab:bombRun').mods.moveMul, 1 + skb('enemy_1040_bombd', 'boomb').bb.move_speed);
-  assert.ok(v0 > 0);
+  const s = skb('enemy_1040_bombd', 'boomb');
+  h.run(s.initCooldown + 0.2);
+  const [w1, w2, w3] = ['t_wall', 't_wall2', 't_wall3'].map((id) => h.unit(id));
+  approx(w2.stats.taken, e.s.atk, 1e-6, 'the target (latest deployed in range): 100 % ATK');
+  approx(w1.stats.taken, e.s.atk, 1e-6, 'a tile next to it: splash 100 %');
+  assert.equal(w3.stats.taken, 0, 'two rows away: outside the 3×3');
+  assert.equal(e.stats.attacks, 0, 'never a normal attack');
+  approx(e.findBuff('ab:bombRun').mods.moveMul, s.bb.move_speed, 1e-9, '移速最终提升至200%');
+  h.run(20);
+  approx(w2.stats.taken + w1.stats.taken, 2 * e.s.atk, 1e-6, 'only once');
+  assert.equal(e.stats.attacks, 0);
 });
 
 for (const key of ['enemy_10083_hlbird', 'enemy_10084_hlegle', 'enemy_10085_hllevi_2']) {
@@ -738,6 +741,7 @@ for (const key of ['enemy_10083_hlbird', 'enemy_10084_hlegle', 'enemy_10085_hlle
     assert.equal(f.length, 1);
     approx(f[0].duration, tb(key, 'SelfFear.fear'));
     assert.ok(e.findBuff('ab:fearRun'));
+    approx(e.findBuff('ab:fearRun').mods.moveMul, tb(key, 'SelfFear.move_speed'), 1e-9, '移动速度最终提升至150%');
     h.b.dealDamage(null, e, { amount: 1, type: 'true' });
     assert.equal(statuses(h, e.id, 'fear').length, 1, 'only once');
   });
@@ -774,19 +778,66 @@ test(`${nm('enemy_1407_hummbd')}: death exposes nearby operators (damage taken �
   assert.equal(h.unit('t_wall2').s.dmgTakenMul, 1);
 });
 
-test(`${nm('enemy_9009_acfort')}: devours nearby normal flyers for ammo, then fires it all (ATK×1.3 per round)`, () => {
-  const h = arena({ units: [{ chessId: 't_wall', row: 10, col: 5 }] });
+test(`${nm('enemy_9009_acfort')}: grabs ≤ 3 normal flyers within 2.5 × range_radius for ammo, then fires one ATK×1.3 hit per ammo at random allies`, () => {
+  const h = arena({ units: [{ chessId: 't_wall', row: 10, col: 5 }, { chessId: 't_wall2', row: 12, col: 2 }] });
   h.step();
   const e = put(h, 'enemy_9009_acfort', [10, 7], { route: 2 });
   e.profile.noAttack = true;
-  const y1 = put(h, 'enemy_1005_yokai', [10, 7], { route: 2 });
-  const y2 = put(h, 'enemy_1005_yokai', [11, 7], { route: 2 });
-  const k = skb('enemy_9009_acfort', 'KillOthers');
-  h.run(k.initCooldown + k.bb.duration + 0.1);
-  assert.ok(!y1.alive && !y2.alive);
-  assert.ok(h.unit('t_wall').stats.taken >= 2 * e.s.atk * skb('enemy_9009_acfort', 'FireWeapon').bb.atk_scale - 1e-6 || e.mem.ab.ammo === 2);
-  h.run(skb('enemy_9009_acfort', 'FireWeapon').cooldown + 0.1);
-  approx(h.unit('t_wall').stats.taken, 2 * e.s.atk * skb('enemy_9009_acfort', 'FireWeapon').bb.atk_scale);
+  const k = skb('enemy_9009_acfort', 'KillOthers'), f = skb('enemy_9009_acfort', 'FireWeapon');
+  const R = k.bb.range_radius * 2.5;                                   // PRTS: 半径3.75 (2.5倍可变半径)
+  assert.equal(R, 3.75);
+  // four prey inside 3.75 (the nearest three are taken), one outside
+  const near = [[10, 7], [11, 7], [10, 9], [12, 10]].map((p) => put(h, 'enemy_1005_yokai', p, { route: 2 }));
+  const out = put(h, 'enemy_1005_yokai', [9, 2], { route: 2 });
+  assert.ok(Math.hypot(out.x - e.x, out.y - e.y) > R && Math.hypot(near[3].x - e.x, near[3].y - e.y) <= R);
+  h.run(k.initCooldown + 0.1);
+  assert.ok(e.findBuff('ab:grabbing')?.flags.bind, '黑云 holds still while grabbing');
+  h.run(0.5 + k.bb.duration + 0.1);
+  assert.deepEqual(near.map((y) => y.alive), [false, false, false, true], 'the nearest three are devoured');
+  assert.ok(out.alive, 'out of reach');
+  const w1 = h.unit('t_wall'), w2 = h.unit('t_wall2');
+  // 全弹发射 fires as soon as it has ammo: 3 hits of ATK×1.3, each on a random ally of the whole field
+  assert.ok(h.runUntil(() => w1.stats.taken + w2.stats.taken > 0, f.cooldown + 1));
+  h.run(0.1);
+  approx(w1.stats.taken + w2.stats.taken, 3 * e.s.atk * f.bb.atk_scale, 1e-6, 'one hit per ammo');
+  assert.equal(e.mem.ab.ammo, 0, 'all SP spent');
+  checkInvariants(h.b);
+});
+
+test(`${nm('enemy_1112_emppnt')} / 中枢: every attack is a shell that lands 3 s later on the target's spot (all allies within 1.2)`, () => {
+  for (const key of ['enemy_1112_emppnt', 'enemy_1112_emppnt_2']) {
+    const h = arena({ units: [{ chessId: 't_wall', row: 10, col: 6 }, { chessId: 't_wall2', row: 11, col: 6 }, { chessId: 't_wall3', row: 12, col: 6 }], captureNoisy: true });
+    h.step();
+    const e = put(h, key, [10, 7], { route: 2 });
+    assert.ok(h.runUntil(() => e.stats.attacks >= 1, 10), 'attacks');
+    const [w1, w2, w3] = ['t_wall', 't_wall2', 't_wall3'].map((id) => h.unit(id));
+    const t0 = h.b.time;
+    assert.equal(w1.stats.taken + w2.stats.taken + w3.stats.taken, 0, 'nothing on launch');
+    assert.ok(h.events.some((ev) => ev[0] === 'atk' && ev[1] === e.id && ev[3] === 'mortar'), 'attack event without a projectile');
+    const shell = h.eventsOf('fx').find((ev) => ev[1] === 'bombardShell');
+    assert.ok(shell, 'the shell fx (3 s flight)');
+    h.run(2.8);
+    assert.equal(w1.stats.taken + w2.stats.taken + w3.stats.taken, 0, 'still in the air');
+    h.run(0.3);
+    const hit = [w1, w2, w3].filter((w) => w.stats.taken > 0);
+    // the target (latest deployed in range 2) is t_wall3 or t_wall2; the blast covers every wall within 1.2 of it
+    assert.ok(hit.length >= 2 && hit.every((w) => Math.abs(w.stats.taken - e.s.atk) < 1e-6), `${key}: ${hit.map((w) => w.defId)}`);
+    assert.ok(h.b.time - t0 >= 3 - 1e-6);
+  }
+});
+
+test(`${nm('enemy_10084_hlegle')}: never attacks a flying ally (不会攻击飞行单位) — a ground one in range instead`, () => {
+  // a flying ally (the 炎佑 is one) deployed after the wall, so the engine's order (latest deployed) would pick it
+  const h = arena({ units: [{ chessId: 't_wall', row: 10, col: 6 }, { chessId: 't_wall2', row: 10, col: 8 }] });
+  h.step();
+  const w = h.unit('t_wall'), fly = h.unit('t_wall2');
+  fly.motion = 'FLY';
+  assert.ok(fly.isFlying && fly.deploySeq > w.deploySeq);
+  const e = put(h, 'enemy_10084_hlegle', [10, 7], { route: 2 });
+  assert.ok(h.runUntil(() => e.stats.attacks >= 1, 10));
+  h.run(0.5);
+  assert.equal(fly.stats.taken ?? 0, 0, 'the flyer is never hit');
+  assert.ok(w.stats.taken > 0, 'the ground wall is');
 });
 
 test(`${nm('enemy_1321_wdarft')} + ${nm('enemy_1269_nhfly')}: the apostle spawns seeds that dive onto operators and self-destruct`, () => {

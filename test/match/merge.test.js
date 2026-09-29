@@ -320,8 +320,9 @@ test('a merge completed during SETTLE (突变细胞) keeps its reward offer for 
 test('withdrawing a summoner with a full hand: its own summon stack frees the slot (onto the stack or anywhere)', () => {
   for (const onto of ['stack', 'other']) {
     const { m, ps } = prep(24);
-    const hemo = give(m, ps, 'chess_char_2_02_a');
-    const [r, c] = legalTileFor(m, ps, 'chess_char_2_02_a');
+    // 伺夜: its talent summon 狼群 is a hand card (a skill's summon such as 赫默's drone never is)
+    const hemo = give(m, ps, 'chess_char_3_19_a');
+    const [r, c] = legalTileFor(m, ps, 'chess_char_3_19_a');
     assert.deepEqual(m.handle('p_0', { t: 'g.move', uid: hemo.uid, to: { area: 'board', row: r, col: c } }), { ok: true });
     const stackIdx = ps.hand.findIndex((p) => p && p.kind === 'token' && p.ownerUid === hemo.uid);
     assert.ok(stackIdx >= 0, 'its summon stack went to the hand');

@@ -18,9 +18,18 @@
 //     and handed out by `takeEvents()` once renderT passes the stamp. Stale cosmetic events (> `eventMaxLag`
 //     game s behind) are dropped by the caller's choice (`isCosmeticEvent`); state events are always delivered.
 //
-// Snapshot tuple layout (DESIGN §8.2): [id, x, y, hp, maxHp, sp, spMax, flags, anim].
+// Snapshot tuple layout (DESIGN §8.2): [id, x, y, hp, maxHp, sp, spMax, flags, anim]. Two optional lists ride along
+// (server/sim/Battle.js snapshot, user playtest #4 items 8 / 9):
+//   * `elem` [[id, element, fill, cooldownEnd, cooldown]] — the element gauge a unit shows: appended to that unit's
+//     normalised tuple (EL…EL_DUR) and handed out by sample() as `el`, `elFill`, `elUntil`, `elDur` (from the older
+//     snapshot, like flags);
+//   * `down` [[id, respawnAt, respawnTime, state]] — knocked-out operators waiting to redeploy (they are no longer in
+//     `units`): downAt(time) returns the list of the snapshot at `time`.
+// Game times in both (`cooldownEnd`, `respawnAt`) are on the snapshots' clock, so a view compares them with renderT.
 
-export const TUPLE = Object.freeze({ ID: 0, X: 1, Y: 2, HP: 3, MAXHP: 4, SP: 5, SPMAX: 6, FLAGS: 7, ANIM: 8 });
+export const TUPLE = Object.freeze({ ID: 0, X: 1, Y: 2, HP: 3, MAXHP: 4, SP: 5, SPMAX: 6, FLAGS: 7, ANIM: 8, EL: 9, EL_FILL: 10, EL_UNTIL: 11, EL_DUR: 12 });
+/** Element keys a snapshot `elem` entry may carry (server/sim/constants.js ELEMENT_ORDER). */
+const ELEMENT_KEYS = new Set(['neural', 'erosion', 'burn', 'apoptosis', 'necrosis']);
 
 const MAX_EVENTS = 6000;
 const finite = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -42,8 +51,9 @@ export function frameTime(msg) {
 }
 
 /**
- * Validate & normalise a b.snap payload. Returns `{ t, units: Map<id, tuple>, raw }` or null when unusable.
- * Tuples with a non-finite id/x/y are skipped; other numbers default to 0.
+ * Validate & normalise a b.snap payload. Returns `{ t, units: Map<id, tuple>, down: [[id, respawnAt, respawnTime,
+ * state]] | null, raw }` or null when unusable. Tuples with a non-finite id/x/y are skipped; other numbers default
+ * to 0; a unit's `elem` entry (see header) is appended to its tuple; malformed `elem` / `down` entries are dropped.
  */
 export function normalizeSnapshot(snap) {
   if (!snap || typeof snap !== 'object') return null;
@@ -59,7 +69,21 @@ export function normalizeSnapshot(snap) {
     if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) continue;
     units.set(id, [id, x, y, finite(u[3]), finite(u[4]), finite(u[5]), finite(u[6]), finite(u[7]) | 0, finite(u[8]) | 0]);
   }
-  return { t, units, raw: snap };
+  if (Array.isArray(snap.elem)) {
+    for (const e of snap.elem) {
+      if (!Array.isArray(e) || !ELEMENT_KEYS.has(e[1])) continue;
+      const tu = units.get(e[0]);
+      if (tu && tu.length === 9) tu.push(e[1], clamp(finite(e[2]), 0, 1), finite(e[3]), Math.max(0, finite(e[4])));
+    }
+  }
+  let down = null;
+  if (Array.isArray(snap.down)) {
+    for (const d of snap.down) {
+      if (!Array.isArray(d) || !(typeof d[0] === 'number' || typeof d[0] === 'string')) continue;
+      (down || (down = [])).push([d[0], finite(d[1]), Math.max(0, finite(d[2])), finite(d[3]) | 0]);
+    }
+  }
+  return { t, units, down, raw: snap };
 }
 
 export class SnapshotBuffer {
@@ -213,9 +237,20 @@ export class SnapshotBuffer {
   }
 
   /**
+   * The `down` list (knocked-out operators waiting to redeploy, see header) of the snapshot shown at `time` (default
+   * renderT) — the same snapshot sample() reads flags from — or null.
+   */
+  downAt(time = this.renderT) {
+    const s = this.snaps;
+    if (!s.length || !Number.isFinite(time)) return null;
+    const ia = this._indexAt(time);
+    return s[ia < 0 ? 0 : ia].down || null;
+  }
+
+  /**
    * Interpolated state at `time` (default renderT). Fills and returns `out` (a Map id → sample object reused
-   * across calls: `{ id, x, y, hp, maxHp, sp, spMax, flags, anim, vx, vy, seen }`). Samples of units no longer
-   * present are deleted from `out`.
+   * across calls: `{ id, x, y, hp, maxHp, sp, spMax, flags, anim, vx, vy, seen, el, elFill, elUntil, elDur }` —
+   * `el` = the shown element gauge (null: none), see header). Samples of units no longer present are deleted from `out`.
    */
   sample(time = this.renderT, out = new Map()) {
     const s = this.snaps;
@@ -231,7 +266,7 @@ export class SnapshotBuffer {
     const stamp = A.t;
     for (const [id, a] of A.units) {
       let o = out.get(id);
-      if (!o) { o = { id, x: 0, y: 0, hp: 0, maxHp: 0, sp: 0, spMax: 0, flags: 0, anim: 0, vx: 0, vy: 0, seen: 0 }; out.set(id, o); }
+      if (!o) { o = { id, x: 0, y: 0, hp: 0, maxHp: 0, sp: 0, spMax: 0, flags: 0, anim: 0, vx: 0, vy: 0, seen: 0, el: null, elFill: 0, elUntil: 0, elDur: 0 }; out.set(id, o); }
       const b = B ? B.units.get(id) : null;
       if (b) {
         const dx = b[1] - a[1], dy = b[2] - a[2];
@@ -264,6 +299,7 @@ export class SnapshotBuffer {
       else if (!(o.hp > 0)) o.hp = 0;
       o.flags = a[7];
       o.anim = a[8];
+      if (a.length > 9) { o.el = a[9]; o.elFill = a[10]; o.elUntil = a[11]; o.elDur = a[12]; } else if (o.el !== null) { o.el = null; o.elFill = 0; o.elUntil = 0; o.elDur = 0; }
       o.seen = stamp;
     }
     for (const id of out.keys()) if (!A.units.has(id)) out.delete(id);

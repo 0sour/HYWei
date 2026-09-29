@@ -7,22 +7,25 @@
 //   → SP-on-hurt / TAKE_DAMAGE trigger → fatal/kill.
 // Phys: max(A − max(0, D×(1−defIgnorePct) − defIgnoreFlat), 5 %·A); Arts: max(A×(1 − R′/100), 5 %·A) with
 // R′ = max(0, R×(1−resIgnorePct) − resIgnoreFlat); True: A.
-// Element damage ('element' type + element) fills a gauge instead of HP (1000; enemy leaders 2000). A full gauge
-// bursts with the official term-table effects (constants.js ELEMENT), which differ by the side hit:
-//   operators (enemy damage):  burn 1200 arts + RES −20 10 s · neural 1000 true + stun 10 s · apoptosis 15 s: no skill
-//     activation, −1 SP/s, 100 arts/s · erosion 800 phys + permanent DEF −100.
-//   enemies (operator damage, "·我方"): burn 7000 元素伤害 + RES −20 (10 s) · neural 6000 元素伤害 + 3 麻痹 (10 s) ·
+// Element damage ('element' type + element) fills a gauge instead of HP (1000; enemy leaders 2000), reduced by the
+// target's 损伤抵抗 (data `epResistance`, a percentage: PRTS 元素 "受到的元素损伤 = 损伤值 × (1 − 损伤抵抗 × 0.01)").
+// A full gauge bursts with the official term-table effects (constants.js ELEMENT), which differ by the side hit:
+//   operators (enemy damage):  burn 1200 arts + RES −20 10 s · neural stun 10 s, then 1000 true · apoptosis 15 s: 阻回
+//     (noSp) + 静默 (no skill activation), −1 SP/s, 100 arts/s · erosion permanent DEF −100, then 800 phys (10 s).
+//   enemies (operator damage, "·我方"): burn 7000 元素伤害 + RES −20 (10 s) · neural 3 麻痹, then 6000 元素伤害 (10 s) ·
 //     apoptosis 15 s: 50 % weaken recovering over the burst + 800 元素伤害/s · erosion 5000 元素伤害 + permanent DEF −120 (8 s).
 //   necrosis (legacy spare gauge): 12 s of 100 true dmg/s and ATK −20 %.
-// The gauge stays locked (full) for the burst duration ("冷却") and resets to 0 when it ends. A burst that is still
-// resolving (its `elementBurst` hook runs before the `<el>Burst` lock exists; erosion on operators has no lock at all)
-// already counts as locked (`unit.burstPending[el]`): same-element fills of that unit are refused until it has resolved,
-// so a hook that spreads the element back (淤困 parasite hosts next to each other) cannot re-burst it recursively.
+// 爆发冷却 (PRTS 元素, "阻回" after a burst): for the burst's duration (the `<el>Burst` buff) NO element of the unit can
+// fill or be recovered (reduceElement) — the bursting gauge shows full — and when it ends EVERY gauge of the unit
+// resets to 0. A burst that is still resolving (its `elementBurst` hook runs before the `<el>Burst` lock exists) already
+// counts as locked (`unit.burstPending[el]`), so a hook that spreads an element back (淤困 parasite hosts next to each
+// other) cannot re-burst the unit recursively. The unit's shown gauge (the fullest, "当前损伤元素") and its cooldown
+// travel in b.snap `elem` (elementView).
 // 元素伤害 (HP damage of an element) is the DamageInfo type 'elemental' (+ optional `element` for display): no DEF/RES,
 // no dodge, × source dmgDealtMul × target dmgTakenMul × elemTakenMul. Sleeping units (沉睡: 无敌) take no damage
 // unless the attacker's profile has `hitSleep` or the damage carries `ignoreSleep`.
 
-import { MIN_DAMAGE_RATIO, ELEMENT, PALSY_MAX } from './constants.js';
+import { MIN_DAMAGE_RATIO, ELEMENT, ELEMENT_ORDER, PALSY_MAX } from './constants.js';
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -201,9 +204,46 @@ export function applyHpLoss(battle, source, target, amount, dmg) {
   return dealt;
 }
 
-/** Is `target`'s `el` gauge locked: its `<el>Burst` buff is up, or its burst is resolving right now (see header). */
-export function burstLocked(target, el) {
-  return !!(target.burstPending && target.burstPending[el]) || !!target.findBuff(el + 'Burst');
+/**
+ * Are `target`'s element gauges locked (爆发冷却, see header): a burst's `<el>Burst` lock is up (any element — the lock
+ * holds every gauge of the unit), or a burst of the unit is resolving right now. The element argument of older callers
+ * is ignored.
+ */
+export function burstLocked(target) {
+  const p = target.burstPending;
+  if (p) for (const k in p) if (p[k]) return true;
+  return !!target.s.flags.burstLock;
+}
+
+/** The burst lock buff (爆发冷却) running on `u`, or null. */
+function burstLockOf(u) {
+  let best = null;
+  for (const b of u.buffs) if (b.flags && b.flags.burstLock && (!best || b.timeLeft > best.timeLeft)) best = b;
+  return best;
+}
+
+/**
+ * The element gauge a unit shows (b.snap `elem`, render/units.js): null when every gauge is empty and no burst
+ * cooldown runs. Official display (PRTS 元素): one icon, the "当前损伤元素" — the fullest gauge (ties: the lower
+ * official element id, constants.js ELEMENT_ORDER) — with its remaining EP; during a 爆发冷却 the bursting element,
+ * refilling over the cooldown. Returns `[el, fill 0..1 (2 decimals), cooldownEnd (game s), cooldown (s)]`; the two
+ * cooldown numbers are 0 outside a cooldown. `now` = the battle time.
+ */
+export function elementView(u, now) {
+  const e = u.elem;
+  if (!e) return null;
+  const lock = u.s.flags.burstLock ? burstLockOf(u) : null;
+  if (lock) {
+    const el = lock.key.endsWith('Burst') ? lock.key.slice(0, -5) : 'burn';
+    const dur = Number.isFinite(lock.duration) && lock.duration > 0 ? lock.duration : 0;
+    const left = Number.isFinite(lock.timeLeft) ? Math.max(0, lock.timeLeft) : 0;
+    return [el in e ? el : 'burn', 1, Math.round((now + left) * 100) / 100, Math.round(dur * 100) / 100];
+  }
+  let best = null, bv = 0;
+  for (const k of ELEMENT_ORDER) { const v = e[k]; if (v > bv) { bv = v; best = k; } }
+  if (!best) return null;
+  const fill = Math.min(1, Math.max(0.01, Math.round((bv / u.gaugeMax) * 100) / 100));
+  return [best, fill, 0, 0];
 }
 
 /** Element gauge accumulation + burst. Fires `elementHit` { source, target, dmg } first (mutable amount/mul, cancel). */
@@ -218,7 +258,8 @@ export function applyElement(battle, source, target, dmg) {
     if (dmg.type !== 'element') return dealDamage(battle, source, target, dmg); // a handler converted it
   }
   const max = target.gaugeMax;
-  let amt = dmg.amount * dmg.mul * target.s.elemTakenMul * (1 - clamp01(target.def?.epDamageResistance ?? 0));
+  // 损伤抵抗 (official EP_RESISTANCE = data epResistance, a percentage)
+  let amt = dmg.amount * dmg.mul * target.s.elemTakenMul * (1 - clamp01((target.def?.epResistance ?? 0) / 100));
   if (!(amt > 0) || !Number.isFinite(amt)) return 0;
   target.elem[el] = Math.min(max, target.elem[el] + amt);
   battle._ev(['dmg', target.id, Math.round(amt), el]);
@@ -229,11 +270,12 @@ export function applyElement(battle, source, target, dmg) {
 }
 
 /**
- * A burst (see header): side-aware official effects; the `<el>Burst` buff locks the gauge for its duration. The unit
- * is marked `burstPending[el]` while the burst resolves (hook, lock, hits), so nothing re-bursts it in the meantime.
+ * A burst (see header): side-aware official effects; the `<el>Burst` buff is the 爆发冷却 that locks every gauge of the
+ * unit for its duration. The unit is marked `burstPending[el]` while the burst resolves (hook, lock, hits), so nothing
+ * re-bursts it in the meantime.
  */
 export function elementBurst(battle, source, target, el) {
-  if (!ELEMENT[el] || !target.alive || burstLocked(target, el)) return;
+  if (!ELEMENT[el] || !target.alive || burstLocked(target)) return;
   const pending = target.burstPending || (target.burstPending = {});
   pending[el] = true;
   try { resolveBurst(battle, source, target, el); } finally { pending[el] = false; }
@@ -242,7 +284,8 @@ export function elementBurst(battle, source, target, el) {
 function resolveBurst(battle, source, target, el) {
   const cfg = ELEMENT[el];
   target.elem[el] = target.gaugeMax;
-  const reset = () => { target.elem[el] = 0; };
+  // the cooldown's end restores every element of the unit ("随后单位所有种类的元素值恢复至最大值")
+  const reset = () => { for (const k of ELEMENT_ORDER) if (k in target.elem) target.elem[k] = 0; };
   battle.fx('burst', { x: target.x, y: target.y, id: target.id, element: el });
   if (battle._hooks.elementBurst) battle.emit('elementBurst', { source, target, element: el });
   if (!target.alive) { reset(); return; }
@@ -265,13 +308,14 @@ function resolveBurst(battle, source, target, el) {
     lock(c.duration, { mods: { resFlat: -c.resDown } });
     if (enemy) hit(c.elemDamage, 'elemental'); else hit(c.damage, c.type);
   } else if (el === 'neural') {
+    // PRTS 元素: the status first ("立刻获得等时长的眩晕" / "获得3层麻痹"), then the hit
     lock(c.duration);
     if (enemy) {
-      hit(c.elemDamage, 'elemental');
-      if (target.alive) battle.applyStatus(target, 'palsy', { value: c.palsy, source });
+      battle.applyStatus(target, 'palsy', { value: c.palsy, source });
+      if (target.alive) hit(c.elemDamage, 'elemental');
     } else {
-      hit(c.damage, c.type);
-      if (target.alive) battle.applyStatus(target, 'stun', { duration: c.stun, source, force: true });
+      battle.applyStatus(target, 'stun', { duration: c.stun, source, force: true });
+      if (target.alive) hit(c.damage, c.type);
     }
   } else if (el === 'apoptosis') {
     if (enemy) {
@@ -285,9 +329,9 @@ function resolveBurst(battle, source, target, el) {
         },
       });
     } else {
-      // 15 s: no skill activation, −1 SP per second, 100 arts damage per second
+      // 15 s of 阻回 ("停止并阻止任意形式的技力回复": noSp) + 静默 (no skill activation), −1 SP and 100 arts damage per second
       lock(c.duration, {
-        flags: { silence: true }, interval: 1,
+        flags: { silence: true, noSp: true }, interval: 1,
         onTick: () => {
           const sk = target.skill;
           if (sk && !sk.noSkill && sk.kind !== 'passive' && !(sk.active && sk.isTimed) && sk.sp > 0) sk.sp = Math.max(0, sk.sp - c.spLossPerSec);
@@ -296,7 +340,7 @@ function resolveBurst(battle, source, target, el) {
       });
     }
   } else if (el === 'erosion') {
-    // the permanent DEF cut lands first, then the hit
+    // the permanent DEF cut lands first, then the hit; both sides then have their cooldown (operators 10 s, enemies 8 s)
     lock(c.duration);
     battle.addBuff(target, { key: 'erosionDown', refresh: 'stack', stacks: 1, maxStacks: 1e6, mods: { defFlat: -c.defDown }, visible: true });
     if (enemy) hit(c.elemDamage, 'elemental'); else hit(c.damage, c.type);
@@ -309,12 +353,15 @@ export function palsyBuff(n) {
   return { key: 'palsy', refresh: 'stack', stacks, maxStacks: PALSY_MAX, visible: true, status: 'palsy' };
 }
 
-/** Reduce an element gauge (e.g. wandermedic "回复元素损伤"). Returns the amount removed. */
+/**
+ * Reduce an element gauge (e.g. wandermedic "回复元素损伤"). Returns the amount removed. Nothing recovers during a
+ * burst cooldown ("爆发冷却状态下，单位所有类型的元素值均无法损失、无法被其他手段回复").
+ */
 export function reduceElement(target, amount, el = null) {
   let removed = 0;
+  if (!target || !target.elem || burstLocked(target)) return 0;
   const els = el ? [el] : Object.keys(target.elem);
   for (const k of els) {
-    if (burstLocked(target, k)) continue;
     const take = Math.min(target.elem[k], amount - removed);
     if (take > 0) { target.elem[k] -= take; removed += take; }
     if (removed >= amount) break;

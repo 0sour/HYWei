@@ -1,7 +1,8 @@
 // server/sim/content/bonds/core.js — the 8 core bonds (核心盟约, research 02 §3.1–3.8), battle side + prep side.
 //
-//   炎 yanShip           members ATK ×(1 + base_atk + atk_per_stack·L); 6: one “炎佑” (30 % of the 炎 ATK / max HP sums
-//                        at battle start); 9: two 炎佑, ATK ×atk, damage taken ×(1 − damage_resistance)
+//   炎 yanShip           members ATK ×(1 + base_atk + atk_per_stack·L); 6: one “炎佑” (its template ATK / max HP + 30 %
+//                        of the 炎 ATK / max HP sums at battle start — PRTS "增加…（最终加算）"); 9: two 炎佑, ATK ×atk,
+//                        damage taken ×(1 − damage_resistance)
 //   萨尔贡 sargonShip    member skill start → every member on the field gets an independent stack (ASPD +base_attack_speed
 //                        for base_time + time_per_stack·L s, ≤ max_buff_stack_cnt); 6: each stack also ATK +base_atk
 //                        (additive, one atkMul); 6 + band_narant: instead lends the caster's equipment (tier ≤

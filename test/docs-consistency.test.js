@@ -5,8 +5,10 @@
 // synthetic zero, reconnect windows (co-op 10 min, solo singleReconnectTime 24 h), g.equip replaceUid + equipped items
 // locked, battleId unique per match, solo pause (g.pause / m.public.paused), road-over-floor lanes, module icons from
 // local art, 标准 = 战场#01 only; user playtest #3 (DESIGN §17): temp overflow kept until the first prep its player can
-// act in (never wiped at the round start), the 回环射手 boomerang and 蕾缪安's shells one by one, the shared picking
-// rule / drag target, the live LP, the detail card order and the static game data.
+// act in (never wiped at the round start), the 回环射手 boomerang and 蕾缪安's shells one by one, the live LP, the detail
+// card order and the static game data; user playtest #4 (DESIGN §18): picking by the tile under the pointer and the
+// dragged model held under it, a single human untimed, the strategy draft's one countdown, 机变 two taps, knocked-out
+// operators and the official element gauges, live stats, the shop-only items, skill summons, 炎佑.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -19,9 +21,10 @@ import { SOLO_RECONNECT_FALLBACK_SEC } from '../server/lobby.js';
 import { moduleTypeIconUrl } from '../public/js/ui/assetUrls.js';
 import { validateC2S } from '../shared/protocol.js';
 import { ERR, PHASE } from '../shared/constants.js';
-import { PROJECTILE_SPEEDS, BOOMERANG_RETURN_SPEED } from '../server/sim/constants.js';
+import { PROJECTILE_SPEEDS, BOOMERANG_RETURN_SPEED, ELEMENT, ELEMENT_ORDER, DOWN_STATE } from '../server/sim/constants.js';
 import { SUB } from '../server/sim/professions.js';
-import { BODY_H, PROBE_MARGIN } from '../public/js/render/pick.js';
+import { ENEMY_REACH } from '../public/js/render/pick.js';
+import { BAND_TURN_SECONDS } from '../server/match/Match.js';
 import { SPINE_EVICT_DELAY_MS, SPINE_QUIET_DELAY_MS } from '../public/js/assets.js';
 import { RETRY_DELAYS_MS } from '../public/js/data.js';
 import { DATA, makeMatch } from './match/harness.js';
@@ -227,14 +230,8 @@ test('回环射手 boomerang and 蕾缪安 S3 shells (user playtest #3 items 4�
   assert.match(SIM, /S3 礼炮·强制追思/);
 });
 
-test('picking, drag target, lost models, live LP, detail card order, static game data (user playtest #3): code and DESIGN §17 agree', () => {
-  assert.equal(BODY_H, 1.27, 'median chibi height (tiles)');
-  assert.equal(PROBE_MARGIN, 0.5);
-  assert.match(DESIGN, /`PROBE_MARGIN` 0\.5 tile/);
-  const app = readFileSync(join(ROOT, 'public/js/render/app.js'), 'utf8');
-  assert.match(app, /export const TOUCH_LIFT_TILES = 0\.6;/);
-  assert.match(DESIGN, /`TOUCH_LIFT_TILES` = 0\.6 tile above the finger/);
-  assert.match(DESIGN, /render\/pick\.js/);
+test('lost models, live LP, detail card order, static game data (user playtest #3): code and DESIGN §17 agree', () => {
+  assert.match(DESIGN, /### 17\.2 Picking and the drag target \(#7\) — superseded by §18\.1/);
   assert.equal(SPINE_EVICT_DELAY_MS, 1000);
   assert.equal(SPINE_QUIET_DELAY_MS, 3000);
   assert.match(DESIGN, /`SPINE_EVICT_DELAY_MS` \(1 s\)/);
@@ -250,4 +247,59 @@ test('picking, drag target, lost models, live LP, detail card order, static game
   assert.match(DESIGN, /`ownLeaks\(local, server\)`/);
   assert.match(PLAYING, /顶栏的目标生命值会\*\*立即\*\*显示扣除后的数值/);
   assert.match(README, /漏怪时顶栏的目标生命值实时减少/);
+});
+
+test('user playtest #4 (DESIGN §18): picking by tile, timers, 机变 two taps, down / element state, content — code and every doc agree', () => {
+  // #1 the tile under the pointer; the dragged model held under the pointer (no touch lift, probe or body shapes)
+  assert.equal(ENEMY_REACH, 0.6);
+  const app = readFileSync(join(ROOT, 'public/js/render/app.js'), 'utf8');
+  assert.match(app, /export const DRAG_HOLD_TILES = 0\.45;/);
+  assert.ok(!/TOUCH_LIFT_TILES|drawnAt|pickShape|pieceDragOver/.test(app), 'no touch lift, pixel probe or body shapes (user playtest #4 item 1)');
+  assert.match(DESIGN, /`DRAG_HOLD_TILES` = 0\.45 tile/);
+  assert.match(DESIGN, /`ENEMY_REACH` 0\.6 tile/);
+  assert.match(DESIGN, /render\/pick\.js/);
+  assert.ok(!/pieceDragOver'\|/.test(DESIGN), 'DESIGN §9: no pieceDragOver event');
+  assert.match(README, /按地上的方格/);
+  for (const [name, text] of [['README', README], ['PLAYING', PLAYING]]) {
+    assert.ok(!/画面上实际画出的干员/.test(text), `${name}: no body picking`);
+    assert.ok(!/模型抬高到手指上方|模型在手指上方/.test(text), `${name}: no touch lift`);
+  }
+  // #3 a single human is untimed outside battles (code + docs)
+  const lone = makeMatch({ mode: 'coop', difficulty: 'FUNNY', humans: 1, bots: 1, seed: 8, fake: true }).start();
+  assert.equal(lone.m.soloUntimed, true);
+  assert.equal(lone.m.publicView().deadline, 0, 'no briefing countdown');
+  lone.m.dispose();
+  assert.match(DESIGN, /solo and any single-human match untimed/);
+  assert.match(META, /solo \/ single human untimed/);
+  assert.match(PLAYING, /只有你一名玩家/);
+  // #4 one countdown: BAND_TURN_SECONDS per turn (code = data = docs)
+  assert.equal(BAND_TURN_SECONDS, 30);
+  assert.equal(DATA.config.timers.bandTurn, BAND_TURN_SECONDS);
+  assert.match(DESIGN, /`BAND_TURN_SECONDS` 30 s per turn = m\.public\.deadline/);
+  assert.match(META, /`Match\.BAND_TURN_SECONDS` 30/);
+  assert.match(PLAYING, /\*\*每人 30 秒\*\*/);
+  assert.ok(!/12 s\/turn/.test(DESIGN) && !/`bandTurn` 12/.test(META) && !/每人 12 秒/.test(PLAYING), 'the old 12 s turn is gone');
+  assert.match(META, /`ev\.preview` true/, 'META: onBattleStart handlers must not change the match for the stats preview');
+  // #2 机变 two taps
+  assert.match(PLAYING, /选卡要\*\*点两次\*\*/);
+  assert.match(README, /机变选卡/);
+  // #8 / #9 element gauges (爆发冷却) and knocked-out operators
+  assert.equal(ELEMENT.erosion.ally.duration, 10, 'operators\' 侵蚀 burst has its 10 s cooldown');
+  assert.deepEqual(ELEMENT_ORDER.slice(0, 4), ['neural', 'erosion', 'burn', 'apoptosis']);
+  assert.deepEqual({ ...DOWN_STATE }, { COUNTING: 0, WAIT_DP: 1, WAIT_TILE: 2 });
+  assert.match(DESIGN, /\*\*爆发冷却\*\*/);
+  assert.match(DESIGN, /`down: \[\[id, respawnAt \(game s\), respawnTime \(s\), state\]\]`/);
+  assert.match(SIM, /`burstLocked\(unit\)` in damage\.js/);
+  assert.match(SIM, /损伤抵抗 = the target's data `epResistance`/);
+  assert.ok(!/800 phys; no lock/.test(SIM), 'SIM §3: operators\' 侵蚀 locks too');
+  assert.match(SIM, /`down: \[\[id, respawnAt, respawnTime, state\]\]`/);
+  // #5 / #11 / #12 data rules
+  const special = DATA.items.chess_item_4_09_e_a;
+  assert.ok(special.shopExcluded && special.shopExcludedBy, '灼燃维式重锤 is never sold');
+  assert.match(dataRow('shopExcluded`, `shopExcludedBy'), /isShopItem/);
+  assert.match(PLAYING, /突变细胞只来自昆图斯的策略/);
+  assert.equal(DATA.tokens.token_10000_silent_healrb.placeable, false, '赫默\'s drone is no hand piece');
+  assert.match(dataRow('displayType`, `placeable'), /DEFAULT \*\*and\*\* a talent summon/);
+  assert.ok(!/ATK\/HP are \*\*replaced\*\*/.test(DATA_MD), 'DATA: 炎佑 stats are added (最终加算)');
+  assert.match(DESIGN, /with no enemy on the field it stays where it is/);
 });

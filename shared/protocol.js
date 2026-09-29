@@ -171,6 +171,49 @@ export function resolveLoadout(loadout, chess, getChess) {
   return { skillIndex, moduleId };
 }
 
+// ---- unit stats (user playtest #4 item 7): m.unitStats units and the browser battle's live stats ---------------------
+
+const fin = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+const round1 = (v) => Math.round(v * 10) / 10;
+const round2 = (v) => Math.round(v * 100) / 100;
+/** Attack interval (s) of a stats object: its own `interval`, else bat × 100 / aspd (null without an attack time). */
+const intervalOf = (x) => {
+  if (Number.isFinite(x.interval) && x.interval > 0) return round2(x.interval);
+  const bat = fin(x.bat, 0);
+  const aspd = fin(x.aspd, 100) > 0 ? fin(x.aspd, 100) : 100;
+  return bat > 0 ? round2((bat * 100) / aspd) : null;
+};
+const statView = (x) => ({
+  maxHp: Math.round(fin(x.maxHp)), atk: Math.round(fin(x.atk)), def: Math.round(fin(x.def)), res: round1(fin(x.res)),
+  interval: intervalOf(x), blockCnt: Math.max(0, Math.round(fin(x.blockCnt))), moveSpeed: round2(fin(x.moveSpeed)),
+});
+
+/**
+ * The detail card's stats of a sim unit (server/sim/units.js Unit): its effective stats `s` (the aggregated `unit.s`,
+ * or the last ones the sim computed) next to its own `unit.base` (no buffs) — max HP, ATK, DEF, RES, attack interval
+ * (s), block, move speed — rounded for display (the sim keeps floats), plus the current HP. The shape of the
+ * `m.unitStats` units (Match.unitStats: what the board's units start their next battle with) and of the browser
+ * runner's live battle stats (public/js/battle/runner.js unitStats).
+ * @param {{ id?: number, uid?: number|null, defId?: string, hp?: number, alive?: boolean, base?: any } | null} u
+ * @param {any} [s] aggregated stats (missing ⇒ the base)
+ * @returns {{ id: number|null, uid: number|null, defId: string|null, hp: number, alive: boolean, maxHp: number, atk: number,
+ *   def: number, res: number, interval: number|null, blockCnt: number, moveSpeed: number,
+ *   base: { maxHp: number, atk: number, def: number, res: number, interval: number|null, blockCnt: number, moveSpeed: number } }}
+ */
+export function unitStatsEntry(u, s = null) {
+  const base = u && u.base && typeof u.base === 'object' ? u.base : {};
+  const cur = s && typeof s === 'object' ? s : base;
+  return {
+    id: Number.isInteger(u?.id) ? u.id : null,
+    uid: Number.isInteger(u?.uid) ? u.uid : null,
+    defId: typeof u?.defId === 'string' ? u.defId : null,
+    hp: Math.max(0, Math.round(fin(u?.hp))),
+    alive: u?.alive !== false,
+    ...statView(cur),
+    base: statView(base),
+  };
+}
+
 /** Deploy directions (DESIGN §3, research 09 §1.2; the same list as server/sim/dir.js DIRS). */
 export const DIRS = Object.freeze(['UP', 'RIGHT', 'DOWN', 'LEFT']);
 const isDir = (v) => DIRS.includes(v);
@@ -202,6 +245,9 @@ export const C2S = {
   'g.infoReady': {},
   'g.band': { bandId: isId },
   'g.bandSkip': {},
+  // the strategy highlighted in the draft screen (user playtest #4 item 4): a turn that runs out takes it while it is
+  // free (Match.timeoutBand); absent / null clears it
+  'g.bandFocus': { bandId: nullable(isId), $optional: ['bandId'] },
   'g.buy': { slot: (v) => isInt(v, 0, 15) },
   'g.refresh': {},
   'g.freeze': {},
@@ -223,6 +269,9 @@ export const C2S = {
   // solo pause (official PauseUp / ResumeUp, DESIGN §14): freezes the running battle (field clock, deadlines, the
   // browser's local runner) — solo matches only (co-op ⇒ WRONG_PHASE), only while a battle runs; m.public.paused
   'g.pause': { on: isBool },
+  // the stats the own board's units start their next battle with (user playtest #4 item 7; prep phases): answered by
+  // the push m.unitStats { seq, round, units: [unitStatsEntry] }; `seq` is echoed so the client keeps the newest answer
+  'g.unitStats': { seq: (v) => isInt(v, 0, 2 ** 31), $optional: ['seq'] },
   'g.leave': {},
 
   // client-side combat (DESIGN §14): the authoritative client of a field reports its battle
@@ -240,6 +289,8 @@ export const S2C = [
   'welcome', 'ok', 'error', 'pong',
   'room.state', 'room.closed',
   'm.public', 'm.private', 'm.field', 'm.toast', 'm.ticker', 'm.emote', 'm.result',
+  // m.unitStats { seq, round, units: [unitStatsEntry] } — the answer to g.unitStats (the requester only)
+  'm.unitStats',
   // client-side combat (DESIGN §14): b.start { battleId, fieldId, kind, spec, authoritative, startAt, serverNow, elapsed,
   // speed, watch? } · b.pool { hp, max, teamLp, acked: { [fieldId]: cumulative boss damage counted } } ·
   // b.end { battleId, fieldId, reason }

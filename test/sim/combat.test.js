@@ -156,7 +156,7 @@ test('element bursts on enemies: apoptosis = 800 元素伤害/s + 50 % weaken re
   assert.equal(e.s.def, 500 - 2 * ELEMENT.erosion.enemy.defDown, 'stacks, permanent');
 });
 
-test('element bursts on operators (enemy damage): burn 1200 arts, neural 1000 true + stun 10 s, apoptosis no skill / −1 SP/s / 100 arts/s, erosion 800 phys + DEF −100', () => {
+test('element bursts on operators (enemy damage): burn 1200 arts, neural stun 10 s then 1000 true, apoptosis 阻回 + no skill / −1 SP/s / 100 arts/s, erosion DEF −100 then 800 phys (10 s cooldown)', () => {
   const op = chessRec({ id: 't_op', profession: 'WARRIOR', stats: { atk: 0, maxHp: 1e6, def: 300, res: 0, blockCnt: 0 }, skill: { spCost: 30, initSp: 20, duration: 5, bb: { atk: 0.5 } } });
   const h = makeBattle({ defs: { chess: { t_op: op } }, units: [{ chessId: 't_op', row: 9, col: 5 }], content: 'generic', autoFinish: false, timeLimit: 120 });
   h.step();
@@ -164,31 +164,74 @@ test('element bursts on operators (enemy damage): burn 1200 arts, neural 1000 tr
   let hp = u.hp;
   h.b.dealDamage(null, u, { type: 'element', element: 'burn', amount: 1000 });
   approx(hp - u.hp, ELEMENT.burn.ally.damage);
+  h.run(ELEMENT.burn.ally.duration + 0.1); // the burn cooldown holds every gauge
   hp = u.hp;
+  let stunned = null;
+  h.b.on('damaged', (c) => { if (c.target === u && c.type === 'true' && stunned == null) stunned = !!u.s.flags.stun; });
   h.b.dealDamage(null, u, { type: 'element', element: 'neural', amount: 1000 });
   approx(hp - u.hp, ELEMENT.neural.ally.damage);
-  assert.ok(u.findBuff('stun'));
+  assert.equal(stunned, true, 'PRTS: "立刻获得等时长的眩晕；随后受到1000点…真实伤害" — stunned before the hit');
   approx(u.findBuff('stun').timeLeft, ELEMENT.neural.ally.stun);
   h.run(10.1);
   const sp0 = u.skill.sp;
   hp = u.hp;
   h.b.dealDamage(null, u, { type: 'element', element: 'apoptosis', amount: 1000 });
   assert.ok(u.s.flags.silence, 'no skill activation');
+  assert.ok(u.s.flags.noSp, '阻回: no SP recovery');
   h.run(3.02);
   approx(hp - u.hp, 3 * ELEMENT.apoptosis.ally.dps);
-  approx(u.skill.sp, sp0 + 3 * u.s.spRecovery - 3 * ELEMENT.apoptosis.ally.spLossPerSec, 0.05);
+  approx(u.skill.sp, sp0 - 3 * ELEMENT.apoptosis.ally.spLossPerSec, 0.05);
+  const spHeld = u.skill.sp;
+  assert.ok(spHeld < u.skill.spCost && !u.skill.active, 'room for SP (a 0 below is 阻回, not a full bar)');
+  assert.equal(u.skill.gainSp(5, 'talent'), 0, '阻回 ("停止并阻止任意形式的技力回复"): no granted SP');
+  assert.equal(u.skill.gainSp(1, 'hurt'), 0, '… nor SP from hits taken');
+  assert.equal(u.skill.gainSp(1, 'attack'), 0, '… nor from attacks');
+  assert.equal(u.skill.sp, spHeld);
   h.run(12.1);
-  assert.ok(!u.s.flags.silence);
+  assert.ok(!u.s.flags.silence && !u.s.flags.noSp);
   hp = u.hp;
   h.b.dealDamage(null, u, { type: 'element', element: 'erosion', amount: 1000 });
   approx(hp - u.hp, ELEMENT.erosion.ally.damage - (300 - ELEMENT.erosion.ally.defDown), 1e-6, 'DEF cut first, then 800 phys');
   assert.equal(u.s.def, 300 - ELEMENT.erosion.ally.defDown);
-  assert.equal(u.elem.erosion, 0, 'no lock: accumulates again at once');
+  assert.equal(ELEMENT.erosion.ally.duration, 10, 'PRTS 元素: 侵蚀 爆发 10 s on operators');
+  assert.equal(u.elem.erosion, 1000, 'held full during its cooldown');
+  h.run(10.1);
+  assert.equal(u.elem.erosion, 0, 'reset when the cooldown ends');
+  h.b.dealDamage(null, u, { type: 'element', element: 'erosion', amount: 1000 });
+  assert.equal(u.findBuff('erosionDown').stacks, 2, 'the DEF cut stacks (permanent)');
+});
+
+test('爆发冷却 (PRTS 元素): during a burst no element fills or recovers; its end resets every gauge; 损伤抵抗 = epResistance %', () => {
+  const resRec = enemyRec({ key: 'enemy_res', hp: 1e6, speed: 0 });
+  resRec.stats.elementRes = 10;
+  const h = makeBattle({
+    defs: { enemies: { enemy_dummy: dummy(), enemy_res: resRec } },
+    enemies: [{ key: 'enemy_dummy', pos: [11, 8] }, { key: 'enemy_res', pos: [10, 8] }], content: 'none', autoFinish: false,
+  });
+  h.step();
+  const e = h.enemy('enemy_dummy');
+  h.b.dealDamage(null, e, { type: 'element', element: 'neural', amount: 400 });
+  h.b.dealDamage(null, e, { type: 'element', element: 'burn', amount: 1000 });
+  assert.ok(e.findBuff('burnBurst') && e.s.flags.burstLock);
+  assert.equal(h.b.dealDamage(null, e, { type: 'element', element: 'neural', amount: 1000 }), 0, 'another element cannot fill during the cooldown');
+  approx(e.elem.neural, 400);
+  assert.equal(h.b.reduceElement(e, 300), 0, 'nor be recovered');
+  h.run(ELEMENT.burn.enemy.duration - 0.2);
+  assert.equal(e.elem.burn, 1000);
+  h.run(0.3);
+  assert.deepEqual([e.elem.burn, e.elem.neural, e.elem.apoptosis, e.elem.erosion], [0, 0, 0, 0], 'every gauge restored');
+  h.b.dealDamage(null, e, { type: 'element', element: 'neural', amount: 300 });
+  approx(e.elem.neural, 300, 1e-6, 'fills again after the cooldown');
+  // 损伤抵抗 (data elementRes → epResistance, a percentage): 受到的元素损伤 = 损伤值 × (1 − 损伤抵抗 × 0.01)
+  const r = h.enemy('enemy_res');
+  assert.equal(r.def.epResistance, 10);
+  h.b.dealDamage(null, r, { type: 'element', element: 'burn', amount: 500 });
+  approx(r.elem.burn, 450);
 });
 
 test('a resolving burst already locks its gauge: an elementBurst handler spreading the element back cannot re-burst (no ping-pong recursion)', () => {
-  // two operators that spread every burst to each other (the 淤困 parasite pattern) — burn has a lock, erosion on
-  // operators has none (duration 0), apoptosis locks with a ticker: each must burst exactly once per fill
+  // two operators that spread every burst to each other (the 淤困 parasite pattern) — every burst has its cooldown
+  // (erosion on operators too: 10 s), apoptosis locks with a ticker: each must burst exactly once per fill
   const op = (id) => chessRec({ id, profession: 'WARRIOR', stats: { atk: 0, maxHp: 1e6, def: 300, res: 0, blockCnt: 0 }, skill: null });
   for (const el of ['burn', 'erosion', 'apoptosis', 'neural']) {
     const h = makeBattle({
@@ -210,7 +253,10 @@ test('a resolving burst already locks its gauge: an elementBurst handler spreadi
     if (el === 'burn') { approx(hpA - A.hp, ELEMENT.burn.ally.damage); approx(hpB - B.hp, ELEMENT.burn.ally.damage); }
     if (el === 'erosion') {
       for (const u of [A, B]) assert.equal(u.findBuff('erosionDown').stacks, 1, 'one permanent DEF cut');
-      assert.equal(A.elem.erosion, 0, 'no lock once resolved: accumulates again');
+      h.b.dealDamage(null, A, { type: 'element', element: 'erosion', amount: 1000 });
+      assert.equal(A.findBuff('erosionDown').stacks, 1, 'locked during its 10 s cooldown');
+      h.run(ELEMENT.erosion.ally.duration + 0.1);
+      assert.equal(A.elem.erosion, 0, 'reset once the cooldown ended');
       h.b.dealDamage(null, A, { type: 'element', element: 'erosion', amount: 1000 });
       assert.equal(A.findBuff('erosionDown').stacks, 2, 'a later fill bursts again');
     }

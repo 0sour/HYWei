@@ -44,6 +44,16 @@ export function flattenBlackboard(bb) {
 
 const num = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : (typeof v === 'string' && v.trim() !== '' && Number.isFinite(+v) ? +v : d));
 
+/**
+ * Is an items.json record a shop item — what the 调度中心 item slot, the 道具补给 / 机密商店 cards and the "random
+ * item" pools (pool_equip_normal …) draw from: a normal EQUIP item with a tier, neither hidden by the official shop
+ * table (`hideInShop`: the Arts) nor one of the effect-only items build-data marks `shopExcluded` (the special
+ * 维式重锤 of 维多利亚 / 洛洛, 突变细胞 — tools/build-data.mjs SHOP_EXCLUDED_ITEMS).
+ */
+export function isShopItem(it) {
+  return !!it && typeof it === 'object' && !it.isGolden && !it.hideInShop && !it.shopExcluded && it.itemType === 'EQUIP' && Number.isInteger(it.tier);
+}
+
 function toArrayOfPairs(grid) {
   if (!Array.isArray(grid)) return null;
   const out = [];

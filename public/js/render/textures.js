@@ -6,6 +6,7 @@
 //     renderer swaps the texture without touching geometry,
 //   * FX atlas (one base texture ⇒ particles batch / fit a ParticleContainer),
 //   * status icons, tier chips, backdrop gradients,
+//   * HUD rings: element gauge icons and the redeploy countdown ring (hudRings / ringArc),
 //   * avatar-in-rarity-diamond composites (cached per unit asset id) for the Spine fallback.
 // Everything procedural is deterministic (seeded noise) and generated lazily on first use. Requires
 // globalThis.PIXI and a DOM canvas at call time (never at import time).
@@ -1155,4 +1156,131 @@ export function itemTexture(key, img, color) {
   tex = P.Texture.from(canvas);
   _items.set(k, tex);
   return tex;
+}
+
+// =============================================================================================================
+// HUD rings (user playtest #4 items 8 and 9): the element gauge icon of a unit (PRTS 元素: "模型下部会显示对应的元素
+// 图标，并以白条显示剩余的元素值" — operators: the element's disc with its glyph; enemies: "小尺寸图标（不显示元素图标，
+// 仅根据元素种类改变背景色）") inside a white ring of the remaining 元素值, and the redeploy countdown ring above a
+// knocked-out operator. One 512×576 atlas: RING_STEPS + 1 arc frames (white, clockwise from 12 o'clock) and the discs.
+// Official element colours / glyphs after the client icons (图标 元素 sanity / water / fire / dark), drawn procedurally
+// (the local-client extraction has no general battle HUD sprites).
+
+/** Arc frames: `arcs[k]` covers k / RING_STEPS of the circle. */
+export const RING_STEPS = 48;
+/** Element disc colours (official icons: 神经 teal, 侵蚀 steel blue, 灼燃 rust, 凋亡 charcoal) and glyph colours. */
+export const ELEMENT_RING = Object.freeze({
+  neural: Object.freeze({ disc: '#13806c', glyph: '#bfe6df', tint: 0x1fae93 }),
+  erosion: Object.freeze({ disc: '#2d5d86', glyph: '#cfdcea', tint: 0x4a8cc4 }),
+  burn: Object.freeze({ disc: '#8f3512', glyph: '#f0cdbd', tint: 0xe0632c }),
+  apoptosis: Object.freeze({ disc: '#363338', glyph: '#bdb8c2', tint: 0x9c8fb0 }),
+  necrosis: Object.freeze({ disc: '#363338', glyph: '#bdb8c2', tint: 0x9c8fb0 }),
+});
+const RING_KEYS = Object.keys(ELEMENT_RING);
+const RC = 64;              // cell px
+const RING_R = 26, RING_W = 6.5, DISC_R = 21.5;
+let _rings = null;
+
+function drawElementGlyph(c, el, cx, cy, col) {
+  c.fillStyle = col; c.strokeStyle = col; c.lineCap = 'round'; c.lineJoin = 'round';
+  if (el === 'neural') {           // concentric target
+    c.lineWidth = 2.4;
+    c.beginPath(); c.arc(cx, cy, 12, 0, Math.PI * 2); c.stroke();
+    c.beginPath(); c.arc(cx, cy, 7, 0, Math.PI * 2); c.stroke();
+    c.beginPath(); c.arc(cx, cy, 2.6, 0, Math.PI * 2); c.fill();
+  } else if (el === 'erosion') {   // a big and a small water drop over a wave
+    const drop = (x, y, r) => {
+      c.beginPath(); c.moveTo(x, y - r * 2.1);
+      c.bezierCurveTo(x + r * 0.5, y - r * 1.2, x + r, y - r * 0.5, x + r, y + r * 0.1);
+      c.arc(x, y + r * 0.1, r, 0, Math.PI);
+      c.bezierCurveTo(x - r, y - r * 0.5, x - r * 0.5, y - r * 1.2, x, y - r * 2.1); c.fill();
+    };
+    drop(cx - 3, cy - 1, 5.6); drop(cx + 7.5, cy + 2, 3.1);
+    c.lineWidth = 2.2; c.beginPath(); c.moveTo(cx - 13, cy + 11); c.quadraticCurveTo(cx - 6.5, cy + 7, cx, cy + 11); c.quadraticCurveTo(cx + 6.5, cy + 15, cx + 13, cy + 11); c.stroke();
+  } else if (el === 'burn') {      // flame
+    c.beginPath(); c.moveTo(cx, cy - 13); c.quadraticCurveTo(cx + 11, cy - 1, cx + 7, cy + 9); c.quadraticCurveTo(cx, cy + 14, cx - 7, cy + 9);
+    c.quadraticCurveTo(cx - 11, cy - 1, cx - 2, cy - 5); c.quadraticCurveTo(cx - 1, cy - 9, cx, cy - 13); c.fill();
+    c.globalCompositeOperation = 'destination-out';
+    c.beginPath(); c.moveTo(cx, cy - 1); c.quadraticCurveTo(cx + 5, cy + 5, cx + 2, cy + 9); c.quadraticCurveTo(cx - 2, cy + 11, cx - 4, cy + 7); c.quadraticCurveTo(cx - 4, cy + 3, cx, cy - 1); c.fill();
+    c.globalCompositeOperation = 'source-over';
+  } else {                         // 凋亡: an eye-like lozenge
+    c.lineWidth = 2.2;
+    c.beginPath(); c.moveTo(cx - 13, cy); c.lineTo(cx, cy - 8); c.lineTo(cx + 13, cy); c.lineTo(cx, cy + 8); c.closePath(); c.stroke();
+    c.beginPath(); c.moveTo(cx - 6, cy); c.lineTo(cx, cy - 3.5); c.lineTo(cx + 6, cy); c.lineTo(cx, cy + 3.5); c.closePath(); c.fill();
+  }
+}
+
+/**
+ * The HUD ring atlas: `{ arcs: Texture[RING_STEPS + 1], track, disc: { [element]: Texture }, discEnemy: { [element] },
+ * downDisc }` — every frame RC px square, centred on the ring centre (anchor 0.5). Built once, lazily.
+ */
+export function hudRings() {
+  if (_rings) return _rings;
+  const P = PIXI();
+  const W = 8 * RC, rowsArc = Math.ceil((RING_STEPS + 1) / 8), H = (rowsArc + 2) * RC;
+  const canvas = makeCanvas(W, H);
+  const c = canvas.getContext('2d');
+  const cell = (i) => [(i % 8) * RC, Math.floor(i / 8) * RC];
+  const frames = { arcs: [] };
+  // arcs: white with a thin dark edge (readable on light and dark ground)
+  for (let k = 0; k <= RING_STEPS; k++) {
+    const [x, y] = cell(k);
+    frames.arcs.push([x, y]);
+    if (!k) continue;
+    const cx = x + RC / 2, cy = y + RC / 2, a0 = -Math.PI / 2, a1 = a0 + (Math.PI * 2 * k) / RING_STEPS;
+    c.lineCap = k === RING_STEPS ? 'butt' : 'round';
+    c.strokeStyle = 'rgba(0,0,0,0.55)'; c.lineWidth = RING_W + 2.5;
+    c.beginPath(); c.arc(cx, cy, RING_R, a0, a1); c.stroke();
+    c.strokeStyle = '#ffffff'; c.lineWidth = RING_W;
+    c.beginPath(); c.arc(cx, cy, RING_R, a0, a1); c.stroke();
+  }
+  const row = rowsArc * RC;
+  // row A: ally discs (with glyph), the track ring, the dark disc of the redeploy ring
+  RING_KEYS.forEach((el, i) => {
+    const x = i * RC, cx = x + RC / 2, cy = row + RC / 2;
+    c.fillStyle = ELEMENT_RING[el].disc; c.beginPath(); c.arc(cx, cy, DISC_R, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = 'rgba(0,0,0,0.5)'; c.lineWidth = 1.5; c.stroke();
+    c.save(); c.beginPath(); c.arc(cx, cy, DISC_R - 1, 0, Math.PI * 2); c.clip();
+    drawElementGlyph(c, el, cx, cy, ELEMENT_RING[el].glyph);
+    c.restore();
+    frames['a:' + el] = [x, row];
+  });
+  {
+    const x = RING_KEYS.length * RC, cx = x + RC / 2, cy = row + RC / 2;
+    c.strokeStyle = 'rgba(12,16,15,0.72)'; c.lineWidth = RING_W + 2.5; c.beginPath(); c.arc(cx, cy, RING_R, 0, Math.PI * 2); c.stroke();
+    c.strokeStyle = 'rgba(255,255,255,0.16)'; c.lineWidth = RING_W; c.beginPath(); c.arc(cx, cy, RING_R, 0, Math.PI * 2); c.stroke();
+    frames.track = [x, row];
+    const x2 = x + RC, cx2 = x2 + RC / 2;
+    const g = c.createRadialGradient(cx2, cy, 2, cx2, cy, RING_R + 3);
+    g.addColorStop(0, 'rgba(18,24,22,0.92)'); g.addColorStop(0.8, 'rgba(10,14,13,0.86)'); g.addColorStop(1, 'rgba(10,14,13,0)');
+    c.fillStyle = g; c.beginPath(); c.arc(cx2, cy, RING_R + 3, 0, Math.PI * 2); c.fill();
+    frames.downDisc = [x2, row];
+  }
+  // row B: enemy discs (element colour only)
+  RING_KEYS.forEach((el, i) => {
+    const x = i * RC, cx = x + RC / 2, cy = row + RC + RC / 2;
+    c.fillStyle = ELEMENT_RING[el].disc; c.beginPath(); c.arc(cx, cy, DISC_R, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = 'rgba(0,0,0,0.5)'; c.lineWidth = 1.5; c.stroke();
+    frames['e:' + el] = [x, row + RC];
+  });
+  const base = P.BaseTexture.from(canvas, { mipmap: P.MIPMAP_MODES.ON });
+  const tex = ([x, y]) => new P.Texture(base, new P.Rectangle(x, y, RC, RC));
+  _rings = {
+    base, canvas, size: RC,
+    arcs: frames.arcs.map(tex),
+    track: tex(frames.track),
+    downDisc: tex(frames.downDisc),
+    disc: Object.fromEntries(RING_KEYS.map((el) => [el, tex(frames['a:' + el])])),
+    discEnemy: Object.fromEntries(RING_KEYS.map((el) => [el, tex(frames['e:' + el])])),
+  };
+  return _rings;
+}
+
+/** Arc frame of a fraction 0..1 (rounded to the nearest step; a non-zero fraction never shows an empty ring). */
+export function ringArc(frac) {
+  const r = hudRings();
+  const f = frac > 1 ? 1 : frac > 0 ? frac : 0;
+  let k = Math.round(f * RING_STEPS);
+  if (k === 0 && f > 0) k = 1;
+  return r.arcs[k];
 }

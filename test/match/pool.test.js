@@ -88,10 +88,51 @@ test('item slot: tier ≤ level, shop-eligible normal equipment only', () => {
     for (let i = 0; i < 300; i++) {
       const id = pool.rollItem(rng, level);
       const it = DATA.items[id];
-      assert.ok(it && it.itemType === 'EQUIP' && !it.isGolden && !it.hideInShop, id);
+      assert.ok(it && it.itemType === 'EQUIP' && !it.isGolden && !it.hideInShop && !it.shopExcluded, id);
       assert.ok(it.tier <= level, `L${level} item tier ${it.tier}`);
     }
   }
+});
+
+// user playtest #4 item 5: the special 维式重锤 (维多利亚 25-layer reward / 洛洛's 定制品) and 突变细胞 (strategy 昆图斯)
+// are never sold although the official shop table lists them (tools/build-data.mjs SHOP_EXCLUDED_ITEMS)
+const EFFECT_ONLY = ['chess_item_2_03_e_a', 'chess_item_3_09_e_a', 'chess_item_3_10_e_a', 'chess_item_4_09_e_a', 'chess_item_5_08_e_a'];
+
+test('effect-only items are never shop items: not in shopItemsByTier, never in the item slot, the pools or the 机变 supply', () => {
+  for (const id of EFFECT_ONLY) {
+    assert.equal(DATA.items[id].shopExcluded, true, `${id} (${DATA.items[id].name}) marked`);
+    assert.equal(DATA.items[id].hideInShop, false, `${id}: the official table does not hide it`);
+    assert.ok(DATA.items[id.replace(/_a$/, '_b')].shopExcluded, `${id}: the golden too`);
+  }
+  assert.equal(DATA.items.chess_item_1_01_e_a.shopExcluded, false, 'the plain 维式重锤 is sold');
+  const gd = gdOf();
+  const listed = new Set(Object.values(gd.shopItemsByTier).flat());
+  assert.equal(listed.size, 51, '56 normal equipment − 5 effect-only');
+  for (const id of EFFECT_ONLY) assert.ok(!listed.has(id), `${id} not a shop item`);
+  assert.ok(listed.has('chess_item_1_01_e_a'));
+  // the shop item slot at every level
+  const pool = new SharedPool(gd);
+  const rng = createRng(4);
+  for (let level = 1; level <= 6; level++) for (let i = 0; i < 400; i++) assert.ok(!EFFECT_ONLY.includes(pool.rollItem(rng, level)));
+  // every shop-eligible pool (凯瑟琳 / 列装 / 定向投放 / 见者有份) and the plain "random item" roll of effects
+  const m = makeMatch({ mode: 'coop', seed: 3, fake: true }).m;
+  for (const pid of ['pool_equip_normal', 'pool_equip_shop_1', 'pool_equip_kathe', 'pool_equip_narant']) {
+    for (let i = 0; i < 300; i++) assert.ok(!EFFECT_ONLY.includes(m.rollItemId({ pool: pid, shopLevel: 6 })), pid);
+  }
+  for (let i = 0; i < 300; i++) assert.ok(!EFFECT_ONLY.includes(m.rollItemId({ maxTier: 6 })));
+  m.dispose();
+});
+
+test('维多利亚 25-layer reward and 洛洛的定制品: the 4 special 维式重锤 (and nothing else)', () => {
+  const special = ['chess_item_2_03_e_a', 'chess_item_3_09_e_a', 'chess_item_3_10_e_a', 'chess_item_4_09_e_a'];
+  const m = makeMatch({ mode: 'coop', seed: 3, fake: true }).m;
+  for (const pid of ['pool_equip_vict', 'pool_equip_rockr']) {
+    assert.deepEqual([...DATA.choices.pools[pid].items].sort(), special, pid);
+    const seen = new Set();
+    for (let i = 0; i < 200; i++) seen.add(m.rollPool(pid).id);
+    assert.deepEqual([...seen].sort(), special, `${pid}: every special hammer can come, nothing else`);
+  }
+  m.dispose();
 });
 
 test('per-match disabled bonds: 3 core + 4 add-on (NORMAL+), FUNNY static + 0 + 1; weight-0 never drawn; subset ban rule', () => {

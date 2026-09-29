@@ -35,7 +35,8 @@
 //                 do not stack), refilled by shield_ratio_each_trigger /s when the target was not hit for `interval`
 //                 s (always while 凯瑟琳's skill runs, owner bb overwrite_ratio)
 //   投递坐标 / 风雪之眼 / 保护目标  inert pieces (no attack; 风雪之眼 untargetable) — their effects belong to the owner kit
-//   炎佑 (enemy_9012_acloon)  flying ally AI (see spawnYanyou)
+//   炎佑 (enemy_9012_acloon)  flying ally: flies after the highest-aggro enemy of the field and hovers over it, stays
+//                 put when there is none; 3-target arts + burn on every hit, 元素脆弱 aura, 祛恶之焰 channel (yanyouKit)
 //   预备干员-医疗 / Touch (band map characters)  generic kit / 恳切福音 kit
 // Common rules: deploy limit per owner for tokens running these kits (data `deployLimit`; the oldest is withdrawn),
 // `summonKill` hook ({ token, owner, victim }) whenever a token kills, lifetimes never outlive a shorter
@@ -874,30 +875,64 @@ function yanyouFallbackDef(battle) {
   return battle.data.rawEnemy?.(TOKEN_IDS.yanyou) ?? null;
 }
 
+/**
+ * 炎佑 (PRTS “炎佑” 级别0(卫戍协议), enemy_database enemy_9012_acloon; user playtest #4 item 12):
+ *   * moves on its own — "持续追踪全场范围内仇恨值最高的敌方单位": it flies after the highest-aggro targetable enemy of
+ *     the whole field (the operator order: taunt, least remaining path, earliest spawned; while 祛恶之焰 channels, its
+ *     locked target) and hovers over it (YANYOU_STOP short of its position; a 2nd 炎佑 of 9 炎 hovers 0.8 row beside the
+ *     first); with no enemy on the field it stays where it is (user playtest #4: "停留在最后在的位置，而不是往一个固定位置
+ *     返回"; PRTS says it then tracks a random tile — the user's first-hand account wins);
+ *   * normal attack: rangeRadius 2.0, arts, 3 targets ("可同时攻击3个目标", talent 1.attack@max_target);
+ *   * every damage it deals adds burn = ATK × 2.ep_damage_ratio (20 %: "自身造成伤害时，附加攻击力20%的灼燃损伤"; the
+ *     official 下半 notice: "祛恶之焰附带的灼燃损伤调整为基于炎佑的攻击力") — normal attacks AND flame ticks;
+ *   * 元素脆弱 aura: enemies within YANYOU_FRAGILE_RADIUS (1.5, PRTS "自身<固定半径>半径1.5范围内") take element damage
+ *     × 2.damage_scale (1.2);
+ *   * immune to element damage ("即将受到元素损伤前取消此元素损伤");
+ *   * 祛恶之焰 [模式乙] (the 炎 bond's mode, Skill_2; cooldown / initCooldown 15, atk_scale 0.6, hit_duration 20,
+ *     range_radius 1.0): "触发索敌和普通攻击相同：锁定1个目标持续施法，最多持续20秒，每秒对目标周围半径1.0范围内的所有
+ *     敌方单位造成攻击力60%的法术伤害（范围伤害为中点判定…对被锁定的目标也不例外）※施法期间受到沉默影响后，立即结束技能".
+ *     It fires when a normal attack would (SP = the 15 s cooldown), locks that attack's first target, channels on it
+ *     (no normal attacks meanwhile), deals the 1 s ticks (the first at once) and ends after 20 s, when the locked
+ *     target is gone (dead, left, untargetable — "锁定1个目标…最多持续") or when silenced; the cooldown then runs again
+ *     [ASSUMED: the cooldown counts from the end of the channel, like the engine's timed skills]. While stunned /
+ *     frozen the channel keeps its lock but deals nothing.
+ */
+const YANYOU_STOP = 0.25;             // [ASSUMED] how close it hovers to the tracked enemy (tiles)
+const YANYOU_FRAGILE_RADIUS = 1.5;    // PRTS "在场期间自身<!--固定半径-->半径1.5范围内的敌方单位受到20%的元素脆弱"
+const YANYOU_AURA_EVERY = 0.2;        // aura refresh period (s); the status lasts two periods
+const YANYOU_PROFILE = Object.freeze({ canHitFly: true });
+
+/** Highest-aggro targetable enemy of the whole field for `u` (operator order, targeting.js sortEnemyTargets). */
+function topAggroEnemy(battle, u) {
+  let best = null, bk = null;
+  for (const e of battle.enemies) {
+    if (!canTargetEnemy(u, e, YANYOU_PROFILE)) continue;
+    const k = [-(e.s.taunt || 0), battle.remainingDistance(e), e.spawnSeq];
+    if (!bk || k[0] < bk[0] || (k[0] === bk[0] && (k[1] < bk[1] - 1e-9 || (Math.abs(k[1] - bk[1]) <= 1e-9 && k[2] < bk[2])))) { best = e; bk = k; }
+  }
+  return best;
+}
+
 function yanyouKit(bb, raw) {
   // enemy-shaped record: `talents` is one { bb } object, `skills` the enemy skill list
   const tal = raw?.talents && !Array.isArray(raw.talents) ? raw.talents.bb ?? {} : raw?.talent ?? {};
   const skills = Array.isArray(raw?.skills) ? raw.skills : [];
-  const sk1 = skills.find((s) => s.prefabKey === 'Skill') ?? skills[0] ?? {};
-  const sk2 = skills.find((s) => s.prefabKey === 'Skill_2') ?? sk1;
+  // the 炎 bond summons 模式乙 (Skill_2, PRTS: "由核心盟约-炎召唤时为模式乙"); 模式甲 (Skill) hits the target only
+  const sk = skills.find((s) => s.prefabKey === 'Skill_2') ?? skills.find((s) => s.prefabKey === 'Skill') ?? skills[0] ?? {};
   const maxTargets = Math.max(1, Math.floor(num(tal['1.attack@max_target'], 1)));
   const epRatio = num(tal['2.ep_damage_ratio'], 0);
-  const fragR = num(tal['2.range_radius'], 0);
   const fragMul = num(tal['2.damage_scale'], 1);
   const radius = num(raw?.stats?.rangeRadius, 0) > 0 ? num(raw.stats.rangeRadius, 0) : 2;
   const moveSpeed = num(raw?.stats?.moveSpeed, 1);
-  const cd = num(sk1.cooldown, 0);
-  const initCd = num(sk1.initCooldown, cd);
-  const flameScale = num(sk2.bb?.atk_scale ?? sk1.bb?.atk_scale, 0);
-  const flameDur = num(sk2.bb?.hit_duration ?? sk1.bb?.hit_duration, 0);
-  const flameR = num(sk2.bb?.range_radius, 0);
-  const FLAME_PROFILE = { canHitFly: true };
-  const inReach = (u, e, pad = 0) => e && e.alive && !e.hidden && Math.hypot(e.x - u.x, e.y - u.y) <= radius + pad + 1e-9;
-  const bestInReach = (battle, u) => {
-    const list = battle.enemies.filter((e) => inReach(u, e) && canTargetEnemy(u, e, FLAME_PROFILE));
-    if (!list.length) return null;
-    sortEnemyTargets(battle, u, list, null);
-    return list[0];
+  const cd = num(sk.cooldown, 0);
+  const initCd = num(sk.initCooldown, cd);
+  const flameScale = num(sk.bb?.atk_scale, 0);
+  const flameDur = num(sk.bb?.hit_duration, 0);
+  const flameR = num(sk.bb?.range_radius, 0);
+  /** The channel's locked target while it is still valid (alive, on the field, targetable), else null. */
+  const lockOf = (u) => {
+    const t = u.mem.flame?.target;
+    return t && t.alive && canTargetEnemy(u, t, YANYOU_PROFILE) ? t : null;
   };
   const refreshKeys = (u) => {
     // cached while it hovers in place — unless the engine rebuilt the range from the (dummy) grid meanwhile
@@ -917,63 +952,73 @@ function yanyouKit(bb, raw) {
   return {
     skill: cd > 0 && flameDur > 0 ? {
       kind: 'duration', duration: flameDur, spType: 'time', spCost: cd, initSp: Math.max(0, cd - initCd), trigger: 'DEFAULT',
-      onStart({ unit }) { unit.mem.flame = { target: null, acc: 1 }; },
+      attack: { noAttack: true },                                  // channelling: no normal attacks
+      onStart({ battle, unit }) {
+        // "触发索敌和普通攻击相同": the normal attack's first target
+        const list = battle.enemiesInKeys(unit.rangeKeys, unit, YANYOU_PROFILE);
+        sortEnemyTargets(battle, unit, list, null);
+        unit.mem.flame = { target: list[0] ?? null, acc: 1 };
+        if (!list[0]) unit.skill.end('noTarget');
+      },
       onTick({ battle, unit, dt }) {
-        const f = unit.mem.flame || (unit.mem.flame = { target: null, acc: 1 });
+        const f = unit.mem.flame;
+        if (!f) return;
+        if (unit.s.flags.silence) { unit.skill.end('silence'); return; }
+        const t = lockOf(unit);
+        if (!t) { unit.skill.end('targetLost'); return; }
+        if (!unit.canAct) return;                                  // stunned / frozen: the lock holds, no damage
         f.acc += dt ?? battle.dt;
         if (f.acc < 1 - 1e-9) return;
         f.acc -= 1;
-        if (!inReach(unit, f.target, 0.5) || !canTargetEnemy(unit, f.target, FLAME_PROFILE)) f.target = bestInReach(battle, unit);
-        const t = f.target;
-        if (!t) { unit.skill.end('noTarget'); return; }
-        // 祛恶之焰 (Skill_2 range_radius): the channelled target and every enemy within range_radius of it
-        // (research 02 §3.1; the talent's 3-target cap is for normal attacks)
-        const others = flameR > 0 ? battle.enemiesInRadius(t.x, t.y, flameR).filter((e) => e !== t) : [];
-        for (const e of [t, ...others]) battle.dealDamage(unit, e, { amount: unit.s.atk * flameScale, type: 'arts', isSkill: true, tags: ['flame'] });
-        battle.fx('yanyouFlame', { x: t.x, y: t.y, id: unit.id, target: t.id, n: 1 + others.length });
+        // centre-point AoE around the locked target, searched again every second (the target itself included)
+        const hit = flameR > 0 ? battle.enemiesInRadius(t.x, t.y, flameR) : [];
+        if (!hit.includes(t)) hit.unshift(t);
+        for (const e of hit) battle.dealDamage(unit, e, { amount: unit.s.atk * flameScale, type: 'arts', isSkill: true, tags: ['flame'] });
+        battle.fx('yanyouFlame', { x: t.x, y: t.y, id: unit.id, target: t.id, r: flameR, n: hit.length, dur: 1 });
       },
       onEnd({ unit }) { unit.mem.flame = null; },
     } : null,
-    trait: {
-      attack: 'ranged', dmgType: 'arts', projectile: 'bolt', canHitFly: true, maxTargets, heal: null, noAttack: false,
-      afterHit: (b, u, target, info) => {
-        // 元素脆弱 (same-name statuses keep the strongest); it lasts until shortly after its next attack [ASSUMED: no data]
-        if (fragR > 0 && fragMul > 1) {
-          for (const e of b.enemiesInRadius(info.x, info.y, fragR)) b.applyStatus(e, 'elemFragile', { duration: u.s.interval + 0.5, value: fragMul - 1, source: u });
-        }
-        if (epRatio > 0 && target && target.alive) b.dealDamage(u, target, { type: 'element', element: 'burn', amount: u.s.atk * epRatio, tags: ['yanyou'] });
-      },
-    },
+    trait: { attack: 'ranged', dmgType: 'arts', projectile: 'bolt', canHitFly: true, maxTargets, heal: null, noAttack: false },
     install(battle, unit) {
       unit.motion = 'FLY';
       if (!(unit.base.spRecovery > 0)) unit.base.spRecovery = 1; // the cooldown ticks as time SP (data spRecovery 0)
       unit.base.blockCnt = 0;
       const speed = moveSpeed * MOVE_SCALE;
       onDeploy(battle, unit, () => { unit.mem.keysAt = null; refreshKeys(unit); });
+      // every damage it deals adds burn (not the burn itself, not element bursts)
+      if (epRatio > 0) {
+        battle.on('damaged', (ctx) => {
+          if (ctx.source !== unit || !ctx.target || ctx.target.side !== 'enemy' || !ctx.target.alive) return;
+          if (ctx.type === 'element' || ctx.type === 'elemental' || !(ctx.amount > 0)) return;
+          battle.dealDamage(unit, ctx.target, { type: 'element', element: 'burn', amount: unit.s.atk * epRatio, tags: ['yanyou'] });
+        }, { owner: unit });
+      }
+      // "即将受到元素损伤前取消此元素损伤"
+      battle.on('elementHit', (ctx) => { if (ctx.target === unit) ctx.dmg.cancel = true; }, { owner: unit });
+      let auraAcc = YANYOU_AURA_EVERY;
       battle.on('tick', ({ dt }) => {
         if (!unit.alive || !unit.deployed) return;
         if (unit.canAct && !unit.s.flags.noMove && speed > 0) {
-          // chase the leading enemy (or the flame target) and hover over the middle of the enemies around it, so
-          // its multi-target attacks reach as many as possible
-          const tgt = unit.mem.flame?.target && unit.mem.flame.target.alive ? unit.mem.flame.target : mostAdvancedEnemy(battle);
-          let tx = unit.homeC, ty = unit.homeR;
+          const tgt = lockOf(unit) ?? topAggroEnemy(battle, unit);
           if (tgt) {
-            let sx = 0, sy = 0, n = 0;
-            for (const e of battle.enemiesInRadius(tgt.x, tgt.y, radius)) { sx += e.x; sy += e.y; n++; }
-            tx = n ? sx / n : tgt.x; ty = n ? sy / n : tgt.y;
-            ty += num(unit.mem.hoverDy, 0); // a 2nd 炎佑 hovers beside the first one
-          }
-          const dx = tx - unit.x, dy = ty - unit.y;
-          const d = Math.hypot(dx, dy);
-          const stop = tgt ? 0.25 : 0;
-          if (d > stop + 1e-6) {
-            const step = Math.min(d - stop, speed * dt);
-            const R = battle.rect;
-            unit.x = Math.max(R.c0, Math.min(R.c1, unit.x + (dx / d) * step));
-            unit.y = Math.max(R.r0, Math.min(R.r1, unit.y + (dy / d) * step));
+            const dx = tgt.x - unit.x, dy = tgt.y + num(unit.mem.hoverDy, 0) - unit.y;
+            const d = Math.hypot(dx, dy);
+            if (d > YANYOU_STOP + 1e-6) {
+              const step = Math.min(d - YANYOU_STOP, speed * dt);
+              const R = battle.rect;
+              unit.x = Math.max(R.c0, Math.min(R.c1, unit.x + (dx / d) * step));
+              unit.y = Math.max(R.r0, Math.min(R.r1, unit.y + (dy / d) * step));
+            }
           }
         }
         refreshKeys(unit);
+        auraAcc += dt;
+        if (fragMul > 1 && auraAcc >= YANYOU_AURA_EVERY - 1e-9) {
+          auraAcc = 0;
+          for (const e of battle.enemiesInRadius(unit.x, unit.y, YANYOU_FRAGILE_RADIUS)) {
+            battle.applyStatus(e, 'elemFragile', { duration: 2 * YANYOU_AURA_EVERY, value: fragMul - 1, source: unit });
+          }
+        }
       }, { owner: unit });
     },
   };
@@ -1003,8 +1048,9 @@ function airTile(battle, playerId, taken) {
 
 /**
  * 炎 bond summon: spawn `count` “炎佑” for `playerId` (flying ally that picks its own targets; bonds.js computes the
- * numbers). atk / hp replace the template stats (0.3 × 炎 sums at battle start), atkMul (9 炎: ×1.5) and
- * dmgTakenMul (9 炎: 0.1) are applied as a persistent buff. Returns the spawned units.
+ * numbers). atk / hp (0.3 × the 炎 sums at battle start) are ADDED to the template stats (600 / 12000): PRTS "登场时使
+ * 自身攻击力、生命值增加召唤自身的玩家场地上的所有【炎】盟约干员攻击力、生命值的30%（最终加算）". atkMul (9 炎: ×1.5,
+ * [ASSUMED] on the whole ATK) and dmgTakenMul (9 炎: 0.1) are applied as a persistent buff. Returns the spawned units.
  */
 export function spawnYanyou(battle, playerId, { atk, hp, atkMul = 1, dmgTakenMul = 1, count = 1 } = {}) {
   const rec = battle.data.rawToken?.(TOKEN_IDS.yanyou) ?? battle.data.rawEnemy?.(TOKEN_IDS.yanyou) ?? null;
@@ -1013,9 +1059,10 @@ export function spawnYanyou(battle, playerId, { atk, hp, atkMul = 1, dmgTakenMul
   const n = Math.max(0, Math.min(Math.floor(num(count, 1)), Math.max(1, Math.floor(num(rec.deployLimit ?? rec.stats?.deployLimit, 2)))));
   const out = [];
   const taken = new Set();
+  const base = rec.stats || {};
   const stats = {};
-  if (num(atk, -1) >= 0) stats.atk = num(atk, 0);
-  if (num(hp, 0) > 0) stats.maxHp = num(hp, 1);
+  if (num(atk, -1) >= 0) stats.atk = num(base.atk, 0) + num(atk, 0);
+  if (num(hp, 0) > 0) stats.maxHp = num(base.maxHp, 0) + num(hp, 1);
   const ps = battle.getPlayer(playerId);
   for (let i = 0; i < n; i++) {
     const tile = airTile(battle, playerId, taken);
@@ -1027,7 +1074,7 @@ export function spawnYanyou(battle, playerId, { atk, hp, atkMul = 1, dmgTakenMul
     if (num(atkMul, 1) !== 1 && num(atkMul, 1) >= 0) mods.atkMul = num(atkMul, 1);
     if (num(dmgTakenMul, 1) !== 1 && num(dmgTakenMul, 1) >= 0) mods.dmgTakenMul = num(dmgTakenMul, 1);
     if (Object.keys(mods).length) battle.addBuff(u, { key: 'bond:yanyou', persist: true, allowDead: true, mods });
-    u.mem.hoverDy = out.length === 0 ? 0 : (out.length % 2 ? 0.8 : -0.8);
+    u.mem.hoverDy = out.length === 0 ? 0 : (out.length % 2 ? 0.8 : -0.8); // the 2nd one hovers beside the first
     u.hp = u.s.maxHp;
     battle.fx('yanyouSummon', { x: u.x, y: u.y, id: u.id, playerId });
     out.push(u);

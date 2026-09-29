@@ -164,8 +164,9 @@ describe('render engine in headless Chrome', { skip }, () => {
     const placed = await page.evaluate((uid) => window.__demo.scene.state.board.find((p) => p.uid === uid) || null, info.uid);
     assert.ok(placed, 'piece moved to the board');
     assert.deepEqual([placed.row, placed.col], [10, 5]);
-    const r2 = await page.evaluate(() => window.__demo.view.pieceScreenRect(window.__demo.scene.state.board[1].uid));
-    await page.mouse.click(r2.left + r2.width / 2, r2.top + r2.height / 2, { button: 'right' });
+    // picking is by tile (user playtest #4 item 1): right-click the unit's own tile
+    const r2 = await page.evaluate(() => { const p = window.__demo.scene.state.board[1]; return window.__demo.view.tileScreen(p.row, p.col); });
+    await page.mouse.click(r2.x, r2.y, { button: 'right' });
     await wait(150);
     const log = await page.evaluate(() => window.__demo.log.join('\n'));
     assert.match(log, /pieceClick .*"detail":true/);

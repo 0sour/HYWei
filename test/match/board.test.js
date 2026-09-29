@@ -224,20 +224,20 @@ test('a terrain change by content (setDeviceActive at the prep end, no recompute
 
 test('withdrawing a deployed summon into a full hand: HAND_FULL like any other card (no overflow into temp)', () => {
   const { m, ps } = prepMatch('act2autochess_m04');
-  // 赫默 → one 医疗探机 (deployLimit 1): once deployed no stack is left in the hand to join
-  const medic = give(m, ps, 'chess_char_2_02_a');
+  // 伺夜 → one 狼群 (deployLimit 1): once deployed no stack is left in the hand to join
+  const medic = give(m, ps, 'chess_char_3_19_a');
   assert.deepEqual(m.handle('p_0', { t: 'g.move', uid: medic.uid, to: { area: 'board', row: 10, col: 5 } }), { ok: true });
   const drone = ps.hand.find((p) => p && p.kind === 'token');
-  assert.ok(drone && drone.count === 1, 'one drone');
+  assert.ok(drone && drone.count === 1, 'one 狼群');
   assert.deepEqual(m.handle('p_0', { t: 'g.move', uid: drone.uid, to: { area: 'board', row: 9, col: 4 } }), { ok: true });
   // golden items never merge with each other: a plain full hand
   for (let i = 0; i < ps.hand.length; i++) if (!ps.hand[i]) giveItem(m, ps, 'chess_item_1_02_e_b', 'hand', i);
   assert.ok(ps.hand.every(Boolean) && ps.tempEmpty);
   assert.equal(m.handle('p_0', { t: 'g.move', uid: drone.uid, to: { area: 'hand', idx: 0 } }).error, ERR.HAND_FULL, 'a new card for a full hand');
-  assert.equal(ps.board.get('9,4'), drone, 'the drone stays on the board');
+  assert.equal(ps.board.get('9,4'), drone, 'the 狼群 stays on the board');
   assert.ok(ps.tempEmpty, 'nothing overflowed into temp (Ready stays possible)');
   assert.equal(m.handle('p_0', { t: 'g.move', uid: medic.uid, to: { area: 'hand', idx: 0 } }).error, ERR.HAND_FULL, 'the same as withdrawing an operator');
-  // a free slot: the drone comes back
+  // a free slot: the 狼群 comes back
   ps.hand[3] = null;
   assert.deepEqual(m.handle('p_0', { t: 'g.move', uid: drone.uid, to: { area: 'hand', idx: 0 } }), { ok: true });
   assert.equal(ps.hand[3], drone);

@@ -618,8 +618,13 @@ function enemyAttack(b, e) {
   const attackId = ++b._attackSeq;
   const type = def.dmgType === 'heal' ? 'arts' : def.dmgType;
   const rangedShot = radius > 0 && !(e.blockedBy && targets[0] === e.blockedBy && radius < 1);
+  // content-resolved attacks (`e.profile.deferHit`: 帝国炮火先兆者's shell landing 3 s later): the attack itself happens
+  // — the 'atk' event (kind `e.profile.shot`, drawn by the content's own fx), cooldown, pause, the 'attack' hook — and
+  // the content's 'attack' handler deals its damage
+  const deferred = !!(e.profile && e.profile.deferHit);
   for (const t of targets) {
-    b._ev(['atk', e.id, t.id, rangedShot ? 'enemy' : 'none']);
+    b._ev(['atk', e.id, t.id, deferred ? (e.profile.shot || 'none') : rangedShot ? 'enemy' : 'none']);
+    if (deferred) continue;
     const hit = (tt) => {
       if (!tt || !tt.alive || !e.alive && !rangedShot) return;
       b.dealDamage(e, tt, { amount: e.s.atk * (e.profile?.atkScale ?? 1), type, isAttack: true, attackId });

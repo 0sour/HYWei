@@ -56,6 +56,7 @@
 //   Attribute bonuses are 直接乘算 (support/index.js convention): ×(1 + x) multipliers; flat values stay flat.
 
 import { gameData, num, buffsOf, passiveBuff, effectRecord } from './support/index.js';
+import { isShopItem } from '../simdata.js';
 
 // =====================================================================================================================
 // data helpers
@@ -166,10 +167,8 @@ export function choiceCardIds(data = gameData()) {
   for (const c of Array.isArray(cards.bounty) ? cards.bounty : []) if (c && c.effectId && !bounty.includes(c.effectId)) bounty.push(c.effectId);
   for (const c of Array.isArray(cards.tactic) ? cards.tactic : []) if (c && c.effectId && !tactic.includes(c.effectId)) tactic.push(c.effectId);
   const items = [];
-  for (const [id, it] of Object.entries((data && data.items) || {})) {
-    if (!it || it.isGolden || it.hideInShop || it.itemType !== 'EQUIP' || !Number.isInteger(it.tier)) continue;
-    items.push(id);
-  }
+  // the 道具补给 / 机密商店 cards draw shop items only (never the effect-only special 维式重锤 / 突变细胞)
+  for (const [id, it] of Object.entries((data && data.items) || {})) if (isShopItem(it)) items.push(id);
   return { bounty: bounty.sort(), tactic: tactic.sort(), items: items.sort() };
 }
 

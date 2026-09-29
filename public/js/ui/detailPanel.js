@@ -10,8 +10,14 @@
 // match (research 09 §5, ui/underframe.js): the panel's own 出售 / 销毁 buttons only render for callers that pass
 // `editable` + handlers. `side` 'right' docks the panel at the right edge (the game screen picks the side away from a
 // selected unit's underframe, gameLogic panelSide).
+// Live stats (user playtest #4 item 7 — the card used to show the fixed record numbers): `live` = the unit's current
+// stats (shared/protocol.js unitStatsEntry + `src`) — in battle the browser's own sim (battle/runner.js unitStats; a
+// getter re-read 4× a second: current HP, max HP, ATK, DEF, RES, attack interval, block), in prep the stats the own
+// board's units start their next battle with (m.unitStats: equipment, bonds / layers, 特质, band and 机变 effects). Each
+// value is coloured against the unit's base like the official card — green when it helps (higher, or a shorter attack
+// interval) with the difference beside it, red when it hurts — and a 实时 / 开战时 tag says which it is.
 
-import { html, Icon, TierChip, MicroLabel, Button, confirmDialog } from './components.js';
+import { html, Icon, TierChip, MicroLabel, Button, confirmDialog, useTicker } from './components.js';
 import { Img, RichText, UnitThumb, BondGlyph, GIcon } from './gameComponents.js';
 import { attackInterval, rangeGridBox, fmtNum, tileKey, chessLoadout, nextThreshold, bondTier } from './gameLogic.js';
 import { chessPortraitUrl, skillIconUrl, skillRecordIconUrl, profIconUrl, subProfIconUrl, itemIconUrl, enemyIconUrl, tokenAvatarUrl, factionIconUrl, uiUrl, moduleTypeIconUrl } from './assetUrls.js';
@@ -43,8 +49,64 @@ export function RangeGrid({ grid, class: cls }) {
   return html`<div class=${cx('rgrid', cls)} style=${`grid-template-columns:repeat(${box.cols}, var(--rg))`} aria-label="攻击范围">${cells}</div>`;
 }
 
-function Stat({ k, v, sub }) {
-  return html`<div class="dstat"><span class="dstat__k">${k}</span><span class="dstat__row"><b class="dstat__v num">${v}</b>${sub ? html`<small>${sub}</small>` : null}</span></div>`;
+function Stat({ k, v, sub, tone = null, title }) {
+  return html`<div class=${cx('dstat', tone && `is-${tone}`)} title=${title}><span class="dstat__k">${k}</span><span class="dstat__row"><b class="dstat__v num">${v}</b>${sub ? html`<small>${sub}</small>` : null}</span></div>`;
+}
+
+/** Tolerance below which a live stat counts as its base (display rounding). */
+const STAT_EPS = { interval: 0.005, res: 0.05, moveSpeed: 0.005 };
+
+/**
+ * How a live stat compares with the unit's base (the official card's colours): 'up' (green) when it helps — higher,
+ * or a shorter attack interval —, 'down' (red) when it hurts, null when equal or unknown.
+ * @param {string} key maxHp | atk | def | res | interval | blockCnt | moveSpeed
+ * @param {any} cur @param {any} base
+ * @returns {'up'|'down'|null}
+ */
+export function statTone(key, cur, base) {
+  if (!Number.isFinite(cur) || !Number.isFinite(base)) return null;
+  const d = cur - base;
+  if (Math.abs(d) < (STAT_EPS[key] ?? 0.5)) return null;
+  return (key === 'interval' ? d < 0 : d > 0) ? 'up' : 'down';
+}
+
+/**
+ * One stat of the card: the live value (when `live` has it) coloured against `live.base`, with the difference as the
+ * small text; else the record value.
+ * @param {any} live unitStatsEntry (+ src) or null
+ * @param {string} key unitStatsEntry key
+ * @param {any} fallback record value
+ * @param {(v: any) => any} [fmt]
+ * @returns {{ v: any, tone: 'up'|'down'|null, sub: string|null, title: string|undefined }}
+ */
+export function liveStat(live, key, fallback, fmt = fmtNum) {
+  const cur = live && Number.isFinite(live[key]) ? live[key] : null;
+  if (cur == null) return { v: fallback == null ? '—' : fmt(fallback), tone: null, sub: null, title: undefined };
+  const base = live.base && Number.isFinite(live.base[key]) ? live.base[key] : null;
+  const tone = statTone(key, cur, base);
+  let sub = null;
+  if (tone) {
+    const d = cur - base;
+    sub = key === 'interval' ? `${d > 0 ? '+' : '−'}${Math.abs(d).toFixed(2)}` : `${d > 0 ? '+' : '−'}${key === 'res' || key === 'moveSpeed' ? Math.round(Math.abs(d) * 10) / 10 : fmtNum(Math.abs(d))}`;
+  }
+  return { v: fmt(cur), tone, sub, title: base != null ? `基础 ${fmt(base)}` : undefined };
+}
+
+/** The tag of a live stats block: 实时 (battle) / 开战时 (the prep preview). */
+function LiveTag({ live }) {
+  if (!live) return null;
+  const battle = live.src === 'battle';
+  return html`<span class=${cx('dstats__tag', battle && 'is-battle')} title=${battle ? '当前作战中的实时数值（绿色为增益，红色为减益）'
+    : '下一场作战开始时的数值：已计入装备、盟约层数、特质、策略与机变效果（不含技能与作战中的临时效果）'}>${battle ? '实时' : '开战时'}</span>`;
+}
+
+const fmtInterval = (v) => (Number.isFinite(v) && v > 0 ? `${v.toFixed(2)}s` : '—');
+const fmtRes = (v) => (Number.isFinite(v) ? String(Math.round(v * 10) / 10) : '0');
+
+/** HP bar of the card header: the live HP in battle, else the snapshot's. */
+function hpOf(live, snapHp) {
+  if (live && live.src === 'battle' && Number.isFinite(live.hp) && Number.isFinite(live.maxHp)) return { hp: live.hp, max: live.maxHp };
+  return snapHp || null;
 }
 
 function Section({ title, micro, children, class: cls }) {
@@ -139,8 +201,9 @@ function GarrisonBlock({ garrison, m }) {
   </section>`;
 }
 
-export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bonds, loadout, onBond }) {
+export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bonds, loadout, onBond, live = null }) {
   const m = data.get('assets');
+  const hp = hpOf(live, snapHp);
   const lo = chessLoadout(chess, loadout, (id) => data.lookup('chess', id));
   const c = chess;
   // stats / talents the unit fights with: the chosen module's (or none — statsBase) for an elite (DESIGN §16)
@@ -177,21 +240,28 @@ export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bond
           <span>${c.subProfessionName || ''}</span>
           <span class="dhead__pos">${c.position === 'MELEE' ? '近战位' : '远程位'}</span>
         </div>
-        ${snapHp ? html`<div class="dhp"><i style=${`width:${Math.max(0, Math.min(100, (snapHp.hp / Math.max(1, snapHp.max)) * 100))}%`}></i><span class="num">${fmtNum(snapHp.hp)} / ${fmtNum(snapHp.max)}</span></div>` : null}
+        ${hp ? html`<div class="dhp"><i style=${`width:${Math.max(0, Math.min(100, (hp.hp / Math.max(1, hp.max)) * 100))}%`}></i><span class="num">${fmtNum(hp.hp)} / ${fmtNum(hp.max)}</span></div>` : null}
         <${BondChips} bondIds=${c.bonds} bonds=${bonds} onBond=${onBond} />
       </div>
     </div>`;
   blocks.garrison = garrison ? html`<${GarrisonBlock} key="garrison" garrison=${garrison} m=${m} />` : null;
   blocks.trait = c.trait?.desc ? html`<p key="trait" class="dtrait"><${Icon} name="info" /><${RichText} text=${traitText(c, golden, lo)} /></p>` : null;
+  // live (battle) / start-of-battle (prep) values against the base, else the record's (liveStat)
+  const st = {
+    maxHp: liveStat(live, 'maxHp', s.maxHp), atk: liveStat(live, 'atk', s.atk), def: liveStat(live, 'def', s.def),
+    res: liveStat(live, 'res', s.res ?? 0, fmtRes), interval: liveStat(live, 'interval', interval, fmtInterval),
+    blockCnt: liveStat(live, 'blockCnt', s.blockCnt, (v) => String(v)),
+  };
   blocks.stats = html`
-    <div key="stats" class="dstats-wrap">
+    <div key="stats" class=${cx('dstats-wrap', live && 'is-live')} data-live=${live ? live.src || 'prep' : undefined}>
       <div class="dstats">
-        <${Stat} k="生命上限" v=${fmtNum(s.maxHp)} />
-        <${Stat} k="攻击" v=${fmtNum(s.atk)} />
-        <${Stat} k="防御" v=${fmtNum(s.def)} />
-        <${Stat} k="法术抗性" v=${s.res ?? 0} />
-        <${Stat} k="攻击间隔" v=${interval ? `${interval.toFixed(2)}s` : '—'} />
-        <${Stat} k="阻挡数" v=${s.blockCnt ?? '—'} />
+        <${LiveTag} live=${live} />
+        <${Stat} k="生命上限" ...${st.maxHp} />
+        <${Stat} k="攻击" ...${st.atk} />
+        <${Stat} k="防御" ...${st.def} />
+        <${Stat} k="法术抗性" ...${st.res} />
+        <${Stat} k="攻击间隔" ...${st.interval} />
+        <${Stat} k="阻挡数" ...${st.blockCnt} />
         <${Stat} k="部署费用" v=${s.cost ?? '—'} />
         <${Stat} k="再部署" v=${s.respawnTime != null ? `${s.respawnTime}s` : '—'} />
       </div>
@@ -234,7 +304,11 @@ export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bond
   return CHESS_SECTIONS.map((k) => blocks[k]).filter(Boolean);
 }
 
-function ItemDetail({ item, piece, editable, onDestroy }) {
+/**
+ * An item's card (hand / temp / shop / equipped). An effect-only item (items.json `shopExcluded`: the special 维式重锤,
+ * 突变细胞 — user playtest #4 item 5) says it is never sold and where it comes from (`shopExcludedBy`).
+ */
+export function ItemDetail({ item, piece, editable, onDestroy }) {
   const m = data.get('assets');
   return html`
     <div class="dhead dhead--item">
@@ -250,16 +324,24 @@ function ItemDetail({ item, piece, editable, onDestroy }) {
     ${item.itemType === 'MAGIC'
       ? html`<p class="dhint"><${Icon} name="info" />将其拖拽至战场上的格子使用</p>`
       : html`<p class="dhint"><${Icon} name="info" />拖拽至干员身上进行配发（每名干员最多 2 件，配发后无法取下）${item.mergeable ? '；2 件相同装备自动合成进阶装备' : ''}</p>`}
+    ${item.shopExcluded ? html`<p class="dhint dhint--source"><${Icon} name="info" />调度中心不出售 · 获取途径：${item.shopExcludedBy || '效果获得'}</p>` : null}
     ${piece && editable ? html`<div class="dactions"><${Button} variant="danger" onClick=${() => onDestroy(piece, item)}>销毁道具<//></div>` : null}`;
 }
 
-function EnemyDetail({ enemy, snapHp, count }) {
+function EnemyDetail({ enemy, snapHp, count, live = null }) {
   const m = data.get('assets');
   const s = enemy.stats || {};
   const types = Array.isArray(enemy.acTypes) ? enemy.acTypes : enemy.acType ? [enemy.acType] : [];
   const factions = data.get('factions')?.types || {};
   const imm = Object.entries(s.immunities || {}).filter(([, v]) => v).map(([k]) => ({ stun: '晕眩', silence: '沉默', sleep: '沉睡', frozen: '冻结', levitate: '浮空' }[k] || k));
   const interval = attackInterval(s.bat, s.aspd);
+  const hp = hpOf(live, snapHp);
+  // a battle enemy: its live stats against its spawned ones (the round's multipliers included — unitStatsEntry base)
+  const st = {
+    maxHp: liveStat(live, 'maxHp', s.maxHp), atk: liveStat(live, 'atk', s.atk), def: liveStat(live, 'def', s.def),
+    res: liveStat(live, 'res', s.res ?? 0, fmtRes), moveSpeed: liveStat(live, 'moveSpeed', s.moveSpeed, (v) => String(Math.round(v * 100) / 100)),
+    interval: liveStat(live, 'interval', interval, (v) => (Number.isFinite(v) && v > 0 ? `${v.toFixed(1)}s` : '—')),
+  };
   return html`
     <div class="dhead dhead--enemy">
       <div class=${cx('dhead__icon', 'dhead__icon--enemy', enemy.rank === 'BOSS' && 'is-boss', enemy.rank === 'ELITE' && 'is-elite')}>
@@ -273,16 +355,17 @@ function EnemyDetail({ enemy, snapHp, count }) {
         </div>
         <h3 class="dhead__name">${enemy.name}</h3>
         <div class="dfactions">${types.map((t) => html`<span key=${t} class="dfaction"><${Img} src=${factionIconUrl(m, factions[t]?.icon)} />${factions[t]?.name || t}</span>`)}</div>
-        ${snapHp ? html`<div class="dhp dhp--enemy"><i style=${`width:${Math.max(0, Math.min(100, (snapHp.hp / Math.max(1, snapHp.max)) * 100))}%`}></i><span class="num">${fmtNum(snapHp.hp)} / ${fmtNum(snapHp.max)}</span></div>` : null}
+        ${hp ? html`<div class="dhp dhp--enemy"><i style=${`width:${Math.max(0, Math.min(100, (hp.hp / Math.max(1, hp.max)) * 100))}%`}></i><span class="num">${fmtNum(hp.hp)} / ${fmtNum(hp.max)}</span></div>` : null}
       </div>
     </div>
-    <div class="dstats">
-      <${Stat} k="生命上限" v=${fmtNum(s.maxHp)} />
-      <${Stat} k="攻击" v=${fmtNum(s.atk)} sub=${DMG[s.dmgType] || ''} />
-      <${Stat} k="防御" v=${fmtNum(s.def)} />
-      <${Stat} k="法术抗性" v=${s.res ?? 0} />
-      <${Stat} k="移动速度" v=${s.moveSpeed ?? '—'} />
-      <${Stat} k="攻击间隔" v=${interval ? `${interval.toFixed(1)}s` : '—'} />
+    <div class=${cx('dstats', live && 'is-live')} data-live=${live ? live.src || 'battle' : undefined}>
+      <${LiveTag} live=${live} />
+      <${Stat} k="生命上限" ...${st.maxHp} />
+      <${Stat} k="攻击" ...${st.atk} sub=${st.atk.sub || DMG[s.dmgType] || ''} />
+      <${Stat} k="防御" ...${st.def} />
+      <${Stat} k="法术抗性" ...${st.res} />
+      <${Stat} k="移动速度" ...${st.moveSpeed} />
+      <${Stat} k="攻击间隔" ...${st.interval} />
       <${Stat} k="攻击范围" v=${s.rangeRadius > 0 ? s.rangeRadius : '近战'} />
       <${Stat} k="目标价值" v=${s.lpr ?? 1} />
     </div>
@@ -292,20 +375,27 @@ function EnemyDetail({ enemy, snapHp, count }) {
     <//>` : enemy.descRaw || enemy.desc ? html`<${Section} title="说明"><${RichText} as="p" text=${enemy.descRaw || enemy.desc} class="dtext" /><//>` : null}`;
 }
 
-function TokenDetail({ token, piece }) {
+function TokenDetail({ token, piece, snapHp = null, live = null }) {
   const m = data.get('assets');
   const s = token.stats || {};
+  const hp = hpOf(live, snapHp);
+  const st = {
+    maxHp: liveStat(live, 'maxHp', s.maxHp), atk: liveStat(live, 'atk', s.atk), def: liveStat(live, 'def', s.def),
+    blockCnt: liveStat(live, 'blockCnt', s.blockCnt, (v) => String(v)),
+  };
   return html`
     <div class="dhead dhead--item">
       <div class="dhead__icon"><${Img} src=${tokenAvatarUrl(m, token.tokenId)} fallback=${html`<${GIcon} name="target" />`} /></div>
       <div class="dhead__info">
         <div class="dhead__chips"><span class="dtag-token">召唤物</span>${piece?.count > 1 ? html`<span class="dtag-kind num">×${piece.count}</span>` : null}</div>
         <h3 class="dhead__name">${token.name}</h3>
+        ${hp ? html`<div class="dhp"><i style=${`width:${Math.max(0, Math.min(100, (hp.hp / Math.max(1, hp.max)) * 100))}%`}></i><span class="num">${fmtNum(hp.hp)} / ${fmtNum(hp.max)}</span></div>` : null}
       </div>
     </div>
-    <div class="dstats">
-      <${Stat} k="生命上限" v=${fmtNum(s.maxHp)} /><${Stat} k="攻击" v=${fmtNum(s.atk)} />
-      <${Stat} k="防御" v=${fmtNum(s.def)} /><${Stat} k="阻挡数" v=${s.blockCnt ?? '—'} />
+    <div class=${cx('dstats', live && 'is-live')} data-live=${live ? live.src || 'prep' : undefined}>
+      <${LiveTag} live=${live} />
+      <${Stat} k="生命上限" ...${st.maxHp} /><${Stat} k="攻击" ...${st.atk} />
+      <${Stat} k="防御" ...${st.def} /><${Stat} k="阻挡数" ...${st.blockCnt} />
     </div>
     ${token.descRaw || token.desc ? html`<${Section} title="说明"><${RichText} as="p" text=${token.descRaw || token.desc} class="dtext" /><//>` : null}`;
 }
@@ -351,9 +441,15 @@ export function resolveDetail(target, pieces) {
  *   bonds: the owner's m.private.bonds (counts / tiers of the bond chips); loadout: m.private.loadout (DESIGN §16) for
  *   the player's own operators and shop cards; a teammate's unit gets its owner's choice (gameLogic unitLoadout); null
  *   = the defaults
+ *   live: the unit's live stats (unitStatsEntry + src 'battle' | 'prep') — an object, or a getter the panel re-reads 4×
+ *   a second (the battle's own sim, battle/runner.js unitStats); null ⇒ the record's numbers
  */
-export function DetailPanel({ detail, editable, snapHp, onClose, onSell, onDestroy, bonds = [], loadout = null, onBond = null, side = 'left', shopOpen = false }) {
+export function DetailPanel({ detail, editable, snapHp, onClose, onSell, onDestroy, bonds = [], loadout = null, onBond = null, side = 'left', shopOpen = false, live = null }) {
+  const getter = typeof live === 'function' ? live : null;
+  useTicker(detail && getter ? 250 : 0);
   if (!detail) return null;
+  let liveNow = null;
+  try { liveNow = getter ? getter() : live && typeof live === 'object' ? live : null; } catch { liveNow = null; }
   const sellIt = async (piece, chess) => {
     const golden = piece.golden || chess?.isGolden;
     if (golden) {
@@ -371,10 +467,10 @@ export function DetailPanel({ detail, editable, snapHp, onClose, onSell, onDestr
     <button type="button" class="dpanel__close" aria-label="关闭" onClick=${onClose}><${Icon} name="close" /></button>
     <div class="dpanel__scroll">
       ${detail.type === 'chess' ? html`<${ChessDetail} chess=${detail.chess} piece=${detail.piece} snapHp=${snapHp} editable=${editable} onSell=${sellIt}
-        bonds=${bonds} loadout=${loadout} onBond=${onBond} />` : null}
+        bonds=${bonds} loadout=${loadout} onBond=${onBond} live=${liveNow} />` : null}
       ${detail.type === 'item' ? html`<${ItemDetail} item=${detail.item} piece=${detail.piece} editable=${editable} onDestroy=${destroyIt} />` : null}
-      ${detail.type === 'enemy' ? html`<${EnemyDetail} enemy=${detail.enemy} snapHp=${snapHp} count=${detail.count} />` : null}
-      ${detail.type === 'token' ? html`<${TokenDetail} token=${detail.token} piece=${detail.piece} />` : null}
+      ${detail.type === 'enemy' ? html`<${EnemyDetail} enemy=${detail.enemy} snapHp=${snapHp} count=${detail.count} live=${liveNow} />` : null}
+      ${detail.type === 'token' ? html`<${TokenDetail} token=${detail.token} piece=${detail.piece} snapHp=${snapHp} live=${liveNow} />` : null}
     </div>
   </aside>`;
 }
