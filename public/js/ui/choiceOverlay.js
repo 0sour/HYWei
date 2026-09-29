@@ -1,9 +1,11 @@
 // 机变 draft overlay (research 06 §4.4 / §11.5): family title | description, "倒计时结束后仍未选定将自动分配",
 // whose turn ("当前轮到你决策" / "{name} 正在决策…") with countdown, pick order with ✓ / ⌛ / … / door,
 // and a 3×2 grid (solo: 3 cards) of cards with icon, title, rich description, tier chip and the taker's
-// avatar badge. Clicking an available card on your turn sends g.choice.
+// avatar badge. Clicking an available card on your turn sends g.choice; while it is in flight the card shows a
+// "选择中" strip with a sweeping bar (never a spinner over its text — user playtest #3 item 9), dropped as soon as the
+// pick shows in m.public (spBusy itself resets when the request settles, ≤ 8 s, or the phase moves on).
 
-import { html, Icon, TierChip, Countdown, MicroLabel, Spinner } from './components.js';
+import { html, Icon, TierChip, Countdown, MicroLabel } from './components.js';
 import { Img, RichText, PlayerAvatar, GIcon } from './gameComponents.js';
 import { itemIconUrl, enemyIconUrl, uiUrl } from './assetUrls.js';
 import { richTextPlain } from './richText.js';
@@ -45,6 +47,15 @@ export function resolveSpCard(card, family) {
     team: !!team,
     coin: card.coin ?? bounty?.coin ?? eff?.enemyPrice ?? null,
   };
+}
+
+/**
+ * Whether a card shows the in-flight pick (g.choice sent, no answer yet): only until the pick lands in m.public — the
+ * player's pick is known or the card is taken — so it can never outlive the request's effect.
+ * @param {number|null} busyIdx @param {{ idx: number, takenBy?: string|null }} card @param {number|null|undefined} mine
+ */
+export function pickBusy(busyIdx, card, mine) {
+  return busyIdx != null && !!card && busyIdx === card.idx && mine == null && !card.takenBy;
 }
 
 /**
@@ -94,7 +105,9 @@ export function ChoiceOverlay({ pub, sp, myId, solo, onPick, busyIdx = null, tot
           const r = resolveSpCard(card, sp.family);
           const taker = card.takenBy ? players.get(card.takenBy) : null;
           const can = myTurn && mine == null && !card.takenBy && busyIdx == null;
-          return html`<button key=${card.idx} type="button" class=${cx('spcard', `spcard--${r.kind}`, card.takenBy && 'is-taken', card.takenBy === myId && 'is-mine', can && 'is-pickable', busyIdx === card.idx && 'is-busy')}
+          const busy = pickBusy(busyIdx, card, mine);
+          return html`<button key=${card.idx} type="button" class=${cx('spcard', `spcard--${r.kind}`, card.takenBy && 'is-taken', card.takenBy === myId && 'is-mine', can && 'is-pickable', busy && 'is-busy')}
+              aria-busy=${busy ? 'true' : undefined}
               disabled=${!can} onClick=${() => can && onPick(card.idx)} aria-label=${r.name} title=${`${r.name}\n${richTextPlain(r.desc)}`}>
             <span class="spcard__glow" aria-hidden="true"></span>
             ${r.tier ? html`<${TierChip} tier=${r.tier} size="md" class="spcard__tier" />` : null}
@@ -108,7 +121,7 @@ export function ChoiceOverlay({ pub, sp, myId, solo, onPick, busyIdx = null, tot
               </span>
             </span>
             ${taker ? html`<span class="spcard__taker" title=${`${taker.name} 已选择`}><${PlayerAvatar} player=${taker} size="sm" /><span>${card.takenBy === myId ? '你' : taker.name}</span></span>` : null}
-            ${busyIdx === card.idx ? html`<span class="spcard__spin"><${Spinner} size="sm" /></span>` : null}
+            ${busy ? html`<span class="spcard__busy" role="status">选择中</span>` : null}
           </button>`;
         })}
       </div>

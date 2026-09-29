@@ -77,6 +77,7 @@ function harness(opts = {}) {
   const c = createDragController({
     hitPiece: (x, y) => pieces.find((p) => Math.abs(p.x - x) < 40 && Math.abs(p.y - y) < 40) || null,
     pickTile: (x, y) => (x < 0 || y < 0 || x >= 2100 ? null : { row: 12 - Math.floor(y / 100), col: Math.floor(x / 100) }),
+    dropPoint: opts.dropPoint,
     isOverCanvas: (cx, cy) => !(opts.domCover && cy > 900),
     canPlace: opts.canPlace,
     emit: (name, p) => events.push([name, p]),
@@ -215,6 +216,86 @@ describe('drag controller', () => {
     h.c.pointerCancel({ pointerId: 1 });
     assert.equal(h.c.dragging, false);
     assert.equal(h.events.filter((e) => e[0] === 'pieceDrop').length, 0);
+  });
+
+  // user playtest #3 item 7: the drop target is the tile under the dragged ghost's feet (render/app.js dropPoint: the
+  // pointer for a mouse, a little above the finger for touch) — the hover tile, legality, the ghost and the drop agree
+  test('dropPoint: target, tileHover, legality and the drop follow the ghost\'s feet; default = the pointer', () => {
+    const calls = [];
+    const h = harness({
+      dropPoint: (e, piece) => { calls.push([e.pointerType, piece.uid]); return e.pointerType === 'touch' ? { x: e.x, y: e.y - 100 } : null; },
+      canPlace: (p, r) => r !== 11,
+    });
+    h.c.setEditable(true);
+    // mouse: the hook returns nothing → the pointer itself
+    h.ev('pointerDown', 50, 550);
+    h.ev('pointerMove', 350, 250);
+    let mv = h.events.filter((e) => e[0] === 'pieceDragMove').pop()[1];
+    assert.deepEqual([mv.hx, mv.hy, mv.target], [350, 250, { area: 'board', row: 10, col: 3 }]);
+    h.ev('pointerUp', 350, 250);
+    assert.deepEqual(h.events.find((e) => e[0] === 'pieceDrop')[1].target, { area: 'board', row: 10, col: 3 });
+    // touch: the ghost (and the target) one row above the finger
+    h.events.length = 0;
+    h.ev('pointerDown', 50, 550, { pointerType: 'touch' });
+    h.ev('pointerMove', 450, 350, { pointerType: 'touch' });
+    mv = h.events.filter((e) => e[0] === 'pieceDragMove').pop()[1];
+    assert.deepEqual([mv.x, mv.y, mv.hx, mv.hy], [450, 350, 450, 250], 'pointer and drop point both reported');
+    assert.deepEqual(mv.target, { area: 'board', row: 10, col: 4 });
+    assert.equal(mv.legal, true);
+    assert.ok(h.events.some((e) => e[0] === 'tileHover' && e[1] && e[1].row === 10 && e[1].col === 4), 'tileHover = the target');
+    h.ev('pointerMove', 450, 250, { pointerType: 'touch' });
+    assert.equal(h.events.filter((e) => e[0] === 'pieceDragMove').pop()[1].legal, false, 'row 11 under the ghost: illegal');
+    h.ev('pointerUp', 450, 350, { pointerType: 'touch' });
+    assert.deepEqual(h.events.find((e) => e[0] === 'pieceDrop')[1].target, { area: 'board', row: 10, col: 4 });
+    assert.ok(calls.every(([, uid]) => uid === 1) && calls.some(([t]) => t === 'touch'));
+  });
+
+  // the view may skip its pixel probe on hover picks (a readback per mouse move stalls on the GPU): the controller says
+  // which calls are hovers — mouse moves without a press, drag moves — and which must be exact: presses and releases
+  test('hitPiece / dropPoint tell hovers from presses and releases', () => {
+    const hits = [];
+    const drops = [];
+    const pieces = [{ uid: 1, area: 'hand', idx: 0, x: 50, y: 550 }];
+    const c = createDragController({
+      hitPiece: (x, y, hover) => { hits.push(hover === true); return pieces.find((p) => Math.abs(p.x - x) < 40 && Math.abs(p.y - y) < 40) || null; },
+      pickTile: (x, y) => ({ row: 12 - Math.floor(y / 100), col: Math.floor(x / 100) }),
+      dropPoint: (e, piece, final) => { drops.push(final === true); return null; },
+      emit: () => {},
+    });
+    const ev = (type, x, y) => c[type]({ pointerId: 1, pointerType: 'mouse', button: 0, x, y, clientX: x, clientY: y });
+    c.setEditable(true);
+    ev('pointerMove', 50, 550);
+    assert.deepEqual(hits, [true], 'a mouse move without a press is a hover');
+    ev('pointerDown', 50, 550);
+    assert.deepEqual(hits, [true, false], 'a press probes');
+    ev('pointerMove', 350, 250);
+    ev('pointerMove', 360, 250);
+    ev('pointerUp', 360, 250);
+    assert.ok(drops.length >= 3);
+    assert.ok(drops.slice(0, -1).every((f) => f === false), 'drag moves are hovers');
+    assert.equal(drops[drops.length - 1], true, 'the release is final');
+  });
+
+  // review of item 7: on a phone the bench is the lowest canvas row and the shop bar (DOM) sits right under it — a
+  // touch ghost lifted onto the bench has the finger on the shop bar. DOM cover is judged at the drop point.
+  test('dropPoint: DOM cover is tested at the ghost\'s feet, not at the finger (touch onto the bench above the shop bar)', () => {
+    const h = harness({ domCover: true, dropPoint: (e) => (e.pointerType === 'touch' ? { x: e.x, y: e.y - 400 } : null) });
+    h.c.setEditable(true);
+    // board unit (10,4) dragged by touch; the finger ends on the covered strip (y > 900), its ghost on bench slot 2
+    h.ev('pointerDown', 450, 250, { pointerType: 'touch' });
+    h.ev('pointerMove', 250, 950, { pointerType: 'touch' });
+    const mv = h.events.filter((e) => e[0] === 'pieceDragMove').pop()[1];
+    assert.deepEqual(mv.target, { area: 'hand', idx: 2 });
+    assert.equal(mv.legal, true);
+    h.ev('pointerUp', 250, 950, { pointerType: 'touch' });
+    assert.deepEqual(h.events.find((e) => e[0] === 'pieceDrop')[1].target, { area: 'hand', idx: 2 });
+    // the ghost itself under the DOM: outside (the piece goes back), as for a mouse released on the DOM
+    h.events.length = 0;
+    h.ev('pointerDown', 450, 250, { pointerType: 'touch' });
+    h.ev('pointerMove', 250, 1350, { pointerType: 'touch' });
+    assert.equal(h.events.filter((e) => e[0] === 'pieceDragMove').pop()[1].target, null);
+    h.ev('pointerUp', 250, 1350, { pointerType: 'touch' });
+    assert.equal(h.events.find((e) => e[0] === 'pieceDrop')[1].target.area, 'outside');
   });
 
   test('a throwing listener or hit-test never breaks the controller', () => {

@@ -9,14 +9,20 @@
 // target (temp slot, enemy lane, `canPlace` false, or the piece's own bench slot) cancels the drag without a
 // pieceDrop. A board piece released on its OWN tile is a drop (when `canPlace` allows it): the UI opens the
 // direction wheel to re-orient it in place (research 09 §1.2 — "drag the unit onto its own tile and swipe").
+// While dragging, the target is the tile under the dragged ghost's feet: `dropPoint(e, piece)` (app.js) gives that
+// canvas point — the pointer itself (mouse / pen), a little above the finger (touch) — and the ghost is drawn standing
+// on it, so what the player sees is where the piece lands (user playtest #3 item 7); whether DOM UI covers the drop is
+// tested there too (a lifted touch ghost stands on the bench while the finger is on the shop bar below it). Hover and
+// presses use the pointer.
 //
 // Events emitted through `emit(name, payload)`:
 //   pieceHover     { uid, piece, clientX, clientY } | { uid: null }            (mouse/pen hover changes)
-//   tileHover      { row, col, area, idx } | null                              (hover / drag tile changes)
+//   tileHover      { row, col, area, idx } | null                              (hover / drag target tile changes)
 //   pieceClick     { uid, piece, button, detail, clientX, clientY }            (detail: right-click / long-press)
 //   pieceDetail    { uid, piece, clientX, clientY }                            (right-click / long-press)
 //   pieceDragStart { uid, piece, from }
-//   pieceDragMove  { uid, piece, x, y, clientX, clientY, target, legal }       (for the ghost; high frequency)
+//   pieceDragMove  { uid, piece, x, y, hx, hy, clientX, clientY, target, legal } (for the ghost; high frequency;
+//                                                                              hx, hy = the drop point)
 //   pieceDrop      { uid, piece, from, target }
 //   pieceDragEnd   { uid, piece, dropped, cancelled }
 
@@ -90,8 +96,11 @@ const DEFAULTS = { threshold: 6, touchThreshold: 10, longPressMs: 480 };
 /**
  * Pointer state machine.
  * @param {{
- *   hitPiece: (x, y) => (object|null),            // piece under canvas point (front-most); piece.uid required
+ *   hitPiece: (x, y, hover) => (object|null),     // piece under canvas point (render/pick.js rule); piece.uid required;
+ *                                                 // hover = a mouse move (not a press): may skip the pixel probe
  *   pickTile: (x, y) => ({row, col}|null),        // grid tile under canvas point
+ *   dropPoint?: (e, piece, final) => ({x, y}|null), // canvas point of the dragged ghost's feet (default: the pointer);
+ *                                                 // final = the release (a move may skip the pixel probe)
  *   isOverCanvas?: (clientX, clientY) => boolean, // false when DOM UI covers the point (default true)
  *   canPlace?: (piece, row, col, target) => boolean,
  *   emit: (name, payload) => void,
@@ -112,8 +121,14 @@ export function createDragController(hooks) {
   const emit = (name, payload) => { try { h.emit(name, payload); } catch (err) { console.error('[drag] listener failed', err); } };
   const draggable = (piece) => !!piece && piece.draggable !== false && piece.uid != null;
   const tileAt = (x, y) => { try { return h.pickTile(x, y); } catch { return null; } };
-  const pieceAt = (x, y) => { try { return h.hitPiece(x, y); } catch { return null; } };
+  const pieceAt = (x, y, hover = false) => { try { return h.hitPiece(x, y, hover); } catch { return null; } };
   const overCanvas = (cx, cy) => { try { return h.isOverCanvas ? h.isOverCanvas(cx, cy) !== false : true; } catch { return true; } };
+  /** The drop point of a dragged piece (its ghost's feet) for pointer event `e`. */
+  const dropAt = (e, piece, final = false) => {
+    let p = null;
+    try { p = typeof h.dropPoint === 'function' ? h.dropPoint(e, piece, final) : null; } catch { p = null; }
+    return p && Number.isFinite(p.x) && Number.isFinite(p.y) ? p : { x: e.x, y: e.y };
+  };
 
   function setHoverTile(tile) {
     const slot = tile ? tileSlot(tile) : null;
@@ -140,13 +155,18 @@ export function createDragController(hooks) {
     moveDrag(e);
   }
 
+  /** Is the drop point (not the finger) on the canvas? A touch ghost is lifted over the board while the finger may be
+   * on the DOM below it (the shop bar under the bench on a phone): what counts is where the piece is drawn. */
+  const dropOverCanvas = (e, pt) => overCanvas(e.clientX + (pt.x - e.x), e.clientY + (pt.y - e.y));
+
   function moveDrag(e) {
-    const tile = tileAt(e.x, e.y);
-    const over = overCanvas(e.clientX, e.clientY);
+    const pt = dropAt(e, st.piece);
+    const tile = tileAt(pt.x, pt.y);
+    const over = dropOverCanvas(e, pt);
     const slot = over && tile ? tileSlot(tile) : null;
     const legal = !!slot && slot.area !== 'temp' && (slot.area === 'board' || !sameSlot(slot, st.from)) && isLegal(canPlace, st.piece, slot);
     setHoverTile(over ? tile : null);
-    emit('pieceDragMove', { uid: st.piece.uid, piece: st.piece, x: e.x, y: e.y, clientX: e.clientX, clientY: e.clientY, target: slot, legal });
+    emit('pieceDragMove', { uid: st.piece.uid, piece: st.piece, x: e.x, y: e.y, hx: pt.x, hy: pt.y, clientX: e.clientX, clientY: e.clientY, target: slot, legal });
   }
 
   function endDrag(e, cancelled) {
@@ -155,8 +175,9 @@ export function createDragController(hooks) {
     if (!s) return;
     let dropped = false;
     if (!cancelled) {
-      const tile = tileAt(e.x, e.y);
-      const d = resolveDrop({ piece: s.piece, from: s.from, tile, overCanvas: overCanvas(e.clientX, e.clientY), clientX: e.clientX, clientY: e.clientY, canPlace });
+      const pt = dropAt(e, s.piece, true);
+      const tile = tileAt(pt.x, pt.y);
+      const d = resolveDrop({ piece: s.piece, from: s.from, tile, overCanvas: dropOverCanvas(e, pt), clientX: e.clientX, clientY: e.clientY, canPlace });
       if (d.kind === 'drop') {
         dropped = true;
         emit('pieceDrop', { uid: s.piece.uid, piece: s.piece, from: s.from, target: d.target });
@@ -205,7 +226,7 @@ export function createDragController(hooks) {
     pointerMove(e) {
       if (!st) {
         if (e.pointerType === 'touch') return;
-        setHoverPiece(pieceAt(e.x, e.y), e);
+        setHoverPiece(pieceAt(e.x, e.y, true), e);
         setHoverTile(tileAt(e.x, e.y));
         return;
       }

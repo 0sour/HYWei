@@ -12,6 +12,9 @@
 // Simplifications (one line per id; see also the report of the content phase):
 //  1_15 盟约·辅助干员  element pick = neural → burn → apoptosis, skipping the elements already bursting on the target.
 //  6_01 蕾缪安   locks every 0.5 s while an enemy is in range (ends early — and bombs — when the range empties);
+//                the shells then follow one every 0.3 s (PRTS), each landing 0.3 s after it is fired [ASSUMED flight];
+//                the 1.5 radius (PRTS "碰撞箱判定") is read as the centre distance like every engine radius; knocked
+//                out / withdrawn after the end, she fires no further shell (those already in the air still land);
 //                "wanted" needs a continuous 8 s stay in some 拉特兰 range; wanted targets are added to her range tiles.
 //  6_02 圣聆初雪 "诱导" (ba.attract 无法被阻挡并向目标位置移动) = the engine `attract` status for attract_time: the enemy
 //                is unblockable and walks (own speed, grid path) to the nearest ground tile around her, then waits there;
@@ -98,6 +101,7 @@
 import { absoluteRangeKeys, sortEnemyTargets, canTargetEnemy } from '../../targeting.js';
 import { aggregateMods } from '../../buffs.js';
 import { COLS, ROWS } from '../../constants.js';
+import { rotateOffset } from '../../dir.js';
 import { summonToken, TOKEN_IDS } from '../tokens.js';
 
 // ------------------------------------------------------------------------------------------------------------------
@@ -345,6 +349,15 @@ function pithst(bb, chess, def) {
 // ------------------------------------------------------------------------------------------------------------------
 // 蕾缪安 chess_char_6_01 (神射手) — S3 礼炮·强制追思; 跨境追缉许可; 逃犯引渡手续
 
+/** S3 bombardment: one shell every 0.3 s after the skill ends, for at most 10 s (PRTS S3 note, not in the data). */
+const LEMUEN_SHELL_INTERVAL = 0.3;
+const LEMUEN_SHELL_WINDOW = 10;
+/**
+ * Shell flight time [ASSUMED]: the first bombardment lands one interval after the skill ends, so every shell of the
+ * PRTS count (≤ 33 in the 10 s window) lands inside it; the renderer draws the shell over this time (fx bombardShell).
+ */
+const LEMUEN_SHELL_FLIGHT = 0.3;
+
 function ensureWanted(battle) {
   const S = bstate(battle);
   if (S.wanted) return S.wanted;
@@ -394,17 +407,42 @@ function lemuen(bb, chess, def) {
     for (const e of cands) if (!best || cnt(e) < cnt(best)) best = e;
     return best;
   };
-  const bombard = (battle, unit, locks) => {
-    for (const L of locks) {
-      const x = L.e.alive && !L.e.hidden ? L.e.x : L.x;
-      const y = L.e.alive && !L.e.hidden ? L.e.y : L.y;
-      battle.fx('bombard', { x, y, id: unit.id, r: d2 });
-      for (const e of battle.enemiesInRadius(x, y, d2)) {
-        if (e.s.flags.untargetable) continue;
-        const d = Math.hypot(e.x - x, e.y - y);
-        battle.dealDamage(unit, e, { amount: unit.s.atk * (d <= d1 ? s1 : s2), type: 'phys', isSkill: true, isSplash: true, tags: ['skill', 'bombard'] });
-      }
+  // S3 bombardment (PRTS 蕾缪安 S3 note — the timing is not in the blackboard): after the skill ends ONE shell every
+  // LEMUEN_SHELL_INTERVAL s, in lock order, on a random point of the square of side 2 × emit_offset (PRTS "边长0.4",
+  // emit_offset 0.2) around its lock mark — the locked enemy while it is on the field ("持续追踪锁定目标"), else the spot
+  // it left ("锁定标记会留在原地") — landing LEMUEN_SHELL_FLIGHT s later; each shell hits every enemy within dist_2 once
+  // (limited_hit_time 1): proj_atk_scale_1 × ATK within dist_1 of its point, proj_atk_scale_2 × ATK beyond, all with the
+  // ATK cached when the skill ended ("缓存攻击力"); at most LEMUEN_SHELL_WINDOW s of shells ("最多产生33次轰炸").
+  const spread = Math.max(0, num(bb['attack@emit_offset'], 0.2));
+  const markOf = (L) => {
+    const e = L.e;
+    if (!L.gone && (!e.alive || !e.hidden)) { L.x = e.x; L.y = e.y; if (!e.alive) L.gone = true; }
+    return L;
+  };
+  const blast = (battle, unit, atk, x, y) => {
+    battle.fx('bombard', { x, y, id: unit.id, r: d2 });
+    for (const e of battle.enemiesInRadius(x, y, d2)) {
+      if (e.s.flags.untargetable) continue;
+      const d = Math.hypot(e.x - x, e.y - y);
+      battle.dealDamage(unit, e, { amount: atk * (d <= d1 ? s1 : s2), type: 'phys', isSkill: true, isSplash: true, tags: ['skill', 'bombard'] });
     }
+  };
+  const bombard = (battle, unit, locks) => {
+    const atk = unit.s.atk;
+    const seq = unit.deploySeq;
+    const n = Math.min(locks.length, Math.floor(LEMUEN_SHELL_WINDOW / LEMUEN_SHELL_INTERVAL + 1e-9));
+    const fire = (i) => {
+      // knocked out / withdrawn after the skill ended: the shells not fired yet are dropped (those in the air land)
+      if (!(unit.alive && unit.deployed && unit.deploySeq === seq)) return;
+      const L = markOf(locks[i]);
+      // the random offset is drawn in her facing frame (the square turns onto itself): a turned board plays alike
+      const [oy, ox] = rotateOffset(battle.rng.range(-spread, spread), battle.rng.range(-spread, spread), unit.dir);
+      const x = L.x + ox, y = L.y + oy;
+      battle.fx('bombardShell', { x, y, id: unit.id, r: d2, t: LEMUEN_SHELL_FLIGHT, i });
+      battle.after(LEMUEN_SHELL_FLIGHT, () => blast(battle, unit, atk, x, y), { owner: unit });
+      if (i + 1 < n) battle.after(LEMUEN_SHELL_INTERVAL, () => fire(i + 1), { owner: unit });
+    };
+    if (n > 0) fire(0);
   };
   // S2 归乡邀约: aimed snipe at a wanted enemy — ATK scale ramps main → fin by ex every interval (at most trig_cnt
   // steps, aim_duration s), fired early once ATK × scale > the target's HP + DEF; ignores dodge; one bullet per aim
@@ -463,7 +501,7 @@ function lemuen(bb, chess, def) {
       onTick({ battle, unit, skill, dt }) {
         const m = unit.mem;
         if (!m.lemLocks) return;
-        for (const L of m.lemLocks) if (L.e.alive && !L.e.hidden) { L.x = L.e.x; L.y = L.e.y; }
+        for (const L of m.lemLocks) markOf(L);
         if (!unit.canAct) return;
         m.lemAcc += dt;
         if (m.lemAcc + 1e-9 < aim) return;
@@ -477,6 +515,7 @@ function lemuen(bb, chess, def) {
         if (skill.active && skill.ammoLeft <= 0) skill.end('ammo');
       },
       onEnd({ battle, unit, reason }) {
+        // the shells follow one by one after the end (bombard); knocked out / withdrawn mid-lock ('death'): none
         const locks = unit.mem.lemLocks || [];
         unit.mem.lemLocks = null;
         if (reason !== 'death' && unit.alive) bombard(battle, unit, locks);

@@ -20,13 +20,17 @@
 // authoritative (the server is waiting for it); the server takes a duplicate idempotently. A server refusal is final.
 // Solo pause (g.pause, DESIGN §14): while `m.public.paused` is true every local battle clock stands still (no ticks, no
 // reports); on resume the clocks move on by the paused time, like the server's field clock.
+// Live leaks (user playtest #3 item 2): every normal field simulated here keeps its counted leaks so far — the settle
+// rule's count (leaked entries with counted !== false, /sim/spec.js battleProgress) — and publishes them as
+// state().leaks { [fieldId]: n } whenever one changes, authoritative or display replica alike; the top bar shows the
+// own field's min(lpCapPerRound, n) as the LP about to be lost (ui/hud.js liveLp).
 //
 // The sim (≈ 0.2–1 ms per tick) runs on the main thread: one battle at a time is stepped for display (plus an
 // authoritative one if it is not the one on screen). stats() exposes the measured cost.
 //
 //   import { battleRunner } from './battle/runner.js'     (browser singleton wired to net.js + store.js; null in Node)
 //   battleRunner.on('snap' | 'ev' | 'field' | 'state', fn) → off
-//   battleRunner.state()  → { battleId, fieldId, kind, authoritative, watch, done, own, members, loading, paused } | null
+//   battleRunner.state()  → { battleId, fieldId, kind, authoritative, watch, done, own, members, loading, paused, leaks } | null
 //   battleRunner.stats()  → { ticks, stepMs, avgTickMs, maxFrameMs, catchups, errors, battles }
 //
 // createBattleRunner(deps) builds an instance with injectable net / store / clock / frame scheduler / sim loader
@@ -133,6 +137,8 @@ export function createBattleRunner(deps) {
   let lastPool = null;
   /** solo pause: the runner clock's instant when m.public.paused turned true (null while running) */
   let pausedAt = null;
+  /** a normal field's leak count changed since the last publishState() */
+  let leaksDirty = false;
   const stats = { ticks: 0, stepMs: 0, maxFrameMs: 0, catchups: 0, errors: 0, battles: 0, frames: 0 };
 
   const hidden = () => !!(doc && doc.hidden);
@@ -147,20 +153,47 @@ export function createBattleRunner(deps) {
     return simP;
   }
 
+  /** Counted leaks so far of every normal field simulated here: { [fieldId]: n } (user playtest #3 item 2). */
+  function leakMap() {
+    const out = {};
+    for (const e of entries.values()) if (e.kind === 'normal' && e.fieldId) out[e.fieldId] = e.leaks;
+    return out;
+  }
+
   function state() {
     const e = cur;
-    if (!e) return loading ? { loading: true, battleId: loading.battleId, fieldId: loading.fieldId, kind: loading.kind } : null;
+    if (!e) return loading ? { loading: true, battleId: loading.battleId, fieldId: loading.fieldId, kind: loading.kind, leaks: leakMap() } : null;
     return {
       battleId: e.battleId, fieldId: e.fieldId, kind: e.kind, authoritative: e.authoritative, watch: e.watch,
       done: e.done, own: e.own, members: e.members.slice(), loading: !!loading, speed: e.speed, paused: pausedAt != null,
+      leaks: leakMap(),
     };
   }
 
   function publishState() {
+    leaksDirty = false;
     const s = state();
     try { store.patch('match', { battle: s }); } catch { /* store without a match slice */ }
     emit('state', s);
   }
+
+  /**
+   * Re-count an entry's leaks when its battle recorded a new one (Battle.leakedCount) or ended (timeout leaks, and the
+   * final result): the settle rule's count, leaked entries with counted !== false (/sim/spec.js battleProgress).
+   */
+  function noteLeaks(e) {
+    if (e.kind !== 'normal') return;
+    const b = e.battle;
+    const mark = `${Number(b.leakedCount) || 0}:${b.finished ? 1 : 0}`;
+    if (mark === e.leakMark) return;
+    e.leakMark = mark;
+    let n = e.leaks;
+    try { n = Math.max(0, Math.trunc(Number(e.sim.spec.battleProgress(b).leaks) || 0)); } catch { /* keep the last count */ }
+    if (n !== e.leaks) { e.leaks = n; leaksDirty = true; }
+  }
+
+  /** Publish the state when a leak count changed since the last publish. */
+  function flushLeaks() { if (leaksDirty) publishState(); }
 
   /** Target tick of an entry on its clock. */
   const targetTick = (e, t) => Math.max(0, Math.floor((((t - e.t0) / 1000) * e.speed) / TICK + 1e-9));
@@ -225,6 +258,7 @@ export function createBattleRunner(deps) {
   function finished(e) {
     if (e.done) return;
     e.done = true;
+    noteLeaks(e);
     if (e.authoritative && !e.resultSent && net) {
       progress(e, true);
       e.resultSent = true;
@@ -240,6 +274,7 @@ export function createBattleRunner(deps) {
       }
     }
     if (e === cur) publishState();
+    else flushLeaks();
   }
 
   /**
@@ -302,6 +337,7 @@ export function createBattleRunner(deps) {
     if (dt > stats.maxFrameMs) stats.maxFrameMs = dt;
     if (render) emitFrame(e, catchingUp);
     else { try { e.battle.drainEvents(); } catch { /* ignore */ } }
+    noteLeaks(e);
     progress(e);
     if (e.battle.finished) finished(e);
   }
@@ -313,6 +349,7 @@ export function createBattleRunner(deps) {
     stats.frames++;
     const t = clock();
     for (const e of [...entries.values()]) if (running(e)) advance(e, t, e === cur);
+    flushLeaks();
     schedule();
   }
 
@@ -320,6 +357,7 @@ export function createBattleRunner(deps) {
     // hidden tab: no animation frames — keep authoritative battles on their clock (no rendering)
     if (!hidden()) return;
     for (const e of [...entries.values()]) if (e.authoritative && running(e)) advance(e, clock(), false);
+    flushLeaks();
   }
 
   function schedule() {
@@ -411,6 +449,8 @@ export function createBattleRunner(deps) {
       t0: clock() - ((Number(msg.elapsed) || 0) / speed) * 1000, lastProgressAt: -Infinity, done: false, resultSent: false,
       result: null, delivery: null,
       meter: sim.spec.attachLpMeter(battle),
+      // counted leaks so far (normal fields; noteLeaks) and the Battle state they were counted at
+      leaks: 0, leakMark: '',
     };
     if (lastPool && battle.sharedBoss && typeof battle.sharedBoss.sync === 'function') {
       battle.sharedBoss.sync(lastPool.hp, lastPool.acked ? lastPool.acked[e.fieldId] : undefined);
@@ -420,17 +460,19 @@ export function createBattleRunner(deps) {
       const n = Math.min(PREPARE_SLICE, targetTick(e, clock()) - battle.tickCount);
       stepEntry(e, n);
       try { battle.drainEvents(); } catch { /* ignore */ }
+      noteLeaks(e);
       if (e.authoritative) progress(e);
       await yieldFrame();
       if (seq !== startSeq) {
         // superseded while preparing: an authoritative battle must still finish (it is kept), a replica is dropped
-        if (e.authoritative) { entries.set(e.battleId, e); evict(); schedule(); }
+        if (e.authoritative) { entries.set(e.battleId, e); evict(); if (e.leaks) leaksDirty = true; schedule(); }
         return;
       }
     }
     entries.set(e.battleId, e);
     evict();
     loading = null;
+    noteLeaks(e);
     show(e);
     if (battle.finished) finished(e);
   }
@@ -459,6 +501,7 @@ export function createBattleRunner(deps) {
     }
     if (e === cur) emitFrame(e, false);
     finished(e);
+    flushLeaks();
     schedule();
   }
 

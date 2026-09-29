@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { makeBattle, chessRec, enemyRec, checkInvariants } from '../helpers/battleHarness.js';
 import { SUB, resolveProfile } from '../../server/sim/professions.js';
 import { getDefaultSource } from '../../server/sim/simdata.js';
+import { PROJECTILE_SPEEDS, BOOMERANG_RETURN_SPEED } from '../../server/sim/constants.js';
 
 const approx = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} ≈ ${b}`);
 const dummy = (o = {}) => enemyRec({ key: 'enemy_dummy', hp: 1e7, speed: 0, ...o });
@@ -219,6 +220,72 @@ test('stalker dodges and hits everything in range; hunter consumes and reloads a
   h2.b.enemies[0].hidden = true;
   h2.run(4);
   assert.ok(hu.trait.ammo >= 2);
+});
+
+// 回环射手 (loopshooter, 跃跃): "持有回旋投射物时才能够攻击（投射物需要时间回收）" — out at 15 tiles/s, back at 3.75
+// (PRTS 跃跃 特性 note); a 0.2 s attack interval so the boomerang, not the cooldown, sets the pace
+const LOOP = () => mk('loopshooter', 'SNIPER', { id: 't_loop', attackKind: 'ranged', projectile: 'arrow', canHitFly: true, stats: { atk: 100, bat: 0.2, respawnTime: 5 } });
+
+test('loopshooter: the boomerang flies out (15 tiles/s), hits on arrival, flies back (3.75 tiles/s); the next attack waits for the catch', () => {
+  const p = resolveProfile({ profession: 'SNIPER', subProf: 'loopshooter', attackKind: 'ranged', dmgType: 'phys', projectile: 'arrow', traitBb: {} });
+  assert.equal(p.projectile, 'boomerang', "the data's generic 'arrow' never replaces the boomerang");
+  assert.equal(PROJECTILE_SPEEDS.boomerang, 15);
+  assert.equal(BOOMERANG_RETURN_SPEED, 3.75);
+  for (const col of [7, 5]) { // 3 tiles / 1 tile away
+    const h = makeBattle({
+      defs: { chess: { t_loop: LOOP() }, enemies: { enemy_dummy: dummy() } },
+      units: [{ chessId: 't_loop', row: 10, col: 4 }], enemies: [{ key: 'enemy_dummy', pos: [10, col] }],
+      content: 'none', captureNoisy: true, hooks: ['attack', 'damaged'], autoFinish: false,
+    });
+    h.run(8);
+    const u = h.unit('t_loop');
+    const d = col - 4;
+    const flight = d / PROJECTILE_SPEEDS.boomerang + d / BOOMERANG_RETURN_SPEED;
+    const at = h.hooksOf('attack').filter((c) => c.attacker === u).map((c) => c.t);
+    const hits = h.hooksOf('damaged').filter((c) => c.source === u);
+    assert.ok(at.length >= 5, `${d} tiles: ${at.length} attacks`);
+    for (let i = 1; i < at.length; i++) {
+      const gap = at[i] - at[i - 1];
+      assert.ok(gap >= flight - 1e-9 && gap <= flight + 3 * h.TICK, `${d} tiles: gap ${gap.toFixed(3)} ≈ out + back ${flight.toFixed(3)}`);
+    }
+    // one hit per throw (the way back deals nothing), landing out-flight time after the throw
+    const landed = at.filter((t) => t + d / PROJECTILE_SPEEDS.boomerang + 2 * h.TICK < h.b.time).length;
+    assert.ok(hits.length >= landed && hits.length <= at.length, `one hit per boomerang (${hits.length} hits, ${at.length} throws)`);
+    const lag = hits[0].t - at[0];
+    assert.ok(lag >= d / PROJECTILE_SPEEDS.boomerang - 2 * h.TICK && lag <= d / PROJECTILE_SPEEDS.boomerang + h.TICK, `hit ${lag.toFixed(3)} s after the throw`);
+    const atk = h.eventsOf('atk').filter((e) => e[1] === u.id);
+    assert.ok(atk.length && atk.every((e) => e[3] === 'boomerang'), "b.ev ['atk', thrower, target, 'boomerang']");
+    checkInvariants(h.b);
+  }
+});
+
+test('loopshooter: a target killed mid-flight is not hit, the boomerang still comes back; a knocked-out thrower gets a fresh one on redeploy', () => {
+  const h = makeBattle({
+    defs: { chess: { t_loop: LOOP() }, enemies: { enemy_dummy: dummy(), enemy_dummy2: dummy({ key: 'enemy_dummy2', hp: 1e7 }) } },
+    units: [{ chessId: 't_loop', row: 10, col: 4 }], enemies: [{ key: 'enemy_dummy', pos: [10, 7] }, { key: 'enemy_dummy2', pos: [10, 7] }],
+    content: 'none', captureNoisy: true, hooks: ['attack', 'damaged'], autoFinish: false,
+  });
+  const u = h.unit('t_loop');
+  assert.ok(h.runUntil(() => u.stats.attacks === 1, 2));
+  const first = h.hooksOf('attack')[0].targets[0];
+  assert.equal(u.trait.boomerangsOut, 1);
+  h.b.kill(first);
+  h.run(0.5);
+  assert.equal(h.hooksOf('damaged').filter((c) => c.target === first && c.source === u).length, 0, 'the dead target took nothing');
+  assert.equal(u.stats.attacks, 1, 'still waiting for the boomerang');
+  assert.ok(h.runUntil(() => u.stats.attacks === 2, 1.5), 'caught at the thrower → the next throw');
+  const second = h.hooksOf('attack')[1].targets[0];
+  assert.notEqual(second, first);
+  // knocked out with the boomerang in flight: it is lost; the redeployed thrower holds a fresh one
+  assert.equal(u.trait.boomerangsOut, 1);
+  h.b.dealDamage(null, u, { amount: 1e9, type: 'true' });
+  assert.equal(u.alive, false);
+  h.run(2);
+  assert.equal(u.stats.attacks, 2);
+  assert.ok(h.runUntil(() => u.alive, 10), 'redeployed');
+  assert.equal(u.trait.boomerangsOut, 0, 'a fresh boomerang');
+  assert.ok(h.runUntil(() => u.stats.attacks === 3, 1), 'attacks at once');
+  checkInvariants(h.b);
 });
 
 test('fortress: melee on blocked enemies, ranged splash otherwise; tactician calls a reinforcement', () => {

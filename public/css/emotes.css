@@ -41,7 +41,7 @@
 }
 .ewheel__btn.has-sprite:hover:not(:disabled), .ewheel__btn.has-sprite.is-on { color: #fff; filter: brightness(1.18); border: 0; }
 .ewheel__btn.has-sprite:disabled { opacity: 1; color: rgba(242, 242, 242, .45); }
-.ewheel__btn.is-cooling { cursor: wait; }
+.ewheel__btn.is-cooling { cursor: default; }
 .ewheel__label { white-space: nowrap; }
 
 /* ---- panel: one page per theme ----------------------------------------------------------------------------- */
@@ -84,7 +84,7 @@
 .ewheel__panel.has-cell .ewheel__item:hover:not(:disabled) { background-color: transparent; filter: brightness(1.35); }
 .ewheel__item:active:not(:disabled) { transform: scale(.9); }
 .ewheel__item:focus-visible { outline: 2px solid var(--mint-500); outline-offset: 1px; }
-.ewheel__item:disabled { opacity: .45; cursor: wait; }
+.ewheel__item:disabled { opacity: .45; cursor: default; }
 
 /* pager: ‹ dots › in the strip under the cells */
 .ewheel__dots { position: absolute; left: .15rem; width: 2.82rem; top: 1.99rem; height: .12rem; display: flex; align-items: center; justify-content: center; gap: .1rem; }

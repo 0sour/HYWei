@@ -88,15 +88,29 @@ export function dmgStyleKey(type) {
 /** Hit spark colour per damage type. */
 export const HIT_TINT = Object.freeze({ phys: 0xffd9a0, arts: 0xc77dff, true: 0xffffff, heal: 0x62f08a, elem: 0xff7b3a });
 
-/** Projectile visuals per atk projKind (sim: none|arrow|bolt|bomb|lob|orb|drone|enemy|chain|chainHeal). */
+/**
+ * Projectile visuals per b.ev 'atk' projKind (sim: none | arrow | bolt | bomb | lob | orb | drone | enemy | boomerang;
+ * chain / chainHeal / beam are beams). Drawn by render/fx.js:
+ *   look   tracer (bullet streak + muzzle flash) | orb (glowing ball, particle trail) | shell (lobbed on an arc with a
+ *          ground shadow, smoke trail) | dart (small fast bolt) | boomerang (spins to the target and back to the thrower)
+ *   speed  tiles per game second — a copy of the sim's PROJECTILE_SPEEDS (server/sim/constants.js; `back` of the
+ *          boomerang = BOOMERANG_RETURN_SPEED, PRTS 跃跃: out 15, back 3.75). fx.js prefers the sim's own values, loaded
+ *          from /sim/constants.js, so the visual flight ends with the sim's hit; this copy stands in until then (and in
+ *          Node). test/render/fxproj.test.js keeps the two equal.
+ *   sizes  in tiles (× the camera's px per tile at the shot): `len` trail length, `width` trail thickness, `head` glow
+ *          diameter; `arc` peak height of a lob over a 3-tile throw (scales with the range)
+ *   colours `tint` hot core, `glow` halo, `trail` trail particles, `muzzle` flash at the shooter
+ *   hit    arrival burst (fx.js _impact): spark | arts | heal | boom | splash | zap | enemy
+ */
 export const PROJ = Object.freeze({
-  arrow: { speed: 14, tex: 'streak', tint: 0xfff2d0, len: 0.55, width: 0.09, trail: 0 },
-  bolt: { speed: 11, tex: 'orb', tint: 0xd49bff, len: 0.28, width: 0.28, trail: 0xa35cff },
-  orb: { speed: 11, tex: 'orb', tint: 0x9dffb8, len: 0.26, width: 0.26, trail: 0x4ee07a },
-  bomb: { speed: 8, tex: 'orb', tint: 0xffb066, len: 0.24, width: 0.24, trail: 0xff7a33, arc: 0.9 },
-  lob: { speed: 8, tex: 'orb', tint: 0xffc78a, len: 0.22, width: 0.22, trail: 0xffa04a, arc: 1.2 },
-  drone: { speed: 16, tex: 'orb', tint: 0x8fe6ff, len: 0.16, width: 0.16, trail: 0x57c9ff },
-  enemy: { speed: 12, tex: 'orb', tint: 0xff6a5a, len: 0.22, width: 0.22, trail: 0xff3b30 },
+  arrow: { look: 'tracer', speed: 14, tint: 0xfff6dc, glow: 0xffc45a, len: 1.05, width: 0.2, head: 0.36, muzzle: 0xffd27a, hit: 'spark' },
+  bolt: { look: 'orb', speed: 11, tint: 0xf4e2ff, glow: 0xb36bff, len: 0.6, width: 0.34, head: 0.52, trail: 0xa35cff, muzzle: 0xc77dff, hit: 'arts' },
+  orb: { look: 'orb', speed: 10, tint: 0xeafff0, glow: 0x3fe07a, len: 0.55, width: 0.3, head: 0.48, trail: 0x62f08a, muzzle: 0x62f08a, hit: 'heal' },
+  bomb: { look: 'shell', speed: 8, tint: 0xffeed0, glow: 0xff8a3d, len: 0.85, width: 0.3, head: 0.56, trail: 0xff9c4a, arc: 1.1, smoke: 0x2e2824, muzzle: 0xffb35c, hit: 'boom' },
+  lob: { look: 'shell', speed: 8, tint: 0xfff4dc, glow: 0xffb04a, len: 0.7, width: 0.26, head: 0.5, trail: 0xffc27a, arc: 1.4, smoke: 0x3a322c, muzzle: 0xffc27a, hit: 'splash' },
+  drone: { look: 'dart', speed: 16, tint: 0xe4fbff, glow: 0x57c9ff, len: 0.7, width: 0.16, head: 0.3, trail: 0x57c9ff, hit: 'zap' },
+  enemy: { look: 'orb', speed: 10, tint: 0xffe2da, glow: 0xff3b30, len: 0.55, width: 0.28, head: 0.44, trail: 0xff4a3a, muzzle: 0xff6a5a, hit: 'enemy' },
+  boomerang: { look: 'boomerang', speed: 15, back: 3.75, tint: 0xfff4d6, glow: 0x9ff0dc, len: 0.4, width: 0.3, head: 0.5, trail: 0x9ff0dc, hit: 'spark' },
 });
 
 /** Status keys (b.ev 'status' + UF flags) → icon atlas key (render/textures.js) and colour. */

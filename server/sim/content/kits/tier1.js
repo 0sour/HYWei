@@ -593,7 +593,10 @@ export default {
   }),
 
   // ---------------------------------------------------------------------------------------------------------------
-  // 1_09 跃跃 乐趣加倍: ATK +atk, each attack throws `cnt` boomerangs (cnt hits). 戏耍随心: prob per hit for
+  // 1_09 跃跃 (回环射手: every attack is a boomerang out to the target and back — she attacks again only once it is
+  // caught, professions.js loopshooter / ai.js throwBoomerang). 乐趣加倍: ATK +atk, each attack throws `cnt`
+  // boomerangs at the target (cnt hits); they fly the same path, so the flight carries cnt hits and all of them are
+  // back together ("必须回收全部回旋投掷物才可以进行下一次攻击"). 戏耍随心: prob per hit (each boomerang on its own) for
   // ATK ×atk_scale. Elite module (LPS-X, trait atk_scale): vs enemies on the 8 surrounding tiles ATK ×atk_scale.
   // Alternate S1 强力击·β型 (AUTO, attack SP): the next attack at atk_scale × ATK.
   chess_char_1_09_a: (bb, chess) => {

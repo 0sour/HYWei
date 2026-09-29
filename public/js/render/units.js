@@ -22,12 +22,18 @@
 // pen: idle loops only) animates through the impostor atlas every 3rd frame; under the view's adaptive load level
 // (`ctx.loadLevel()` 1–3, app.js) small / far units (< ~56 px per tile) animate every 2nd frame, and from level 2 on
 // every unit does.
+//
+// Picking (user playtest #3 item 7): `pickShape()` describes the body as drawn — feet, px per tile, the model's own
+// height (measured once from the posed skeleton's bounds; the median chibi until then), facing, draw order and the
+// HUD it shows (tier chip / bars) — for the shared rule of render/pick.js; `bounds()` / `hitTest()` use the same shape.
+// A dragged (lifted) item plate is drawn centred on its ground point, i.e. on the pointer (render/app.js).
 
 import { UF, ANIM } from '../../../shared/constants.js';
 import { SpineActor } from './spine.js';
 import { diamondTexture, shadowTexture, fxAtlas, tierChip, statusTexture, itemTexture } from './textures.js';
 import { COLORS, TIER_COLORS, ENEMY_FRAME, UNIT, statusIconKey } from './style.js';
 import { drawCrate, rowDepthKey, ROW_KEY, deviceBoxOf, DEVICE_BOX } from './tiles.js';
+import { BODY_H, bodyBounds, hitBody } from './pick.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const DIRS = ['UP', 'RIGHT', 'DOWN', 'LEFT'];
@@ -137,6 +143,9 @@ export class UnitView {
     this.shake = 0;
     this.screen = { x: 0, y: 0, s: 1, top: 0 };
     this.destroyed = false;
+    this._bodyH = null;           // model height (tiles above the feet), measured once per Spine model (pickShape)
+    this._hudBox = null;          // screen rect of the HUD shown this frame (tier chip / bars), or null
+    this._flip = this.visFacing;  // drawn facing (±1) of the model
 
     // --- display objects
     this.shadow = new P.Sprite(ctx.shadowTex || shadowTexture());
@@ -397,6 +406,7 @@ export class UnitView {
       this.imp = null;
     }
     this._box = null;
+    this._bodyH = null; // the next model is measured again
     const old = this.actor;
     this.actor = null;
     this.spineReady = false;
@@ -514,6 +524,7 @@ export class UnitView {
     // off-screen: nothing to animate or draw (bounds / hit-testing still follow `screen`)
     if (this._cull(bx, by, s, dt)) return;
     const flip = this.isEnemy ? (ENEMY_MODEL_FACES_LEFT ? -this.visFacing : this.visFacing) : this.visFacing;
+    this._flip = flip;
 
     // shadow (on a raised top it is drawn with that block row, else in the shadow layer under everything)
     placeOnGround(this.ctx, this.shadow, this.ctx.layers.shadow, this.y, this.z);
@@ -558,6 +569,8 @@ export class UnitView {
         this.actor.update(animDt);
         if (this._tint !== tint) { this._tint = tint; this.actor.spine.tint = tint; }
       }
+      // the model's own height for picking: once, from its first resting pose (not a deploy / skill clip)
+      if (this._bodyH == null && this.actor.clock > 0 && this.actor.mode === 'base') this._bodyH = this._measureBody();
     }
     // the diamond is only needed while no model shows (a cross-fade keeps whatever diamond was already up)
     if (!spineShown) this._ensurePicture();
@@ -693,6 +706,16 @@ export class UnitView {
       if (prep) this.chip.position.set(x, y - this.chip.height / 2 + 2);
       else this.chip.position.set(x0 - this.chip.width / 2 - 1, cy + (showSp ? spH / 2 : 0));
     }
+    // the HUD's screen rect (drawn above every unit: a press on a unit's chip / bars is on that unit, render/pick.js)
+    let hx0 = Infinity, hy0 = Infinity, hx1 = -Infinity, hy1 = -Infinity;
+    const hudAdd = (ax, ay, bx2, by2) => { hx0 = Math.min(hx0, ax); hy0 = Math.min(hy0, ay); hx1 = Math.max(hx1, bx2); hy1 = Math.max(hy1, by2); };
+    if (showHp) hudAdd(x0 - 1, cy - bh / 2 - 1, x0 + bw + 1, cy + bh / 2 + 1);
+    if (showSp) hudAdd(x0 - 1, cy, x0 + bw + 1, this._spY + spH / 2 + 1);
+    if (this.chip && this.chip.visible) {
+      const cw = this.chip.width / 2, ch = this.chip.height / 2;
+      hudAdd(this.chip.position.x - cw, this.chip.position.y - ch, this.chip.position.x + cw, this.chip.position.y + ch);
+    }
+    this._hudBox = hx1 > hx0 && hy1 > hy0 && this.hud.alpha > 0.05 ? { x0: hx0, y0: hy0, x1: hx1, y1: hy1 } : null;
     // status icons row above the bars
     const icons = this._iconKeys();
     const isz = clamp(s * 0.26, 12, 26);
@@ -858,18 +881,39 @@ export class UnitView {
     return out;
   }
 
-  /** Canvas-space bounds (CSS px) of the body. */
+  /** Model height (tiles above the feet) of the posed Spine model: its local bounds' top, clamped per kind. */
+  _measureBody() {
+    let b = null;
+    try { b = this.actor.spine.getLocalBounds(); } catch { b = null; }
+    const top = b && Number.isFinite(b.y) && b.height > 1 ? -b.y * UNIT.modelScale : NaN;
+    const [lo, hi] = this.isEnemy ? (this.isBoss ? [0.6, 3.2] : [0.45, 2.4]) : [1.0, 1.55];
+    if (Number.isFinite(top) && top > 0.2) return clamp(top, lo, hi);
+    return this.isEnemy ? clamp(this._headTiles || BODY_H, lo, hi) : BODY_H;
+  }
+
+  /**
+   * The body as drawn, for render/pick.js (canvas CSS px): the Spine chibi (feet, px per tile, its height — measured,
+   * else the median chibi / the enemy's bounds —, width factor, facing, draw order, HUD) or the avatar diamond shown
+   * until the model is there.
+   * @returns {import('./pick.js').PickBody}
+   */
+  pickShape() {
+    const sc = this.screen;
+    const depth = this.root && !this.root.destroyed ? this.root.zIndex : 0;
+    const hud = this.culled ? null : this._hudBox; // a culled unit's HUD box is where it was last drawn: stale
+    if (!(this.actor && this.spineReady)) return { kind: 'diamond', x: sc.x, y: sc.y, s: sc.s || 1, d: UNIT.diamond * (this.isBoss ? 1.5 : 1), depth, hud };
+    const h = this._bodyH || (this.isEnemy ? clamp(this._headTiles || BODY_H, 0.45, this.isBoss ? 3.2 : 2.4) : BODY_H);
+    return { kind: 'chibi', x: sc.x, y: sc.y, s: sc.s || 1, h, w: this.isEnemy ? clamp(h / 1.2, 0.75, 2.2) : 1, flip: this._flip === -1 ? -1 : 1, depth, hud };
+  }
+
+  /** Canvas-space bounds (CSS px) of the drawn body (the outline of pickShape, without the HUD). */
   bounds() {
-    const s = this.screen.s || 1;
-    const h = (this._headTiles || UNIT.headroom) * s;
-    const w = s * 0.7;
-    return { x: this.screen.x - w / 2, y: this.screen.y - h, width: w, height: h + s * 0.1 };
+    return bodyBounds({ ...this.pickShape(), hud: null });
   }
 
   hitTest(x, y) {
     if (!this.alive || this.alpha < 0.05) return false;
-    const b = this.bounds();
-    return x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
+    return hitBody(this.pickShape(), x, y) > 0;
   }
 
   setHover(on) { this.hovered = !!on; }
@@ -921,7 +965,10 @@ function defaultInterval(ctx, info) {
 
 // =============================================================================================================
 
-/** Hand item: icon plate floating above its slot. */
+/**
+ * Hand item: icon plate floating above its slot. While dragged (`lift` > 0) the plate is centred on its ground point —
+ * the pointer (render/app.js moveDragVisual) — so the item lands, and equips, where it is drawn.
+ */
 export class ItemView {
   constructor(ctx, info) {
     const P = ctx.P;
@@ -946,21 +993,29 @@ export class ItemView {
   }
   setWorld(x, y, z = 0) { this.x = x; this.y = y; this.z = z; }
   update(dt, cam, t) {
-    const p = cam.project(this.x, this.y, this.z + this.lift + 0.12 + Math.sin(t * 2 + this.bob) * 0.03, this.screen);
+    const lifted = this.lift > 0;
+    const p = cam.project(this.x, this.y, lifted ? this.z : this.z + this.lift + 0.12 + Math.sin(t * 2 + this.bob) * 0.03, this.screen);
     this.root.position.set(p.x, p.y);
     this.root.zIndex = unitDepthKey(cam, this.x, this.y, this.lift);
     const size = p.s * 0.62;
     this.plate.scale.set(size / 128);
+    this.plate.anchor.set(0.5, lifted ? 0.5 : 1);
     this.root.alpha = this.dimmed ? 0.35 : 1;
     placeOnGround(this.ctx, this.shadow, this.ctx.layers.shadow, this.y, this.z);
     const sh = cam.project(this.x, this.y, this.z, SH_P);
     this.shadow.position.set(sh.x, sh.y);
     this.shadow.scale.set((p.s * 0.55) / this.shadow.texture.width);
     this.shadow.alpha = 0.35;
-    this.screen.top = p.y - size;
+    this.screen.top = lifted ? p.y - size / 2 : p.y - size;
   }
-  bounds() { const s = this.screen.s; const w = s * 0.62; return { x: this.screen.x - w / 2, y: this.screen.y - w, width: w, height: w }; }
-  hitTest(x, y) { const b = this.bounds(); return x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height; }
+  /** The plate on screen for render/pick.js: a square centred on the icon. */
+  pickShape() {
+    const s = this.screen.s || 1;
+    const cy = this.lift > 0 ? this.screen.y : this.screen.y - s * 0.31;
+    return { kind: 'plate', x: this.screen.x, y: cy, s, r: 0.31, depth: this.root && !this.root.destroyed ? this.root.zIndex : 0, hud: null };
+  }
+  bounds() { return bodyBounds(this.pickShape()); }
+  hitTest(x, y) { return hitBody(this.pickShape(), x, y) > 0; }
   setHover() {}
   destroy() { if (this.destroyed) return; this.destroyed = true; this.shadow.destroy(); this.root.destroy({ children: true }); }
 }

@@ -600,11 +600,21 @@ export function groundTexture(img = null, crop = null) {
 // =============================================================================================================
 // FX atlas
 
-const FX_SIZE = 512;
+const FX_W = 1024, FX_H = 512;
+/** Status icons: one 32 px row at the bottom of the FX atlas (frames `st_<key>`). */
+const STATUS_ROW_Y = 448;
 let _fx = null;
 
+/**
+ * FX atlas frames — name: [x, y, w, h, draw(ctx, x, y, w, h)]. Every frame owns its cell: no two frames share a pixel
+ * (the light pillar once ran into the status-icon row, so every skill / deploy pillar carried the 'silence' and 'slow'
+ * icons at its foot) and each drawing stays off its cell's outer pixel (mipmapped sampling of a small sprite must not
+ * pull in a neighbour). Frame sizes are part of the API — sprites are scaled by them: glow / soft / ring / hex / shock /
+ * reticle / smoke / flare 128², spark / plus / orb / chevron / boomerang / muzzle 64², coin 48², dot / shard / square
+ * 32², streak / tracer / bolt 128×32 (head at the right), slash 128×64 (arc bulging up), pillar 64×256 (foot at the
+ * bottom).
+ */
 const FX_DRAW = {
-  // name: [x, y, w, h, draw(ctx, x, y, w, h)]
   glow: [0, 0, 128, 128, (c, x, y, w) => { radial(c, x + w / 2, y + w / 2, w / 2, [[0, 'rgba(255,255,255,1)'], [0.25, 'rgba(255,255,255,0.6)'], [1, 'rgba(255,255,255,0)']]); }],
   soft: [128, 0, 128, 128, (c, x, y, w) => { radial(c, x + w / 2, y + w / 2, w / 2, [[0, 'rgba(255,255,255,0.8)'], [1, 'rgba(255,255,255,0)']]); }],
   ring: [256, 0, 128, 128, (c, x, y, w) => {
@@ -625,67 +635,153 @@ const FX_DRAW = {
     c.stroke(); c.globalAlpha = 1;
     for (let k = 0; k < 6; k++) { const a = (k * Math.PI) / 3; c.fillStyle = '#fff'; c.fillRect(cx + Math.cos(a) * 60 - 3, cy + Math.sin(a) * 60 - 3, 6, 6); }
   }],
-  spark: [0, 128, 64, 64, (c, x, y, w) => {
+  // a thin sharp ring with a faint wake inside: shockwaves (skill bursts, explosions, the bombard warning)
+  shock: [512, 0, 128, 128, (c, x, y, w) => {
+    radial(c, x + w / 2, y + w / 2, w / 2 - 1, [[0, 'rgba(255,255,255,0)'], [0.52, 'rgba(255,255,255,0)'], [0.8, 'rgba(255,255,255,0.16)'],
+      [0.9, 'rgba(255,255,255,1)'], [0.96, 'rgba(255,255,255,0.3)'], [1, 'rgba(255,255,255,0)']]);
+  }],
+  // lock-on reticle: circle, cross ticks, corner brackets, centre dot (蕾缪安 locks, marks)
+  reticle: [640, 0, 128, 128, (c, x, y, w) => {
+    const cx = x + w / 2, cy = y + w / 2;
+    c.strokeStyle = '#fff'; c.lineCap = 'round';
+    c.lineWidth = 5; c.beginPath(); c.arc(cx, cy, 36, 0, Math.PI * 2); c.stroke();
+    c.lineWidth = 2; c.globalAlpha = 0.55; c.beginPath(); c.arc(cx, cy, 27, 0, Math.PI * 2); c.stroke(); c.globalAlpha = 1;
+    c.lineWidth = 5;
+    for (let k = 0; k < 4; k++) {
+      const a = (k * Math.PI) / 2, ca = Math.cos(a), sa = Math.sin(a);
+      c.beginPath(); c.moveTo(cx + ca * 22, cy + sa * 22); c.lineTo(cx + ca * 50, cy + sa * 50); c.stroke();
+    }
+    c.lineWidth = 4;
+    for (let k = 0; k < 4; k++) {
+      const sx = k & 1 ? 1 : -1, sy = k & 2 ? 1 : -1, bx = cx + sx * 52, by = cy + sy * 52;
+      c.beginPath(); c.moveTo(bx - sx * 14, by); c.lineTo(bx, by); c.lineTo(bx, by - sy * 14); c.stroke();
+    }
+    c.fillStyle = '#fff'; c.beginPath(); c.arc(cx, cy, 4, 0, Math.PI * 2); c.fill();
+  }],
+  smoke: [768, 0, 128, 128, (c, x, y) => {
+    const r = rng(77);
+    for (let i = 0; i < 14; i++) radial(c, x + 30 + r() * 68, y + 30 + r() * 68, 18 + r() * 22, [[0, 'rgba(255,255,255,0.22)'], [1, 'rgba(255,255,255,0)']]);
+  }],
+  // star flare: hot centre, four long and four short rays (skill flash, explosion core, impacts)
+  flare: [896, 0, 128, 128, (c, x, y, w) => {
+    const cx = x + w / 2, cy = y + w / 2;
+    radial(c, cx, cy, w / 2 - 1, [[0, 'rgba(255,255,255,0.95)'], [0.12, 'rgba(255,255,255,0.55)'], [0.4, 'rgba(255,255,255,0.1)'], [1, 'rgba(255,255,255,0)']]);
+    const ray = (a, len, half) => {
+      c.save(); c.translate(cx, cy); c.rotate(a);
+      const g = c.createLinearGradient(0, 0, len, 0);
+      g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+      c.fillStyle = g;
+      c.beginPath(); c.moveTo(0, -half); c.lineTo(len, 0); c.lineTo(0, half); c.closePath(); c.fill();
+      c.restore();
+    };
+    for (let k = 0; k < 4; k++) ray((k * Math.PI) / 2, 60, 5);
+    for (let k = 0; k < 4; k++) ray(Math.PI / 4 + (k * Math.PI) / 2, 30, 3);
+  }],
+  pillar: [0, 128, 64, 256, (c, x, y, w, h) => {
+    const g = c.createLinearGradient(x, 0, x + w, 0);
+    g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g; c.fillRect(x, y + 1, w, h - 2);
+    const v = c.createLinearGradient(0, y, 0, y + h);
+    v.addColorStop(0, 'rgba(0,0,0,1)'); v.addColorStop(0.35, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0)');
+    c.globalCompositeOperation = 'destination-out'; c.fillStyle = v; c.fillRect(x, y, w, h); c.globalCompositeOperation = 'source-over';
+  }],
+  spark: [64, 128, 64, 64, (c, x, y, w) => {
     const cx = x + w / 2, cy = y + w / 2;
     radial(c, cx, cy, w / 2, [[0, 'rgba(255,255,255,0.9)'], [0.2, 'rgba(255,255,255,0.35)'], [1, 'rgba(255,255,255,0)']]);
     c.fillStyle = 'rgba(255,255,255,1)';
     c.beginPath(); c.moveTo(cx, y + 2); c.lineTo(cx + 3, cy - 3); c.lineTo(x + w - 2, cy); c.lineTo(cx + 3, cy + 3); c.lineTo(cx, y + w - 2);
     c.lineTo(cx - 3, cy + 3); c.lineTo(x + 2, cy); c.lineTo(cx - 3, cy - 3); c.closePath(); c.fill();
   }],
-  plus: [64, 128, 64, 64, (c, x, y, w) => {
+  plus: [128, 128, 64, 64, (c, x, y, w) => {
     const cx = x + w / 2, cy = y + w / 2;
     radial(c, cx, cy, w / 2, [[0, 'rgba(255,255,255,0.5)'], [1, 'rgba(255,255,255,0)']]);
     c.fillStyle = '#fff';
     c.fillRect(cx - 5, cy - 18, 10, 36); c.fillRect(cx - 18, cy - 5, 36, 10);
   }],
-  orb: [128, 128, 64, 64, (c, x, y, w) => {
+  orb: [192, 128, 64, 64, (c, x, y, w) => {
     radial(c, x + w / 2, y + w / 2, w / 2, [[0, 'rgba(255,255,255,1)'], [0.3, 'rgba(255,255,255,0.85)'], [0.55, 'rgba(255,255,255,0.3)'], [1, 'rgba(255,255,255,0)']]);
   }],
-  dot: [192, 128, 32, 32, (c, x, y, w) => { radial(c, x + w / 2, y + w / 2, w / 2, [[0, 'rgba(255,255,255,1)'], [0.5, 'rgba(255,255,255,0.7)'], [1, 'rgba(255,255,255,0)']]); }],
-  shard: [224, 128, 32, 32, (c, x, y, w) => {
-    c.fillStyle = '#fff'; c.beginPath(); c.moveTo(x + w / 2, y + 1); c.lineTo(x + w - 8, y + w / 2); c.lineTo(x + w / 2, y + w - 1); c.lineTo(x + 8, y + w / 2); c.closePath(); c.fill();
-  }],
-  streak: [0, 192, 128, 32, (c, x, y, w, h) => {
-    const g = c.createLinearGradient(x, 0, x + w, 0);
-    g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.7, 'rgba(255,255,255,0.7)'); g.addColorStop(1, 'rgba(255,255,255,1)');
-    c.fillStyle = g;
-    c.beginPath(); c.moveTo(x, y + h / 2 - 1); c.lineTo(x + w - 10, y + h / 2 - 5); c.lineTo(x + w, y + h / 2); c.lineTo(x + w - 10, y + h / 2 + 5); c.lineTo(x, y + h / 2 + 1); c.closePath(); c.fill();
-  }],
-  slash: [128, 192, 128, 64, (c, x, y, w, h) => {
-    c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
-    const g = c.createLinearGradient(x, y, x + w, y);
-    g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-    c.fillStyle = g;
-    c.beginPath(); c.ellipse(x + w / 2, y + h * 1.3, w * 0.48, h * 1.05, 0, Math.PI, 0); c.ellipse(x + w / 2, y + h * 1.45, w * 0.44, h * 1.05, 0, 0, Math.PI, true); c.fill();
-    c.restore();
-  }],
-  pillar: [256, 128, 64, 256, (c, x, y, w, h) => {
-    const g = c.createLinearGradient(x, 0, x + w, 0);
-    g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-    c.fillStyle = g; c.fillRect(x, y, w, h);
-    const v = c.createLinearGradient(0, y, 0, y + h);
-    v.addColorStop(0, 'rgba(0,0,0,1)'); v.addColorStop(0.35, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0)');
-    c.globalCompositeOperation = 'destination-out'; c.fillStyle = v; c.fillRect(x, y, w, h); c.globalCompositeOperation = 'source-over';
-  }],
-  smoke: [320, 128, 128, 128, (c, x, y, w) => {
-    const r = rng(77);
-    for (let i = 0; i < 14; i++) radial(c, x + 30 + r() * 68, y + 30 + r() * 68, 18 + r() * 22, [[0, 'rgba(255,255,255,0.22)'], [1, 'rgba(255,255,255,0)']]);
-  }],
-  chevron: [448, 128, 64, 64, (c, x, y, w) => {
+  chevron: [256, 128, 64, 64, (c, x, y) => {
     c.fillStyle = '#fff';
     c.beginPath(); c.moveTo(x + 14, y + 8); c.lineTo(x + 30, y + 8); c.lineTo(x + 52, y + 32); c.lineTo(x + 30, y + 56); c.lineTo(x + 14, y + 56); c.lineTo(x + 36, y + 32); c.closePath(); c.fill();
   }],
-  bolt: [0, 256, 128, 32, (c, x, y, w, h) => {
-    const g = c.createLinearGradient(0, y, 0, y + h);
-    g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-    c.fillStyle = g; c.fillRect(x, y, w, h);
+  // 回环射手 boomerang: two curved arms meeting at an elbow, centred on the cell (it spins about the centre)
+  boomerang: [320, 128, 64, 64, (c, x, y, w) => {
+    c.save(); c.translate(x + w / 2, y + w / 2 + 3);
+    c.beginPath();
+    c.moveTo(0, -21);
+    c.quadraticCurveTo(19, -17, 27, 14); c.quadraticCurveTo(21, 18, 14, 11); c.quadraticCurveTo(8, -5, 0, -8);
+    c.quadraticCurveTo(-8, -5, -14, 11); c.quadraticCurveTo(-21, 18, -27, 14); c.quadraticCurveTo(-19, -17, 0, -21);
+    c.closePath();
+    c.fillStyle = 'rgba(255,255,255,0.9)'; c.fill();
+    c.lineWidth = 2.5; c.lineJoin = 'round'; c.strokeStyle = '#fff'; c.stroke();
+    c.restore();
   }],
-  square: [128, 256, 32, 32, (c, x, y, w) => { c.fillStyle = '#fff'; c.fillRect(x + 1, y + 1, w - 2, w - 2); }],
-  coin: [160, 256, 48, 48, (c, x, y, w) => {
+  // muzzle flash pointing right (+x) from a hot spot at (12, 32): sprite anchor (0.19, 0.5), rotated to the shot
+  muzzle: [384, 128, 64, 64, (c, x, y, w, h) => {
+    const cx = x + 12, cy = y + h / 2;
+    radial(c, cx, cy, 11, [[0, 'rgba(255,255,255,1)'], [0.5, 'rgba(255,255,255,0.6)'], [1, 'rgba(255,255,255,0)']]);
+    const g = c.createLinearGradient(cx, 0, x + w - 2, 0);
+    g.addColorStop(0, 'rgba(255,255,255,0.95)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g;
+    c.beginPath(); c.moveTo(cx, cy - 7); c.quadraticCurveTo(cx + 26, cy - 12, x + w - 2, cy); c.quadraticCurveTo(cx + 26, cy + 12, cx, cy + 7); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(cx + 2, cy - 3); c.lineTo(cx + 18, cy - 19); c.lineTo(cx + 9, cy); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(cx + 2, cy + 3); c.lineTo(cx + 18, cy + 19); c.lineTo(cx + 9, cy); c.closePath(); c.fill();
+  }],
+  coin: [448, 128, 48, 48, (c, x, y, w) => {
     const cx = x + w / 2, cy = y + w / 2;
     c.fillStyle = '#ffc600'; c.beginPath(); c.arc(cx, cy, 20, 0, Math.PI * 2); c.fill();
     c.fillStyle = '#fff2a8'; c.beginPath(); c.arc(cx - 4, cy - 4, 11, 0, Math.PI * 2); c.fill();
     c.fillStyle = '#c98f00'; c.font = 'bold 22px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('$', cx, cy + 1);
+  }],
+  dot: [512, 128, 32, 32, (c, x, y, w) => { radial(c, x + w / 2, y + w / 2, w / 2, [[0, 'rgba(255,255,255,1)'], [0.5, 'rgba(255,255,255,0.7)'], [1, 'rgba(255,255,255,0)']]); }],
+  shard: [544, 128, 32, 32, (c, x, y, w) => {
+    c.fillStyle = '#fff'; c.beginPath(); c.moveTo(x + w / 2, y + 1); c.lineTo(x + w - 8, y + w / 2); c.lineTo(x + w / 2, y + w - 1); c.lineTo(x + 8, y + w / 2); c.closePath(); c.fill();
+  }],
+  square: [576, 128, 32, 32, (c, x, y, w) => { c.fillStyle = '#fff'; c.fillRect(x + 1, y + 1, w - 2, w - 2); }],
+  // melee swing: a thick crescent (arc bulging up), hot in the middle, tips fading, a bright rim
+  slash: [640, 128, 128, 64, (c, x, y, w, h) => {
+    const cx = x + w / 2;
+    const g = c.createLinearGradient(x, 0, x + w, 0);
+    g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.28, 'rgba(255,255,255,0.8)'); g.addColorStop(0.55, 'rgba(255,255,255,1)');
+    g.addColorStop(0.82, 'rgba(255,255,255,0.7)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.save(); c.beginPath(); c.rect(x + 1, y + 1, w - 2, h - 2); c.clip();
+    c.beginPath();
+    c.ellipse(cx, y + h * 1.2, w * 0.47, h, 0, Math.PI, 0);
+    c.ellipse(cx, y + h * 1.42, w * 0.43, h, 0, 0, Math.PI, true);
+    c.closePath();
+    c.globalAlpha = 0.85; c.fillStyle = g; c.fill(); c.globalAlpha = 1;
+    c.lineWidth = 3; c.strokeStyle = g;
+    c.beginPath(); c.ellipse(cx, y + h * 1.2, w * 0.47, h, 0, Math.PI * 1.06, Math.PI * 1.94); c.stroke();
+    c.restore();
+  }],
+  // soft trail (orbs, shells, dashes): tapered band with a soft cross-section, transparent tail at the left
+  streak: [768, 128, 128, 32, (c, x, y, w, h) => {
+    const cy = y + h / 2;
+    const v = c.createLinearGradient(0, cy - 10, 0, cy + 10);
+    v.addColorStop(0, 'rgba(255,255,255,0)'); v.addColorStop(0.5, 'rgba(255,255,255,0.95)'); v.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = v;
+    c.beginPath(); c.moveTo(x + 1, cy - 2); c.lineTo(x + w - 14, cy - 10); c.quadraticCurveTo(x + w - 1, cy, x + w - 14, cy + 10); c.lineTo(x + 1, cy + 2); c.closePath(); c.fill();
+    c.fillStyle = '#fff';
+    c.beginPath(); c.moveTo(x + 1, cy - 0.5); c.lineTo(x + w - 10, cy - 2.5); c.lineTo(x + w - 4, cy); c.lineTo(x + w - 10, cy + 2.5); c.lineTo(x + 1, cy + 0.5); c.closePath(); c.fill();
+    fadeTail(c, x, y, w, h, 0.6);
+  }],
+  // bullet tracer: glow band + hot core line + bright head at the right
+  tracer: [768, 160, 128, 32, (c, x, y, w, h) => {
+    const cy = y + h / 2;
+    const v = c.createLinearGradient(0, y + 1, 0, y + h - 1);
+    v.addColorStop(0, 'rgba(255,255,255,0)'); v.addColorStop(0.32, 'rgba(255,255,255,0.22)'); v.addColorStop(0.5, 'rgba(255,255,255,0.75)');
+    v.addColorStop(0.68, 'rgba(255,255,255,0.22)'); v.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = v; c.fillRect(x + 1, y + 1, w - 10, h - 2);
+    c.fillStyle = '#fff';
+    c.beginPath(); c.moveTo(x + 1, cy - 0.8); c.lineTo(x + w - 10, cy - 2.6); c.lineTo(x + w - 10, cy + 2.6); c.lineTo(x + 1, cy + 0.8); c.closePath(); c.fill();
+    fadeTail(c, x, y, w, h, 0.45);
+    radial(c, x + w - 10, cy, 9, [[0, 'rgba(255,255,255,1)'], [0.45, 'rgba(255,255,255,0.75)'], [1, 'rgba(255,255,255,0)']]);
+  }],
+  bolt: [896, 128, 128, 32, (c, x, y, w, h) => {
+    const g = c.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g; c.fillRect(x + 1, y, w - 2, h);
   }],
 };
 
@@ -696,27 +792,41 @@ function radial(c, cx, cy, r, stops) {
   c.fillRect(cx - r, cy - r, r * 2, r * 2);
 }
 
+/** Fade a horizontal frame towards its tail (left edge transparent → `mid` alpha at 55 % → opaque head at the right). */
+function fadeTail(c, x, y, w, h, mid) {
+  c.globalCompositeOperation = 'destination-in';
+  const g = c.createLinearGradient(x, 0, x + w - 8, 0);
+  g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.55, `rgba(255,255,255,${mid})`); g.addColorStop(1, 'rgba(255,255,255,1)');
+  c.fillStyle = g; c.fillRect(x, y, w, h);
+  c.globalCompositeOperation = 'source-over';
+}
+
+/** The FX atlas layout (no canvas needed): `{ size: [w, h], frames: { name: [x, y, w, h] } }` incl. `st_<key>` icons. */
+export function fxFrames() {
+  const frames = {};
+  for (const [name, [x, y, w, h]] of Object.entries(FX_DRAW)) frames[name] = [x, y, w, h];
+  STATUS_KEYS.forEach((k, i) => { frames['st_' + k] = [(i % 32) * 32, STATUS_ROW_Y + Math.floor(i / 32) * 32, 32, 32]; });
+  return { size: [FX_W, FX_H], frames };
+}
+
 /** FX atlas: `{ base, tex: { [name]: PIXI.Texture } }` (all frames share one base texture). */
 export function fxAtlas() {
   if (_fx) return _fx;
   const P = PIXI();
-  const canvas = makeCanvas(FX_SIZE, FX_SIZE);
+  const canvas = makeCanvas(FX_W, FX_H);
   const ctx = canvas.getContext('2d');
-  const frames = {};
+  const { frames } = fxFrames();
   for (const [name, [x, y, w, h, draw]] of Object.entries(FX_DRAW)) {
     ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
     try { draw(ctx, x, y, w, h); } catch { /* keep blank */ }
     ctx.restore();
-    frames[name] = [x, y, w, h];
   }
-  // status icons row (32 px each) at y = 320
-  STATUS_KEYS.forEach((k, i) => {
-    const x = (i % 16) * 32, y = 320 + Math.floor(i / 16) * 32;
+  for (const k of STATUS_KEYS) {
+    const [x, y] = frames['st_' + k];
     ctx.save(); ctx.beginPath(); ctx.rect(x, y, 32, 32); ctx.clip();
     try { drawStatusIcon(ctx, k, x, y, 32); } catch { /* ignore */ }
     ctx.restore();
-    frames['st_' + k] = [x, y, 32, 32];
-  });
+  }
   const base = P.BaseTexture.from(canvas, { mipmap: P.MIPMAP_MODES.ON });
   const tex = {};
   for (const [name, [x, y, w, h]] of Object.entries(frames)) tex[name] = new P.Texture(base, new P.Rectangle(x, y, w, h));

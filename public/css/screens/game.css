@@ -133,6 +133,23 @@
 .lp--danger { color: var(--red-premium); }
 .lp--danger .lp__icon { filter: hue-rotate(-140deg) saturate(2.4) brightness(.95); }
 .lp--team { color: var(--mint-glow); }
+/* the running battle's pending loss (LpTower `pending`, user playtest #3 item 2): the number turns red, a −N plate
+   pops again on every new leak (keyed), 联防中 while teammates may still save part of it */
+.lp.is-pending .lp__val { color: var(--red-premium); text-shadow: 0 0 .08rem rgba(255, 60, 60, .45); }
+.lp__pend {
+  align-self: center; margin-left: .02em; padding: .06em .24em; font-size: .56em; font-weight: 700; line-height: 1.1;
+  color: #fff; background: #d8262a; box-shadow: 0 0 .1rem rgba(255, 50, 50, .55);
+  clip-path: polygon(.12em 0, 100% 0, 100% calc(100% - .12em), calc(100% - .12em) 100%, 0 100%, 0 .12em);
+  animation: lp-pend 520ms var(--ease-out);
+}
+.lp__note {
+  align-self: center; padding: .08em .3em; font-size: .4em; font-weight: 700; letter-spacing: .08em; line-height: 1.2;
+  color: #1a0800; background: var(--orange);
+}
+.lp--sm .lp__note { font-size: .6em; }
+@keyframes lp-pend { 0% { opacity: 0; transform: scale(1.9); } 45% { opacity: 1; transform: scale(.92); } 100% { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .lp__pend { animation: none; } }
+.sp-reduced-motion .lp__pend { animation: none; }
 
 /* enemy preview button: amber [🔍▶▶] → the pen (research 09 §2); grey [🔍] in the pen view and outside 休整期 */
 .enemybtn {
@@ -159,6 +176,13 @@
 .readywrap { display: flex; flex-direction: column; align-items: flex-end; gap: .05rem; }
 .readywrap__count { font-size: .14rem; color: var(--text-lo); }
 .readywrap__count b { color: var(--mint-400); font-size: .17rem; }
+/* why 准备就绪 is refused (the temp overflow row holds pieces, user playtest #3 item 3): shown, not only on hover */
+.readywrap__why {
+  display: inline-flex; align-items: center; gap: .05rem; padding: .02rem .1rem .02rem .06rem; font-size: .14rem; font-weight: 700;
+  color: #ffdcd6; background: rgba(40, 6, 6, .88); border: 1px solid rgba(255, 90, 71, .7); border-right: 3px solid #ff5a47; white-space: nowrap;
+}
+.readywrap__why .icon { width: .16rem; height: .16rem; color: #ff6a55; flex: none; }
+.readywrap__why b { color: #ff8a78; font-size: .16rem; }
 .readybtn {
   display: flex; align-items: center; gap: .12rem; height: .56rem; padding: 0 .16rem 0 .12rem; min-width: 2.3rem;
   background: rgba(10, 14, 12, .9); border: 2px solid var(--mint-500); color: var(--text-hi);
@@ -264,6 +288,9 @@
 
 /* ---- effects ---------------------------------------------------------------------------------------------- */
 .gm__effects { position: absolute; right: .3rem; top: 2.4rem; }
+/* 准备就绪 refused (the temp row holds pieces): its reason shows under the button and pushes the ready count down —
+   the effects column follows, or the count runs into it on phones */
+.gm.has-readywhy .gm__effects { top: calc(2.4rem + max(.3rem, 16px)); }
 .effects { display: flex; flex-direction: column; align-items: flex-end; gap: .08rem; }
 .effect {
   position: relative; width: .5rem; height: .5rem; display: grid; place-items: center;
@@ -310,7 +337,7 @@
   transition: background var(--t-fast), border-color var(--t-fast), transform var(--t-fast), color var(--t-fast);
 }
 .ewheel__item:hover:not(:disabled) { background: var(--mint-a10); border-color: var(--mint-700); color: var(--mint-400); transform: translateY(-.02rem); }
-.ewheel__item:disabled { opacity: .45; cursor: wait; }
+.ewheel__item:disabled { opacity: .45; cursor: default; }
 .ewheel__art { width: .6rem; height: .6rem; display: grid; place-items: center; }
 .ewheel__art:empty { display: none; }
 .ewheel__art .eart { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 0 .06rem rgba(23, 249, 183, .25)); }
@@ -383,10 +410,10 @@
   background: rgba(8, 11, 10, .9); border: 1px solid var(--line-2); border-radius: .3rem; white-space: nowrap;
   animation: pop-in var(--t-slow) var(--ease-out);
 }
-.chud__msg .icon { width: .22rem; height: .22rem; color: var(--gold); animation: hg-flip 2.4s var(--ease-in-out) infinite; }
-@keyframes hg-flip { 0%, 40% { transform: rotate(0); } 50%, 90% { transform: rotate(180deg); } 100% { transform: rotate(360deg); } }
+/* a still hourglass: a rotating one next to the text read as a loading spinner (user playtest #3 item 9) */
+.chud__msg .icon { width: .22rem; height: .22rem; color: var(--gold); }
 .chud__msg--dead { border-color: rgba(255, 84, 84, .5); color: var(--red-premium); }
-.chud__msg--dead .icon { color: var(--red-premium); animation: none; }
+.chud__msg--dead .icon { color: var(--red-premium); }
 .vswitch { display: flex; align-items: center; gap: .1rem; height: .5rem; padding: 0 .06rem; background: rgba(8, 11, 10, .9); border: 1px solid var(--line-2); }
 .vswitch__arrow { width: .4rem; height: .4rem; display: grid; place-items: center; background: none; border: 0; color: var(--mint-500); }
 .vswitch__arrow .icon { width: .3rem; height: .3rem; }

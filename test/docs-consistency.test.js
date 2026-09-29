@@ -4,7 +4,9 @@
 // m.public.overtimeAt), 联防 helper order (unite.helperOrder, research 08 §5), boss results handed over instead of a
 // synthetic zero, reconnect windows (co-op 10 min, solo singleReconnectTime 24 h), g.equip replaceUid + equipped items
 // locked, battleId unique per match, solo pause (g.pause / m.public.paused), road-over-floor lanes, module icons from
-// local art, 标准 = 战场#01 only.
+// local art, 标准 = 战场#01 only; user playtest #3 (DESIGN §17): temp overflow kept until the first prep its player can
+// act in (never wiped at the round start), the 回环射手 boomerang and 蕾缪安's shells one by one, the shared picking
+// rule / drag target, the live LP, the detail card order and the static game data.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -16,7 +18,12 @@ import { NET_DEFAULTS } from '../server/net.js';
 import { SOLO_RECONNECT_FALLBACK_SEC } from '../server/lobby.js';
 import { moduleTypeIconUrl } from '../public/js/ui/assetUrls.js';
 import { validateC2S } from '../shared/protocol.js';
-import { ERR } from '../shared/constants.js';
+import { ERR, PHASE } from '../shared/constants.js';
+import { PROJECTILE_SPEEDS, BOOMERANG_RETURN_SPEED } from '../server/sim/constants.js';
+import { SUB } from '../server/sim/professions.js';
+import { BODY_H, PROBE_MARGIN } from '../public/js/render/pick.js';
+import { SPINE_EVICT_DELAY_MS, SPINE_QUIET_DELAY_MS } from '../public/js/assets.js';
+import { RETRY_DELAYS_MS } from '../public/js/data.js';
 import { DATA, makeMatch } from './match/harness.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -172,4 +179,75 @@ test('solo pause: g.pause {on} is solo-only and m.public.paused follows (code) �
   assert.match(META, /`m\.public\.paused`|`paused`\n?\(solo pause/);
   assert.match(README, /暂停（独立模拟）/);
   assert.match(PLAYING, /同盟模拟的作战不能暂停/);
+});
+
+test('temp overflow (user playtest #3 item 3): kept through the round start, resolved at the deadline of the first prep its player can act in (code) — every doc says so', () => {
+  const h = makeMatch({ mode: 'coop', difficulty: 'NORMAL', humans: 2, seed: 4343, fake: true }).start();
+  const m = h.m;
+  const ps = h.ps('p_0');
+  // distinct plain equipment (two identical ones would merge)
+  const plain = Object.values(DATA.items).filter((i) => i.itemType === 'EQUIP' && !i.isGolden && i.kind === 'passive').map((i) => i.itemId ?? i.id);
+  assert.ok(plain.length > ps.hand.length);
+  h.toPrep(1);
+  assert.ok(h.drive(() => m.phase === PHASE.SETTLE && m.round === 1), 'SETTLE of R1');
+  ps.hand.fill(null);
+  plain.slice(0, ps.hand.length).forEach((id, i) => { ps.hand[i] = ps.newPiece('item', id); });
+  const late = ps.newPiece('item', plain[ps.hand.length]);
+  assert.equal(ps.stow(late), 'temp', 'a gain after the battle with a full hand overflows into temp');
+  h.toPrep(2);
+  assert.ok(ps.temp.includes(late), 'not wiped at the round start');
+  assert.equal(ps.tempDue(late), ps.prepsEnded, 'due at the end of this prep — the first one its player can act in');
+  assert.equal(ps.privateView().canReady, false, 'it blocks Ready');
+  assert.ok(h.drive(() => m.phase === PHASE.COMBAT && m.round === 2, { ready: false }), 'the prep deadline passes');
+  assert.ok(!ps.temp.includes(late), 'resolved at that deadline');
+  m.dispose();
+  assert.ok(!/temp hand wiped/.test(DESIGN), 'DESIGN §6.1: the round start no longer wipes temp');
+  assert.match(DESIGN, /PlayerState\.tempDue/);
+  assert.ok(!/temp wiped \(reward offers/.test(META) && !/wiped at the round start/.test(META), 'META §1 / rules');
+  assert.match(META, /PlayerState\.tempDue/);
+  assert.ok(!/下一回合开始时自动销毁/.test(PLAYING), 'PLAYING §3: no round-start destruction');
+  assert.match(PLAYING, /保留到\*\*下一个休整期\*\*/);
+});
+
+test('回环射手 boomerang and 蕾缪安 S3 shells (user playtest #3 items 4–5): code and SIM / DESIGN agree', () => {
+  assert.equal(PROJECTILE_SPEEDS.boomerang, 15, 'PRTS 跃跃: out 15');
+  assert.equal(BOOMERANG_RETURN_SPEED, 3.75, 'PRTS 跃跃: back 3.75');
+  assert.equal(SUB.loopshooter.projectile, 'boomerang');
+  assert.equal(typeof SUB.loopshooter.canAttack, 'function', 'attacks only while holding the boomerang');
+  assert.match(SIM, /boomerang 15 out,\s*3\.75 back/);
+  assert.ok(!/next attack waits for the boomerang \(2 × distance \/ 10 s\)/.test(SIM), 'SIM §8: the old lob rule is gone');
+  assert.match(SIM, /`none\|arrow\|bolt\|bomb\|lob\|orb\|drone\|enemy\|boomerang\|chain\|chainHeal`/);
+  assert.match(DESIGN, /BOOMERANG_RETURN_SPEED/);
+  // 蕾缪安: one shell every 0.3 s after the skill (PRTS), fx 'bombardShell' then 'bombard' — the kit's constants
+  const kit = readFileSync(join(ROOT, 'server/sim/content/kits/tier6.js'), 'utf8');
+  assert.match(kit, /const LEMUEN_SHELL_INTERVAL = 0\.3;/);
+  assert.match(kit, /battle\.fx\('bombardShell'/);
+  assert.match(DESIGN, /'bombardShell' \{x, y, id: shooter, r, t: flight game s, i\}/);
+  assert.match(DESIGN, /ONE shell every 0\.3 s in lock order/);
+  assert.match(SIM, /S3 礼炮·强制追思/);
+});
+
+test('picking, drag target, lost models, live LP, detail card order, static game data (user playtest #3): code and DESIGN §17 agree', () => {
+  assert.equal(BODY_H, 1.27, 'median chibi height (tiles)');
+  assert.equal(PROBE_MARGIN, 0.5);
+  assert.match(DESIGN, /`PROBE_MARGIN` 0\.5 tile/);
+  const app = readFileSync(join(ROOT, 'public/js/render/app.js'), 'utf8');
+  assert.match(app, /export const TOUCH_LIFT_TILES = 0\.6;/);
+  assert.match(DESIGN, /`TOUCH_LIFT_TILES` = 0\.6 tile above the finger/);
+  assert.match(DESIGN, /render\/pick\.js/);
+  assert.equal(SPINE_EVICT_DELAY_MS, 1000);
+  assert.equal(SPINE_QUIET_DELAY_MS, 3000);
+  assert.match(DESIGN, /`SPINE_EVICT_DELAY_MS` \(1 s\)/);
+  assert.match(DESIGN, /`SPINE_QUIET_DELAY_MS` \(3 s\)/);
+  assert.deepEqual([...RETRY_DELAYS_MS], [600, 2000]);
+  assert.match(DESIGN, /after 600 ms and 2 s \(`RETRY_DELAYS_MS`\)/);
+  const panel = readFileSync(join(ROOT, 'public/js/ui/detailPanel.js'), 'utf8');
+  assert.match(panel, /CHESS_SECTIONS = Object\.freeze\(\['head', 'garrison', 'trait', 'stats', 'skill', 'module', 'equip', 'talents'/);
+  assert.match(DESIGN, /`detailPanel\.js CHESS_SECTIONS`\): header .* → \*\*特质\*\*/);
+  assert.match(panel, /export function garrisonTypeIconKey\(garrison\)/);
+  assert.match(DESIGN, /official `eventTypeIcon` \(`detailPanel\.js garrisonTypeIconKey`/);
+  assert.match(DESIGN, /pendingLp\? \/\* COMBAT \/ 联防 of a normal round/);
+  assert.match(DESIGN, /`ownLeaks\(local, server\)`/);
+  assert.match(PLAYING, /顶栏的目标生命值会\*\*立即\*\*显示扣除后的数值/);
+  assert.match(README, /漏怪时顶栏的目标生命值实时减少/);
 });

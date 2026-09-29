@@ -2,15 +2,22 @@
 //
 // attachAudit(m) wraps a live Match's phase transitions and a few prep handlers (instance-level wrappers; the engine
 // is untouched) and records every rule violation it observes, next to the structural invariants of invariants.js:
-//   prep end      leftover funds lost (carry bands excepted), temp resolved, reward offers expired
+//   temp          (临时整备区) every piece entering a temp slot (PlayerState._putTemp) is due at the deadline of the first
+//                 prep in which its player could act on it: the current prep when it arrived in PREP before Ready,
+//                 the next one when it arrived after Ready / at the prep end, else (COMBAT, SETTLE, ROUND_START, 机变)
+//                 the next prep to end; a piece that got into temp by other means counts as due at the prep in
+//                 progress when it is first seen at a prep end. No temp piece may outlive its due prep.
+//   prep end      leftover funds lost (carry bands excepted), temp resolved (only pieces due at a later prep stay),
+//                 reward offers expired
 //   round start   income = config income(r) (= min(3 + r, 12)) + pending funds, upgrade price −1 (floor 0) from R2,
-//                 temp wiped, offers earned after the last prep kept, frozen slots kept in place (same id; chess slots
-//                 keep their index, the item slot(s) follow the chess slots, so a level-up moves them right),
-//                 everything else rerolled with tier ≤ shop level from the unbanned pool, freeze toggle released
+//                 temp not wiped (nothing overdue), offers earned after the last prep kept, frozen slots kept in
+//                 place (same id; chess slots keep their index, the item slot(s) follow the chess slots, so a
+//                 level-up moves them right), everything else rerolled with tier ≤ shop level from the unbanned pool,
+//                 freeze toggle released
 //   prep handlers buy / sell / refresh / levelUp pay exactly price / +sell price / refresh price (free first) / level
-//                 price, the level rises by one and its price resets to the next base
-//   combat start  temp empty, everyone ready, funds lost (carry bands excepted), unfrozen shop cleared, one field per
-//                 alive player
+//                 price, the level rises by one and its price resets to the next base; Ready only with an empty temp
+//   combat start  nothing overdue in temp, everyone ready, funds lost (carry bands excepted), unfrozen shop cleared,
+//                 one field per alive player
 //   drafts        every seat holds an allowed band with LP = totalHp; 机变: one card per alive player, card ↔ picker
 //                 maps consistent, 6 (co-op) / 3 (solo) cards
 //   联防          decided after the COMBAT_END pause from the players still in: runs iff co-op with ≥ 1 leaker and
@@ -74,7 +81,34 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
     if (hook === 'onIncome' && ev && ps) incomeEv.set(ps, { initial: { income: ev.income, pending: ev.pending }, ev });
     return orig(ps, hook, ev, opts);
   });
+  // temp arrivals: ps → Map(uid → index of the prep whose deadline resolves it); ps → preps ended (own count)
+  const tempDue = new Map();
+  const prepsEnded = new Map();
+  const endedOf = (ps) => prepsEnded.get(ps) || 0;
+  const dueOf = (ps) => { let d = tempDue.get(ps); if (!d) tempDue.set(ps, (d = new Map())); return d; };
+  const overdue = (ps, label) => {
+    const d = dueOf(ps);
+    for (const p of ps.temp) {
+      if (!p) continue;
+      const due = d.get(p.uid);
+      if (due != null && due < endedOf(ps)) fail(`${ps.playerId}: temp piece ${p.id} (due at prep ${due}) survived ${label} (${endedOf(ps)} preps ended)`);
+    }
+  };
   for (const ps of m.players.values()) {
+    wrap(ps, '_putTemp', function (orig, i, piece) {
+      const res = orig(i, piece);
+      // after Ready / at the prep end the player cannot act on it any more: due at the next prep
+      if (piece) dueOf(ps).set(piece.uid, endedOf(ps) + (m.phase === PHASE.PREP && ps.ready ? 1 : 0));
+      return res;
+    });
+    wrap(ps, 'setReady', function (orig, on) {
+      const was = ps.ready;
+      const res = orig(on);
+      // un-ready: the player can act on what arrived while it was ready — due at this prep again
+      if (res && res.ok && was && !on) for (const p of ps.temp) if (p && (dueOf(ps).get(p.uid) ?? 0) > endedOf(ps)) dueOf(ps).set(p.uid, endedOf(ps));
+      if (res && res.ok && on) check('ready', () => { if (!ps.tempEmpty) fail(`${ps.playerId}: ready with a non-empty temp`); });
+      return res;
+    });
     wrap(ps, '_rollChessSlot', function (orig) {
       const s = orig();
       if (s) {
@@ -114,7 +148,8 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
         const upWant = r > 1 ? Math.max(0, up0 - 1) : up0;
         if (ps.shop.upgradePrice !== upWant) fail(`${id}: upgrade price ${up0} → ${ps.shop.upgradePrice}, expected ${upWant}`);
         if (ps.pendingFunds !== 0) fail(`${id}: pending funds not cleared`);
-        if (!ps.tempEmpty) fail(`${id}: temp not wiped at round start`);
+        // temp is not wiped here: what overflowed after the last prep's deadline is shown in this prep
+        overdue(ps, 'the round start');
         // offers of the last prep expired at its end; the ones queued after it (SETTLE merges) wait for this prep
         if (offers0.some((o) => !ps.offers.includes(o))) fail(`${id}: a reward offer earned after the prep was dropped at the round start`);
         if (ps.shop.frozen) fail(`${id}: freeze toggle still on after the round start`);
@@ -183,18 +218,16 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
       return res;
     });
     wrap(ps, 'endPrep', function (orig) {
+      // a temp piece that got there by other means (not _putTemp) was in temp during this prep: due now
+      for (const p of ps.temp) if (p && !dueOf(ps).has(p.uid)) dueOf(ps).set(p.uid, endedOf(ps));
       const res = orig();
+      prepsEnded.set(ps, endedOf(ps) + 1);
       check('prep end', () => {
         // leftover funds are lost at prep end (carry bands excepted); gains after this (SETTLE effects) are kept
         if (ps.funds !== 0 && !carries(ps)) fail(`${ps.playerId}: kept ${ps.funds} funds past the prep end without a carry band`);
-        if (!ps.tempEmpty) fail(`${ps.playerId}: temp not resolved at prep end`);
+        overdue(ps, 'its prep end');
         if (ps.offers.length) fail(`${ps.playerId}: reward offer survived the prep end`);
       });
-      return res;
-    });
-    wrap(ps, 'setReady', function (orig, on) {
-      const res = orig(on);
-      if (res && res.ok && on) check('ready', () => { if (!ps.tempEmpty) fail(`${ps.playerId}: ready with a non-empty temp`); });
       return res;
     });
   }
@@ -283,7 +316,7 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
     check('combat start', () => {
       for (const ps of m.alivePlayers()) {
         const id = ps.playerId;
-        if (!ps.tempEmpty) fail(`${id}: temp not empty at combat start`);
+        overdue(ps, 'into combat');
         if (!ps.ready) fail(`${id}: not ready at combat start`);
         if (ps.funds !== 0 && !carries(ps)) fail(`${id}: kept ${ps.funds} funds into combat`);
         if (ps.offers.length) fail(`${id}: reward offer survived the prep`);

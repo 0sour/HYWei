@@ -18,6 +18,7 @@ import { GEO, PHASE, UF } from '../../../shared/constants.js';
 import { resolveLoadout, loadoutOptions, MODULE_NONE } from '../../../shared/protocol.js';
 import { resolveRecordLoadout, loadoutRecord } from '../../../shared/loadoutRecord.js';
 import { layoutPen } from '../render/pen.js';
+import { pickBody } from '../render/pick.js';
 import { bossLevelSeconds } from './matchStatus.js';
 
 // ---- small helpers -------------------------------------------------------------------------------
@@ -871,17 +872,31 @@ export function dropIntent(ctx, uid, target) {
 }
 
 /**
- * The front-most piece whose screen rect contains (x, y): the one standing nearest the camera (largest bottom).
- * @param {Array<{uid:number, left:number, top:number, right:number, bottom:number}|null>} rects
+ * The piece under a screen point (user playtest #3 item 7). Rects of the render engine carry the drawn body
+ * (`shape`, view.pieceScreenRect) and are picked by the shared rule of render/pick.js — the face / torso of a unit is
+ * its own; elsewhere the piece standing on the tile under the pointer (`tile`, same space as the rects' `tile`) wins.
+ * Plain rects (the DOM fallback) go to the one whose centre is nearest relative to its size (a unit standing in front
+ * no longer takes the whole overlap), ties → the front-most (largest bottom).
+ * @param {Array<{uid:number, left:number, top:number, right:number, bottom:number, shape?:object, tile?:{row:number,col:number}}|null>} rects
+ * @param {number} x
+ * @param {number} y
+ * @param {{row:number, col:number}|null} [tile] the tile under the point
  * @returns {number|null} uid
  */
-export function pickPieceAt(rects, x, y) {
+export function pickPieceAt(rects, x, y, tile = null) {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  let best = null;
-  for (const r of Array.isArray(rects) ? rects : []) {
-    if (!isObj(r) || !Number.isInteger(r.uid)) continue;
+  const list = (Array.isArray(rects) ? rects : []).filter((r) => isObj(r) && Number.isInteger(r.uid));
+  const shaped = list.filter((r) => isObj(r.shape) && r.shape.s > 0);
+  if (shaped.length && shaped.length === list.length) {
+    const hit = pickBody(shaped.map((r) => ({ ...r.shape, tile: r.tile || null, uid: r.uid })), x, y, tile);
+    return hit ? hit.uid : null;
+  }
+  let best = null, bestD = Infinity;
+  for (const r of list) {
     if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;
-    if (!best || r.bottom > best.bottom) best = r;
+    const hw = Math.max(1, (r.right - r.left) / 2), hh = Math.max(1, (r.bottom - r.top) / 2);
+    const d = Math.hypot((x - (r.left + r.right) / 2) / hw, (y - (r.top + r.bottom) / 2) / hh);
+    if (d < bestD - 1e-9 || (Math.abs(d - bestD) <= 1e-9 && r.bottom > best.bottom)) { best = r; bestD = d; }
   }
   return best ? best.uid : null;
 }

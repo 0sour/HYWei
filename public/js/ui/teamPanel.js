@@ -5,8 +5,12 @@
 // "前往查看" button under the row (when that teammate can be observed now; otherwise the reason is toasted through
 // onWatch); while observing, the own row shows a "返回战场" button. Without `observe` (server-run combat) a click
 // watches that player's field at once.
+// Live LP (user playtest #3 item 2): during a normal round's battle each row's tower shows lp − the loss that player's
+// leaks so far will cost (red, −N): the own row the top bar's live value (`self`, ui/hud.js liveLp), a teammate's row
+// m.public players[].pendingLp (server/match/Match.js, ~1 Hz).
 
 import { useEffect, useState } from '../../vendor/hooks.module.js';
+import { PHASE } from '../../../shared/constants.js';
 import { html, Icon, Tooltip } from './components.js';
 import { PlayerAvatar, LpTower, GIcon, LocalSprite } from './gameComponents.js';
 import { EmoteBubble } from './emotes.js';
@@ -19,11 +23,28 @@ const cx = (...p) => p.flat().filter(Boolean).join(' ');
 const STATUS_SPRITE = { ready: 'icon_ready', deciding: 'icon_waiting', done: 'icon_complete', dead: 'icon_dead' };
 
 /**
+ * A row's LP tower: the settled LP and the pending loss of the round's battle (0 outside COMBAT / UNITE). The own row
+ * takes the top bar's live value when there is one (its m.private lp: the same number as the top bar).
+ * @param {any} p m.public players[] entry @param {any} pub m.public
+ * @param {{ lp?: number|null, pending: number, unite: boolean } | null} [self] the own live value (only for the own row)
+ * @returns {{ lp: number|null, pending: number, unite: boolean }}
+ */
+export function rowLp(p, pub, self = null) {
+  const pubLp = Number.isFinite(p?.lp) ? p.lp : null;
+  if ((pub?.phase !== PHASE.COMBAT && pub?.phase !== PHASE.UNITE) || p?.alive === false) return { lp: pubLp, pending: 0, unite: false };
+  const lp = self && Number.isFinite(self.lp) ? self.lp : pubLp;
+  if (lp == null) return { lp, pending: 0, unite: false };
+  const raw = self ? self.pending : p.pendingLp;
+  const pending = Math.min(lp, Math.max(0, Math.trunc(Number(raw) || 0)));
+  return { lp, pending, unite: pending > 0 && (self ? !!self.unite : pub.phase === PHASE.UNITE) };
+}
+
+/**
  * @param {{ pub:any, myId:string, watching:string|null, bubbles: Map<string,{id:string,seq:number}>, onWatch:(p:any)=>void,
- *   compact?: boolean, teamLp?: number|null,
+ *   compact?: boolean, teamLp?: number|null, self?: { lp?: number|null, pending: number, unite: boolean } | null,
  *   observe?: null | { canObserve: (p:any) => { fieldId?: string, reason?: string|null, back?: boolean }, observing: boolean, onBack: () => void } }} props
  */
-export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = false, observe = null }) {
+export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = false, observe = null, self: selfLive = null }) {
   const [openPid, setOpenPid] = useState(null);
   const phaseKey = `${pub?.phase}:${pub?.round}`;
   useEffect(() => { setOpenPid(null); }, [phaseKey, watching, observe?.observing]);
@@ -47,6 +68,7 @@ export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = fal
       const open = !!observe && openPid === p.playerId && !self;
       const back = !!observe && self && observe.observing;
       const title = observe ? (self ? (observe.observing ? '返回战场' : '你自己') : `查看 ${p.name} 的战场`) : (self ? '查看自己的阵地' : `查看 ${p.name} 的阵地`);
+      const lp = rowLp(p, pub, self ? selfLive : null);
       return html`<div key=${p.playerId} class=${cx('team__row', self && 'is-self', watched && 'is-watched', p.alive === false && 'is-dead', open && 'is-open')}>
         <button type="button" class="team__btn" onClick=${() => click(p, self)} title=${title} aria-expanded=${observe && !self ? String(open) : undefined}>
           <${PlayerAvatar} player=${p} self=${self} />
@@ -57,7 +79,8 @@ export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = fal
         <div class="team__info">
           <span class="team__name">${p.name || '博士'}</span>
           <div class="team__line">
-            <${LpTower} value=${p.lp} size="sm" tone=${Number.isFinite(p.lp) && p.lp <= 5 ? 'danger' : null} />
+            <${LpTower} value=${lp.lp} size="sm" tone=${Number.isFinite(lp.lp) && lp.lp - lp.pending <= 5 ? 'danger' : null} pending=${lp.pending}
+              tip=${lp.pending > 0 ? `目标生命值 ${lp.lp}，${lp.unite ? '联防中，' : ''}结算时扣除${lp.unite ? '至多' : ''} ${lp.pending} 点` : null} />
             <${Tooltip} text=${offline ? '连接已断开' : meta.text} placement="right">
               <span class=${cx('team__status', `is-${meta.tone}`, offline && 'is-offline', (offline || STATUS_SPRITE[status]) && localAsset('ui/battle', offline ? 'icon_lost_connect' : STATUS_SPRITE[status]) && 'has-sprite')} aria-label=${meta.text}>
                 ${offline ? html`<${LocalSprite} name="icon_lost_connect" fallback=${html`<${Icon} name="wifiOff" />`} />`

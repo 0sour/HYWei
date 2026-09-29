@@ -188,6 +188,10 @@ Boss HP scaling:
    - Funds do **not** carry over [WIKI: "没有用完的资金无法留到下一回合"].
    - Exception, band 坎诺特 (`coin_carry_over {capital:5, interest:1, max:1}`): keep leftovers, +1 if leftover ≥ 5.
 3. Destroy everything in the 临时整备区 (temporary overflow bench) [tip: "处于临时整备区的调度资源，在进入下一回合后会自动销毁"].
+   *Superseded in the remake (user playtest #3, DESIGN §6.2):* wiping at the round start destroyed what SETTLE had just put
+   there (battle-result grants, a SETTLE merge's elite, returned equipment) before the player ever saw it — reported as a
+   bug by a player of the official mode. The remake resolves a temp piece at the deadline of the first prep in which its
+   player could act on it (the "next round" of the tip = the combat that follows that prep; Ready stays blocked meanwhile).
 4. If `isSpPrepare`: run the 机变阶段 choice (§12) before the shop opens.
 5. Free automatic shop refresh of all **non-frozen** slots [ASSUMED, auto-chess convention]. Promotion-reward slots from last round are gone.
 6. Fire "<进入休整期时>" effects: bands (e.g. 小贾斯汀 R1/4/7/10, 杰西卡 R4/7/10/13, 松桐 on even rounds…), operator traits (garrison), equipment.

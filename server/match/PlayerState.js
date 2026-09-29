@@ -3,8 +3,14 @@
 // Handlers validate → mutate → recompute bonds → mark the private view dirty. They never throw on bad input; they
 // return `{ ok: true }` or `{ error: ERR.*, detail? }`. Rules (research 00-INDEX §3–§4, 01 A1, 04 §2):
 //   * Hand (整备区) 10 slots filled right→left, temp (临时整备区) 5 slots. A full hand refuses buys / withdrawals,
-//     except a purchase that completes a merge and a withdrawal whose own summon stack frees a slot. Passive gains (merge results, grants, returned equipment) overflow
-//     into temp; temp blocks Ready; temp is wiped at the next round start (and auto-resolved at the prep deadline).
+//     except a purchase that completes a merge and a withdrawal whose own summon stack frees a slot. Passive gains (merge
+//     results, grants, returned equipment) overflow into temp; temp blocks Ready ("直到溢出情况排除才可开始进行作战").
+//     A temp piece is resolved (chess sold back to the pool, items / summon stacks destroyed) at the deadline of the
+//     first prep in which the player could act on it (tempDue): a piece that overflowed during a prep before Ready
+//     expires at that prep's end; one that arrived after Ready, at the prep end (<休整期结束时> grants), in COMBAT /
+//     SETTLE (battle-result grants, merges, returned equipment) or at the next round start / 机变 stays visible and
+//     usable (move to a free hand slot, place, equip, destroy, sell) through the NEXT prep — nothing is destroyed before
+//     the player saw it in a prep ("处于临时整备区的调度资源，在进入下一回合后会自动销毁").
 //   * Board: own region rows 9–12 × cols 2–10, legality from the stage legend (board.js); deploy cap 8 (+effects);
 //     tokens (placeable summons) don't use deploy slots. Board↔hand swaps are always allowed. A terrain change
 //     (terrain 机变 cards, content overrides) withdraws the pieces left on tiles they may no longer occupy (hand,
@@ -14,8 +20,10 @@
 //     rerolls everything and the new slots stay frozen), level-up price = base − rounds elapsed (floor 0).
 //   * Merge: 3 normal copies (风丸 2) on board/hand/temp → 1 elite to the hand; equipment returns to the hand; a
 //     reward offer of 3 free chess of tier min(level+1, 6) is queued (pick 1, expires at prep end; an offer earned
-//     after the prep — SETTLE / Final Assault effects — is kept for the next prep). Outside PREP a full hand sends the
-//     elite to a freed board tile of a consumed copy rather than to temp (wiped at the next round start).
+//     after the prep — SETTLE / Final Assault effects — is kept for the next prep). The elite goes to the hand
+//     (research 01 A1 "1 elite goes to the hand, not to a board tile"), overflow temp — also outside PREP (a
+//     SETTLE merge's elite waits in temp for the next prep); only with the hand and temp both full does it take a
+//     freed board tile of a consumed copy.
 //   * Items: equip max 2 (a 3rd replaces the equipped item the player picks — g.equip replaceUid, the oldest when
 //     absent; equipped items are otherwise locked: g.destroy refuses them),
 //     2 identical normal items (hand/temp/equipped) merge into the golden item in the hand, items are never sold
@@ -81,6 +89,10 @@ export class PlayerState {
     this.hand = new Array(HAND_SIZE).fill(null);
     /** @type {Array<any>} */
     this.temp = new Array(TEMP_SIZE).fill(null);
+    /** preps of this player that ended so far (endPrep) = index of the current (or next) prep */
+    this.prepsEnded = 0;
+    /** @type {Map<number, number>} temp piece uid → index of the prep whose deadline resolves it (see tempDue) */
+    this._tempDue = new Map();
     /** @type {Map<string, any>} 'r,c' → piece */
     this.board = new Map();
     /** persistent bond layers */
@@ -127,6 +139,30 @@ export class PlayerState {
   get deployCap() { return Math.max(1, this.gd.deployCap + this.deployCapBonus, this.deployCapMin); }
   get deployCount() { let n = 0; for (const p of this.board.values()) if (p.kind === 'chess') n++; return n; }
   get tempEmpty() { return this.temp.every((x) => x == null); }
+
+  /**
+   * Index of the prep whose deadline resolves a temp piece (compare with `prepsEnded`): recorded when the piece entered
+   * temp (_putTemp); a piece put there by other means counts as due at the current (or next) prep.
+   */
+  tempDue(piece) {
+    const due = piece ? this._tempDue.get(piece.uid) : undefined;
+    return Number.isInteger(due) ? due : this.prepsEnded;
+  }
+
+  /**
+   * Due prep of a piece entering temp now: the current prep while the player can still act on it (PREP, not ready);
+   * after Ready or at the prep end (onPrepEnd grants) the next one; outside PREP (COMBAT, SETTLE, ROUND_START, 机变)
+   * the next prep to end — `prepsEnded` then already names it.
+   */
+  _tempDueNow() {
+    return this.prepsEnded + (this.m.phase === PHASE.PREP && this.ready ? 1 : 0);
+  }
+
+  /** Every write of a piece into a temp slot goes through here (records its due prep). */
+  _putTemp(i, piece) {
+    this.temp[i] = piece;
+    this._tempDue.set(piece.uid, this._tempDueNow());
+  }
 
   /**
    * Replace the operator loadout (DESIGN §16) after re-checking it against this match's data. Accepts the checked
@@ -259,7 +295,7 @@ export class PlayerState {
   _detach(loc) {
     if (!loc) return;
     if (loc.area === 'hand') this.hand[loc.idx] = null;
-    else if (loc.area === 'temp') this.temp[loc.idx] = null;
+    else if (loc.area === 'temp') { this.temp[loc.idx] = null; this._tempDue.delete(loc.piece.uid); }
     else if (loc.area === 'board') this.board.delete(loc.key);
     else if (loc.area === 'equipped') {
       const i = loc.holder.items.indexOf(loc.piece);
@@ -268,7 +304,8 @@ export class PlayerState {
   }
 
   /**
-   * Put a piece into the hand (right→left) or, when `allowTemp`, the temp slots. Returns 'hand' | 'temp' | null.
+   * Put a piece into the hand (right→left) or, when `allowTemp`, the temp slots (due at the deadline of the first prep
+   * in which the player can act on it, _tempDueNow). Returns 'hand' | 'temp' | null.
    */
   stow(piece, { allowTemp = true, toTemp = false, preferIdx = null } = {}) {
     if (!toTemp) {
@@ -281,7 +318,7 @@ export class PlayerState {
       if (!allowTemp) return null;
     }
     const j = freeSlot(this.temp);
-    if (j >= 0) { this.temp[j] = piece; return 'temp'; }
+    if (j >= 0) { this._putTemp(j, piece); return 'temp'; }
     return null;
   }
 
@@ -411,10 +448,9 @@ export class PlayerState {
       this.grantTokensFor(elite);
       return 'board';
     };
-    // outside PREP (a merge completed by SETTLE / battle-result effects) the player cannot clear the temp slots before
-    // they are wiped at the next round start: with a full hand the elite takes a freed board tile instead
-    const canAct = this.m.phase === PHASE.PREP;
-    let where = this.stow(elite, { allowTemp: canAct || !boardLoc });
+    // the elite goes to the hand, overflow temp — outside PREP too (a merge completed by SETTLE / battle-result effects):
+    // a temp piece that arrived after the prep waits there through the next prep (tempDue)
+    let where = this.stow(elite, { allowTemp: true });
     if (!where && boardLoc) {
       // hand and temp both full ⇒ every consumed copy stood on the board: the elite takes the first freed tile
       // instead of being lost
@@ -896,7 +932,7 @@ export class PlayerState {
   /** Put a piece into the container slot described by `loc` (hand/temp idx), or anywhere free. */
   _putBack(loc, piece) {
     if (loc.area === 'hand' && this.hand[loc.idx] == null) { this.hand[loc.idx] = piece; return true; }
-    if (loc.area === 'temp' && this.temp[loc.idx] == null) { this.temp[loc.idx] = piece; return true; }
+    if (loc.area === 'temp' && this.temp[loc.idx] == null) { this._putTemp(loc.idx, piece); return true; }
     return !!this.stow(piece, { allowTemp: true });
   }
 
@@ -1006,7 +1042,7 @@ export class PlayerState {
     this.hand[idx] = piece;
     if (occ) {
       if (loc.area === 'hand') this.hand[loc.idx] = occ;
-      else this.temp[loc.idx] = occ;
+      else this._putTemp(loc.idx, occ);
     }
     this.recompute();
     return OK;
@@ -1161,18 +1197,25 @@ export class PlayerState {
     if (on && !this.tempEmpty) return fail(ERR.TEMP_NOT_EMPTY);
     if (this.ready === !!on) return OK;
     this.ready = !!on;
+    // un-ready: the player can act again, so what overflowed while it was ready is due at this prep's deadline
+    if (!on) for (const p of this.temp) if (p && this.tempDue(p) > this.prepsEnded) this._tempDue.set(p.uid, this.prepsEnded);
     this.dirty();
     this.m.onReadyChanged(this);
     return OK;
   }
 
-  /** Prep deadline / round start: temp contents are sold (copies back to the pool) or destroyed. */
+  /**
+   * Prep deadline: every temp piece due at this prep (tempDue ≤ prepsEnded) is resolved — a chess is sold back (its
+   * pool copies return, its summons are removed), items and summon stacks are destroyed. Pieces that overflowed after
+   * the player could no longer act on them (after Ready, at the prep end) are kept for the next prep.
+   */
   resolveTemp() {
     let changed = false;
     for (let i = 0; i < this.temp.length; i++) {
       const p = this.temp[i];
-      if (!p) continue;
+      if (!p || this.tempDue(p) > this.prepsEnded) continue;
       this.temp[i] = null;
+      this._tempDue.delete(p.uid);
       changed = true;
       if (p.kind === 'chess') {
         this.removeTokensOf(p.uid);
@@ -1194,8 +1237,9 @@ export class PlayerState {
     this.m.dispatch(this, 'onIncome', ev);
     const nonNeg = (v) => (Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0);
     this.addFunds(nonNeg(ev.income) + nonNeg(ev.pending), { reason: 'income' });
-    this.resolveTemp();
-    // reward offers of the last prep already expired at its end (endPrep); what is still queued was earned after it —
+    // temp is NOT wiped here: the last prep's deadline resolved what the player could act on (endPrep); what overflowed
+    // after it (battle-result grants, SETTLE merges, returned equipment) is shown and usable in this prep (tempDue).
+    // Likewise reward offers of the last prep already expired at its end; what is still queued was earned after it —
     // a merge completed during SETTLE / the Final Assault (突变细胞, battle-result grants) — and is shown in this prep
     this.ready = false;
     this.rollShop({ keepFrozen: true });
@@ -1204,8 +1248,14 @@ export class PlayerState {
     this.recompute();
   }
 
+  /**
+   * Prep deadline (Match.endPrep, after the <休整期结束时> onPrepEnd effects): the temp pieces due at this prep are
+   * resolved; what overflowed after Ready or during onPrepEnd stays for the next prep, which `prepsEnded` now names.
+   */
   endPrep() {
     this.resolveTemp();
+    this.prepsEnded++;
+    for (const uid of [...this._tempDue.keys()]) if (!this.temp.some((p) => p && p.uid === uid)) this._tempDue.delete(uid);
     this.offers = [];
     this.clearUnfrozenShop();
     if (!this.gd.leftoverKeptBands.includes(this.bandId)) this.funds = 0;
@@ -1225,6 +1275,7 @@ export class PlayerState {
     this.board.clear();
     this.hand.fill(null);
     this.temp.fill(null);
+    this._tempDue.clear();
     this.offers = [];
     this.bounties = [];
     this.shop.slots = [];

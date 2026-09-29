@@ -7,8 +7,10 @@
 //   room        – last `room.state` payload (without `t`) or null
 //   match       – { public, private, field, result } from the `m.*` pushes; `battle` = the local battle runner's
 //                 state (client-side combat, public/js/battle/runner.js): { battleId, fieldId, kind, authoritative,
-//                 watch, done, own, members, loading } | null. Under client-side combat `field` is published by the
-//                 runner (the m.field shape of the battle on screen, `local: true`).
+//                 watch, done, own, members, loading, speed, paused, leaks } | null — `paused`: the solo pause holds
+//                 every local clock; `leaks`: { [fieldId]: counted leaks so far } of every normal field simulated
+//                 locally (the live LP of ui/hud.js liveLp, user playtest #3 item 2). Under client-side combat `field`
+//                 is published by the runner (the m.field shape of the battle on screen, `local: true`).
 //   ticker      – recent `m.ticker` lines, emotes – recent `m.emote` events
 //   clock       – { offset, rtt } server clock correction: serverNow ≈ Date.now() + offset
 //   ui          – small bits of local UI state shared between screens

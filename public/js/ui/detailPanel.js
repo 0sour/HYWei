@@ -1,8 +1,11 @@
 // Detail panel (click / right-click a piece, shop card, bond member, battle unit or previewed enemy):
 // operators — portrait, name, tier, elite, class/subclass and, right under them in the header's right column (no
 // scrolling, user playtest #2 item 9), the unit's bonds (阵营 / 盟约: icon, name, member count / next threshold,
-// reached tier, active state — tap one for its popup); then stats, range mini-map, skill (the one chosen in the loadout, DESIGN §16: icon, SP info, rich description,
-// 已调配 when not the default), elite module (模组: official type icon from the local-client art, else its letter), talents, 特质 (garrison), equipped items; items — icon, tier,
+// reached tier, active state — tap one for its popup); right under the header the operator's own effect (特质 —
+// garrison: type chip (its official type icon + eventTypeDesc such as 整备能力, garrisonTypeIconKey) + description,
+// compact, visible without scrolling: user playtest #3 items 8 / 9), the class trait (特性), stats + range mini-map, skill (the one chosen in the loadout, DESIGN §16: icon, SP
+// info, rich description, 已调配 when not the default), elite module (模组: official type icon from the local-client
+// art, else its letter), equipped items, talents (CHESS_SECTIONS); items — icon, tier,
 // effect; tokens; enemies — stats, rank, faction tags, abilities. Selling / destroying is the underframe's job in the
 // match (research 09 §5, ui/underframe.js): the panel's own 出售 / 销毁 buttons only render for callers that pass
 // `editable` + handlers. `side` 'right' docks the panel at the right edge (the game screen picks the side away from a
@@ -21,7 +24,8 @@ const cx = (...p) => p.flat().filter(Boolean).join(' ');
 const PROF_NAME = { PIONEER: '先锋', WARRIOR: '近卫', TANK: '重装', SNIPER: '狙击', CASTER: '术师', MEDIC: '医疗', SUPPORT: '辅助', SPECIAL: '特种', TOKEN: '召唤物' };
 const SP_TYPE = { INCREASE_WITH_TIME: '自动回复', INCREASE_WHEN_ATTACK: '攻击回复', INCREASE_WHEN_TAKEN_DAMAGE: '受击回复', ON_DEPLOY: '被动' };
 const SKILL_TYPE = { MANUAL: '自动触发', AUTO: '自动触发', PASSIVE: '被动' };
-const EVENT_ICON = { IN_BATTLE: 's_icon_battle', SERVER_GAIN: 's_icon_bond', SERVER_PREP_START: 's_icon_support', SERVER_PREP_FIN: 's_icon_support', SERVER_CHESS_SOLD: 's_icon_gold', SERVER_PRICE: 's_icon_gold', SERVER_REFRESH_SHOP: 's_icon_gold' };
+/** Fallback type icon by trigger, for a garrison record without its official `eventTypeIcon` (garrisonTypeIconKey). */
+const EVENT_ICON = { IN_BATTLE: 's_icon_battle', SERVER_GAIN: 's_icon_bond', SERVER_PREP_START: 's_icon_bond', SERVER_PREP_FIN: 's_icon_bond', SERVER_CHESS_SOLD: 's_icon_gold', SERVER_PRICE: 's_icon_gold', SERVER_REFRESH_SHOP: 's_icon_gold' };
 const RANK = { NORMAL: '普通', ELITE: '精英', BOSS: '领袖' };
 const DMG = { phys: '物理', arts: '法术', heal: '治疗', true: '真实', none: '无' };
 
@@ -40,7 +44,7 @@ export function RangeGrid({ grid, class: cls }) {
 }
 
 function Stat({ k, v, sub }) {
-  return html`<div class="dstat"><span class="dstat__k">${k}</span><b class="dstat__v num">${v}</b>${sub ? html`<small>${sub}</small>` : null}</div>`;
+  return html`<div class="dstat"><span class="dstat__k">${k}</span><span class="dstat__row"><b class="dstat__v num">${v}</b>${sub ? html`<small>${sub}</small>` : null}</span></div>`;
 }
 
 function Section({ title, micro, children, class: cls }) {
@@ -101,7 +105,41 @@ function traitText(c, golden, lo) {
   return t.moduleDescRaw || base;
 }
 
-function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bonds, loadout, onBond }) {
+/**
+ * Order of an operator card's blocks (user playtest #3 item 8): the operator's own effect (特质 — garrison: its trigger
+ * such as 休整期结束时 and what it does) right under the header, visible without scrolling; the class trait (特性) and
+ * the stats next; then the skill, the elite's module, the equipped items (the player's own build) and the talents.
+ */
+export const CHESS_SECTIONS = Object.freeze(['head', 'garrison', 'trait', 'stats', 'skill', 'module', 'equip', 'talents', 'actions']);
+
+/**
+ * Sprite key (ui `garrisonTypeIcon/…`, small variant) of a 特质's type chip: the garrison's own official
+ * `eventTypeIcon` — icon_battle 作战能力 / icon_gold 整备能力 / icon_bond 持续叠加·单次叠加 / icon_support 特异化, the
+ * icon that goes with its `eventTypeDesc` — never a guess from the trigger (that put the spoked 特异化 glyph, which reads
+ * like a loading spinner, before the text of every <休整期开始时 / 结束时> 特质: user playtest #3 item 9).
+ * @param {{ eventTypeIcon?: string|null, eventType?: string }|null} garrison
+ */
+export function garrisonTypeIconKey(garrison) {
+  const k = garrison && typeof garrison.eventTypeIcon === 'string' ? garrison.eventTypeIcon : '';
+  if (/^icon_[a-z]+$/.test(k)) return `s_${k}`;
+  return EVENT_ICON[garrison?.eventType] || 's_icon_bond';
+}
+
+/** The operator's own effect (特质, garrisons.json): trigger chip + description, compact. */
+function GarrisonBlock({ garrison, m }) {
+  return html`<section class="dgarrison" aria-label="特质" data-garrison=${garrison.garrisonId || ''}>
+    <div class="dgarrison__head">
+      <span class="dgarrison__k">特质</span>
+      <span class="dgarrison__type">
+        <${Img} src=${uiUrl(m, `garrisonTypeIcon/${garrisonTypeIconKey(garrison)}`)} class="dgarrison__icon" />
+        ${garrison.eventTypeDesc || ''}
+      </span>
+    </div>
+    <${RichText} as="p" text=${garrison.descRaw || garrison.desc} class="dgarrison__text" />
+  </section>`;
+}
+
+export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bonds, loadout, onBond }) {
   const m = data.get('assets');
   const lo = chessLoadout(chess, loadout, (id) => data.lookup('chess', id));
   const c = chess;
@@ -117,8 +155,9 @@ function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bonds, load
   const garrison = Array.isArray(c.garrisonIds) && c.garrisonIds[0] ? data.lookup('garrisons', c.garrisonIds[0]) : null;
   const items = Array.isArray(piece?.items) ? piece.items : [];
   const sell = c.sellPrice ?? 1;
-  return html`
-    <div class="dhead">
+  const blocks = {};
+  blocks.head = html`
+    <div key="head" class="dhead">
       <div class=${cx('dhead__art', golden && 'is-golden', `dhead__art--t${c.tier}`)}>
         <${Img} src=${chessPortraitUrl(m, c)} fallback=${html`<${UnitThumb} kind="chess" id=${c.chessId} size="lg" />`} />
       </div>
@@ -141,9 +180,11 @@ function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bonds, load
         ${snapHp ? html`<div class="dhp"><i style=${`width:${Math.max(0, Math.min(100, (snapHp.hp / Math.max(1, snapHp.max)) * 100))}%`}></i><span class="num">${fmtNum(snapHp.hp)} / ${fmtNum(snapHp.max)}</span></div>` : null}
         <${BondChips} bondIds=${c.bonds} bonds=${bonds} onBond=${onBond} />
       </div>
-    </div>
-    ${c.trait?.desc ? html`<p class="dtrait"><${Icon} name="info" /><${RichText} text=${traitText(c, golden, lo)} /></p>` : null}
-    <div class="dstats-wrap">
+    </div>`;
+  blocks.garrison = garrison ? html`<${GarrisonBlock} key="garrison" garrison=${garrison} m=${m} />` : null;
+  blocks.trait = c.trait?.desc ? html`<p key="trait" class="dtrait"><${Icon} name="info" /><${RichText} text=${traitText(c, golden, lo)} /></p>` : null;
+  blocks.stats = html`
+    <div key="stats" class="dstats-wrap">
       <div class="dstats">
         <${Stat} k="生命上限" v=${fmtNum(s.maxHp)} />
         <${Stat} k="攻击" v=${fmtNum(s.atk)} />
@@ -155,8 +196,8 @@ function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bonds, load
         <${Stat} k="再部署" v=${s.respawnTime != null ? `${s.respawnTime}s` : '—'} />
       </div>
       <div class="drange"><span class="dstat__k">攻击范围</span><${RangeGrid} grid=${attackRangeGrid(fr) || c.rangeGrid} /></div>
-    </div>
-    ${sk ? html`<${Section} title="技能" micro="SKILL" class="dsec--skill">
+    </div>`;
+  blocks.skill = sk ? html`<${Section} key="skill" title="技能" micro="SKILL" class="dsec--skill">
       <div class="dskill" data-skill=${sk.skillId || ''}>
         <${Img} src=${skIcon} class="dskill__icon" fallback=${html`<span class="dskill__icon dskill__icon--empty">${skSlot ? html`<b class="num">${skSlot}</b>` : null}</span>`} />
         <div class="dskill__meta">
@@ -171,8 +212,8 @@ function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bonds, load
         </div>
       </div>
       <${RichText} as="p" text=${sk.descRaw || sk.desc} class="dtext" />
-    <//>` : null}
-    ${golden && lo?.module ? html`<${Section} title="模组" micro="MODULE" class="dsec--module">
+    <//>` : null;
+  blocks.module = golden && lo?.module ? html`<${Section} key="module" title="模组" micro="MODULE" class="dsec--module">
       <div class=${cx('dmodule', lo.module.none && 'is-none')} data-module=${lo.module.id}>
         ${!lo.module.none && lo.module.typeName ? html`<span class="dmodule__icon" data-type=${lo.module.typeName}>
           <${Img} src=${moduleTypeIconUrl(data.get('local'), lo.module.typeName)} fallback=${html`<b class="num">${moduleBadge(lo.module)}</b>`} /></span>` : null}
@@ -180,25 +221,17 @@ function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bonds, load
         ${lo.module.typeName ? html`<span class="dmodule__type">${lo.module.typeName}</span>` : null}
         ${!lo.defaultModule ? html`<span class="dtag-loadout" title="干员调配中选择的模组">已调配</span>` : null}
       </div>
-    <//>` : null}
-    ${Array.isArray(fr.talents) && fr.talents.some((t) => t && t.name && !t.hidden) ? html`<${Section} title="天赋" micro="TALENT">
-      ${fr.talents.filter((t) => t && t.name && !t.hidden).map((t, i) => html`<div key=${i} class="dtalent"><b>${t.name}</b><${RichText} text=${t.descRaw || t.desc} class="dtext" /></div>`)}
-    <//>` : null}
-    ${garrison ? html`<${Section} title="特质" micro="GARRISON">
-      <div class="dgarrison">
-        <span class="dgarrison__type">
-          <${Img} src=${uiUrl(m, `garrisonTypeIcon/${EVENT_ICON[garrison.eventType] || 's_icon_bond'}`)} class="dgarrison__icon" />
-          ${garrison.eventTypeDesc || ''}
-        </span>
-        <${RichText} as="p" text=${garrison.descRaw || garrison.desc} class="dtext" />
-      </div>
-    <//>` : null}
-    ${piece?.kind === 'chess' ? html`<${Section} title="装备" micro=${`EQUIP ${items.length}/2`}>
+    <//>` : null;
+  blocks.equip = piece?.kind === 'chess' ? html`<${Section} key="equip" title="装备" micro=${`EQUIP ${items.length}/2`} class="dsec--equip">
       ${items.length ? items.map((it) => html`<${ItemRow} key=${it.uid} itemId=${it.id} />`) : html`<p class="t-dim dempty">拖拽装备至该干员以配发（最多 2 件）</p>`}
-    <//>` : null}
-    ${piece && editable && piece.kind !== 'item' ? html`<div class="dactions">
+    <//>` : null;
+  blocks.talents = Array.isArray(fr.talents) && fr.talents.some((t) => t && t.name && !t.hidden) ? html`<${Section} key="talents" title="天赋" micro="TALENT" class="dsec--talent">
+      ${fr.talents.filter((t) => t && t.name && !t.hidden).map((t, i) => html`<div key=${i} class="dtalent"><b>${t.name}</b><${RichText} text=${t.descRaw || t.desc} class="dtext" /></div>`)}
+    <//>` : null;
+  blocks.actions = piece && editable && piece.kind !== 'item' ? html`<div key="actions" class="dactions">
       <${Button} variant="amber" icon="close" class="dpanel__sell" onClick=${() => onSell(piece, c)}>出售<span class="dsell num">+${sell}</span><//>
-    </div>` : null}`;
+    </div>` : null;
+  return CHESS_SECTIONS.map((k) => blocks[k]).filter(Boolean);
 }
 
 function ItemDetail({ item, piece, editable, onDestroy }) {

@@ -1,8 +1,12 @@
 // Lazy loader + cache for the generated game data served at /data/*.json.
 //
-// Files are fetched on first use and cached (the Promise is shared, so concurrent callers trigger a
-// single request). Missing files (404, network failure, bad JSON) resolve to `null` and are
-// reported once on the console — the UI must degrade gracefully while data is being generated.
+// Files are fetched on first use and cached for the page's lifetime (the Promise is shared, so concurrent callers
+// trigger a single request): every text of the game (operators, skills, bonds, items, enemies …) is static data loaded
+// once — nothing is fetched from the server during a match. main.js warms the in-match files (gameComponents
+// GAME_FILES) in the background once the player is in a room, and the match screen waits for them, so no text of the
+// match UI ever appears late. A transient failure (network error, HTTP 5xx) is retried twice (RETRY_DELAYS_MS); files
+// that stay unavailable (404, repeated failures, bad JSON) resolve to `null` and are reported once on the console — the
+// UI must degrade gracefully while data is being generated.
 //
 // Each file is indexed tolerantly so the getters work whether a file is
 //   - an array of records carrying an id field (id / chessId / bondId / itemId / …),
@@ -70,13 +74,31 @@ export function buildIndex(name, json) {
   return map;
 }
 
+/** Waits (ms) before retrying a data file whose download failed transiently (network error, HTTP 5xx / 408 / 429). */
+export const RETRY_DELAYS_MS = Object.freeze([600, 2000]);
+
+/**
+ * A failed load worth retrying: the request itself failed (network error) or the server answered 5xx / 408 / 429 — not a
+ * definite 4xx (the file is not there) nor a delivered file that is not valid JSON (`badJson`).
+ */
+const transientFailure = (err) => {
+  if (!err || err.badJson) return false;
+  const s = err.status;
+  return !(Number.isInteger(s) && s >= 400 && s < 500 && s !== 408 && s !== 429);
+};
+
 /**
  * Create a data store bound to a fetch implementation (injectable for tests).
- * @param {{ fetch?: typeof fetch, base?: string }} [opts]
+ * A file is downloaded once per page (the texts of the game are static data, never fetched again during a match —
+ * user playtest #3 item 9); a transient failure is retried (RETRY_DELAYS_MS) while the file stays 'loading', so a
+ * network hiccup does not leave the texts of a whole session missing.
+ * @param {{ fetch?: typeof fetch, base?: string, retryDelays?: number[], wait?: (ms: number) => Promise<void> }} [opts]
  */
 export function createDataStore(opts = {}) {
   const base = opts.base ?? '/data/';
   const doFetch = opts.fetch || ((...a) => globalThis.fetch(...a));
+  const retryDelays = Array.isArray(opts.retryDelays) ? opts.retryDelays : RETRY_DELAYS_MS;
+  const wait = opts.wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   /** @type {Map<string, { status: 'loading'|'ready'|'missing', promise: Promise<any>, value: any, index: Map<string, any>|null }>} */
   const entries = new Map();
   const listeners = new Set();
@@ -96,19 +118,31 @@ export function createDataStore(opts = {}) {
     if (cur) return cur.promise;
     const entry = { status: 'loading', promise: null, value: null, index: null };
     entry.promise = (async () => {
-      try {
-        const res = await doFetch(urlFor(name), { cache: 'no-cache' });
-        if (!res || !res.ok) throw new Error(`HTTP ${res ? res.status : '???'}`);
-        const json = await res.json();
-        entry.value = json;
-        entry.status = 'ready';
-      } catch (err) {
-        if (!warned.has(name)) {
-          warned.add(name);
-          console.warn(`[data] ${urlFor(name)} unavailable (${err?.message || err}); continuing without it`);
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const res = await doFetch(urlFor(name), { cache: 'no-cache' });
+          if (!res || !res.ok) throw Object.assign(new Error(`HTTP ${res ? res.status : '???'}`), { status: res ? res.status : null });
+          let json;
+          try { json = await res.json(); } catch (err) { throw Object.assign(err instanceof Error ? err : new Error(String(err)), { badJson: true }); }
+          entry.value = json;
+          entry.status = 'ready';
+          break;
+        } catch (err) {
+          // a transient failure is tried again (still 'loading'), unless the load was superseded meanwhile
+          if (transientFailure(err) && attempt < retryDelays.length && entries.get(name) === entry) {
+            await wait(retryDelays[attempt]);
+            if (entries.get(name) === entry) continue;
+            entry.status = 'missing'; // superseded by invalidate() meanwhile: the new load reports for itself
+            break;
+          }
+          if (!warned.has(name)) {
+            warned.add(name);
+            console.warn(`[data] ${urlFor(name)} unavailable (${err?.message || err}); continuing without it`);
+          }
+          entry.value = null;
+          entry.status = 'missing';
+          break;
         }
-        entry.value = null;
-        entry.status = 'missing';
       }
       // A load superseded by invalidate() must not announce itself (its entry is no longer cached).
       if (entries.get(name) === entry) notify(name);

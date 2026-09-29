@@ -1,5 +1,6 @@
 // assets.js — asset manifest (/data/assets.json, docs/ASSETS.md) URL helpers, image cache/preload, and the
-// Spine loader (LRU + refcount + memory budget + timeout + concurrency cap) used by the battlefield renderer.
+// Spine loader (LRU + refcount + memory budget + timeout + concurrency cap) used by the battlefield renderer. A
+// skeleton is never handed out while its unload is in flight (RefLru; user playtest #3 item 1: invisible models).
 //
 // Pure at import time: no PIXI, no DOM access until a loader actually runs (Node tests import this file).
 //
@@ -178,17 +179,25 @@ export function unitSfxUrl(m, id, kind, skillIndex) {
 
 /**
  * LRU cache of refcounted async resources. `load(key, arg)` → Promise<value>; `unload(key, value, record)` frees it
- * (`record` is the cache record the value belonged to).
+ * (`record` is the cache record the value belonged to) and may return a promise that settles once it is freed.
  * Entries with refs > 0 are never evicted; the cache may exceed `max` while everything is in use.
  * Failures are remembered for `failTtl` ms (so a missing model is not refetched every frame) and rethrown.
  * Memory budget (optional): `weigh(key, value, arg)` → cost of a ready value; idle (refs 0) ready entries are evicted,
- * least recently used first, while their total weight exceeds `maxIdleWeight` — or `quietWeight` while nothing at all
- * is referenced (no scene on screen) — once they have been idle for `idleGrace` ms (a scene switch releases and
- * re-acquires its models within that window, so it never reloads them); a timer sweeps what the grace held back.
+ * least recently used first, while their total weight exceeds `maxIdleWeight` — or `quietWeight` once nothing at all
+ * has been referenced for `quietDelay` ms (no scene on screen; the instant zero in the middle of a scene switch is not
+ * quiet) — once they have been idle for `idleGrace` ms (a scene switch releases and re-acquires its models within that
+ * window, so it never reloads them); a timer sweeps what the grace held back.
+ * `evictDelay` > 0: a release (or a finished load) schedules the eviction pass that much later instead of running it
+ * at once, so a scene rebuilt in one go (every view destroyed, then the next scene's views built) never drops a value
+ * it takes again.
+ * A value whose unload is still in flight is never handed out again: a new load of that key waits for the unload to
+ * settle (user playtest #3 item 1 — PIXI.Assets keeps an unloading skeleton in its loader cache until a microtask
+ * later, so loading the same URL meanwhile returned the doomed skeleton, whose textures the unload then destroyed:
+ * invisible operator models).
  */
 export class RefLru {
   constructor({ load, unload = () => {}, max = 60, timeout = 20000, concurrency = 6, failTtl = 60000, now = () => Date.now(),
-    weigh = null, maxIdleWeight = Infinity, quietWeight, idleGrace = 0, timers } = {}) {
+    weigh = null, maxIdleWeight = Infinity, quietWeight, idleGrace = 0, quietDelay = 0, evictDelay = 0, timers } = {}) {
     if (typeof load !== 'function') throw new TypeError('RefLru: load required');
     this._load = load;
     this._unload = unload;
@@ -202,13 +211,19 @@ export class RefLru {
     this.maxIdleWeight = budget(maxIdleWeight, Infinity);
     this.quietWeight = budget(quietWeight, this.maxIdleWeight);
     this.idleGrace = budget(idleGrace, 0);
+    this.quietDelay = budget(quietDelay, 0);
+    this.evictDelay = budget(evictDelay, 0);
     this._timers = timers && typeof timers.set === 'function' ? timers : {
       set: (fn, ms) => { const t = setTimeout(fn, ms); t?.unref?.(); return t; },
       clear: (t) => clearTimeout(t),
     };
-    this._sweep = null; // { timer, at } pending weight sweep
+    this._sweep = null; // { timer, at } pending eviction pass (weight sweep / deferred eviction)
     /** @type {Map<string, { key, promise, value, state: 'loading'|'ready'|'failed', refs: number, used: number, weight: number, idleSince: number|null, error?, failedAt? }>} */
     this.map = new Map();
+    this._refs = 0;             // Σ refs of every entry
+    this._quietAt = this.now(); // since when nothing has been referenced (null while something is)
+    /** @type {Map<string, Promise<void>>} key → unload still in flight (settles, never rejects) */
+    this._unloading = new Map();
     this._active = 0;
     this._queue = [];
     this._tick = 0;
@@ -230,12 +245,17 @@ export class RefLru {
     if (!e) {
       e = { key, promise: null, value: null, state: 'loading', refs: 0, used: ++this._tick, weight: 0, idleSince: null };
       this.map.set(key, e);
-      e.promise = this._schedule(() => this._withTimeout(this._load(key, arg), key)).then(
+      // an unload of this key still in flight: load again only once it has settled (never the doomed value)
+      const load = () => {
+        const pending = this._unloading.get(key);
+        return pending ? pending.then(() => this._load(key, arg)) : this._load(key, arg);
+      };
+      e.promise = this._schedule(() => this._withTimeout(load(), key)).then(
         (v) => {
-          if (this.map.get(key) !== e) { try { this._unload(key, v, e); } catch { /* ignore */ } return v; }
+          if (this.map.get(key) !== e) { this._unloadNow(key, v, e); return v; }
           e.value = v; e.state = 'ready';
           if (this._weigh) { let w = 0; try { w = Number(this._weigh(key, v, arg)); } catch { /* ignore */ } e.weight = w > 0 ? w : 0; }
-          this._evict();
+          this._requestEvict();
           return v;
         },
         (err) => {
@@ -246,6 +266,8 @@ export class RefLru {
       e.promise.catch(() => {});
     }
     e.refs++;
+    this._refs++;
+    this._quietAt = null;
     e.idleSince = null;
     e.used = ++this._tick;
     return e.promise;
@@ -255,14 +277,27 @@ export class RefLru {
   release(key) {
     const e = this.map.get(key);
     if (!e) return;
-    if (e.refs > 0 && --e.refs === 0) e.idleSince = this.now();
+    if (e.refs > 0) {
+      if (--e.refs === 0) e.idleSince = this.now();
+      if (--this._refs <= 0) { this._refs = 0; this._quietAt = this.now(); }
+    }
     e.used = ++this._tick;
-    this._evict();
+    this._requestEvict();
+  }
+
+  /** Is an unload of `key` still in flight (a new load of it waits for it)? */
+  unloading(key) { return this._unloading.has(key); }
+
+  /** Evict now, or (evictDelay > 0) in one pass a moment later. */
+  _requestEvict() {
+    if (this.evictDelay > 0) this._sweepIn(this.evictDelay);
+    else this._evict();
   }
 
   /**
    * Evict least-recently-used unreferenced ready/failed entries above `max`, then idle ready entries past their
-   * grace while the idle weight is over budget (`maxIdleWeight`, or `quietWeight` when nothing is referenced).
+   * grace while the idle weight is over budget (`maxIdleWeight`, or `quietWeight` once nothing has been referenced
+   * for `quietDelay` ms).
    */
   _evict() {
     if (this.map.size > this.max) {
@@ -273,33 +308,49 @@ export class RefLru {
       }
     }
     if (!this._weigh) return;
-    let refs = 0, idleWeight = 0;
+    let idleWeight = 0;
     const idle = [];
     for (const e of this.map.values()) {
-      refs += e.refs;
       if (e.refs === 0 && e.state === 'ready') { idleWeight += e.weight; idle.push(e); }
     }
-    const budget = refs === 0 ? this.quietWeight : this.maxIdleWeight;
-    if (idleWeight <= budget) return;
-    idle.sort((a, b) => a.used - b.used);
     const now = this.now();
+    let budget = this.maxIdleWeight;
     let wait = Infinity;
-    for (const e of idle) {
-      if (idleWeight <= budget) break;
-      const age = now - (e.idleSince ?? now);
-      if (age < this.idleGrace) { wait = Math.min(wait, this.idleGrace - age); continue; }
-      idleWeight -= e.weight;
-      this._drop(e);
+    if (this._refs === 0) {
+      const quietFor = now - (this._quietAt ?? now);
+      if (quietFor >= this.quietDelay) budget = this.quietWeight;
+      else if (idleWeight > this.quietWeight) wait = this.quietDelay - quietFor; // re-check once the quiet has lasted
     }
-    if (idleWeight > budget && wait < Infinity) this._sweepIn(wait);
+    if (idleWeight > budget) {
+      idle.sort((a, b) => a.used - b.used);
+      let graceWait = Infinity;
+      for (const e of idle) {
+        if (idleWeight <= budget) break;
+        const age = now - (e.idleSince ?? now);
+        if (age < this.idleGrace) { graceWait = Math.min(graceWait, this.idleGrace - age); continue; }
+        idleWeight -= e.weight;
+        this._drop(e);
+      }
+      if (idleWeight > budget) wait = Math.min(wait, graceWait);
+    }
+    if (wait < Infinity) this._sweepIn(wait);
   }
 
   _drop(e) {
     this.map.delete(e.key);
-    if (e.state === 'ready') { try { this._unload(e.key, e.value, e); } catch { /* ignore */ } }
+    if (e.state === 'ready') this._unloadNow(e.key, e.value, e);
   }
 
-  /** Re-run eviction in `ms` (keeps the earliest pending sweep). */
+  /** Run the unload of a value; while a returned promise is pending, loads of that key wait (see the header). */
+  _unloadNow(key, value, rec) {
+    let p = null;
+    try { p = this._unload(key, value, rec); } catch { p = null; }
+    if (!p || typeof p.then !== 'function') return;
+    const done = Promise.resolve(p).then(() => {}, () => {}).then(() => { if (this._unloading.get(key) === done) this._unloading.delete(key); });
+    this._unloading.set(key, done);
+  }
+
+  /** Re-run eviction in `ms` (keeps the earliest pending pass). */
   _sweepIn(ms) {
     const at = this.now() + ms;
     if (this._sweep && this._sweep.at <= at) return;
@@ -313,7 +364,9 @@ export class RefLru {
     if (this._sweep) { this._timers.clear(this._sweep.timer); this._sweep = null; }
     const all = [...this.map.values()];
     this.map.clear();
-    for (const e of all) if (e.state === 'ready') { try { this._unload(e.key, e.value, e); } catch { /* ignore */ } }
+    this._refs = 0;
+    this._quietAt = this.now();
+    for (const e of all) if (e.state === 'ready') this._unloadNow(e.key, e.value, e);
   }
 
   stats() {
@@ -324,7 +377,7 @@ export class RefLru {
       weight += e.weight || 0;
       if (e.refs === 0) idleWeight += e.weight || 0;
     }
-    return { size: this.map.size, ready, loading, failed, refs, weight, idleWeight, active: this._active, queued: this._queue.length };
+    return { size: this.map.size, ready, loading, failed, refs, weight, idleWeight, active: this._active, queued: this._queue.length, unloading: this._unloading.size };
   }
 
   _schedule(fn) {
@@ -434,26 +487,32 @@ export function spinePages(entry) {
  * parser loads each page through the loader (`loader.load({ src })`), so the decoded page (an ImageBitmap) stays in
  * `PIXI.Assets.loader.promiseCache` until that URL is unloaded too. Pages listed in `keep` (still used by another
  * cached skeleton) are left alone.
+ * The unloads are asynchronous (PIXI frees an asset a microtask after the call, and until then `PIXI.Assets.load` of
+ * the same URL hands out that doomed asset): the returned promise settles (never rejects) once every one has run, and
+ * the spine LRU makes a new load of the skeleton wait for it (RefLru header).
  * @param {object} entry manifest spine entry { skel, atlas?, textures? }
  * @param {any} [_value] the unloaded spineData (unused)
  * @param {Set<string>} [keep] page URLs not to unload
+ * @returns {Promise<void>|undefined}
  */
 export function unloadSpineData(entry, _value, keep) {
   const PIXI = globalThis.PIXI;
   const skel = entry && entry.skel;
-  if (!skel || !PIXI?.Assets?.unload) return;
+  if (!skel || !PIXI?.Assets?.unload) return undefined;
   const atlas = (typeof entry.atlas === 'string' && entry.atlas) || skel.replace(/\.skel$/, '.atlas');
   const loader = PIXI.Assets.loader;
+  const pending = [];
   const unload = (url, direct) => {
     try {
       const p = direct && loader && typeof loader.unload === 'function' ? loader.unload(url) : PIXI.Assets.unload(url);
-      Promise.resolve(p).catch(() => {});
+      pending.push(Promise.resolve(p).catch(() => {}));
     } catch { /* ignore */ }
   };
   unload(skel, false);
   unload(atlas, false);
   // pages were loaded by the atlas parser straight through the loader (never through Assets.load / the resolver)
   for (const url of spinePages(entry)) if (!(keep && keep.has(url))) unload(url, true);
+  return Promise.all(pending).then(() => {});
 }
 
 // ---- store ---------------------------------------------------------------------------------------------------
@@ -462,13 +521,22 @@ export function unloadSpineData(entry, _value, keep) {
 export const SPINE_IDLE_BYTES = 48 * 1024 * 1024;
 /** How long a released skeleton is safe from the weight budget (a prep ⇄ battle switch re-acquires within it). */
 export const SPINE_IDLE_GRACE_MS = 15000;
+/**
+ * Spine LRU eviction runs this long after a release, in one pass: a scene switch (battle → prep destroys every battle
+ * view, then builds the prep views; prep → battle builds the battle views over the next frames) takes its models back
+ * before anything is dropped (user playtest #3 item 1: the bench models were unloaded and re-loaded in one go).
+ */
+export const SPINE_EVICT_DELAY_MS = 1000;
+/** Nothing referenced for this long = no scene on screen (lobby / room): the idle skeletons may all go. */
+export const SPINE_QUIET_DELAY_MS = 3000;
 
 /**
  * Create an asset store.
  * @param {{ url?: string, fetch?: typeof fetch, manifest?: object, loadImage?: (url) => Promise<any>,
- *           loadSpine?: (entry) => Promise<any>, unloadSpine?: (entry, value, keepPages:Set<string>) => void, spineMax?: number,
- *           spineTimeout?: number, spineWeigh?: (key, spineData) => number, spineIdleBytes?: number,
- *           spineQuietBytes?: number, spineIdleGrace?: number, spineTimers?: { set, clear }, spineNow?: () => number }} [opts]
+ *           loadSpine?: (entry) => Promise<any>, unloadSpine?: (entry, value, keepPages:Set<string>) => (Promise<void>|void),
+ *           spineMax?: number, spineTimeout?: number, spineWeigh?: (key, spineData) => number, spineIdleBytes?: number,
+ *           spineQuietBytes?: number, spineIdleGrace?: number, spineEvictDelay?: number, spineQuietDelay?: number,
+ *           spineTimers?: { set, clear }, spineNow?: () => number }} [opts]
  */
 export function createAssets(options) {
   const opts = options && typeof options === 'object' ? options : {};
@@ -512,17 +580,22 @@ export function createAssets(options) {
       spineEntries.delete(key);
       const keep = new Set();
       for (const [k, other] of spineEntries) if (k !== key && spine.map.has(k)) for (const u of spinePages(other)) keep.add(u);
-      (opts.unloadSpine || unloadSpineData)(e, value, keep);
+      // the promise (when the unloader returns one) holds back a new load of this skeleton until it has settled
+      return (opts.unloadSpine || unloadSpineData)(e, value, keep);
     },
     max: opts.spineMax ?? 60,
     timeout: opts.spineTimeout ?? 20000,
     concurrency: opts.spineConcurrency ?? 6,
     // memory budget (a parsed skeleton holds ~0.1–12 MB): idle skeletons beyond SPINE_IDLE_BYTES go, and all of
-    // them once no scene references any (lobby / room), each after a grace that covers a prep ⇄ battle switch
+    // them once no scene has referenced any for SPINE_QUIET_DELAY_MS (lobby / room), each after a grace that covers a
+    // prep ⇄ battle switch; evictions run SPINE_EVICT_DELAY_MS after the release that allows them (a scene switch
+    // takes its models back first)
     weigh: opts.spineWeigh || ((key, value) => spineDataWeight(value)),
     maxIdleWeight: opts.spineIdleBytes ?? SPINE_IDLE_BYTES,
     quietWeight: opts.spineQuietBytes ?? 0,
     idleGrace: opts.spineIdleGrace ?? SPINE_IDLE_GRACE_MS,
+    quietDelay: opts.spineQuietDelay ?? SPINE_QUIET_DELAY_MS,
+    evictDelay: opts.spineEvictDelay ?? SPINE_EVICT_DELAY_MS,
     timers: opts.spineTimers,
     now: opts.spineNow,
   });

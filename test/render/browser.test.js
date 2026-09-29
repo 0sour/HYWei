@@ -77,28 +77,70 @@ describe('render engine in headless Chrome', { skip }, () => {
 
   test('fx gallery: every sim fx kind, projectile and status renders without errors; board art in use', async () => {
     const { page, problems } = await open('scene=fx&panel=0', 1280, 720);
-    // cycle through the whole FX_KINDS table (one kind every 0.5 game s = 0.25 real s)
+    // cycle through the whole FX_KINDS table (one kind every 0.5 game s = 0.25 real s), watching the FX system: shots
+    // in flight (every projectile kind incl. the boomerang) and 蕾缪安's S3 locks (the gallery plays it at 'lock')
     const kinds = await page.evaluate(async () => (await import('/js/render/fx.js')).FX_KINDS).then((k) => Object.keys(k).length);
-    await wait(Math.min(45000, kinds * 260 + 1500));
+    const seen = await page.evaluate(async (ms) => {
+      const seen = { projectiles: 0, particles: 0, locks: 0, auras: 0 };
+      const t0 = performance.now();
+      while (performance.now() - t0 < ms) {
+        const st = window.__demo.stats();
+        for (const k of Object.keys(seen)) seen[k] = Math.max(seen[k], st[k] || 0);
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return seen;
+    }, Math.min(45000, kinds * 260 + 1500));
     const st = await page.evaluate(() => window.__demo.stats());
     await page.screenshot({ path: path.join(OUT, 'render-fx.png') });
     await page.close();
     assert.deepEqual(problems, []);
     assert.equal(st.mode, 'battle');
     assert.ok(st.units >= 10, `units ${st.units}`);
+    assert.ok(seen.projectiles > 0 && seen.particles > 20 && seen.auras > 0, `projectiles, particles and a skill aura drawn (${JSON.stringify(seen)})`);
+    assert.ok(seen.locks >= 2, `蕾缪安's lock reticles shown (${JSON.stringify(seen)})`);
     if (existsSync(path.join(ROOT, 'public/assets/local/map/autochess/tiles.json'))) assert.equal(st.boardArt, true, 'real board art composed');
   });
 
-  test('stress: 120 units + FX keep the per-frame JS cost bounded', async () => {
+  /** fps / JS-per-frame (frame() + Pixi render EMAs, app.js stats) / particles over `ms`, sampled every 200 ms. */
+  async function frameCost(page, ms) {
+    return page.evaluate(async (ms) => {
+      const rows = [];
+      const t0 = performance.now();
+      while (performance.now() - t0 < ms) {
+        const s = window.__demo.stats();
+        rows.push([s.fps, s.cpuMs, s.renderMs, s.particles, s.projectiles]);
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      const avg = (i) => rows.reduce((a, r) => a + r[i], 0) / rows.length;
+      return { fps: avg(0), cpuMs: avg(1), renderMs: avg(2), particles: avg(3), maxParticles: Math.max(...rows.map((r) => r[3])), projectiles: avg(4) };
+    }, ms);
+  }
+  const costLine = (c) => `fps ${c.fps.toFixed(1)} · JS ${c.cpuMs.toFixed(2)} + render ${c.renderMs.toFixed(2)} ms/frame · particles ${c.particles.toFixed(0)} (max ${c.maxParticles}) · shots ${c.projectiles.toFixed(1)}`;
+
+  test('stress: 120 units + FX keep the per-frame JS cost bounded', async (t) => {
     const { page, problems } = await open('scene=stress&panel=0');
-    await wait(6000);
+    await wait(3000);
+    const cost = await frameCost(page, 3000);
     const st = await page.evaluate(() => window.__demo.stats());
     await page.screenshot({ path: path.join(OUT, 'render-stress.png') });
     await page.close();
+    t.diagnostic(`stress 1920×1080: ${costLine(cost)}`);
     assert.deepEqual(problems, []);
     assert.equal(st.units, 120);
     assert.ok(st.impostor >= 2, 'crowded field switches to impostor rendering');
-    assert.ok(st.cpuMs + st.renderMs < 16, `JS per frame ${st.cpuMs} + ${st.renderMs} ms`);
+    assert.ok(cost.cpuMs + cost.renderMs < 16, `JS per frame ${cost.cpuMs} + ${cost.renderMs} ms`);
+  });
+
+  test('crowded boss battle: the FX keep the per-frame JS cost bounded', async (t) => {
+    const { page, problems } = await open('scene=boss-m02&t=16&panel=0');
+    await wait(2500);
+    // t ≈ 21–29 (2×): 蕾缪安's S3 locks (21–24) and her shells one by one (24–26), skills, crowds of shots and hits
+    const cost = await frameCost(page, 4000);
+    await page.close();
+    t.diagnostic(`boss-m02 1920×1080: ${costLine(cost)}`);
+    assert.deepEqual(problems, []);
+    assert.ok(cost.fps > 20, `fps ${cost.fps}`);
+    assert.ok(cost.cpuMs + cost.renderMs < 16, `JS per frame ${cost.cpuMs} + ${cost.renderMs} ms`);
   });
 
   test('drag a hand piece onto a legal board tile; right-click opens detail', async () => {

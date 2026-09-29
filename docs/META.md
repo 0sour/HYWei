@@ -33,13 +33,16 @@ server/match/
 ```
 LOBBY → INFO_CHECK (co-op 25 s, solo untimed; all humans confirmed ⇒ next) → BAND_DRAFT → BATTLE_CHECK (3 s)
 → for r = 1..lastRound (+ hidden):
-     ROUND_START (2 s)  income + pending coins, upgrade price −1 (r > 1, floor 0), temp wiped (reward offers earned after
-                        the last prep — a SETTLE merge — are kept for this prep),
+     ROUND_START (2 s)  income + pending coins, upgrade price −1 (r > 1, floor 0), temp NOT wiped (what overflowed after
+                        the last prep's deadline — battle-result grants, a SETTLE merge's elite, returned equipment — is
+                        shown and usable in this prep, `PlayerState.tempDue`; reward offers earned after the last prep —
+                        a SETTLE merge — are kept for this prep),
                         shop reroll (frozen slots kept in place, then unfrozen), the round's wave generated (preview),
                         onRoundStart dispatch
      [SP_DRAFT]         r ∈ modes[m].spRounds (机变)
      PREP               onPrepStart; co-op timer rounds[r].prepTime, solo untimed; ends when every alive seat is ready
-     (prep end)         onPrepEnd, temp auto-resolved, reward offers expire, unfrozen shop cleared, funds lost
+     (prep end)         onPrepEnd, the temp pieces due at this prep resolved (tempDue; what arrived after Ready or
+                        during onPrepEnd waits for the next prep), reward offers expire, unfrozen shop cleared, funds lost
                         (band_cannot keeps them), boss round: Σ activated layers recorded for the hidden-core check
      COMBAT             one Battle per alive player (FieldRunner, 2× game speed; limit = 2 × maxPlayTime game s, §3)
      UNITE              co-op, ≥ 1 leaker and ≥ 1 perfect player (§4)
@@ -83,7 +86,7 @@ text "无需消耗资金"). A `choice:<effectId>` registry handler overrides the
 
 ### 1.3 Disconnects, AI takeover
 * Disconnected human: the seat keeps playing its last lineup; drafts auto-resolve at their deadlines, prep auto-readies at
-  the deadline (temp sold/destroyed). Nothing is bought for them. A battle the human was authority of goes to the server
+  the deadline (the temp pieces due at that prep sold/destroyed). Nothing is bought for them. A battle the human was authority of goes to the server
   (normal / 联防: re-simulated from t = 0) or, on a boss field, to the partner's replica (DESIGN §14). The session stays
   resumable for 10 min (net.js `reconnectWindowMs`); a **solo** run's for the official `constants.singleReconnectTime`
   (86 400 s = 24 h, lobby.js `soloResumeWindowMs`) — nothing in a solo run is timed, so it simply waits. `onReconnect`
@@ -332,17 +335,22 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   toggle freezes every unsold slot until the next round start; a manual refresh rerolls everything (new slots stay
   frozen). Unfrozen slots are cleared at combat start. Slot positions are stable (frozen slots keep their index).
 * **Pool**: copies 12/14/18/16/8/5 (缪尔赛思 4); a normal piece holds 1 copy, an elite 3; displays never reserve copies;
-  selling, temp wipes and elimination return exactly what a piece holds (`left + held = cap` always).
+  selling, temp resolution and elimination return exactly what a piece holds (`left + held = cap` always).
 * **Hand**: 10 slots filled right→left, 5 temp slots for passive overflow (merge results, grants, returned equipment);
   a full hand refuses buys unless the purchase completes a merge, and withdrawals unless the withdrawn summoner's own
   summon stack frees a slot (a deployed summon withdrawn with no stack of its own left to join is a new card: `HAND_FULL`,
-  never temp); temp blocks Ready; temp is resolved (chess sold back to the pool, items destroyed) at the
-  prep deadline and at the next round start.
+  never temp); temp blocks Ready. A temp piece is resolved (chess sold back to the pool, items / summon stacks
+  destroyed) at the deadline of the first prep in which its player could act on it (`PlayerState.tempDue` vs
+  `prepsEnded`, recorded by `_putTemp`, user playtest #3): arrived during a prep before Ready → that prep's end; after
+  Ready, during onPrepEnd, or outside PREP (COMBAT, 联防, SETTLE, ROUND_START, 机变) → the end of the NEXT prep, so it
+  is shown and usable first; `setReady(false)` makes what arrived while ready due at the current prep. The round
+  start never wipes temp (DESIGN §6.2).
 * **Merge**: 3 normal copies (风丸 2) anywhere (board/hand/temp) → elite to the hand (the incoming copy, then temp, hand,
   board copies are consumed); equipment returns to the hand; summons of consumed copies are removed; a reward offer of 3
   free chess of tier min(level+1, 6) (pick 1, expires at prep end; queued when several merges happen). A merge
-  completed after the prep (SETTLE / Final Assault effects such as 突变细胞) keeps its offer for the next prep, and with
-  a full hand its elite takes a freed board tile of a consumed copy instead of temp (wiped at the round start).
+  completed after the prep (SETTLE / Final Assault effects such as 突变细胞) keeps its offer for the next prep; its elite
+  goes to the hand like any merge's, overflowing into temp (kept through the next prep, see Hand) — it takes a freed
+  board tile of a consumed copy only when the hand and temp are both full (research 01 A1).
 * **Board**: rows 9–12 × cols 2–10, legality from `stages[id].tiles` + devices (board.js); deploy cap 8 (+effects);
   summons don't use slots; board↔hand swaps always allowed. A terrain change (terrain 机变 cards such as 模拟战场演变·
   模式二 "阻隔工事变为射击台", content `setDeviceActive` / `setTileOverride`) is checked at the next `recompute()` (at the
@@ -501,5 +509,5 @@ receiver only), plus CUSTOM texts (eliminations, 联防, hidden core).
   field) finish that battle, its LP already merged into the team LP stays there.
 * After the LP merge (Final Assault) the per-player LP shown is a share of the team LP ∝ the LP each player brought in.
 * A 联防 helper's operators dead at the end of its own combat do not take part in the 联防 battle.
-* A merge completed after the prep (SETTLE effects) keeps its reward offer for the next prep; with a full hand its elite
-  takes a freed board tile (a prep merge still overflows into temp).
+* A merge completed after the prep (SETTLE effects) keeps its reward offer for the next prep; its elite goes to the hand,
+  overflowing into temp like a prep merge's (temp pieces that arrive after the prep wait through the next prep).

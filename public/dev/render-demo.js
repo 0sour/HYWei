@@ -5,7 +5,8 @@
 //     through the same pushSnapshot/pushEvents path as the game, with play/pause, speed, scrub and scene select
 //   * stress scene: 120 units + projectiles / damage numbers every frame (FPS check)
 //   * fx scene: a small normal field (incl. art-less / unknown units, a crate and a turret device) cycling through
-//     every sim fx kind (render/fx.js FX_KINDS), every projectile kind and every status icon
+//     every sim fx kind (render/fx.js FX_KINDS), every projectile kind (boomerang included) and every status icon; at
+//     'lock' it plays 蕾缪安's S3 as the sim does (a lock every 0.5 s, then one shell every 0.3 s with its bombard)
 // Query: ?scene=prep|<recording>|stress|numbers &stage=<stageId> &t=<seconds> &speed=<x> &paused=1 &panel=0 &quality=high|medium|low
 //        &pen=<recording> (prep: that recording's round preview — m.private.nextEnemies — in the enemy preview pen)
 //        &fa=L|R (prep on that half of the Final Assault boss field, view.setCamera('bossPrep', { side }))
@@ -440,10 +441,11 @@ function fxScene(view, stageId) {
   view.enterBattle({ fieldId: 'fx', kind: 'normal', rect, stageId, units });
   view.setCamera('normal', { rect });
   const kinds = Object.keys(FX_KINDS);
-  const projs = ['arrow', 'bolt', 'orb', 'bomb', 'lob', 'drone', 'enemy', 'chain', 'chainHeal', 'beam', 'none'];
+  const projs = ['arrow', 'bolt', 'orb', 'bomb', 'lob', 'drone', 'enemy', 'boomerang', 'chain', 'chainHeal', 'beam', 'none'];
   const statuses = ['stun', 'ab:frost', 'reed2:scorch', 'fragile', 'sleep', 'silence', 'levitate', 'skill:shotst_shred', 'lumen:resist'];
   let t = 0, acc = 0, i = 0;
   const hp = new Map(units.map((u) => [u.id, u.maxHp]));
+  const unitAt = (id) => units.find((u) => u.id === id) || units[0];
   const extraFor = (k) => {
     const base = { id: [1, 20, 21, 3, 23][i % 5] };
     switch (FX_KINDS[k].a) {
@@ -454,8 +456,25 @@ function fxScene(view, stageId) {
       case 'zone': case 'telegraph': return { ...base, r: 1.5, dur: 2, tiles: k === 'telegraph' ? 'box' : undefined };
       case 'dp': return { ...base, id: 3, n: 10 };
       case 'element': return { ...base, id: 21, element: ['burn', 'neural', 'apoptosis'][i % 3] };
-      default: return base;
+      case 'shell': return { id: 2, r: 1.5, t: 0.3, i: 0 };                  // 蕾缪安 (id = the shooter) shelling an enemy
+      default: return k === 'lock' ? { id: 21, src: 2 } : FX_KINDS[k].pt ? { id: 2, r: 1.5 } : base;
     }
+  };
+  // `pt` kinds name the shooter in `id` and happen at an enemy's spot
+  const posFor = (k, ex) => unitAt(FX_KINDS[k].pt ? [21, 23, 20][i % 3] : ex.id);
+  // 蕾缪安 S3 as the sim plays it (sim/content/kits/tier6.js): a lock every 0.5 s, then after the skill one shell every
+  // 0.3 s on the locks in order, each landing 0.3 s later with its bombard — queued [game time, event]
+  const queue = [];
+  const lemuenS3 = () => {
+    const locks = [21, 23, 20, 21, 24];
+    locks.forEach((id, k) => queue.push([t + 0.5 * k, ['fx', 'lock', unitAt(id).x, unitAt(id).y, { id, src: 2 }]]));
+    const end = t + 0.5 * locks.length;
+    queue.push([end - 0.5, ['skill', 2, 0]]);
+    locks.forEach((id, k) => {
+      const x = unitAt(id).x + ((k * 37) % 7 - 3) * 0.05, y = unitAt(id).y + ((k * 53) % 7 - 3) * 0.05;
+      queue.push([end + 0.3 * k, ['fx', 'bombardShell', x, y, { id: 2, r: 1.5, t: 0.3, i: k }]]);
+      queue.push([end + 0.3 * k + 0.3, ['fx', 'bombard', x, y, { id: 2, r: 1.5 }]]);
+    });
   };
   return {
     stageId, duration: 0, time: 0,
@@ -467,10 +486,12 @@ function fxScene(view, stageId) {
         acc -= 0.1;
         t += 0.1;
         const ev = [];
+        for (let q = queue.length - 1; q >= 0; q--) if (queue[q][0] <= t + 1e-6) ev.unshift(queue.splice(q, 1)[0][1]);
         if (Math.round(t * 10) % 5 === 0) {
           const k = kinds[i % kinds.length];
           const ex = extraFor(k);
-          const at = units.find((u) => u.id === ex.id) || units[0];
+          const at = posFor(k, ex);
+          if (k === 'lock' && !queue.length) { ev.push(['skill', 2, 1]); lemuenS3(); }
           ev.push(['fx', k, at.x, at.y, ex]);
           $('title').textContent = `特效图鉴 · ${k} (${FX_KINDS[k].a})`;
           const a = units[i % 4], b = units[4 + (i % 5)];

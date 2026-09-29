@@ -12,6 +12,11 @@
 // overtimeState): "NN 秒后全队生命值开始流失" once the level time ran out, then a live "生命值 −1/秒" indicator while the
 // merged team LP drains (the LP tower turns red). Solo battles: a pause / resume button beside the countdown (g.pause);
 // while m.public.paused every clock here is frozen at the pause moment (`frozenAt`).
+// Normal rounds (user playtest #3 item 2): the LP tower drops live as the own battle's enemies enter the blue gate —
+// lp − min(lpCapPerRound, counted leaks) in red with a −N tick, 联防中 while a 联防 may still save part of it (liveLp;
+// the leaks come from the local battle runner, else m.public players[].pendingLp).
+// 准备就绪 is refused while the temp overflow row (临时整备区) holds pieces: the reason shows under the button
+// (user playtest #3 item 3; the row's own label is ui/underframe.js TempRowNotice).
 
 import { useRef } from '../../vendor/hooks.module.js';
 import { PHASE } from '../../../shared/constants.js';
@@ -56,21 +61,110 @@ export function PhaseCapsule({ pub, hud }) {
   </div>`;
 }
 
+// ---- live LP of the own battle (user playtest #3 item 2) --------------------------------------------------------
+
+/** Phases whose leaks are still to be charged at settlement (normal rounds: the own battle, then 联防). */
+const LEAK_PHASES = new Set([PHASE.COMBAT, PHASE.UNITE]);
+
 /**
- * Ready toggle (PREP only). Disabled with a reason while the temp hand is non-empty.
+ * LP a round's leaks cost at settlement — the server rule (server/match/Match.js settle): min(lpCapPerRound, counted
+ * leaks), never negative.
+ * @param {number} leaks counted leaks so far
+ * @param {number} [cap] data/config.json lpCapPerRound
+ */
+export function pendingLoss(leaks, cap = 10) {
+  const n = Math.max(0, Math.trunc(Number(leaks) || 0));
+  const c = Number(cap) > 0 ? Math.trunc(Number(cap)) : 10;
+  return Math.min(c, n);
+}
+
+/**
+ * Counted leaks of the own battle so far from its two sources: the local runner's count (state().leaks of the own
+ * field — authoritative or a display replica) and the server's m.public players[].pendingLp (the authority's b.progress,
+ * ~1 Hz; the recorded result in 联防). Both only grow during a round, so the further one wins: a display replica stands
+ * still while the player watches a teammate's field (the server's count moves on), the server's lags the local one by
+ * up to a second. Missing / invalid values count as 0.
+ * @param {any} local @param {any} server
+ */
+export function ownLeaks(local, server) {
+  const n = (v) => (Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0);
+  return Math.max(n(local), n(server));
+}
+
+/**
+ * The own LP while a normal round's battle runs: the loss its counted leaks will cost is shown at once (red, −N)
+ * instead of only at settlement. `base` — kept by the caller between renders — is the settled m.private state the
+ * pending loss applies to: { round, lp, statsLeaks } as first seen in the round's COMBAT / 联防. The pending part is
+ * dropped as soon as the settlement lands — m.private lp or stats.leaks changed (Match.flush sends m.private before the
+ * SETTLE m.public) — or the phase leaves COMBAT / UNITE or the round changes, so the loss is never subtracted twice.
+ * 联防 (UNITE): a leaker finally loses min(cap, the survivors of the 联防 battle that came from them) — never more than
+ * its own battle's count, which stays on show marked `unite` (联防中: teammates may still save part of it) until the
+ * settlement lands. Boss rounds are not handled here (the merged team LP moves live through b.pool / m.public.teamLp).
+ * @param {{ round: any, lp: number, statsLeaks: number|null } | null} base
+ * @param {{ phase: string, round: any, lp: any, statsLeaks?: any, leaks?: any, cap?: number, alive?: boolean }} s
+ * @returns {{ base: { round: any, lp: number, statsLeaks: number|null } | null, pending: number, shown: number|null, unite: boolean }}
+ */
+export function liveLp(base, { phase, round, lp, statsLeaks = null, leaks = 0, cap = 10, alive = true }) {
+  if (!Number.isFinite(lp)) return { base: null, pending: 0, shown: null, unite: false };
+  if (!LEAK_PHASES.has(phase) || alive === false) return { base: null, pending: 0, shown: lp, unite: false };
+  const sl = Number.isFinite(statsLeaks) ? statsLeaks : null;
+  const b = base && base.round === round ? base : { round, lp, statsLeaks: sl };
+  const landed = lp !== b.lp || (sl != null && b.statsLeaks != null && sl !== b.statsLeaks);
+  const pending = landed ? 0 : Math.min(lp, pendingLoss(leaks, cap));
+  return { base: b, pending, shown: lp - pending, unite: phase === PHASE.UNITE && pending > 0 };
+}
+
+/**
+ * Tooltip of an LP tower with a pending loss (null without one).
+ * @param {number} lp settled LP @param {number} pending @param {{ unite?: boolean, cap?: number }} [opts]
+ */
+export function pendingTip(lp, pending, { unite = false, cap = 10 } = {}) {
+  if (!(pending > 0)) return null;
+  return unite
+    ? `目标生命值 ${lp}：联防中，队友正在迎战你漏过的敌人，结算时按联防后剩余的敌人扣除（至多 ${pending} 点）`
+    : `目标生命值 ${lp}：本回合已有 ${pending >= cap ? `${cap} 个以上` : `${pending} 个`}敌人进入蓝门，结算时扣除 ${pending} 点（每回合至多 ${cap} 点）`;
+}
+
+// ---- temp overflow row (临时整备区, user playtest #3 item 3) ---------------------------------------------------
+
+/**
+ * Pieces waiting in the temp overflow row (m.private temp): how many, and how many are items.
+ * @param {any} priv m.private
+ * @returns {{ count: number, items: number }}
+ */
+export function tempInfo(priv) {
+  const list = (Array.isArray(priv?.temp) ? priv.temp : []).filter((p) => p && typeof p === 'object');
+  return { count: list.length, items: list.filter((p) => p.kind === 'item').length };
+}
+
+/** What the temp row asks of the player (the ready button's reason, the row's label). */
+export const TEMP_RULE = '放入整备区或战场、配发或使用后才能准备就绪；休整期结束时仍留在临时整备区的单位将被销毁';
+
+/** Why 准备就绪 is refused while the temp row holds pieces (null when it is empty). */
+export function tempReadyReason(priv) {
+  const t = tempInfo(priv);
+  return t.count ? `临时整备区还有 ${t.count} 个单位：${TEMP_RULE}` : null;
+}
+
+/**
+ * Ready toggle (PREP only). Disabled while the temp row holds pieces — the reason shows under it (not only on hover):
+ * "临时整备区 N 个单位待处理" (user playtest #3 item 3).
  * @param {{ priv:any, onToggle:(ready:boolean)=>void, busy?:boolean, readyCount?:number, total?:number }} props
  */
 export function ReadyToggle({ priv, onToggle, busy, readyCount, total }) {
   const ready = !!priv?.ready;
-  const reason = !ready ? shopBlockReason('ready', { priv, editable: true }) : null;
+  const temp = tempInfo(priv);
+  const reason = !ready ? tempReadyReason(priv) || shopBlockReason('ready', { priv, editable: true }) : null;
   const btn = html`<button type="button" class=${cx('readybtn', 'tapx', ready && 'is-on', busy && 'is-busy')} disabled=${!!reason || busy}
-      aria-pressed=${ready ? 'true' : 'false'} onClick=${() => onToggle(!ready)}>
+      aria-pressed=${ready ? 'true' : 'false'} aria-describedby=${!ready && temp.count ? 'readywrap-why' : undefined} onClick=${() => onToggle(!ready)}>
     <span class="readybtn__box">${ready ? html`<${Icon} name="check" />` : null}</span>
     <span class="readybtn__label">${ready ? '取消准备' : '准备就绪'}</span>
     <kbd class="readybtn__key">Space</kbd>
   </button>`;
   return html`<div class="readywrap">
     ${reason ? html`<${Tooltip} text=${reason} placement="bottom">${btn}<//>` : btn}
+    ${!ready && temp.count ? html`<span class="readywrap__why" id="readywrap-why" role="status" data-testid="ready-why">
+      <${Icon} name="warn" /><span>临时整备区 <b class="num">${temp.count}</b> 个单位待处理</span></span>` : null}
     ${Number.isFinite(total) && total > 1 ? html`<span class="readywrap__count">已就绪 <b class="num">${readyCount}</b>/<span class="num">${total}</span></span>` : null}
   </div>`;
 }
@@ -150,14 +244,18 @@ export function PauseButton({ paused, busy = false, onToggle }) {
  * @param {{ pub:any, priv:any, conn:any, hud:any, total:number|null, drawer:string|null, onExit:Function, onDrawer:(tab:string)=>void,
  *   onReady:(r:boolean)=>void, readyBusy?:boolean, readyCount?:number, playerCount?:number,
  *   pen?:boolean, penAvail?:boolean, onPen?:(on:boolean)=>void, config?: any, frozenAt?: number|null,
- *   pause?: { show: boolean, paused: boolean, busy?: boolean, onToggle: () => void } | null }} props
+ *   pause?: { show: boolean, paused: boolean, busy?: boolean, onToggle: () => void } | null,
+ *   live?: { pending: number, unite: boolean } | null }} props
  *   frozenAt: the server time every clock shows while the solo match is paused (null = live)
+ *   live: the own battle's pending LP loss (liveLp): the tower shows lp − pending in red with a −N tick, 联防中 during 联防
  */
 export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, onReady, readyBusy, readyCount, playerCount, pen = false, penAvail = false, onPen = () => {},
-  config = null, frozenAt = null, pause = null }) {
+  config = null, frozenAt = null, pause = null, live = null }) {
   const phase = pub?.phase;
   const boss = isBossPhase(phase);
   const lp = boss && Number.isFinite(pub?.teamLp) ? pub.teamLp : Number.isFinite(priv?.lp) ? priv.lp : null;
+  // normal rounds: the leaks of the own battle so far (boss rounds: the team LP above already moves live)
+  const pending = !boss && Number.isFinite(lp) && live && live.pending > 0 ? Math.min(lp, live.pending) : 0;
   const hidden = phase === PHASE.HIDDEN_CORE || (Number.isFinite(pub?.lastRound) && pub.round > pub.lastRound);
   const roundText = hidden ? '??' : pub?.round > 0 ? String(pub.round) : '--';
   const showReady = phase === PHASE.PREP && priv?.alive !== false;
@@ -167,7 +265,8 @@ export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, 
   const now = Number.isFinite(frozenAt) ? frozenAt : serverNow();
   const ot = otLive ? overtimeState(pub, now, { perSec: overtimeDrainPerSec(config) }) : null;
   const draining = ot?.state === 'drain';
-  const lowLp = (Number.isFinite(lp) && lp <= 5) || draining;
+  const lowLp = (Number.isFinite(lp) && lp - pending <= 5) || draining;
+  const cap = Number(config?.lpCapPerRound) > 0 ? Number(config.lpCapPerRound) : 10;
   const frozenSecs = Number.isFinite(frozenAt) ? remainAt(pub?.deadline, frozenAt) : null;
   const btn = checkButtons({ pen, penAvail, infoOpen: !!drawer });
   const onLeft = () => (pen ? onPen(false) : onDrawer('info'));
@@ -191,7 +290,8 @@ export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, 
         <b class="roundbox__num num">${roundText}</b>
       </div>
       <${PhaseCapsule} pub=${pub} hud=${hud} />
-      <${LpTower} value=${lp} size="lg" tone=${lowLp ? 'danger' : boss ? 'team' : null} />
+      <${LpTower} value=${lp} size="lg" tone=${lowLp ? 'danger' : boss ? 'team' : null} pending=${pending}
+        note=${pending > 0 && live?.unite ? '联防中' : null} tip=${pendingTip(lp, pending, { unite: !!live?.unite, cap })} />
       <${Tooltip} text=${btn.right.tip} placement="bottom">
         <${CheckBtn} sprite=${btn.right.sprite} cls=${cx('enemybtn', btn.right.grey && 'is-grey')} label=${btn.right.label}
           chev=${btn.right.grey ? null : '▶▶'} disabled=${btn.right.grey && !pen} onClick=${onRight} testid="check-enemy" />

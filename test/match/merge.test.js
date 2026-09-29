@@ -264,7 +264,7 @@ test('item merge with a full hand AND a full temp: the golden item takes the equ
   m.dispose();
 });
 
-test('a merge completed during SETTLE (突变细胞) keeps its reward offer for the next prep; a full hand sends the elite to a freed board tile', () => {
+test('a merge completed during SETTLE (突变细胞) keeps its reward offer for the next prep; with a full hand the elite waits in temp for that prep', () => {
   const X = 'chess_char_2_04_a';
   const fillers = Object.values(DATA.items).filter((i) => i.itemType === 'EQUIP' && !i.isGolden && !String(i.kind || '').startsWith('consume')).map((i) => i.itemId ?? i.id).filter(Boolean);
   for (const onBoard of [false, true]) {
@@ -295,7 +295,19 @@ test('a merge completed during SETTLE (突变细胞) keeps its reward offer for 
     assert.ok(elite, 'the elite survived the round start');
     assert.deepEqual(ps.offers.map((o) => o.source), ['merge'], 'the promotion reward waits for this prep');
     assert.ok(ps.privateView().shop.rewardOffer, 'and is shown');
-    if (onBoard) assert.ok(tiles.includes(ps.find(elite.uid).key), 'full hand outside PREP: the elite took a freed board tile, not temp');
+    if (onBoard) {
+      // research 01 A1: the elite goes to the hand, never straight to a board tile — the full hand overflows it into
+      // temp, where it stays (not wiped at the round start) and blocks Ready until the player places it
+      assert.equal(ps.find(elite.uid).area, 'temp', 'full hand outside PREP: the elite overflowed into temp');
+      assert.ok(ps.privateView().temp.some((v) => v && v.uid === elite.uid), 'shown in the temp row');
+      assert.equal(ps.privateView().canReady, false);
+      assert.deepEqual(m.handle('p_0', { t: 'g.ready', ready: true }), { error: ERR.TEMP_NOT_EMPTY });
+      const [r, c] = tiles[0].split(',').map(Number);
+      assert.deepEqual(m.handle('p_0', { t: 'g.move', uid: elite.uid, to: { area: 'board', row: r, col: c } }), { ok: true }, 'placed on a freed tile');
+      assert.ok(ps.tempEmpty && ps.privateView().canReady);
+    } else {
+      assert.equal(ps.find(elite.uid).area, 'hand', 'the consumed hand copies freed the slots');
+    }
     assert.ok(ps.tempEmpty);
     checkInvariants(m);
     // it expires at the end of that prep like any other offer

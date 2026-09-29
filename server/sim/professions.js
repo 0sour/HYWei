@@ -4,7 +4,9 @@
 //   PROFESSION_DEFAULTS[profession] → SUB[subProfessionId] → trait-text / trait-blackboard tunables (TUNE[sub]) →
 //   data fields (dmgType/attackKind/projectile/canHitFly/targetPriority from data/chess.json) → kit.trait overrides.
 // Profile fields:
-//   attack 'melee'|'ranged'   dmgType 'phys'|'arts'|'true'|'heal'|'none'   projectile 'none'|'arrow'|'bolt'|'bomb'|'lob'|'orb'|'drone'
+//   attack 'melee'|'ranged'   dmgType 'phys'|'arts'|'true'|'heal'|'none'
+//   projectile 'none'|'arrow'|'bolt'|'bomb'|'lob'|'orb'|'drone'|'boomerang' ('boomerang': out to the target and back to
+//                             the thrower, ai.js throwBoomerang)        boomerang bool (回环射手: keeps 'boomerang')
 //   canHitFly bool            maxTargets n (≥1)          hitAllBlocked bool (attack every blocked enemy)
 //   allInRange bool           splashRadius tiles         splashScale (× damage for splash victims)
 //   splashOthersOnly bool     groundOnly bool            hits n (damage instances per attack)
@@ -175,6 +177,18 @@ const installHunter = (battle, unit) => {
   battle.on('deploy', (ctx) => { if (ctx.unit === unit) unit.trait.ammo = max; }, { owner: unit });
 };
 
+/**
+ * 回环射手 (loopshooter) trait "持有回旋投射物时才能够攻击（投射物需要时间回收）": its projectile is a boomerang that
+ * flies to the target, hits on arrival and flies back to the thrower (ai.js throwBoomerang, speeds in constants.js);
+ * the thrower attacks only while it holds its boomerang — every one it threw must be caught first (PRTS 跃跃 S2 note
+ * "必须回收全部回旋投掷物才可以进行下一次攻击") — and once its attack cooldown is ready, so the real interval is the longer
+ * of the two ("实际攻击间隔会受投掷物的实际飞行时间影响产生浮动"). A (re)deployed thrower holds a fresh one.
+ */
+const installLoopshooter = (battle, unit) => {
+  unit.trait.boomerangsOut = 0;
+  battle.on('deploy', (ctx) => { if (ctx.unit === unit) unit.trait.boomerangsOut = 0; }, { owner: unit });
+};
+
 const installTactician = (battle, unit) => {
   const spawn = () => {
     if (!unit.alive || !unit.deployed) return;
@@ -266,13 +280,8 @@ export const SUB = Object.freeze({
     canAttack: (battle, unit) => (unit.trait.ammo ?? 8) > 0,
     dmgMul: (b, u) => u.profile.ammoScale ?? 1.2,
     afterAttack: (battle, unit) => { unit.trait.ammo = Math.max(0, (unit.trait.ammo ?? 8) - 1); } }),
-  loopshooter: P({ projectile: 'lob',
-    afterAttack: (battle, unit, targets) => {
-      const t = targets[0];
-      if (!t) return;
-      const d = Math.hypot(t.x - unit.x, t.y - unit.y);
-      unit.atkCd = Math.max(unit.atkCd, (2 * d) / 10);
-    } }),
+  loopshooter: P({ projectile: 'boomerang', boomerang: true, install: installLoopshooter,
+    canAttack: (battle, unit) => !(unit.trait.boomerangsOut > 0) }),
   reaperrange: P({ allInRange: true,
     dmgMul: (battle, unit, target) => {
       const grid = unit.profile.frontGrid;
@@ -456,6 +465,9 @@ export function resolveProfile(def, kitTrait = null) {
   }
   if (def.targetPriority) p.priority = PRIORITY_ALIASES[def.targetPriority] ?? def.targetPriority;
   if (def.splashRadius != null && def.splashRadius > 0) p.splashRadius = def.splashRadius;
+  // a boomerang thrower (回环射手) always throws its boomerang: the data's generic ranged projectile ('arrow', a
+  // build-data default) would turn the out-and-back flight into a plain shot
+  if (p.boomerang && p.attack === 'ranged') p.projectile = 'boomerang';
   if (def.type === 'token') {
     if (p.dmgType === 'heal') p.heal = p.heal || { mode: 'single' };
     if (def.stats.atk <= 0) p.noAttack = true;

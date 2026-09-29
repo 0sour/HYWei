@@ -111,7 +111,9 @@ export function Chevrons({ count = 3, dir = 'right', tone = 'mint', animated = t
 // ---- Button ------------------------------------------------------------------------------------
 
 /**
- * Button.
+ * Button. `loading` (a request in flight): disabled and dimmed, and after a short delay a thin bar sweeps along its
+ * bottom edge (css .btn__busy) — never a spinning ring or a wait cursor, which read as "this text is still loading from
+ * the server" (user playtest #3 item 9); the icon stays.
  * @param {{ variant?: 'primary'|'secondary'|'danger'|'amber'|'ice'|'ghost', size?: 'sm'|'md'|'lg'|'xl',
  *   icon?: string, iconRight?: string, loading?: boolean, disabled?: boolean, block?: boolean, square?: boolean,
  *   active?: boolean, onClick?: Function, type?: string, title?: string, class?: string, children?: any }} props
@@ -126,9 +128,10 @@ export function Button({
       active && 'is-active', loading && 'is-loading', cls)}
     disabled=${isDisabled} aria-busy=${loading ? 'true' : undefined} aria-pressed=${active ? 'true' : undefined}
     onClick=${(e) => { if (!isDisabled && onClick) onClick(e); }} ...${rest}>
-    ${loading ? html`<span class="btn__spin" aria-hidden="true"></span>` : icon ? html`<${Icon} name=${icon} class="btn__icon" />` : null}
+    ${icon ? html`<${Icon} name=${icon} class="btn__icon" />` : null}
     ${children != null && children !== false ? html`<span class="btn__label">${children}</span>` : null}
     ${iconRight ? html`<${Icon} name=${iconRight} class="btn__icon btn__icon--right" />` : null}
+    ${loading ? html`<span class="btn__busy" aria-hidden="true"></span>` : null}
   </button>`;
 }
 

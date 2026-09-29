@@ -72,7 +72,11 @@ test('盟约·辅助干员 (elite): element damage vs elite enemies uses the mod
   assert.ok(near(el.amount, u.s.atk * u.def.talents[0].bb.ep_damage_ratio_boss, 1e-3));
 });
 
-test('蕾缪安: S3 locks 5 (+1 talent) targets every 0.5 s then bombards (360 % centre)', () => {
+/** 蕾缪安 S3 fx of the battle: [{ kind, x, y, ...extra }] for 'lock' / 'bombardShell' / 'bombard'. */
+const lemFx = (h, kind) => h.eventsOf('fx').filter((e) => e[1] === kind).map((e) => ({ x: e[2], y: e[3], ...e[4] }));
+const SHELL_IV = 0.3; // PRTS S3 note: "以0.3s为间隔" (not in the blackboard)
+
+test('蕾缪安: S3 locks 5 (+1 talent) targets every 0.5 s, then the shells land one by one every 0.3 s (360 % centre)', () => {
   const h = battle({
     units: [{ chessId: 'chess_char_6_01_a', row: 10, col: 3 }],
     enemies: [{ key: 'enemy_dummy', pos: [10, 5] }],
@@ -85,13 +89,94 @@ test('蕾缪安: S3 locks 5 (+1 talent) targets every 0.5 s then bombards (360 %
   const start = h.b.time;
   assert.ok(u.findBuff('lemuen:extradition'), 'ATK +10 % after 20 s');
   assert.ok(h.runUntil(() => !u.skill.active, 20));
+  const end = h.b.time;
   const ammo = h.hooksOf('ammoUsed').filter((c) => c.unit === u);
-  assert.equal(ammo.length, bb['attack@trigger_time'] + t1.add_count);
-  assert.ok(Math.abs(h.b.time - start - (ammo.length - 1) * bb['attack@aim_interval']) < 0.1, 'one lock every 0.5 s');
+  const n = bb['attack@trigger_time'] + t1.add_count;
+  assert.equal(ammo.length, n);
+  assert.ok(Math.abs(end - start - (ammo.length - 1) * bb['attack@aim_interval']) < 0.1, 'one lock every 0.5 s');
+  assert.equal(lemFx(h, 'lock').length, n, 'one lock mark per bullet');
+  assert.equal(h.dmg.filter((d) => d.src === u.id && d.tags.includes('bombard')).length, 0, 'nothing lands all at once at the end');
+  const atk = u.s.atk;
+  h.run(SHELL_IV * (n + 1));
+  // one shell every 0.3 s in lock order, each on a random point within ±emit_offset of its (stationary) target
+  const shells = lemFx(h, 'bombardShell');
+  assert.deepEqual(shells.map((s) => s.i), [...Array(n).keys()], 'shells fired one by one, in lock order');
+  const spread = bb['attack@emit_offset'] + 0.01;
+  for (const s of shells) {
+    assert.ok(Math.abs(s.x - 5) <= spread && Math.abs(s.y - 10) <= spread, `aimed within ±${bb['attack@emit_offset']} of the lock (${s.x}, ${s.y})`);
+    assert.equal(s.id, u.id);
+    assert.equal(s.r, bb['attack@dist_2']);
+    assert.ok(s.t > 0 && s.t <= SHELL_IV + 1e-9, `flight ${s.t} s`);
+  }
+  assert.ok(new Set(shells.map((s) => `${s.x},${s.y}`)).size > 1, 'the aim points are spread (seeded rng)');
   const bombs = h.dmg.filter((d) => d.src === u.id && d.tags.includes('bombard'));
-  assert.equal(bombs.length, ammo.length, 'one bomb per lock');
-  assert.ok(near(bombs[0].amount, u.s.atk * bb['attack@proj_atk_scale_1'], 1e-3), 'centre damage 360 %');
-  assert.equal(h.dmg.filter((d) => d.src === u.id && d.attack && d.t > start && d.t < h.b.time - 0.1).length, 0, 'no normal attacks while locking');
+  assert.equal(bombs.length, n, 'one hit per shell on the single enemy (limited_hit_time 1)');
+  bombs.forEach((b, i) => assert.ok(Math.abs(b.t - end - SHELL_IV * (i + 1)) <= 2 / 30 + 1e-9, `shell ${i} lands at +${(b.t - end).toFixed(3)} s`));
+  assert.equal(lemFx(h, 'bombard').length, n, 'an explosion fx per shell');
+  for (const b of bombs) assert.ok(near(b.amount, atk * bb['attack@proj_atk_scale_1'], 1e-3), 'centre damage 360 % (the ATK when the skill ended)');
+  assert.equal(h.dmg.filter((d) => d.src === u.id && d.attack && d.t > start && d.t < end - 0.1).length, 0, 'no normal attacks while locking');
+  checkInvariants(h.b);
+});
+
+test('蕾缪安: S3 lock marks follow a walking target and stay where it died; the outer ring deals 240 %', () => {
+  const h = battle({
+    units: [{ chessId: 'chess_char_6_01_a', row: 10, col: 3, carryState: { sp: 99 } }],
+    enemies: [{ key: 'enemy_walker', route: { motion: 'WALK', start: [9, 6], end: [9, 2], checkpoints: [] } }, { key: 'enemy_dummy', pos: [10, 6] }],
+  });
+  const u = h.unit('chess_char_6_01_a');
+  const bb = u.def.skill.bb;
+  assert.ok(h.runUntil(() => u.skill.active, 10));
+  assert.ok(h.runUntil(() => !u.skill.active, 10));
+  const walker = enemyAt(h, 'enemy_walker'), dummyE = enemyAt(h, 'enemy_dummy');
+  const locks = lemFx(h, 'lock');
+  assert.deepEqual(locks.slice(0, 2).map((l) => l.id).sort(), [walker.id, dummyE.id].sort(), 'unlocked targets first, then a new round');
+  // the walker's shells aim at where it is when each is fired (it keeps walking), not where it was locked
+  const firstLock = locks.find((l) => l.id === walker.id);
+  const at0 = { x: walker.x, y: walker.y };
+  assert.ok(Math.abs(at0.x - firstLock.x) > 0.6, `the walker moved on since its lock (${firstLock.x} → ${at0.x})`);
+  const order = locks.map((l) => l.id);
+  const spread = bb['attack@emit_offset'] + 0.01;
+  const shell0 = lemFx(h, 'bombardShell')[0];
+  if (order[0] === walker.id) assert.ok(Math.abs(shell0.x - at0.x) <= spread && Math.abs(shell0.y - at0.y) <= spread, 'first shell on the walker\'s current spot');
+  // it dies before its later shells are fired: they fall where it died
+  h.b.kill(walker);
+  const died = { x: walker.x, y: walker.y };
+  h.run(SHELL_IV * (order.length + 1));
+  const shells = lemFx(h, 'bombardShell');
+  assert.equal(shells.length, order.length);
+  shells.forEach((s, i) => {
+    if (order[i] !== walker.id || i === 0) return;
+    assert.ok(Math.abs(s.x - died.x) <= spread && Math.abs(s.y - died.y) <= spread, `shell ${i} on the spot the walker left (${s.x}, ${s.y})`);
+  });
+  // the dummy one row below the walker's line: centre (≤ dist_1) or outer ring (≤ dist_2) damage per shell
+  const onDummy = h.dmg.filter((d) => d.src === u.id && d.tgt === dummyE.id && d.tags.includes('bombard'));
+  assert.ok(onDummy.every((d) => near(d.amount, u.s.atk * bb['attack@proj_atk_scale_1'], 1e-3) || near(d.amount, u.s.atk * bb['attack@proj_atk_scale_2'], 1e-3)));
+  assert.ok(onDummy.some((d) => near(d.amount, u.s.atk * bb['attack@proj_atk_scale_2'], 1e-3)), 'a shell on the walker line reaches it with the outer ring (240 %)');
+  checkInvariants(h.b);
+});
+
+test('蕾缪安: knocked out after S3 ended, the shell in the air still lands and the rest are dropped', () => {
+  const h = battle({
+    units: [{ chessId: 'chess_char_6_01_a', row: 10, col: 3, carryState: { sp: 99 } }],
+    enemies: [{ key: 'enemy_dummy', pos: [10, 5] }],
+  });
+  const u = h.unit('chess_char_6_01_a');
+  assert.ok(h.runUntil(() => u.skill.active, 10));
+  assert.ok(h.runUntil(() => !u.skill.active, 10));
+  assert.equal(lemFx(h, 'bombardShell').length, 1, 'the first shell is fired as the skill ends');
+  h.b.dealDamage(null, u, { amount: 1e9, type: 'true' });
+  assert.equal(u.alive, false);
+  h.run(3);
+  assert.equal(lemFx(h, 'bombardShell').length, 1, 'no shell after she left the field');
+  assert.equal(h.dmg.filter((d) => d.src === u.id && d.tags.includes('bombard')).length, 1, 'the fired shell landed');
+  // knocked out while locking: no bombardment at all
+  const h2 = battle({ units: [{ chessId: 'chess_char_6_01_a', row: 10, col: 3, carryState: { sp: 99 } }], enemies: [{ key: 'enemy_dummy', pos: [10, 5] }] });
+  const u2 = h2.unit('chess_char_6_01_a');
+  assert.ok(h2.runUntil(() => u2.skill.active && lemFx(h2, 'lock').length >= 2, 10));
+  h2.b.dealDamage(null, u2, { amount: 1e9, type: 'true' });
+  h2.run(3);
+  assert.equal(lemFx(h2, 'bombardShell').length, 0);
+  assert.equal(h2.dmg.filter((d) => d.src === u2.id && d.tags.includes('bombard')).length, 0);
   checkInvariants(h.b);
 });
 

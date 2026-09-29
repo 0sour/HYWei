@@ -21,6 +21,8 @@
 // re-layout; ui/compat.js polyfills are imported before anything else.
 // 干员调配 (DESIGN §16): an overlay over any route (<LoadoutHost/>, opened from lobby / room / briefing); its loadout is
 // kept in sync with the server by installLoadoutSync (room.loadout after every welcome and edit).
+// Game data: every text of the game is static data (/data/*.json) downloaded once per page; the in-match files are
+// warmed in the background as soon as the player is in a room (warmGameData), before the match needs them.
 
 // Polyfills first (older Safari / Firefox ESR): every module evaluated after this one sees them.
 import './ui/compat.js';
@@ -32,6 +34,7 @@ import { ToastHost, toast, toastError, describeError } from './ui/toasts.js';
 import { net, identity, NetError } from './net.js';
 import { store, useStore, emptyMatch, selectRoute, sessionResetNotice } from './store.js';
 import { data } from './data.js';
+import { GAME_FILES } from './ui/gameComponents.js';
 import { TitleScreen, sanitizeName } from './screens/title.js';
 import { LobbyScreen, rememberRoom, parseRoomParam } from './screens/lobby.js';
 import { RoomScreen } from './screens/room.js';
@@ -223,7 +226,22 @@ function wireNet() {
   // Entering (title → lobby) while already online also needs the deep-link join.
   store.subscribe((s, prev) => {
     if (s.session.entered && !prev.session.entered) schedulePendingJoin();
+    // in a room (co-op or solo, also a resumed one) a match is near: its data starts downloading
+    if (s.room && !prev.room) warmGameData();
   });
+}
+
+/**
+ * Download every data file of the match UI (gameComponents GAME_FILES: operators, skills, bonds, items, enemies, 特质 …)
+ * in the background once the player is in a room — a match is near (the lobby alone never downloads them). The game's
+ * texts are static data loaded once per page — never fetched during a match — and the match screen waits for these
+ * files, so with them warmed it opens at once and no text ever appears late (user playtest #3 item 9). Idempotent (the
+ * data store shares each file's promise).
+ */
+function warmGameData() {
+  const go = () => { data.loadAll(GAME_FILES).catch(() => {}); };
+  if (typeof globalThis.requestIdleCallback === 'function') globalThis.requestIdleCallback(go, { timeout: 2500 });
+  else setTimeout(go, 600);
 }
 
 // ---- UI chrome (the connection banner lives in ui/connBanner.js) -----------------------------------

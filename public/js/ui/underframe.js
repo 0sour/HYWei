@@ -17,11 +17,18 @@
 // octagon plate: the sprite is used as a CSS mask over the plate colour (出售 amber like every money action, 销毁 /
 // 撤退 red) on a dark backing that shows through the glyph cut-out. Without the local sprites the same plate carries
 // the built-in glyph.
+//
+// TempRowNotice (user playtest #3 item 3) — the other board-anchored overlay of the prep: while the temp overflow row
+// (临时整备区, row 8, the 5 pads in front of the bench) holds pieces, a dashed red frame around that row and a label at
+// its end say that they block 准备就绪 and are destroyed when the prep ends unless moved to the bench, equipped or used.
+// Placed through view.tileScreen (useTileScreen, so it follows the camera — the Final Assault prep too); it never takes
+// the pointer, so the pieces under it stay draggable.
 
-import { html, HexBadge } from './components.js';
+import { html, HexBadge, Icon } from './components.js';
 import { GIcon } from './gameComponents.js';
 import { useTileScreen } from './facingWheel.js';
 import { localAsset } from '../data.js';
+import { GEO } from '../../../shared/constants.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
 
@@ -98,5 +105,70 @@ export function Underframe({ view, uid = null, row, col, actions, name = '', bus
       <${PlateIcon} sprite="icon_destory" glyph="trash" tone="destroy" />
       <span class="uframe__label">销毁</span>
     </button>` : null}
+  </div>`;
+}
+
+// ---- the temp overflow row (临时整备区) ---------------------------------------------------------------------------
+
+/**
+ * Screen frame of the temp row from its two end tiles (view.tileScreen of cols TEMP_C0 and TEMP_C0 + TEMP_SIZE − 1): the
+ * quad [back-left, back-right, front-right, front-left] (back = the far edge, higher on screen — also when the Final
+ * Assault prep mirrors the board), its bounds, and the side of the label: left of the row, or right of it when the
+ * left has no room for `labelW` px. Pure (test/ui/playtest3.test.js).
+ * @param {{ poly: Array<[number, number]> } | null} a @param {{ poly: Array<[number, number]> } | null} b
+ * @param {{ labelW?: number, gap?: number, vw?: number }} [opts]
+ * @returns {{ quad: Array<[number, number]>, left: number, right: number, top: number, bottom: number, y: number, side: 'left'|'right' } | null}
+ */
+export function tempRowFrame(a, b, { labelW = 0, gap = 8, vw = Infinity } = {}) {
+  const ok = (t) => t && Array.isArray(t.poly) && t.poly.length >= 4 && t.poly.every((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+  if (!ok(a) || !ok(b)) return null;
+  const backs = [a.poly[0], a.poly[1], b.poly[0], b.poly[1]];
+  const fronts = [a.poly[2], a.poly[3], b.poly[2], b.poly[3]];
+  const minX = (pts) => pts.reduce((m, p) => (p[0] < m[0] ? p : m));
+  const maxX = (pts) => pts.reduce((m, p) => (p[0] > m[0] ? p : m));
+  const quad = [minX(backs), maxX(backs), maxX(fronts), minX(fronts)];
+  const xs = quad.map((p) => p[0]);
+  const ys = quad.map((p) => p[1]);
+  const left = Math.min(...xs), right = Math.max(...xs), top = Math.min(...ys), bottom = Math.max(...ys);
+  const side = left - gap - labelW >= 0 || right + gap + labelW > vw ? 'left' : 'right';
+  return { quad, left, right, top, bottom, y: (top + bottom) / 2, side };
+}
+
+/**
+ * What the temp row's label says will happen to its pieces (server/match/PlayerState.js tempDue): a piece is resolved
+ * at the end of the first prep in which the player can act on it. Not ready (or outside PREP): at the end of this / the
+ * coming prep, and 准备就绪 waits for the row to be cleared. Ready in PREP: Ready is refused while the row holds pieces,
+ * so whatever lies there arrived after it — kept through the NEXT prep (cancelling Ready makes it due at this one).
+ * @param {boolean} ready m.private ready (during PREP)
+ */
+export function tempRowRule(ready) {
+  return ready
+    ? '已准备就绪后进入的单位保留到下个休整期，届时仍在此处的将被销毁（取消准备则在本休整期结束时销毁）'
+    : '放入整备区或战场、配发或使用后才能准备；休整期结束时仍在此处的将被销毁';
+}
+
+/**
+ * The temp row's notice: dashed red frame + label (count, what to do, what happens at the end of the prep — tempRowRule).
+ * `label` false (a piece is being dragged / placed): the frame only, nothing over the pieces the player is moving.
+ * @param {{ view: any, count: number, items?: number, label?: boolean, ready?: boolean }} props
+ */
+export function TempRowNotice({ view, count, items = 0, label = true, ready = false }) {
+  const a = useTileScreen(view, GEO.TEMP_ROW, GEO.TEMP_C0);
+  const b = useTileScreen(view, GEO.TEMP_ROW, GEO.TEMP_C0 + GEO.TEMP_SIZE - 1);
+  let rem = 100;
+  try { rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 100; } catch { /* default */ }
+  const vw = globalThis.innerWidth || 1920;
+  const f = count > 0 ? tempRowFrame(a, b, { labelW: rem * 2.9, gap: rem * 0.1, vw }) : null;
+  if (!f) return null;
+  const pts = f.quad.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
+  const pad = rem * 0.1;
+  const style = f.side === 'left' ? `left:${(f.left - pad).toFixed(1)}px;top:${f.y.toFixed(1)}px` : `left:${(f.right + pad).toFixed(1)}px;top:${f.y.toFixed(1)}px`;
+  const what = items > 0 && items === count ? '件道具' : '个单位';
+  return html`<div class="tempnote" aria-hidden="false" data-testid="temp-notice">
+    <svg class="tempnote__frame" aria-hidden="true"><polygon points=${pts} /></svg>
+    ${label ? html`<div class=${`tempnote__label is-${f.side}`} style=${style} role="status">
+      <b class="tempnote__title"><${Icon} name="warn" />临时整备区 <span class="num">${count}</span> ${what}待处理</b>
+      <span class="tempnote__rule">${tempRowRule(ready)}</span>
+    </div>` : null}
   </div>`;
 }

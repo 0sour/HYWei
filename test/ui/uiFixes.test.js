@@ -202,7 +202,7 @@ describe('equipment dropped on an operator', () => {
   };
   const ctx = placementContext({ priv, stage: DATA.stages.act2autochess_m01, editable: true, getChess, getToken, getItem });
 
-  test('pickPieceAt picks the front-most sprite under the pointer', () => {
+  test('pickPieceAt: the rect whose centre is nearest (overlap → the nearer unit)', () => {
     const rects = [
       { uid: 1, left: 100, right: 160, top: 400, bottom: 520 }, // row 9 (nearer the camera: lower on screen)
       { uid: 2, left: 100, right: 160, top: 350, bottom: 470 }, // row 10, behind

@@ -15,6 +15,8 @@
 // enemy-pen demo (render-demo ?pen=<name>). Also writes public/dev/recordings/index.json.
 //
 // Usage: node tools/record-battle.mjs [--only name,name] [--out dir] [--seed n] [--max seconds]
+// (`--max` caps every scenario; without it a scenario's own `max` — else 90 game s — applies, so a plain run
+// reproduces the committed recordings byte for byte.)
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -39,6 +41,8 @@ const OUT = path.resolve(ROOT, typeof opt.out === 'string' ? opt.out : 'public/d
 const ONLY = typeof opt.only === 'string' ? new Set(opt.only.split(',')) : null;
 const SEED = Number(opt.seed ?? 20260927) >>> 0;
 const MAX_SECONDS = Number(opt.max ?? 90);
+/** Game seconds recorded at most for scenario `sc`: `--max`, else its own `max`, else 90. */
+const maxSecondsOf = (sc) => (opt.max != null ? MAX_SECONDS : Number(sc.max ?? MAX_SECONDS));
 
 const quiet = { warn() {}, error() {}, info() {}, debug() {} };
 const ds = getDefaultSource();
@@ -111,7 +115,7 @@ const SCENARIOS = [
   },
   {
     name: 'late-m01-r13', title: '常规作战 · 源石流发生装置 · R13（官方波次）', kind: 'normal', stageId: 'act2autochess_m01', modeId: 'mode_multi_hard', round: 13,
-    wave: 'official', waveSeed: 5,
+    wave: 'official', waveSeed: 5, max: 110, // the whole round (55 real s = 110 game s)
     players: () => [{ playerId: 'P1', seat: 0, side: 'L', colOffset: 0, units: lineup('act2autochess_m01', ['星熊*', '银灰*', '斯卡蒂*', '莫斯提马*', '白面鸮', '寒芒克洛丝*', '阿罗玛', '远牙*']) }],
   },
   {
@@ -169,7 +173,7 @@ function record(sc) {
   const frames = [];
   let field = null;
   let ticks = 0;
-  const maxT = Math.min(MAX_SECONDS, sc.kind === 'boss' ? timeLimit : timeLimit + 1);
+  const maxT = Math.min(maxSecondsOf(sc), sc.kind === 'boss' ? timeLimit : timeLimit + 1);
   while (!b.finished) {
     b.step();
     ticks++;

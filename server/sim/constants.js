@@ -17,8 +17,14 @@ export const MOVE_SCALE = 0.5;
 export const ATTACK_PAUSE = 0.35;
 /** Default projectile speed in tiles/s for ranged operators/enemies. */
 export const PROJECTILE_SPEED = 12;
-/** Projectile speeds per visual kind (tiles/s). `none`/`beam` are instant. */
-export const PROJECTILE_SPEEDS = Object.freeze({ arrow: 14, bolt: 11, bomb: 8, lob: 8, orb: 10, drone: 16, enemy: 10 });
+/**
+ * Projectile speeds per visual kind (tiles/s). `none`/`beam` are instant. `boomerang` (回环射手 跃跃) is the OUTBOUND
+ * flight to the target — PRTS 跃跃 特性 note "投射物飞行速度15，返回时飞行速度3.75"; the way back is
+ * BOOMERANG_RETURN_SPEED (ai.js throwBoomerang).
+ */
+export const PROJECTILE_SPEEDS = Object.freeze({ arrow: 14, bolt: 11, bomb: 8, lob: 8, orb: 10, drone: 16, enemy: 10, boomerang: 15 });
+/** 回环射手: speed (tiles/s) of a boomerang flying back from its hit point to its thrower (PRTS "返回时飞行速度3.75"). */
+export const BOOMERANG_RETURN_SPEED = 3.75;
 
 /** Minimum damage ratio after mitigation (5 % of the pre-mitigation amount). */
 export const MIN_DAMAGE_RATIO = 0.05;

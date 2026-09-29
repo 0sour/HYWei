@@ -10,7 +10,7 @@ import {
   avatarUrl, portraitUrl, enemyIconUrl, tokenAvatarUrl, bondIconUrl, bandIconUrl, itemIconUrl, skillIconUrl, uiUrl,
   profIconUrl, subProfIconUrl, spineEntry, hasBackSpine, unitPictureUrl, bgmEntry, sfxUrl, unitSfxUrl, baseCharId,
   validSpine, RefLru, createAssets, unloadSpineData, spinePages, spineDataWeight, SPINE_WEIGHT_MIN, SPINE_IDLE_BYTES,
-  SPINE_IDLE_GRACE_MS,
+  SPINE_IDLE_GRACE_MS, SPINE_EVICT_DELAY_MS, SPINE_QUIET_DELAY_MS,
 } from '../../public/js/assets.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -295,6 +295,143 @@ describe('RefLru', () => {
     await p;
     assert.deepEqual(unloads, ['a']);
   });
+
+  // user playtest #3 item 1 (invisible operator models): an unload is asynchronous; a new load of the same key while
+  // it is in flight must not get the doomed value
+  test('a load of a key whose unload is still in flight waits for that unload (never the doomed value)', async () => {
+    const order = [];
+    let finishUnload;
+    let n = 0;
+    const lru = new RefLru({ max: 1,
+      load: async (k) => { order.push(`load ${k}`); return `${k}#${++n}`; },
+      unload: (k, v) => { order.push(`unload ${v}`); return new Promise((r) => { finishUnload = () => { order.push(`unloaded ${v}`); r(); }; }); } });
+    assert.equal(await lru.acquire('a'), 'a#1');
+    await lru.acquire('b');
+    lru.release('a');                        // over max: a goes, its unload is in flight
+    assert.ok(lru.unloading('a') && lru.stats().unloading === 1);
+    const again = lru.acquire('a');          // same task: taken again
+    await tick();
+    assert.deepEqual(order, ['load a', 'load b', 'unload a#1'], 'the new load waits');
+    finishUnload();
+    assert.equal(await again, 'a#3', 'a fresh value once the old one is gone (b was #2)');
+    assert.deepEqual(order.slice(3), ['unloaded a#1', 'load a']);
+    await tick();
+    assert.equal(lru.unloading('a'), false);
+    // an unloader that throws or returns nothing never blocks a later load
+    const lru2 = new RefLru({ max: 1, load: async (k) => k, unload: () => { throw new Error('x'); } });
+    await lru2.acquire('a'); await lru2.acquire('b'); lru2.release('a');
+    assert.equal(await lru2.acquire('a'), 'a');
+  });
+
+  test('evictDelay: releases schedule one eviction pass; a scene rebuilt in one go keeps what it takes back', async () => {
+    const c = clock(), unloads = [];
+    let loads = 0;
+    const lru = new RefLru({ max: 2, load: async (k) => { loads++; return k; }, unload: (k) => unloads.push(k), evictDelay: 500, now: c.now, timers: c.timers });
+    for (const k of ['a', 'b', 'c']) await lru.acquire(k);
+    // every view destroyed, then the next scene's views built (same task): nothing is dropped meanwhile
+    for (const k of ['a', 'b', 'c']) lru.release(k);
+    for (const k of ['a', 'b']) await lru.acquire(k);
+    assert.deepEqual(unloads, []);
+    assert.equal(c.pending.length, 1, 'one pass pending');
+    c.advance(510);
+    assert.deepEqual(unloads, ['c'], 'the pass drops only what nobody took back');
+    assert.equal(loads, 3, 'a and b were never reloaded');
+  });
+
+  test('quietDelay: the instant zero of a scene switch is not "no scene"; a lasting one is', async () => {
+    const c = clock(), unloads = [];
+    const lru = new RefLru({ max: 100, load: async (k) => k, unload: (k) => unloads.push(k), weigh: () => 10,
+      maxIdleWeight: 100, quietWeight: 0, idleGrace: 5000, quietDelay: 3000, now: c.now, timers: c.timers });
+    await lru.acquire('bench'); await lru.acquire('op');
+    lru.release('bench');                    // prep → battle: the bench model idles for the whole battle
+    c.advance(20000);
+    lru.release('op');                       // battle → prep: nothing referenced for an instant …
+    assert.deepEqual(unloads, [], 'the budget of a shown scene applies (10 + 10 ≤ 100)');
+    await lru.acquire('bench'); await lru.acquire('op'); // … the prep views take their models back
+    c.advance(5000);
+    assert.deepEqual(unloads, []);
+    lru.release('bench'); lru.release('op'); // the view is gone for good (lobby)
+    c.advance(1000);
+    assert.deepEqual(unloads, [], 'not quiet long enough yet');
+    c.advance(2100);
+    assert.deepEqual(unloads, [], 'quiet, but both are still inside their grace');
+    c.advance(2000);
+    assert.deepEqual(unloads.sort(), ['bench', 'op'], 'the quiet budget empties the cache');
+  });
+});
+
+describe('Spine store: unload / reload of the same skeleton (user playtest #3 item 1)', () => {
+  const tick = () => new Promise((r) => setImmediate(r));
+  /**
+   * PIXI.Assets semantics that caused the invisible models: `unload` frees an asset a microtask after the call
+   * (Loader.unload awaits the cached promise, then deletes the cache entry and destroys the asset), and `load` of that
+   * URL meanwhile returns the cached — doomed — asset.
+   */
+  function pixiAssets() {
+    const cache = new Map();
+    let seq = 0;
+    const loader = {
+      async unload(url) {
+        const hit = cache.get(url);
+        if (!hit) return;
+        const asset = await hit;
+        cache.delete(url);
+        asset.destroyed = true;
+      },
+    };
+    const Assets = {
+      loader,
+      load(url) {
+        if (!cache.has(url)) cache.set(url, Promise.resolve({ url, id: ++seq, destroyed: false, animations: [] }));
+        return cache.get(url);
+      },
+      unload(url) { return loader.unload(url); },
+    };
+    const prev = globalThis.PIXI;
+    globalThis.PIXI = { Assets, spine: {} };
+    return { Assets, restore: () => { if (prev === undefined) delete globalThis.PIXI; else globalThis.PIXI = prev; } };
+  }
+
+  test('the hazard: PIXI.Assets hands out an asset whose unload is in flight', async () => {
+    const f = pixiAssets();
+    try {
+      await f.Assets.load('/x.skel');
+      f.Assets.unload('/x.skel');
+      const again = await f.Assets.load('/x.skel');
+      await tick();
+      assert.equal(again.destroyed, true, 'the model a view would build from it has no textures');
+    } finally { f.restore(); }
+  });
+
+  test('battle → prep after a long battle: the bench models come back alive (defaults), with or without an eviction', async () => {
+    for (const eager of [false, true]) {
+      const f = pixiAssets();
+      try {
+        const c = clock();
+        // eager = the old timing (evict at once, no quiet delay): the bench model IS dropped at the instant zero —
+        // the re-acquire must then wait for its unload and load a fresh skeleton
+        const a = createAssets({ manifest: M, spineNow: c.now, spineTimers: c.timers, ...(eager ? { spineEvictDelay: 0, spineQuietDelay: 0 } : {}) });
+        const bench = a.spineEntry('char_010_chen'), op = a.spineEntry('char_002_amiya'), foe = a.spineEntry('enemy_1007_slime');
+        const bench0 = await a.spine.acquire(bench);
+        await a.spine.acquire(op);
+        // prep → battle: the prep views go (the bench model idles), the battle views take the board model and the foe
+        a.spine.release(bench); a.spine.release(op);
+        await a.spine.acquire(op); await a.spine.acquire(foe);
+        c.advance(SPINE_IDLE_GRACE_MS + 20000);           // a long battle: the bench model idles past its grace
+        // battle → prep in one go (render/app.js enterPrepMode + setPrep): every battle view destroyed, prep views built
+        a.spine.release(op); a.spine.release(foe);
+        const [b1, o1] = await Promise.all([a.spine.acquire(bench), a.spine.acquire(op)]);
+        await tick(); await tick();
+        c.advance(SPINE_EVICT_DELAY_MS + SPINE_QUIET_DELAY_MS + 10);
+        await tick(); await tick();
+        assert.equal(b1.destroyed, false, `${eager ? 'eager' : 'default'}: the bench model is alive`);
+        assert.equal(o1.destroyed, false, `${eager ? 'eager' : 'default'}: the board model is alive`);
+        if (eager) assert.notEqual(b1, bench0, 'eager: dropped, then loaded afresh');
+        else assert.equal(b1, bench0, 'default: never dropped, never reloaded');
+        assert.equal(a.spine.stats().unloading, 0);
+      } finally { f.restore(); }
+    }
+  });
 });
 
 describe('spineDataWeight', () => {
@@ -418,12 +555,15 @@ describe('spine unload frees the atlas page images too', () => {
     const f = fakePixi();
     try {
       const E = (id, pages) => ({ ...SP(id), textures: pages });
-      const a = createAssets({ manifest: M, loadSpine: async (e) => ({ animations: [], from: e.skel }), spineMax: 1 });
+      const c = clock();
+      const a = createAssets({ manifest: M, loadSpine: async (e) => ({ animations: [], from: e.skel }), spineMax: 1, spineNow: c.now, spineTimers: c.timers });
       const ea = E('a', ['/assets/spine/a.png', '/assets/spine/common.png']);
       const eb = E('b', ['/assets/spine/b.png', '/assets/spine/common.png']);
       await a.spine.acquire(ea);
       await a.spine.acquire(eb);
-      a.spine.release(ea);                   // a evicted (max 1) while b still uses common.png
+      a.spine.release(ea);                   // a evicted (max 1) while b still uses common.png …
+      assert.deepEqual(f.calls.assets, [], '… in the eviction pass a moment later (SPINE_EVICT_DELAY_MS)');
+      c.advance(SPINE_EVICT_DELAY_MS + 10);
       assert.deepEqual(f.calls.assets, ['/assets/spine/a.skel', '/assets/spine/a.atlas']);
       assert.deepEqual(f.calls.loader, ['/assets/spine/a.png']);
       a.spine.release(eb);

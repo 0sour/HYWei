@@ -13,7 +13,7 @@
 // ATTACK_PAUSE seconds after each attack. Reaching the final leg's end = leak. An `attract` (诱导) status suspends the
 // route: the enemy walks to the status point instead (moveAttracted) and re-plans its route when released.
 
-import { ATTACK_PAUSE, MOVE_SCALE, PROJECTILE_SPEEDS, PROJECTILE_SPEED, COLS } from './constants.js';
+import { ATTACK_PAUSE, MOVE_SCALE, PROJECTILE_SPEEDS, PROJECTILE_SPEED, BOOMERANG_RETURN_SPEED, COLS } from './constants.js';
 import { sortEnemyTargets, sortAllyTargets, canTargetEnemy, canTargetAlly, tileKeyOf } from './targeting.js';
 import { reduceElement } from './damage.js';
 import { OB_CRATE } from './grid.js';
@@ -140,7 +140,9 @@ export function performAttack(b, u, prof, targets, opts = null) {
     b._ev(['atk', u.id, t.id, vis]);
     if (isHeal) { doHeal(b, u, prof, t); continue; }
     const info = { isSkill, index: i, attackId };
-    if (ranged && t.side === 'enemy') {
+    if (ranged && t.side === 'enemy' && prof.projectile === 'boomerang') {
+      throwBoomerang(b, u, prof, t, info);
+    } else if (ranged && t.side === 'enemy') {
       const speed = PROJECTILE_SPEEDS[prof.projectile] ?? PROJECTILE_SPEED;
       // projectiles land even if the shooter died meanwhile (damage is credited to it)
       b.addProjectile({ from: u, target: t, speed, visual: prof.projectile, source: u, hitDead: prof.splashRadius > 0,
@@ -152,6 +154,29 @@ export function performAttack(b, u, prof, targets, opts = null) {
   if (b._hooks.attack) b.emit('attack', { attacker: u, targets, isSkill });
   if (u.skill) u.skill.onAttackPerformed(targets, isSkill, !!(opts && opts.noAmmo));
   if (prof.afterAttack) b._safe(() => prof.afterAttack(b, u, targets), 'profile.afterAttack', u);
+}
+
+/**
+ * 回环射手 boomerang (projectile 'boomerang', professions.js loopshooter): it flies out to the target at
+ * PROJECTILE_SPEEDS.boomerang and the attack hits on arrival; a target that died / vanished meanwhile is not hit (the
+ * boomerang still flies to its last position — a splash profile would burst there), then it flies back to the thrower's
+ * current position at BOOMERANG_RETURN_SPEED, dealing nothing on the way back, and is caught (u.trait.boomerangsOut −1:
+ * the thrower attacks again once every boomerang is back). A thrower knocked out / withdrawn meanwhile loses it — nothing
+ * returns to a unit off the field or to a later deployment of it (the deploy hook hands it a fresh one).
+ */
+function throwBoomerang(b, u, prof, t, info) {
+  const seq = u.deploySeq;
+  u.trait.boomerangsOut = (u.trait.boomerangsOut || 0) + 1;
+  const home = () => u.alive && u.deployed && u.deploySeq === seq;
+  b.addProjectile({ from: u, target: t, speed: PROJECTILE_SPEEDS.boomerang, visual: 'boomerang', source: u, hitDead: true,
+    onHit: (c) => {
+      // (guarded on its own: a content error in the hit must not cost the thrower its boomerang for the battle)
+      if (c.target || prof.splashRadius > 0) b._safe(() => resolveHit(b, u, prof, c.target, info, c.x, c.y), 'boomerang.hit', u);
+      if (!home()) return;
+      // hitDead: flies on to the thrower's last position even while it is hidden, caught there when it is still home
+      b.addProjectile({ from: { x: c.x, y: c.y }, target: u, speed: BOOMERANG_RETURN_SPEED, visual: 'boomerangReturn', source: u, hitDead: true,
+        onHit: () => { if (home() && u.trait.boomerangsOut > 0) u.trait.boomerangsOut--; } });
+    } });
 }
 
 /** Apply one attack hit (called on impact for projectiles). `target` may be null (splash on a dead target's spot). */

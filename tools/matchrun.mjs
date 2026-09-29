@@ -16,8 +16,9 @@
 //   --rehearsal N  layouts each bot rehearses per prep with the real sim (default: the Match default, 3; 0 = off,
 //               faster sweeps with the heuristic placement only)
 //   --check     audit every match: engine invariants at every phase change + rule checks (server/match/audit.js:
-//               income, upgrade price, freeze, shop odds/bans, drafts, 联防 helpers, settle LP, final assault
-//               pairing/pool, hidden core, titles, deadlines). Exit code 1 when anything is violated.
+//               income, upgrade price, freeze, shop odds/bans, temp overflow lifetime (no piece outlives the prep it is
+//               due at), drafts, 联防 helpers, settle LP, final assault pairing/pool, hidden core, titles, deadlines).
+//               Exit code 1 when anything is violated.
 //   --errors    per-source error summary over all runs: sim/content errors grouped by content module + handler label
 //               (+ unit) with occurrence and battle counts, meta handler errors by registry key, match engine errors
 //   --odds      shop tier distribution of rolled chess slots per shop level (all runs)

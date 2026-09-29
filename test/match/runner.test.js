@@ -1,7 +1,8 @@
 // The browser battle runner (public/js/battle/runner.js) under Node with a fake socket, a manual clock and manual
 // animation frames: pacing (60 ticks per real second at 2×, ≤ 8 per frame), the b.snap / b.ev feed and the field meta,
 // b.progress / b.result when authoritative (valid protocol frames, the same result as the server's simulation),
-// fast-forward to `elapsed`, b.end (forced / takeover), the hidden-tab pump, the boss pool sync, phase clearing.
+// fast-forward to `elapsed`, b.end (forced / takeover), the hidden-tab pump, the boss pool sync, phase clearing, the live
+// leak count of normal fields (state().leaks, user playtest #3 item 2).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createBattleRunner, ticksPerFrameCap } from '../../public/js/battle/runner.js';
@@ -328,4 +329,78 @@ test('solo pause: m.public.paused freezes every local battle clock (no ticks, no
   r.advance(1000);
   assert.ok(Math.abs(e.battle.tickCount - (t1 + 60)) <= 2, `resumed on the same clock, no catch-up burst (${e.battle.tickCount})`);
   r.runner.dispose();
+});
+
+/** realStart() with an empty board: every enemy of the wave walks into the blue gate. */
+function leakingStart(seed = 7307) {
+  const start = realStart(seed);
+  const spec = JSON.parse(JSON.stringify(start.spec));
+  for (const p of spec.players) p.units = [];
+  return { ...start, spec };
+}
+
+test('live leaks (user playtest #3 item 2): state().leaks carries the own field\'s counted leaks as they happen — authoritative or display — published in the frame of each leak; the settle rule\'s count at the end', async () => {
+  const start = leakingStart();
+  const r = rig();
+  const seen = [];
+  r.store.subscribe((s, prev) => {
+    const n = s.match.battle && s.match.battle.leaks ? s.match.battle.leaks[start.fieldId] : undefined;
+    const was = prev.match.battle && prev.match.battle.leaks ? prev.match.battle.leaks[start.fieldId] : undefined;
+    if (n !== was && n !== undefined) seen.push(n);
+  });
+  r.net.emit('b.start', start);
+  await r.settle();
+  const e = r.runner._entries.get(start.battleId);
+  assert.deepEqual(r.store.get().match.battle.leaks, { [start.fieldId]: 0 }, 'published with the field, 0 before any leak');
+  // step frame by frame: whenever the battle recorded a counted leak, the store has it after that same frame
+  for (let i = 0; i < 200 * 60 && !e.done; i++) {
+    r.advance(1000 / 60);
+    const now = specMod.battleProgress(e.battle).leaks;
+    assert.equal(r.store.get().match.battle.leaks[start.fieldId], now, `frame ${i}: the store follows the battle`);
+  }
+  assert.ok(e.done, 'finished');
+  const res = e.battle.result();
+  const counted = Object.values(res.perPlayer).reduce((n, pp) => n + pp.leaked.filter((l) => l && l.counted !== false).length, 0);
+  assert.ok(counted >= 3, `the empty board leaks (${counted})`);
+  assert.equal(r.store.get().match.battle.leaks[start.fieldId], counted, 'the settle rule\'s count (Match.settle: counted !== false)');
+  assert.equal(seen[seen.length - 1], counted, 'the last publish carries the final count');
+  assert.ok(seen.every((n, i) => i === 0 || n > seen[i - 1]), `one publish per new count, increasing (${seen})`);
+  r.runner.dispose();
+
+  // a display replica of the own field (the server simulates it: reconnect after a takeover) counts the same
+  const r2 = rig();
+  r2.net.emit('b.start', { ...start, authoritative: false, watch: false, elapsed: 30 });
+  await r2.settle();
+  const e2 = r2.runner._entries.get(start.battleId);
+  assert.equal(r2.store.get().match.battle.leaks[start.fieldId], specMod.battleProgress(e2.battle).leaks, 'counted during the silent catch-up');
+  for (let i = 0; i < 200 && !e2.done; i++) r2.advance(1000, 50);
+  assert.equal(r2.store.get().match.battle.leaks[start.fieldId], counted);
+  assert.equal(r2.net.sent.length, 0, 'still never reports');
+  // the round moves on: the next prep drops the battles and their counts
+  r2.store.patch('match', { public: { phase: 'SETTLE' } });
+  assert.equal(r2.store.get().match.battle.leaks[start.fieldId], counted, 'kept through SETTLE (the top bar resets on the settled m.private)');
+  r2.store.patch('match', { public: { phase: 'PREP' } });
+  assert.equal(r2.store.get().match.battle, null);
+  r2.runner.dispose();
+});
+
+test('live leaks: a boss field is not counted (the merged team LP moves through b.pool); b.end forced publishes the final count', async () => {
+  const start = leakingStart(7308);
+  const r = rig();
+  r.net.emit('b.start', start);
+  await r.settle();
+  r.advance(1500);
+  r.net.emit('b.end', { battleId: start.battleId, fieldId: start.fieldId, reason: 'timeout' });
+  await r.settle();
+  const e = r.runner._entries.get(start.battleId);
+  assert.ok(e.done);
+  const res = e.battle.result();
+  const counted = Object.values(res.perPlayer).reduce((n, pp) => n + pp.leaked.filter((l) => l && l.counted !== false).length, 0);
+  assert.equal(r.store.get().match.battle.leaks[start.fieldId], counted, 'timeout leaks (the enemies left on the field) are counted at once');
+  r.runner.dispose();
+  const r2 = rig();
+  r2.net.emit('b.start', { ...start, kind: 'boss', fieldId: 'b1', battleId: `${start.battleId}x` });
+  await r2.settle();
+  assert.deepEqual(r2.store.get().match.battle.leaks, {}, 'only normal fields');
+  r2.runner.dispose();
 });

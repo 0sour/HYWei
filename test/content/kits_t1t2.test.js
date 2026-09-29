@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBattle, enemyRec, chessRec, checkInvariants } from '../helpers/battleHarness.js';
 import { getDefaultSource } from '../../server/sim/simdata.js';
-import { ELEMENT_GAUGE_MAX } from '../../server/sim/constants.js';
+import { ELEMENT_GAUGE_MAX, PROJECTILE_SPEEDS, BOOMERANG_RETURN_SPEED } from '../../server/sim/constants.js';
 import { sortEnemyTargets } from '../../server/sim/targeting.js';
 
 const ds = getDefaultSource();
@@ -298,6 +298,33 @@ test('1_09 跃跃: 乐趣加倍 throws cnt boomerangs per attack, ATK +atk; 戏�
   h2.run(5);
   const d2 = dealt(h2, u2);
   assert.ok(d2.length > 0 && d2.every((c) => [1, tb2.atk_scale].some((k) => Math.abs(c.amount - u2.s.atk * k * tb.atk_scale) < 1e-6)), 'adjacent ×1.1');
+  done(h2);
+});
+
+test('1_09 跃跃 回环射手: each attack is a boomerang (out 15, back 3.75 tiles/s); faster than its flight she waits for the catch; 乐趣加倍 hits land together', () => {
+  const id = 'chess_char_1_09_a', bb = bbOf(id);
+  const flight = (d) => d / PROJECTILE_SPEEDS.boomerang + d / BOOMERANG_RETURN_SPEED;
+  // ASPD +200 (interval 0.333 s) at 3 tiles: the out-and-back flight (1.0 s) sets the pace
+  const h = run({
+    defs: { enemies: { e: dummy('e') }, chess: noGarrison(id) }, units: [{ chessId: id, row: 10, col: 4 }], enemies: [{ key: 'e', pos: [10, 7] }],
+    setup(b) { b.on('deploy', ({ unit }) => { if (unit.kind === 'op') b.addBuff(unit, { key: 'test:aspd', mods: { aspd: 200 } }); }); },
+  });
+  const u = h.unit(id);
+  h.run(6);
+  assert.ok(u.s.interval < flight(3) / 2);
+  const at = h.hooksOf('attack').filter((c) => c.attacker === u).map((c) => c.t);
+  assert.ok(at.length >= 4 && at.length <= 7, `${at.length} attacks in 6 s`);
+  for (let i = 1; i < at.length; i++) assert.ok(Math.abs(at[i] - at[i - 1] - flight(3)) <= 2 * h.TICK, `gap ${(at[i] - at[i - 1]).toFixed(3)} ≈ ${flight(3)}`);
+  assert.ok(h.eventsOf('atk').filter((e) => e[1] === u.id).every((e) => e[3] === 'boomerang'));
+  done(h);
+  // 乐趣加倍: cnt boomerangs on the same path — cnt hits at the same moment, then one catch
+  const h2 = run({ defs: { enemies: { e: dummy('e') }, chess: noGarrison(id) }, units: [{ chessId: id, row: 10, col: 4, carryState: READY }], enemies: [{ key: 'e', pos: [10, 7] }] });
+  const u2 = h2.unit(id);
+  h2.run(5);
+  assert.ok(u2.skill.active);
+  const byT = new Map();
+  for (const c of dealt(h2, u2, (x) => x.dmg.isSkill)) byT.set(c.t, (byT.get(c.t) ?? 0) + 1);
+  assert.ok(byT.size >= 3 && [...byT.values()].every((n) => n === bb.cnt), `hits per landing ${[...byT.values()]}`);
   done(h2);
 });
 

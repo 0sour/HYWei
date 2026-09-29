@@ -72,6 +72,9 @@
 // duplicate b.result (a browser re-sending one it believes lost) is answered ok and changes nothing.
 // Solo pause (g.pause { on }, setPause): freezes the field clocks, result deadlines, server release timers, the boss
 // clock and the server pacers; m.public.paused; resume shifts every clock / deadline by the pause.
+// Live LP (user playtest #3 item 2): during COMBAT / 联防 m.public players[].pendingLp = min(lpCapPerRound, the counted
+// leaks of the player's own battle so far) (_pendingLpView; omitted when 0) — the teammates' rows of the team panel
+// show lp − pendingLp; the settlement lands with the SETTLE view, where it is gone.
 //   opts.clientCombat  default true (env SP_COMBAT=server → false: the legacy server-run + snapshot streaming mode)
 //   opts.verify        'off' | 'sample' | 'all' (env SP_VERIFY, default 'off'): re-simulate accepted client results
 //                      ('sample': ~1 in 8, in a later callback, mismatches logged; 'all': before accepting — the
@@ -125,7 +128,7 @@ import {
   FieldRunner, DeadBattle, GAME_SPEED, snapFrame, runHeadless, timelineAt, HeadlessPacer, syntheticResult,
   validateClientResult, RESULT_GRACE_MS, BOSS_SILENCE_MS, HARD_CAP_SECONDS, HeadlessJob, HEADLESS_SLICE_MS, CATCHUP_TICKS_PER_INTERVAL,
 } from './fields.js';
-import { buildBattleSpec, createBattleFromSpec, resultDigest, compactResult as compactForVerify } from '../sim/spec.js';
+import { buildBattleSpec, createBattleFromSpec, resultDigest, compactResult as compactForVerify, battleProgress } from '../sim/spec.js';
 import { CreditPool } from './finalAssault.js';
 import { buildResult } from './results.js';
 import { botPrepBeginSteps, botPrepEndSteps, botPickBand, botPickCard } from './bot.js';
@@ -753,6 +756,8 @@ export class Match {
         fieldId: this.fieldOf(ps),
         status: this.statusOf(ps),
         autoplay: ps.autoplay,
+        // the LP this round's own battle will cost at settlement so far (COMBAT / 联防 only, omitted when 0)
+        ...this._pendingLpView(ps),
       })),
       fields: this.fields.map((f) => {
         const v = { fieldId: f.fieldId, kind: f.kind, players: f.players.slice(), live: !!f.live };
@@ -1776,6 +1781,29 @@ export class Match {
       return { killed, total, done: false };
     }
     return { killed: f.progress.killed, total: f.progress.total, done: false };
+  }
+
+  /**
+   * LP a player's own battle of this normal round will cost at settlement so far — settle()'s min(lpCapPerRound,
+   * counted leaks) — for the teammates' live LP (m.public players[].pendingLp, user playtest #3 item 2; the own client
+   * counts its local battle itself). COMBAT: the recorded result once every field is done, else the field's result, else
+   * the authority's b.progress leaks (a server-run field reports none before its result is released); 联防: the own
+   * battle's count — the most the 联防 can charge (settle: min(cap, survivors) ≤ min(cap, counted)). Omitted when 0 and
+   * in every other phase (boss rounds charge the merged team LP live).
+   * @returns {{ pendingLp?: number }}
+   */
+  _pendingLpView(ps) {
+    if (!ps || !ps.alive || (this.phase !== PHASE.COMBAT && this.phase !== PHASE.UNITE)) return {};
+    const counted = (r) => (r && Array.isArray(r.leaked) ? r.leaked.filter((l) => l && l.counted !== false).length : 0);
+    let n = 0;
+    if (this.lastResults.has(ps.playerId)) n = counted(this.lastResults.get(ps.playerId));
+    else if (this.phase === PHASE.COMBAT) {
+      const f = this.fields.find((x) => x && x.kind === 'normal' && Array.isArray(x.players) && x.players.includes(ps.playerId));
+      if (f && f.cc) n = f.done && f.result ? counted(f.result.perPlayer && f.result.perPlayer[ps.playerId]) : Number(f.progress && f.progress.leaks) || 0;
+      else if (f && f.battle) { try { n = battleProgress(f.battle).leaks; } catch { n = 0; } }
+    }
+    const loss = Math.min(this.gd.lpCapPerRound, Math.max(0, Math.trunc(Number(n) || 0)));
+    return loss > 0 ? { pendingLp: loss } : {};
   }
 
   /** The connected human who simulates a field: lowest seat among its players (normal: the owner). */

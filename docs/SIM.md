@@ -615,6 +615,31 @@ export function install(battle) {
 }
 ```
 
+**8. Timed follow-ups — 蕾缪安 `chess_char_6_01` S3 礼炮·强制追思** (user playtest #3; bb `attack@emit_offset 0.2`,
+`dist_1` / `dist_2`, `proj_atk_scale_1` / `_2`; PRTS S3 note: after the skill ends one bombardment every 0.3 s in lock
+order on a random point of the 0.4-side square around each lock mark, ATK cached at the end, ≤ 33 in 10 s). Content that
+unfolds over time chains `battle.after` callbacks owned by the unit (they run even if it dies later — check what the
+official text says and bail out yourself); random numbers come from `battle.rng`, drawn in the unit's facing frame
+(`dir.js rotateOffset`) so a turned board plays alike:
+```js
+const bombard = (battle, unit, locks) => {
+  const atk = unit.s.atk, seq = unit.deploySeq;                        // ATK cached at the skill's end
+  const n = Math.min(locks.length, Math.floor(10 / 0.3 + 1e-9));        // ≤ 33 shells
+  const fire = (i) => {
+    if (!(unit.alive && unit.deployed && unit.deploySeq === seq)) return;  // knocked out: no further shell
+    const L = markOf(locks[i]);                                         // follows the enemy / stays where it left
+    const [oy, ox] = rotateOffset(battle.rng.range(-spread, spread), battle.rng.range(-spread, spread), unit.dir);
+    const x = L.x + ox, y = L.y + oy;
+    battle.fx('bombardShell', { x, y, id: unit.id, r: d2, t: 0.3, i });  // the renderer drops a shell there
+    battle.after(0.3, () => blast(battle, unit, atk, x, y), { owner: unit });   // lands 0.3 s later [ASSUMED]
+    if (i + 1 < n) battle.after(0.3, () => fire(i + 1), { owner: unit });
+  };
+  if (n > 0) fire(0);
+};
+```
+(`blast` emits fx `'bombard'` at (x, y) and deals `proj_atk_scale_1` / `_2` × the cached ATK to every enemy within
+`dist_2`, once each; the full kit is `content/kits/tier6.js lemuen`.)
+
 ---
 
 ## 8. Professions (server/sim/professions.js)
@@ -622,10 +647,12 @@ export function install(battle) {
 Profile resolution: `PROFESSION_DEFAULTS[profession] → SUB[subProfessionId] → trait tunables (trait text + data
 trait.bb, elites include module upgrades) → data fields (dmgType / attackKind / projectile / canHitFly / targetPriority)
 → kit.trait`. Defaults: SNIPER ranged phys arrow · CASTER ranged arts bolt · MEDIC ranged heal · SUPPORT ranged arts ·
-TANK/WARRIOR/PIONEER/SPECIAL melee phys (melee cannot hit FLY). Ranged attacks fly as projectiles (arrow 14, bolt 11,
-bomb/lob 8, drone 16 tiles/s); melee/`none` hits are instant. Kit-settable profile flags beyond the table: `hitSleep`
-(targets and damages sleeping enemies — "可以攻击沉睡的敌人"), `onEachHit(b, u, victim, hctx)`, `dmgMul`, `afterHit`,
-`afterAttack`, `canAttack`, `hitsFn`, `priority`, `blockFly`, `noHeal` (see the header of professions.js).
+TANK/WARRIOR/PIONEER/SPECIAL melee phys (melee cannot hit FLY). Ranged attacks fly as projectiles
+(`constants.js PROJECTILE_SPEEDS`: arrow 14, bolt 11, bomb/lob 8, orb 10, drone 16, enemy 10 tiles/s; boomerang 15 out,
+3.75 back = `BOOMERANG_RETURN_SPEED`, PRTS 跃跃); melee/`none` hits are instant. Kit-settable profile flags beyond the
+table: `hitSleep` (targets and damages sleeping enemies — "可以攻击沉睡的敌人"), `onEachHit(b, u, victim, hctx)`, `dmgMul`,
+`afterHit`, `afterAttack`, `canAttack`, `hitsFn`, `priority`, `blockFly`, `noHeal`, `boomerang` (the projectile stays
+`'boomerang'` whatever the data's generic ranged projectile says) (see the header of professions.js).
 
 | sub | behaviour |
 |---|---|
@@ -635,7 +662,7 @@ bomb/lob 8, drone 16 tiles/s); melee/`none` hits are instant. Kit-settable profi
 | aoesniper / splashcaster / blastcaster | splash 1.1 tiles at full damage |
 | bombarder | ground-only splash 1.0 + aftershock(s) at 50 % ATK (bb append_atk_scale / times) |
 | hunter | 8 bullets (bb value), ×1.2 ATK (bb atk_scale), reloads 1/s after 1 s without attacking; can't attack when empty |
-| loopshooter | next attack waits for the boomerang (2 × distance / 10 s) |
+| loopshooter | 回环射手 (user playtest #3): every attack throws a boomerang (`ai.js throwBoomerang`, projectile `'boomerang'`) out to the target at 15 tiles/s — it hits on arrival — and back to the thrower's current position at 3.75 tiles/s without damage (PRTS 跃跃 "投射物飞行速度15，返回时飞行速度3.75"); attacks only while holding it (every boomerang thrown caught — "必须回收全部回旋投掷物才可以进行下一次攻击", `unit.trait.boomerangsOut`) and with the attack cooldown ready, so the real interval is the longer of the two; a target dead mid-flight is not hit (it still flies to the last position and back); knocked out / withdrawn ⇒ lost, a redeployed thrower holds a fresh one; 跃跃 S2's extra boomerangs share the one flight (cnt hits) |
 | reaperrange | hits every enemy in range; ×1.5 (bb atk_scale) on the trait front grid (or its own line ahead) — both along its direction |
 | chain | chain N (trait text/bb max_target) with −15 % per jump (bb chain.atk_scale), 1.8-tile jumps, sluggish on each hit |
 | funnel | drone damage 20 % → +15 %/hit on the same target → 110 % (bb init/delta/max) |
@@ -681,7 +708,8 @@ Unknown subprofessions fall back to the profession default (test `professions.te
 - `snapshot()` → `{ fieldId, t, units: [[id, x, y, hp, maxHp, sp, spMax, flags, anim]], dp, killed, total, dps?, boss? }`.
   `sp/spMax` show remaining duration/ammo as a draining bar while a timed skill is active. Units in DIE state stay 0.8 s.
 - `drainEvents()` tuples: `['spawn', UnitInfo]` (first appearance), `['deploy', id]` (every (re)deploy), `['atk', src, tgt, projKind]`
-  (`none|arrow|bolt|bomb|lob|orb|drone|enemy|chain|chainHeal`), `['dmg', tgt, amount, type]` (`phys|arts|true|burn|neural|necrosis|apoptosis`),
+  (`none|arrow|bolt|bomb|lob|orb|drone|enemy|boomerang|chain|chainHeal`; a boomerang's way back has no event — the
+  renderer flies it back to the thrower at `BOOMERANG_RETURN_SPEED`), `['dmg', tgt, amount, type]` (`phys|arts|true|burn|neural|necrosis|apoptosis`),
   `['heal', tgt, amount]`, `['skill', id, 1|0]`, `['die', id, reason]`, `['leak', id]`, `['status', id, key, 1|0]`,
   `['fx', kind, x, y, extra]`, `['layer', playerId, bondId, n]`, `['bounty', playerId, coins]`.
 - `UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?, skillIndex? }` (`skillIndex`: an ally's equipped skill, DESIGN §16)

@@ -257,7 +257,7 @@
 .dpick__opt .icon { width: .2rem; height: .2rem; color: var(--d-color); opacity: .55; transition: opacity var(--t-fast); }
 .dpick__opt:hover:not(:disabled) { color: var(--text-hi); background: rgba(255, 255, 255, .03); }
 .dpick__opt:hover:not(:disabled) .icon { opacity: 1; }
-.dpick__opt:disabled { cursor: progress; }
+.dpick__opt:disabled { cursor: default; }
 .dpick__opt.is-active {
   color: var(--d-color);
   background: transparent; background: color-mix(in srgb, var(--d-color) 17%, transparent);
