@@ -7,12 +7,17 @@
 // units "率先迎敌" on the RIGHT-hand field (colOffset +8, where the escaped_multi routes enter), the other keeps the
 // left half (colOffset 0); a lone helper plays escaped_single on its own field. Their operators keep HP%, SP and a
 // running timed skill from the end of their own combat (BattleResult.unitsEnd → PlayerBattleInput.units[].carryState,
-// "阵地以其当前状态"); an operator dead at the end of its own combat (HP ratio 0) and its summons stay out of the 联防
-// battle [ASSUMED: the sim has no "start undeployed with a running redeploy timer" input, so it does not come back
-// mid-联防 either]. Enemies = the union of every leaker's counted leaks (same stats: the SpawnSpec mods travel with
-// the leak), routed on the escaped template (`escaped_single` for 1 helper, `escaped_multi` for 2): walkers on its
-// `lrsldr` action, flyers on `yokai`, tokens on `gopro_2` / `lazerd` (waves.js buildUniteWave); kill bounties keep
-// paying the killer (a helper). No IN_BATTLE layer gains. Time limit = the round's combat limit.
+// "阵地以其当前状态"). An operator knocked out at the end of its own combat (alive false) is fielded with
+// `carryState: { down: true }`: PRTS "部署完成后，将对应单位的生命比例、技力修改至与上一阶段结束时相同（召唤物仅修改技力，
+// 上一阶段为退场状态的干员强制退场）" — the sim deploys it with everyone and forces it out at once (constants.js
+// FORCED_EXIT), so it lies on its own tile with the redeploy ring and comes back like after any knock-out (user
+// playtest #5 item 2: it used to be left out and vanished). Its timer is its full redeploy time [ASSUMED: the
+// official 联防 setup carries only hp / tech per operator (research 09 §3 HelpBattleInfo), no timer]. Summons are fielded as the board has
+// them (a summon's own end state is not carried: unitsEnd lists operators only). Enemies = the union of every leaker's
+// counted leaks (same stats: the SpawnSpec mods travel with the leak), routed on the escaped template (`escaped_single`
+// for 1 helper, `escaped_multi` for 2): walkers on its `lrsldr` action, flyers on `yokai`, tokens on `gopro_2` /
+// `lazerd` (waves.js buildUniteWave); kill bounties keep paying the killer (a helper). No IN_BATTLE layer gains. Time
+// limit = the round's combat limit.
 // LP: an enemy still alive at the end (leaked in the unite battle, or never spawned before the limit) costs its
 // SOURCE player 1 LP; each player's round loss = min(lpCap, survivors attributed to them + leaks that could not
 // re-enter) — the same 10 cap as a normal round.
@@ -99,19 +104,16 @@ export function uniteBattleOpts(m, plan, timeLimit) {
   const wave = buildUniteWave(m.gd, plan.leaked, plan.helpers.length, timeLimit);
   const players = plan.helpers.map((ps, i) => {
     const carry = new Map();
-    const dead = new Set();
     const r = m.lastResults.get(ps.playerId);
     for (const u of (r && r.unitsEnd) || []) {
       if (!u || u.uid == null) continue;
-      if (!u.alive) { dead.add(u.uid); continue; }
+      // knocked out at the end of its own combat: 强制退场 right after the deployment (see header)
+      if (!u.alive) { carry.set(u.uid, { down: true }); continue; }
       carry.set(u.uid, { hpPct: Number.isFinite(u.hpPct) ? Math.max(0.01, Math.min(1, u.hpPct)) : 1, sp: Number.isFinite(u.sp) ? u.sp : 0, skillActive: !!u.skillActive });
     }
     // 2 helpers: the first one meets the enemies first on the right-hand field (escaped_multi enters at col 18)
     const colOffset = plan.helpers.length > 1 && i === 0 ? 8 : 0;
     const input = ps.battleInput({ side: 'L', colOffset, carry });
-    // "阵地以其当前状态": an operator knocked out in the helper's own combat is not on that position (HP ratio 0) — it
-    // stays out of the 联防 battle together with its summons instead of redeploying at full HP
-    if (dead.size) input.units = input.units.filter((u) => !(u.kind === 'token' ? dead.has(u.ownerUid) : dead.has(u.uid)));
     const ev = { input, kind: 'unite', round: m.round, spawns: wave.spawns };
     m.dispatch(ps, 'onBattleStart', ev);
     return ev.input && typeof ev.input === 'object' ? ev.input : input;

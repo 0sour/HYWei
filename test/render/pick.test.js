@@ -8,7 +8,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { presetCamera, pickTile } from '../../public/js/render/projection.js';
-import { pickOnTile, pickBattle, ENEMY_REACH } from '../../public/js/render/pick.js';
+import { pickOnTile, pickBattle, ENEMY_REACH, AREA_PICK, hitRectAt } from '../../public/js/render/pick.js';
+import { hitRect } from '../../server/sim/body.js';
 import { unitDepthKey } from '../../public/js/render/units.js';
 import { TILE_H } from '../../public/js/render/style.js';
 import { GEO } from '../../shared/constants.js';
@@ -150,6 +151,33 @@ describe('pickBattle: allies by their tile, walking enemies by their ground posi
     const A = ally('A', 11, 5);
     assert.equal(pickBattle([A, e], at(5, 11), 400 + 0.3 * 80, 400 - 1.1 * 80).key, 'A', 'the ally\'s tile centre, 0.3 tile beside the head');
     assert.equal(pickBattle([A, e], at(5, 10.6), 400, 400 - 1.0 * 80).key, 'e', 'on the enemy\'s head (over the near edge of that tile)');
+  });
+
+  test('a huge boss (user playtest #5 item 10): a press anywhere on its hit area picks it; allies on their tile and nearer enemies win', () => {
+    // 假想敌：胄 at (3,10): 4.95 × 2.95 up 1 → rows 3–5 × cols 8–12 (the sim's rectangle, server/sim/body.js)
+    const HA = { w: 4.95, h: 2.95, dx: 0, dy: 1 };
+    const area = hitRectAt(10, 3, HA);
+    assert.deepEqual(area, hitRect({ x: 10, y: 3, hitArea: HA }), 'the same rectangle as the sim');
+    assert.equal(hitRectAt(10, 3, null), null);
+    const boss = { key: 'boss', tile: null, x: 10, y: 3, area, body: { x: 600, top: 600 - 3 * 90, feet: 600, s: 90 } };
+    const far = [2000, 2000]; // pointer far from its drawn body line on screen: only the ground area counts
+    for (const [x, y] of [[8, 3], [12.4, 5.4], [7.6, 4], [10, 5]]) assert.equal(pickBattle([boss], at(x, y), ...far)?.key, 'boss', `(${x},${y}) on the area`);
+    for (const [x, y] of [[7.4, 4], [10, 5.6], [9, 2.3], [12.6, 3]]) assert.equal(pickBattle([boss], at(x, y), ...far), null, `(${x},${y}) off the area`);
+    const A = ally('A', 4, 8), e = foe('e', 11, 4.2);
+    assert.equal(pickBattle([boss, A], at(8.3, 4.3), ...far).key, 'A', 'an ally on the fence tile inside the area');
+    assert.equal(pickBattle([boss, A], at(9.2, 4.3), ...far).key, 'boss', 'the next tile: the boss');
+    assert.equal(pickBattle([boss, e], at(11.2, 4.1), ...far).key, 'e', 'a regular enemy near the pointer');
+    assert.ok(AREA_PICK > Math.SQRT1_2 && AREA_PICK > ENEMY_REACH);
+    // a flying unit never uses a ground area
+    assert.equal(pickBattle([{ ...boss, fly: true }], at(9, 4), ...far), null);
+    // the drawn body: an upright box from its feet to its head, hw tiles either side (its px per tile) — off the grid
+    // too
+    const big = { ...boss, body: { ...boss.body, hw: 2.475 } };
+    assert.equal(pickBattle([big], null, 600 + 2.2 * 90, 600 - 2.8 * 90)?.key, 'boss', 'its shoulder, far from the centre line');
+    assert.equal(pickBattle([boss], null, 600 + 2.2 * 90, 600 - 2.8 * 90), null, 'without hw: the centre line only');
+    assert.equal(pickBattle([big], null, 600 + 2.6 * 90, 600 - 1 * 90), null, 'beside the box');
+    assert.equal(pickBattle([big], null, 600 + 1.5 * 90, 600 - 3.8 * 90), null, 'above its head (beyond the line reach too)');
+    assert.equal(pickBattle([big, A], at(8.1, 4.1), 600 - 2 * 90, 600 - 1 * 90).key, 'A', 'the ally on its tile inside the box');
   });
 
   test('bad input: nothing', () => {

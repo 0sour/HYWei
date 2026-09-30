@@ -12,8 +12,10 @@
 //     usable (move to a free hand slot, place, equip, destroy, sell) through the NEXT prep — nothing is destroyed before
 //     the player saw it in a prep ("处于临时整备区的调度资源，在进入下一回合后会自动销毁").
 //   * Board: own region rows 9–12 × cols 2–10, legality from the stage legend (board.js); deploy cap 8 (+effects);
-//     tokens (placeable summons) don't use deploy slots. Board↔hand swaps are always allowed. A terrain change
-//     (terrain 机变 cards, content overrides) withdraws the pieces left on tiles they may no longer occupy (hand,
+//     tokens (placeable summons) don't use deploy slots. Board↔hand swaps are always allowed. In a boss round the
+//     legality reads the player's half of the boss field (Match.deployFieldOf → board.js field 'bossL' / 'bossR',
+//     user playtest #5 item 7); board coordinates are unchanged. A terrain change (terrain 机变 cards, content
+//     overrides) or a change of the deploy field withdraws the pieces left on tiles they may no longer occupy (hand,
 //     overflow temp; summons back onto their stack) — see _evictIllegal.
 //   * Shop: per-level chess slots + item slot, copy-weighted rolls from the SHARED pool (pool.js); refresh 1 (free
 //     refreshes first), one toggle freezes all unsold slots until the next round start (a manual refresh while frozen
@@ -122,6 +124,8 @@ export class PlayerState {
     /** last combat result for this player (unite carry state, bounties) */
     this.lastResult = null;
     this._deployMap = null;
+    /** the deploy field of `_deployMap` ('normal' | 'bossL' | 'bossR', Match.deployFieldOf) */
+    this._deployField = undefined;
     /** the deploy map changed since the board's legality was last checked (invalidateDeployMap) */
     this._legalityStale = false;
     /** Match.scheduleBotPrep: the latest bot prep of this seat (older sliced rehearsals drop out) */
@@ -199,8 +203,19 @@ export class PlayerState {
     return resolveLoadout(this.loadout, chessRecord, (id) => this.gd.chess(id));
   }
 
+  /**
+   * Deploy classes of the board tiles (server/match/board.js buildDeployMap) on the field the player deploys on now
+   * (Match.deployFieldOf: the own board, or its half of the boss field in a boss round — user playtest #5 item 7).
+   * A change of that field (the boss round begins, a re-pairing) re-checks the board's legality like a terrain change.
+   */
   deployMap() {
-    if (!this._deployMap) this._deployMap = this.m.deployMapFor(this);
+    const field = typeof this.m.deployFieldOf === 'function' ? this.m.deployFieldOf(this) : 'normal';
+    if (this._deployMap && this._deployField !== undefined && this._deployField !== field) {
+      this._deployMap = null;
+      this._legalityStale = true;
+    }
+    if (!this._deployMap) this._deployMap = this.m.deployMapFor(this, field);
+    this._deployField = field;
     return this._deployMap;
   }
   /**
@@ -1280,6 +1295,7 @@ export class PlayerState {
   }
 
   recompute() {
+    this.deployMap(); // a change of the deploy field (a boss round's prep) marks the legality stale
     if (this._legalityStale) this._evictIllegal();
     this.bonds = computeBonds(this.gd, this);
     this.dirty();
@@ -1292,6 +1308,7 @@ export class PlayerState {
 
   battleInput({ side = 'L', colOffset = 0, carry = null } = {}) {
     // a terrain change not yet followed by a recompute (a content hook at the prep end) never fields an illegal board
+    this.deployMap();
     if (this._legalityStale) this.recompute();
     const units = [];
     for (const { r, c, piece } of boardOrder(this.board)) {

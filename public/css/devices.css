@@ -38,9 +38,10 @@ input, textarea, select { -webkit-user-select: text; user-select: text; }
    layer: step back over the HUD's safe-area offset so it stays on its unit on a notched phone */
 .gm__hud > .uframe { margin-left: calc(-1 * var(--sa-l)); margin-top: calc(-1 * var(--sa-t)); }
 /* the shop bar keeps its place at the bottom edge (it may reach into the home-indicator strip): raised by the bottom
-   inset it covered ~3/4 of the bench pads 2–9 on a notched phone (844×390 with the iPhone insets: 23 % of those tiles
-   left free, 71 % now — as without insets), and a bench piece is pressed / dropped on by its tile (user playtest #4
-   item 1). Its right edge stays inside the inset (the notch / rounded corner). */
+   inset it covered ~3/4 of the bench pads 2–9 on a notched phone (user playtest #4 item 1), and a bench piece is
+   pressed / dropped on by its tile. The prep camera keeps the bench clear of the bar (ui/fieldHost.js hudBands →
+   render/projection.js clearHud, user playtest #5 item 9). Its right edge stays inside the inset (the notch / rounded
+   corner). */
 .gm__hud > .shopbar { bottom: calc(.2rem - var(--sa-b)); }
 .gm > .spov { left: calc(2.8rem + var(--sa-l)); right: var(--sa-r); }
 /* every other screen is laid out inside the safe area (the app backdrop fills the notch strip) */
@@ -84,6 +85,8 @@ html:not(.sp-in-match) .toast-host { margin-top: var(--sa-t); }
   .readybtn { height: max(.56rem, 34px); }
   .toolbtn { min-height: max(.5rem, 30px); }
   .gm__gear { width: max(.56rem, 34px); height: max(.56rem, 34px); }
+  /* ⚙ / 📖 / ⛶ keep their desktop proportion (half the button) instead of an 11 px glyph in the grown button */
+  .gm__corner .gm__gear .icon { width: max(.28rem, 17px); height: max(.28rem, 17px); }
   .gtop__exit { min-width: max(.56rem, 34px); min-height: max(.56rem, 34px); }
   .gtop__iconbtn.has-sprite, .enemybtn.has-sprite { height: max(.46rem, 26px); width: calc(max(.46rem, 26px) * 35 / 29); }
   .gtop__iconbtn.has-sprite.is-wide, .enemybtn.has-sprite.is-wide { width: calc(max(.46rem, 26px) * 61 / 29); }

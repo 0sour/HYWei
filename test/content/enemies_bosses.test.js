@@ -127,7 +127,7 @@ test(`${nm('enemy_1404_msnip')}: 直击 — a unit in line is shot (arts ATK×at
   assert.ok(e.findBuff('ab:revealed') || h.b.time > s.initCooldown + s.bb.duration);
 });
 
-test(`${nm('enemy_10034_cnvsax')}: never attacks while stealthed; once blocked it counter-attacks and burns around itself`, () => {
+test(`${nm('enemy_10034_cnvsax')}: never attacks while stealthed; once blocked it counter-attacks and burns its locked target`, () => {
   const h = arena({ units: [{ chessId: 't_wall', row: 10, col: 5 }] });
   h.step();
   const free = put(h, 'enemy_10034_cnvsax', [9, 5]);           // next to the wall, not blocked
@@ -137,7 +137,7 @@ test(`${nm('enemy_10034_cnvsax')}: never attacks while stealthed; once blocked i
   h.run(5);
   const w = h.unit('t_wall');
   assert.ok(e.stats.attacks > 0);
-  assert.ok(w.elem.burn > 0, 'fire aura burns');
+  assert.ok(w.elem.burn > 0, '狂欢式演奏 burns its target (the blocker)');
 });
 
 test(`${nm('enemy_9008_acbunn')}: attacks several targets at once while stealthed`, () => {
@@ -483,7 +483,11 @@ test(`${nm('enemy_9007_acelem')}: harder to target (taunt −1); parasitises its
   h.run(2.6);
   const w = h.unit('t_wall');
   assert.ok(w.findBuff('ab:parasite'));
-  approx(w.s.elemTakenMul, tb('enemy_9007_acelem', '1.ep_damage_scale'));
+  // "受到的元素损伤提高至130%": an elementHit multiplier on the host's gauge fills (SIM.md §7.2), not the elemTakenMul mod
+  assert.equal(w.s.elemTakenMul, 1);
+  const n0 = w.elem.neural;
+  h.b.dealDamage(null, w, { type: 'element', element: 'neural', amount: 100 });
+  approx(w.elem.neural - n0, 100 * tb('enemy_9007_acelem', '1.ep_damage_scale'), 1e-9);
   approx(w.stats.taken, 2 * e.s.atk * tb('enemy_9007_acelem', '1.atk_scale'), 1e-6);
   killed(h, e, null);
   assert.ok(!w.findBuff('ab:parasite'));
@@ -1140,14 +1144,16 @@ test(`${nm('enemy_10044_wintun')}: fast with its barrel; first hit ×${skb('enem
   approx(e.s.dodgePhys, skb('enemy_10044_wintun', 'BlockedBoom').bb.prob);
 });
 
-test(`${nm('enemy_10045_parrot')}: 近地悬浮; sprints when first hit`, () => {
+test(`${nm('enemy_10045_parrot')}: 近地悬浮; sprints when first hit (final ×M0SpeedUp.move_speed — PRTS "最终提升至300%")`, () => {
   const h = arena();
   h.step();
   const e = put(h, 'enemy_10045_parrot', [10, 7], { move: true });
   const v = e.s.moveSpeed;
-  assert.ok(e.mem.ab.float && e.s.flags.unblockable);
+  assert.ok(e.findBuff('ab:float') && e.s.flags.unblockable && e.isFlying && e.motion === 'WALK');
   h.b.dealDamage(null, e, { amount: 1, type: 'true' });
-  approx(e.s.moveSpeed, v * (1 + tb('enemy_10045_parrot', 'M0SpeedUp.move_speed')));
+  approx(e.s.moveSpeed, v * tb('enemy_10045_parrot', 'M0SpeedUp.move_speed'));
+  h.run(tb('enemy_10045_parrot', 'M0SpeedUp.duration') + 0.1);
+  approx(e.s.moveSpeed, v);
 });
 
 test(`${nm('enemy_10087_hlchgr')}: spends ammo every ${tb('enemy_10087_hlchgr', 'SkillTrigger.interval')} s for permanent speed and ATK`, () => {
@@ -1173,7 +1179,9 @@ test(`${nm('enemy_10116_ymgtop')}: spinning phase deals ATK×${tb('enemy_10116_y
   h.run(skb('enemy_10116_ymgtop', 'SwitchModeTrigger').initCooldown + 3.05);
   const w = h.unit('t_wall');
   assert.ok(w.stats.taken >= 2 * e.s.atk * tb('enemy_10116_ymgtop', 'RotateDamage.attack@atk_scale') - 1e-6);
-  h.b.displace(e, { x: -1, y: 0 }, 0.5, { force: 3 });                 // pushed back towards the wall: still in reach
+  // pushed towards the wall (to x 6.8): still in reach, not in contact (0.8 > block radius 0.71: the wall would
+  // block it)
+  h.b.displace(e, { x: -1, y: 0 }, 0.2, { force: 3 });
   h.step();
   const t0 = w.stats.taken;
   h.run(3);

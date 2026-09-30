@@ -746,7 +746,9 @@ test('夕 S3 写意胜形: BAT +0.4 s, ATK +, splash 1.7; every attack summons /
 test('夕 S3 写意胜形: unblocked enemies first (the blocked one is attacked only without another choice)', () => {
   const h = run({
     defs: { enemies: { enemy_walk: enemyRec({ key: 'enemy_walk', hp: 1e7, speed: 1 }), enemy_dummy: dummy('enemy_dummy') }, chess: { t_block: ally('t_block', { stats: { blockCnt: 1 } }) } },
-    units: [entry('chess_char_5_12_a', 'skchr_dusk_3', { row: 10, col: 3 }), { chessId: 't_block', row: 9, col: 5 }],
+    // (the blocker at col 4: the walker stops 0.71 tile in front of it — block radius, user playtest #5 — on col 5,
+    // inside 夕's 3-column range)
+    units: [entry('chess_char_5_12_a', 'skchr_dusk_3', { row: 10, col: 3 }), { chessId: 't_block', row: 9, col: 4 }],
     enemies: [{ key: 'enemy_walk', route: 0 }, { key: 'enemy_dummy', pos: [10, 6] }],
   });
   const u = h.unit('chess_char_5_12_a');

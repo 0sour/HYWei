@@ -11,7 +11,8 @@ server/match/
   gamedata.js      typed, defaulted view of data/*.json (config tunables with research defaults) + the balance layer
                    (data/tuning.json, §3.1)
   pool.js          SharedPool (copies per base chess, across players), per-match bans, copy-weighted rolls
-  board.js         placement legality from the stage legend, slot helpers, deployment order
+  board.js         placement legality from the stage legend on the deploy field (own board / boss half), slot helpers,
+                   deployment order
   bondsMeta.js     bond counting modes, tiers, 调和 / 独行 / 助力 / 绝技, layers
   effectsMeta.js   MetaRegistry + EffectDispatcher + the handler ctx (this document, §2)
   builtinMeta.js   engine built-ins (consume-on-equip items, Arts, EffectRefs used by 机变 defaults)
@@ -50,6 +51,20 @@ LOBBY → INFO_CHECK (co-op 25 s; solo and single-human matches untimed; all hum
    boss round  → FINAL_ASSAULT (instead of COMBAT/UNITE/SETTLE)   hidden round → HIDDEN_CORE
 → RESULT (m.result to every human, then onEnd once)
 ```
+
+**Deploy field (user playtest #5 item 7).** From the ROUND_START of a boss round (最终攻势 / 隐秘核心) a player deploys on
+its half of the boss field (`Match.deployFieldOf` → `'bossL'`, or `'bossR'` for the second player of a seat pair — the
+same pairing as the fields, `bossWaves` / `Match.bossGroupOf`, planned in `startRound` BEFORE the players' round start
+so R14 → R15 never re-checks a boss-half board against the normal field, and re-paired — with an immediate re-check —
+when a teammate quits before the fight): `board.js buildDeployMap`
+reads the stage tile (r − 7, c) / mirrored (r − 7, 20 − c) under every board tile (r, c) (official
+ConvertChessPositionInfoToBossMap, player_map_ud_offset 7) and that half's devices under the player's overrides. Board
+coordinates never change (g.move, the battle input). A change of the deploy field re-checks the board like a terrain
+change (`PlayerState.deployMap` → `_evictIllegal`; the read-only checker `invariants.js` uses the pure
+`Match.deployMapFor`); on the data's 11 stages everything legal on the normal board is legal on both boss halves (and
+the two halves have the same classes), and the boss halves add act2 m01's fenced tiles (board (10–12, 8)), which stay
+legal from R14 into R15. The client mirrors it
+(`ui/gameLogic.js deployFieldOf` / `placementContext({ field })`); the bot plans on the same map.
 
 | Timer (real s, × `opts.timerScale`) | Value |
 |---|---|
@@ -215,8 +230,9 @@ Every handler method is `(ctx, ev)`; `ev` is shared by all handlers of one dispa
 | `onLayers` | bond layers were added (prep or battle gains) | `{ bondId, from, to, reason }` (milestones: 维多利亚 25, 远见 10, 奇迹 100 …) |
 
 Dispatch order per player: `global` → `band` → `bond` (data order) → garrisons (board in deployment order, then hand)
-→ equipped items → EffectRefs (insertion order). Every call is isolated with try/catch (the error is logged once and
-counted in `match.dispatcher.errors`); nested dispatches are capped at depth 6.
+→ equipped items → EffectRefs (insertion order). `onPrice` runs the priced chess's own 特质 first (购买价格为N sets the
+price that 远见's discount and the strategies' caps then act on). Every call is isolated with try/catch (the error is
+logged once and counted in `match.dispatcher.errors`); nested dispatches are capped at depth 6.
 
 ### 2.3 Garrisons (特质)
 The dispatcher calls `handler[hook] ?? handler.run` only on the hook of the garrison's `eventType` (a handler may widen
@@ -229,7 +245,7 @@ that per garrison with `garrisonHooks(garrison) → hook[]`, e.g. "<进入休整
 | `SERVER_PREP_FIN` 休整期结束时 | `onPrepEnd` | same |
 | `SERVER_REFRESH_SHOP` 刷新时 | `onRefresh` | same |
 | `SERVER_CHESS_SOLD` 售出时 | `onSold` | the sold piece |
-| `SERVER_PRICE` 购买价格 | `onPrice` | the chess in the priced slot (`ctx.source.where === 'shop'`) |
+| `SERVER_PRICE` 购买价格 | `onPrice` (first) | the chess in the priced slot (`ctx.source.where === 'shop'`); SERVER_CHESS_PRICE `bb.price` is the discount off the tier price (至简 3 − 2 = 1, 红豆 2 − 1 = 1: both texts say 购买价格为1) |
 | `IN_BATTLE` | — | battle side (server/sim/content/garrisons.js `install`) |
 
 ```js
@@ -423,9 +439,12 @@ chosen by most units on the field (downed included) > an active bond > most stan
 units > active bond > Σ active layers > standing > seat (LP plays no part), the first one on the right-hand field
 (colOffset +8, where escaped_multi enters), the other colOffset 0; the escaped template of that size routes the leaked
 enemies by slot class; helpers' operators carry
-`{ hpPct, sp, skillActive }` from `unitsEnd` ("阵地以其当前状态"); an operator dead at the end of the helper's own combat
-stays out of the 联防 battle with its summons [ASSUMED: the sim has no "start undeployed with a running redeploy timer"
-input]; `flags.layerGainsEnabled = false`; time limit = the round's combat limit.
+`{ hpPct, sp, skillActive }` from `unitsEnd` ("阵地以其当前状态"); an operator knocked out at the end of the helper's own
+combat carries `{ down: true }` (PRTS 卫戍协议/帮助: "部署完成后…上一阶段为退场状态的干员强制退场"): deployed, then forced out
+at once, it lies on its tile with the redeploy ring and redeploys like after any knock-out (docs/SIM.md §1.1; user
+playtest #5 item 2 — it used to stay out and vanish); its timer is its full redeploy time [ASSUMED: the official setup
+carries only hp / tech per operator], with the redeploy-time effects that start with the battle (机变 征召); summons are
+fielded as the board has them; `flags.layerGainsEnabled = false`; time limit = the round's combat limit.
 Every enemy still alive at the end (leaked again, or never spawned before the limit) costs its **source** player 1 LP.
 A client-run 联防 result may bill a survivor only to a leaker who sent that enemy in — a split / summon only to a leaker
 who sent in its parent, ≤ the parents' data offspring count (磨砻 2, 烹泉 4 …; fields.js offspringPerParent).
@@ -517,6 +536,9 @@ receiver only), plus CUSTOM texts (eliminations, 联防, hidden core).
 * 中途退出 = elimination at once (research); a quitter's operators already fighting in a shared field (联防, boss
   field) finish that battle, its LP already merged into the team LP stays there.
 * After the LP merge (Final Assault) the per-player LP shown is a share of the team LP ∝ the LP each player brought in.
-* A 联防 helper's operators dead at the end of its own combat do not take part in the 联防 battle.
+* A 联防 helper's operator knocked out at the end of its own combat is deployed and forced out at once (PRTS 强制退场,
+  §4) with HP 0, and redeploys after its full redeploy time: no timer carry (the official setup carries only hp / tech
+  per operator), forced out before `battleStart` (its timer re-read after it, so 征召's −50 % applies; 征召's row check
+  does not count it), no knock-out hooks (`kill`, 'killed' deaths) a second time.
 * A merge completed after the prep (SETTLE effects) keeps its reward offer for the next prep; its elite goes to the hand,
   overflowing into temp like a prep merge's (temp pieces that arrive after the prep wait through the next prep).

@@ -166,7 +166,7 @@ test('联防: trigger, helpers (≤ 2, highest LP then seat), carry state, sourc
   m.dispose();
 });
 
-test('联防: an operator dead at the end of the helper\'s own combat stays out (with its summons); the living carry their state', () => {
+test('联防: an operator knocked out at the end of the helper\'s own combat is fielded `down` (强制退场, with its summons); the living carry their state', () => {
   let deadUid = null;
   const h = makeMatch({
     mode: 'coop', humans: 2, seed: 37, fake: true,
@@ -194,8 +194,10 @@ test('联防: an operator dead at the end of the helper\'s own combat stays out 
   assert.deepEqual(m.unitePlan.helpers.map((p) => p.playerId), ['p_1']);
   const u = FakeBattle.instances.find((b) => b.kind === 'unite');
   const units = u.opts.players[0].units;
-  assert.ok(!units.some((x) => x.uid === hemo.uid), 'the dead operator is not redeployed at full HP');
-  assert.ok(!units.some((x) => x.kind === 'token' && x.ownerUid === hemo.uid), 'nor are its summons');
+  // PRTS 卫戍协议/帮助: deployed, then "上一阶段为退场状态的干员强制退场" — the sim puts it down on its tile with its redeploy
+  // timer (user playtest #5 item 2: it used to be left out and vanished); its summons are fielded as the board has them
+  assert.deepEqual(units.find((x) => x.uid === hemo.uid)?.carryState, { down: true }, 'the knocked-out operator enters 联防 down');
+  assert.ok(units.some((x) => x.kind === 'token' && x.ownerUid === hemo.uid), 'its summons are fielded');
   assert.deepEqual(units.find((x) => x.uid === alive.uid).carryState, { hpPct: 0.5, sp: 3, skillActive: false });
   assert.ok(helper.board.has(`${t0[0]},${t0[1]}`) && helper.board.has(placed), 'the board itself is untouched (next round as usual)');
   // during 联防 an 'n:<pid>' id names no field: refused, and the viewer keeps streaming the 联防 field

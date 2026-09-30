@@ -26,6 +26,7 @@
 //   `node tools/kit-coverage.mjs --tier 4 --strict`; tests: test/content/kits_alt_t4.test.js.
 
 import { COLS } from '../../constants.js';
+import { bodyDist, bodyInKeys } from '../../body.js';
 import { absoluteRangeKeys, canTargetEnemy, sortEnemyTargets } from '../../targeting.js';
 import { normalizeChess } from '../../simdata.js';
 import { aggregateMods } from '../../buffs.js';
@@ -74,7 +75,7 @@ function ownTokenVariant(battle, tokenId, owner) {
 function enemiesOnRange(battle, unit, keys = null) {
   const set = keys || keySet(unit);
   const out = [];
-  for (const e of battle.enemies) if (e.alive && !e.hidden && set.has(tileKey(e))) out.push(e);
+  for (const e of battle.enemies) if (e.alive && !e.hidden && bodyInKeys(e, set)) out.push(e);
   return out;
 }
 /** Targetable enemies in the unit's current range (flyers included), best targets first. */
@@ -510,7 +511,7 @@ const kits = {
             for (const e of battle.aliveEnemies()) {
               if (!canTargetEnemy(unit, e, { canHitFly: true })) continue;
               const t = L2 > 1e-9 ? Math.max(0, Math.min(1, ((e.x - ax) * (bx - ax) + (e.y - ay) * (by - ay)) / L2)) : 0;
-              const d = Math.hypot(e.x - (ax + t * (bx - ax)), e.y - (ay + t * (by - ay)));
+              const d = bodyDist(e, ax + t * (bx - ax), ay + t * (by - ay));
               if (d <= w + 1e-9) hits.push({ e, t, d });
             }
             hits.sort((a, b) => a.t - b.t || a.d - b.d || a.e.id - b.e.id);
@@ -880,7 +881,7 @@ const kits = {
             if (!e.alive) { floating.delete(id); continue; }
             if (e.findBuff('levitate')) continue;
             floating.delete(id);
-            if (S2 && unit.alive && unit.deployed && skillActive(unit) && keySet(unit).has(tileKey(e))) {
+            if (S2 && unit.alive && unit.deployed && skillActive(unit) && bodyInKeys(e, keySet(unit))) {
               battle.dealDamage(unit, e, { amount: unit.s.atk * land, type: 'arts', isSkill: true, tags: ['skill', 'landing'] });
               battle.fx('splash', { x: e.x, y: e.y, id: e.id });
             }
@@ -1041,7 +1042,7 @@ const kits = {
       skill: {
         kind: 'duration',
         onStart({ battle, unit, skill }) {
-          const foes = targetsInRange(battle, unit).sort((a, b) => Math.hypot(b.x - unit.x, b.y - unit.y) - Math.hypot(a.x - unit.x, a.y - unit.y) || a.id - b.id);
+          const foes = targetsInRange(battle, unit).sort((a, b) => bodyDist(b, unit.x, unit.y) - bodyDist(a, unit.x, unit.y) || a.id - b.id);
           const t = foes[0];
           unit.mem.tornado = t ? { x: t.x, y: t.y, acc: 0 } : null;
           if (!t) return;
@@ -1254,6 +1255,7 @@ const kits = {
   //       S1 细雨无声 (passive, for the skill duration: ATK up; hits silence the target 5 s/8 s — 失去特殊能力 — with
   //       260/320 arts per s meanwhile); S2 阵雨连绵 (passive: deploy burst 150 %/180 % arts + RES −15 %/−20 % around her;
   //       for the skill duration ATK up and attacks become arts double hits). Talent 德克萨斯传统 applies to every passive.
+  //       The S3 rain hits air units (PRTS 备注 "效果可对空"); so does the S2 deploy burst [ASSUMED: no note].
   chess_char_4_16_a: (bb, chess, def) => {
     const t0 = tbb(def, 0), t1 = tbb(def, 1);
     const tb = def.traitBb || {};
@@ -1375,8 +1377,9 @@ const kits = {
       skill: { kind: 'passive', mods: { defPct: num(bb.def) } },
       talents: [
         { install(battle, unit) { // 战术装甲: 25 % 伤害抵挡 — negates an enemy phys/arts damage instance ("抵挡一次物理或法术伤害")
-          battle.on('hit', (c) => {
-            if (c.target !== unit || !c.source || c.source.side !== 'enemy' || c.dmg.cancel || (c.dmg.type !== 'phys' && c.dmg.type !== 'arts')) return;
+          battle.on('hit', (c) => { // 抵挡 is target-side: a 无来源 burst (source null) counts via the enemy credited with it
+            const src = c.source || c.credit;
+            if (c.target !== unit || !src || src.side !== 'enemy' || c.dmg.cancel || (c.dmg.type !== 'phys' && c.dmg.type !== 'arts')) return;
             if (battle.rng.chance(num(t0.prob, 0.25))) { c.dmg.cancel = true; battle.fx('block', { x: unit.x, y: unit.y, id: unit.id }); }
           }, { owner: unit });
         } },
@@ -1492,8 +1495,8 @@ const kits = {
 
   // ===== 焰尾 (pioneer) S3 焰心 — 8 DP over the skill, faster, +ATK, block +1, 60 % dodge; talents 前锋剑术 / 红松骑士团团长
   //       S1 迅敏直觉 (+6 DP, dodges the next physical attack); S2 “红松林” (+11/12 DP; ≤ 6 enemies around: 2 × 180 %/210 %
-  //       phys + 0.5 s stun; allies around +40 %/45 % physical dodge for 10 s); module SOL-X (她们的未来): ATK/DEF +8 %
-  //       while blocking. Her dodges (any source) feed talent 前锋剑术.
+  //       phys + 0.5 s stun, air units too — PRTS 备注 "※可对空"; allies around +40 %/45 % physical dodge for 10 s);
+  //       module SOL-X (她们的未来): ATK/DEF +8 % while blocking. Her dodges (any source) feed talent 前锋剑术.
   chess_char_4_19_a: (bb, chess, def) => {
     const t1 = tbb(def, 1);
     const tb = def.traitBb || {};
@@ -1646,7 +1649,7 @@ const kits = {
           battle.on('beforeAttack', (c) => {
             if (c.attacker !== unit || !skillActive(unit) || !unit.extraRangeKeys) return;
             const own = new Set(absoluteRangeKeys(unit.rangeGrid, unit.tileR, unit.tileC, unit.dir, unit.s.rangeExtend));
-            const ok = (e) => own.has(tileKey(e)) || !!(e.blockedBy && e.blockedBy.side === 'ally' && e.blockedBy.alive);
+            const ok = (e) => bodyInKeys(e, own) || !!(e.blockedBy && e.blockedBy.side === 'ally' && e.blockedBy.alive);
             if (c.targets.every(ok)) return;
             const cands = battle.enemiesInKeys(unit.rangeKeys, unit, c.profile).filter(ok);
             sortEnemyTargets(battle, unit, cands, c.profile?.priority ?? null);
@@ -1663,7 +1666,7 @@ const kits = {
         const ds = num(tb.damage_scale, 0), lo = num(tb.min_dist, 1), hi = num(tb.max_dist, 4.5);
         battle.on('hit', (c) => {
           if (c.source !== unit || !c.dmg.isAttack) return;
-          if (S3 && skillActive(unit) && unit.baseRangeKeys && !unit.baseRangeKeys.includes(tileKey(c.target))) c.dmg.mul *= num(bb.damage_scale, 1.25);
+          if (S3 && skillActive(unit) && unit.baseRangeKeys && !bodyInKeys(c.target, unit.baseRangeKeys)) c.dmg.mul *= num(bb.damage_scale, 1.25);
           if (ds > 0) { const d = Math.hypot(c.target.x - unit.x, c.target.y - unit.y); c.dmg.mul *= 1 + ds * Math.max(0, Math.min(1, (d - lo) / Math.max(1e-6, hi - lo))); }
         }, { owner: unit });
       },
@@ -2064,7 +2067,7 @@ const kits = {
       talents: [{ install(battle, unit) { // 血液样本回收: an enemy falls in range ⇒ +2 SP to her and a random ally in range
         battle.on('death', (c) => {
           const e = c.unit;
-          if (c.reason !== 'killed' || e.side !== 'enemy' || !unit.alive || !unit.deployed || !keySet(unit).has(tileKey(e))) return;
+          if (c.reason !== 'killed' || e.side !== 'enemy' || !unit.alive || !unit.deployed || !bodyInKeys(e, keySet(unit))) return;
           unit.skill?.gainSp(num(t0['bldsk_t_1[self].sp'], 2), 'talent');
           // SP cannot be gained while a timed skill runs (engine gainSp ignores it): such allies are not picked
           const pick = battle.rng.pick(battle.alliesInGrid(unit).filter((a) => a !== unit && a.skill && !a.skill.noSkill && a.skill.kind !== 'passive' && !(a.skill.active && a.skill.isTimed)));

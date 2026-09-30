@@ -1,13 +1,15 @@
 // test/sim/downelem.test.js — user playtest #4 items 8 and 9, sim side (server/sim/Battle.js snapshot / fieldMeta,
 // damage.js elementView): b.snap `down` lists the knocked-out operators waiting to redeploy on their own tile (the
 // client keeps them on the field knocked down with a redeploy countdown) and `elem` the element gauge each unit shows
-// (PRTS 元素: the fullest gauge, its 爆发冷却) — entries, states, and what is left out.
+// (PRTS 元素: the fullest gauge, its 爆发冷却) — entries, states, and what is left out. User playtest #5 item 2: an
+// operator entering a battle knocked out (联防 carryState `down`, constants.js FORCED_EXIT) is down the same way.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBattle, chessRec, enemyRec } from '../helpers/battleHarness.js';
-import { DOWN_STATE, ELEMENT, ELEMENT_ORDER } from '../../server/sim/constants.js';
+import { DOWN_STATE, ELEMENT, ELEMENT_ORDER, FORCED_EXIT } from '../../server/sim/constants.js';
 import { elementView } from '../../server/sim/damage.js';
+import { unitStatsEntry } from '../../shared/protocol.js';
 
 const approx = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} ≈ ${b}`);
 const op = (id, stats = {}) => chessRec({ id, profession: 'WARRIOR', stats: { atk: 0, maxHp: 1000, def: 0, blockCnt: 0, cost: 12, respawnTime: 6, ...stats }, skill: null });
@@ -63,6 +65,79 @@ test('summons, devices, enemies and withdrawn / removed operators are never `dow
   assert.deepEqual(h.snapshot().down.map((d) => d[0]), [h.unit('t_c').id], 'only the knocked-out operator');
   const ids = new Set(h.b.fieldMeta().units.map((u) => u.id));
   assert.ok(ids.has(h.unit('t_c').id) && !ids.has(h.unit('t_a').id) && !ids.has(tok.id));
+});
+
+test('carryState.down (联防): deployed with everyone, forced out at once — down on its tile without the knock-out hooks — then back after its timer', () => {
+  // PRTS 卫戍协议/帮助 §联防阶段: "部署完成后…上一阶段为退场状态的干员强制退场"
+  const h = makeBattle({
+    kind: 'unite', defs: { chess: { t_a: op('t_a'), t_b: op('t_b') } },
+    units: [{ chessId: 't_a', row: 9, col: 5, carryState: { down: true } }, { chessId: 't_b', row: 10, col: 5, carryState: { hpPct: 0.5, sp: 0 } }],
+    content: 'none', autoFinish: false, timeLimit: 120, flags: { dpInit: 0, dpPerSec: 1, dpMax: 99 },
+  });
+  h.step();
+  const a = h.unit('t_a'), b = h.unit('t_b');
+  assert.ok(!a.alive && h.b.isDown(a), 'down from the start');
+  assert.equal(a.removeReason, FORCED_EXIT);
+  assert.equal(a.hp, 0, 'HP 0 while down, like a knocked-out operator (the live detail card reads unit.hp)');
+  assert.equal(unitStatsEntry(a).hp, 0);
+  assert.deepEqual([a.tileR, a.tileC], [9, 5], 'on its own tile');
+  const d = downOf(h, a.id);
+  approx(d[1], 6, 0.011);
+  approx(d[2], 6, 0.011);
+  assert.equal(d[3], DOWN_STATE.COUNTING, 'its whole redeploy timer, counting');
+  assert.ok(h.b.fieldMeta().units.some((u) => u.id === a.id), 'a client joining shows it down');
+  assert.ok(b.alive && Math.abs(b.hp - 500) < 1e-6, 'the standing operator keeps its HP ratio');
+  // deployed (deploy effects fire), then withdrawn before battleStart; no `kill`, no 'killed' death, no death counted
+  const dep = h.hooksOf('deploy').find((x) => x.unit === a);
+  assert.ok(dep && dep.initial === true, 'initial deploy hook');
+  const deaths = h.hooksOf('death').filter((x) => x.unit === a);
+  assert.deepEqual(deaths.map((x) => x.reason), [FORCED_EXIT]);
+  assert.equal(h.hooksOf('kill').length, 0);
+  assert.equal(h.hooksOf('battleStart').length, 1);
+  assert.deepEqual(h.eventsOf('die').filter((e) => e[1] === a.id), [['die', a.id, FORCED_EXIT]]);
+  assert.equal(h.b.result().perPlayer.p1.deaths, 0, 'not a new knock-out');
+  h.run(6.5);
+  assert.equal(downOf(h, a.id)[3], DOWN_STATE.WAIT_DP, 'timer done, DP short of its cost');
+  h.run(6);
+  assert.ok(a.alive && a.deployed, 'redeployed once DP ≥ cost');
+  assert.deepEqual([a.tileR, a.tileC], [9, 5]);
+  assert.equal(a.hp, a.s.maxHp, 'at full HP');
+  assert.equal(downOf(h, a.id), null);
+  // a later knock-out in the 联防 battle is an ordinary one
+  h.b.kill(a);
+  assert.equal(downOf(h, a.id)[3], DOWN_STATE.COUNTING);
+  assert.equal(h.b.result().perPlayer.p1.deaths, 1);
+});
+
+test('carryState.down (联防): a redeploy-time effect that starts with the battle (机变 征召) covers the operator forced out', () => {
+  // 征召 "开始作战时若场上至少有一行存在3名干员，所有干员的再部署时间-50%" is switched on by a battleStart handler, after
+  // the forced exit: the forced-out operator's timer is re-read with it (6 → 3 s), like a later knock-out's
+  const run = (card) => {
+    const h = makeBattle({
+      kind: 'unite', defs: { chess: { t_a: op('t_a'), t_b: op('t_b'), t_c: op('t_c'), t_d: op('t_d') } },
+      players: [{
+        playerId: 'p1', seat: 0, side: 'L', colOffset: 0, bonds: {}, bandId: null,
+        playerEffects: card ? [{ key: 'choice:allybuff_select_14', id: 'choice:allybuff_select_14#1', data: { effectId: 'allybuff_select_14' } }] : [],
+        units: [
+          { uid: 1, kind: 'chess', chessId: 't_a', row: 9, col: 5, dir: 'RIGHT', items: [], carryState: { down: true } },
+          ...['t_b', 't_c', 't_d'].map((chessId, i) => ({ uid: 2 + i, kind: 'chess', chessId, row: 10, col: 4 + i, dir: 'RIGHT', items: [], carryState: { hpPct: 1, sp: 0 } })),
+        ],
+      }],
+      autoFinish: false, timeLimit: 120,
+    });
+    h.step();
+    const a = h.unit('t_a'), b = h.unit('t_b');
+    const forced = downOf(h, a.id);
+    h.b.kill(b);
+    const later = downOf(h, b.id);
+    return { forced: forced[2], forcedAt: forced[1], later: later[2] };
+  };
+  const off = run(false), on = run(true);
+  approx(off.forced, 6, 0.011);
+  approx(off.later, 6, 0.011);
+  approx(on.forced, 3, 0.011);
+  approx(on.forcedAt, 3, 0.011);
+  approx(on.later, 3, 0.011);
 });
 
 test('elementView: the fullest gauge (ties: the official element order), its cooldown while bursting, nothing when empty', () => {

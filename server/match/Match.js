@@ -496,9 +496,10 @@ export class Match {
     ps.eliminate(passedRound);
     this.tickerText(`${ps.name}博士中途退出了模拟`);
     if (this.bossWaves && (phase === PHASE.ROUND_START || phase === PHASE.SP_DRAFT || phase === PHASE.PREP)) {
-      // before the boss fight: pair the players left again (the prep preview shows the new partner / template)
+      // before the boss fight: pair the players left again (the prep preview shows the new partner / template); a
+      // player moved to the other half re-checks its board there at once (recompute → deployMap, marks it private)
       this._planBossWaves();
-      for (const p of this.alivePlayers()) this.markPrivate(p);
+      for (const p of this.alivePlayers()) p.recompute();
     }
     this.markPublic();
     if (this.teamLp != null) this._syncTeamLp();
@@ -606,8 +607,35 @@ export class Match {
   }
   humans() { return this.order.filter((p) => !p.isBot && !p.left); }
 
-  deployMapFor(ps) {
-    return buildDeployMap(this.stage, { deviceOverrides: ps.deviceOverrides, tileOverrides: ps.tileOverrides });
+  /**
+   * The boss-round group of a player (`bossWaves`: the seat pairs of finalAssault.js pairPlayers, planned in startRound
+   * before the players' round start) and its side — 'L', or 'R' for the second player of a pair (the mirrored right
+   * half) — or null outside a boss round / for a player without a field.
+   * @returns {{ wave: object, players: string[], side: 'L'|'R' } | null}
+   */
+  bossGroupOf(ps) {
+    if (!ps || !Array.isArray(this.bossWaves)) return null;
+    const g = this.bossWaves.find((x) => Array.isArray(x.players) && x.players.includes(ps.playerId));
+    return g ? { wave: g.wave, players: g.players, side: g.players.indexOf(ps.playerId) === 1 ? 'R' : 'L' } : null;
+  }
+
+  /**
+   * The field a player deploys on (server/match/board.js DEPLOY_FIELDS): in a boss round (最终攻势 / 隐秘核心, from its
+   * ROUND_START on — the pairing exists before PlayerState.startRound's recompute) the player's half of the boss field,
+   * 'bossL' or 'bossR' (bossGroupOf); otherwise its own normal board. User playtest #5 item 7.
+   * @returns {'normal'|'bossL'|'bossR'}
+   */
+  deployFieldOf(ps) {
+    const g = this.bossGroupOf(ps);
+    return !g ? 'normal' : g.side === 'R' ? 'bossR' : 'bossL';
+  }
+
+  /**
+   * A fresh deploy map of a player on `field` (default: the field it deploys on now) under its device / tile overrides.
+   * Pure — no PlayerState cache is touched (the read-only checker invariants.js uses it; PlayerState.deployMap caches).
+   */
+  deployMapFor(ps, field = this.deployFieldOf(ps)) {
+    return buildDeployMap(this.stage, { deviceOverrides: ps.deviceOverrides, tileOverrides: ps.tileOverrides, field });
   }
 
   dispatch(ps, hook, ev = {}, opts = {}) {
@@ -813,10 +841,9 @@ export class Match {
   nextEnemiesFor(ps) {
     if (!ps.alive) return [];
     if (this.bossWaves) {
-      const g = this.bossWaves.find((x) => x.players.includes(ps.playerId));
+      const g = this.bossGroupOf(ps);
       if (!g) return [];
-      const side = g.players.indexOf(ps.playerId) === 1 ? 'R' : 'L';
-      return previewOf([...g.wave.spawns, ...bountySpawns(this.gd, this.round, g.wave, ps.bounties, ps.playerId, { solo: this.isSolo, side })]);
+      return previewOf([...g.wave.spawns, ...bountySpawns(this.gd, this.round, g.wave, ps.bounties, ps.playerId, { solo: this.isSolo, side: g.side })]);
     }
     if (!this.wave) return [];
     const bounty = bountySpawns(this.gd, this.round, this.wave, ps.bounties, ps.playerId, { solo: this.isSolo });
@@ -1305,14 +1332,17 @@ export class Match {
     this.wave = null;
     this.bossWaves = null;
     const alive = this.alivePlayers();
-    for (const ps of alive) ps.startRound(r);
-    // the round's enemies (shared composition, generated now so the prep preview is exact)
+    // the round's enemies (shared composition, generated now so the prep preview is exact). Planned BEFORE the players'
+    // round start: its recompute() checks the board on the field the player deploys on this round (deployFieldOf reads
+    // the boss pairing), so R14 → R15 never re-checks a boss-field board against the normal field (user playtest #5
+    // item 7). rngWaves is used only here, so the order leaves every random stream unchanged.
     const isBoss = r === this.gd.bossRound || r === this.gd.hiddenRound;
     if (isBoss) {
       this._planBossWaves();
     } else {
       this.wave = buildNormalWave(this.gd, this.rngWaves, this.factions, r);
     }
+    for (const ps of alive) ps.startRound(r);
     for (const ps of alive) this.dispatch(ps, 'onRoundStart', { round: r });
     for (const ps of alive) ps.recompute();
     this.setDeadline(DELAYS.ROUND_START / 1000, () => this.afterRoundStart(), { silent: this.soloUntimed });

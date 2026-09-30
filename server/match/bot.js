@@ -16,9 +16,10 @@
 //   3. lineup: the deployed set maximizes unit value + activated bond tiers (exact counting via computeBonds) +
 //      composition (chooseLineup: greedy seed + swap hill-climbing).
 //   4. placement (planLayout): the round's routes are traced over the own board from the enemy preview (ground
-//      routes on the stage's device-aware ground paths, flying routes through their checkpoints) and weighted by
-//      their enemies; an exposure model (tile time × DPS of the covering units, blocker hold time, flyers only for
-//      anti-air) is maximized greedily — blockers first, then damage dealers by DPS, then healers — over every
+//      routes on the stage's device-aware ground paths, flying routes through their checkpoints; 近地悬浮 enemies walk
+//      the ground path but count as flyers) and weighted by their enemies; an exposure model (tile time × DPS of the
+//      covering units, blocker hold time, flyers only for anti-air) is maximized greedily — blockers first, then damage
+//      dealers by DPS, then healers — over every
 //      (legal tile, direction) pair: each unit's range grid is rotated per direction (DESIGN §3; RIGHT is tried first
 //      and kept on ties, so symmetric ranges and melee units whose front adds nothing stay facing the gates), so
 //      ranged units turn toward the enemy path tiles they cover best and blockers toward the road; on 气流 tiles
@@ -37,11 +38,12 @@
 
 import { GEO } from '../../shared/constants.js';
 import { deriveSeed } from '../sim/rng.js';
-import { freeSlot, legalTiles, positionClass, parseKey, tileKey, FIELD, pieceDir } from './board.js';
+import { freeSlot, legalTiles, positionClass, parseKey, tileKey, FIELD, pieceDir, boardTileOf, BOSS_MIRROR_COL } from './board.js';
 import { rotateOffset, normDir, mirrorDir, oppositeDir } from '../sim/dir.js';
 import { itemKey } from './gamedata.js';
 import { computeBonds } from './bondsMeta.js';
 import { withBounties } from './waves.js';
+import { HOVER_KEYS } from '../sim/content/enemies.js';
 
 /**
  * Drive a step generator (planLayoutSteps, createRehearsalSteps, arrangeSteps, botPrepBeginSteps …) to its end in one
@@ -101,6 +103,8 @@ export function botPickCard(m, ps, cards, available) {
 const chessRec = (m, id) => m.gd.chess(id);
 const isHealer = (c) => !!c && (c.dmgType === 'heal' || c.attackKind === 'heal');
 const isBlocker = (c) => !!c && positionClass(c) === 'melee' && (c.stats?.blockCnt ?? 1) > 0 && c.attackKind !== 'none';
+/** 近地悬浮 enemies walk a ground route but are air units (no block, anti-air only — DESIGN §19). */
+const HOVER = new Set(HOVER_KEYS);
 const hitsFly = (c) => !!c && !!c.canHitFly && !isHealer(c) && c.attackKind !== 'none';
 
 /** Distinct owned members per bond (board + hand + temp), and per-bond member sets. */
@@ -330,9 +334,7 @@ function traceLine(points) {
   return out;
 }
 
-/** Boss field → own board: board rows 9–12 are boss rows 2–5 (sim BOSS_ROW_OFFSET −7); the right side is mirrored. */
-const BOSS_ROW_SHIFT = 7;
-const BOSS_MIRROR_COL = 20;
+/** Boss field → own board: board.js boardTileOf (board rows 9–12 are boss rows 2–5; the right side mirrored). */
 const BOSS_MID_COL = 10;
 /** Dwell (s) the planner assumes on a leader's first own tiles (several leaders fight from their spawn point). */
 const BOSS_DWELL = 30;
@@ -340,17 +342,16 @@ const BOSS_DWELL = 30;
 const LEADER_WEIGHT = 10;
 const LEADER_HP = 40000;
 
-/** The boss-round wave of a player's group and its side ('L' | 'R'), or null. */
+/** The boss-round wave of a player's group and its side ('L' | 'R'), or null (Match.bossGroupOf). */
 function bossWaveOf(m, ps) {
-  if (!ps || !Array.isArray(m.bossWaves)) return null;
-  const g = m.bossWaves.find((x) => Array.isArray(x.players) && x.players.includes(ps.playerId));
-  if (!g || !g.wave) return null;
-  return { wave: g.wave, side: g.players.indexOf(ps.playerId) === 1 ? 'R' : 'L' };
+  const g = typeof m.bossGroupOf === 'function' ? m.bossGroupOf(ps) : null;
+  return g && g.wave ? { wave: g.wave, side: g.side } : null;
 }
 
 /**
- * The round's routes over the own board (cached per round): [{ n, fly, tiles: ['r,c'…] (gate → objective, own
- * region only, objective tile excluded), tileTime (s per tile), hp }], a tile → [[route, index]] index, and the
+ * The round's routes over the own board (cached per round): [{ n, fly (air units: flyers, and the 近地悬浮 HOVER_KEYS
+ * on their ground path), tiles: ['r,c'…] (gate → objective, own region only, objective tile excluded), tileTime (s per
+ * tile), hp }], a tile → [[route, index]] index, and the
  * aggregated ground flow per tile. Built from the wave preview (spawn counts per route, enemy HP / speed with the
  * round's multipliers). Boss rounds (pass `ps`): the player's boss-field template mapped onto the own board (rows −7,
  * the right player's half mirrored; only the routes that end on the player's half), the leader weighted heavily with
@@ -367,7 +368,7 @@ export function fieldModel(m, ps = null) {
   const gpaths = (st && (st.groundPathsWithDevices || st.groundPaths)) || {};
   const routesOut = [];
   const toBoard = boss
-    ? ([r, c]) => [r + BOSS_ROW_SHIFT, boss.side === 'R' ? BOSS_MIRROR_COL - c : c]
+    ? ([r, c]) => boardTileOf(boss.side === 'R' ? 'bossR' : 'bossL', r, c)
     : (p) => p;
   const pushRoute = (tilesRC, n, fly, hp, speed, dwell = 0) => {
     const own = tilesRC.map(toBoard).filter(([r, c]) => inRect(r, c)).map(([r, c]) => tileKey(r, c));
@@ -400,8 +401,9 @@ export function fieldModel(m, ps = null) {
       // the leader counts like LEADER_WEIGHT tough enemies: its huge pool makes damage on it worth a lot everywhere
       const hp = isLeader ? LEADER_HP : ((e && e.stats && e.stats.maxHp) || 1000) * ((s.mods && s.mods.hpMul) || 1);
       const spd = ((e && e.stats && e.stats.moveSpeed) || 1) * ((s.mods && s.mods.speedMul) || 1);
-      const key = `${s.routeIndex}|${isLeader ? 'boss' : ''}`;
-      const a = per.get(key) || { ri: s.routeIndex, boss: isLeader, n: 0, hp: 0, spd: 0 };
+      const air = HOVER.has(s.enemyKey);
+      const key = `${s.routeIndex}|${isLeader ? 'boss' : ''}|${air ? 'air' : ''}`;
+      const a = per.get(key) || { ri: s.routeIndex, boss: isLeader, air, n: 0, hp: 0, spd: 0 };
       a.n += isLeader ? LEADER_WEIGHT : n; a.hp += hp * n; a.spd += spd * n;
       per.set(key, a);
     }
@@ -418,7 +420,7 @@ export function fieldModel(m, ps = null) {
       } else {
         const key = `${rt.start[0]},${rt.start[1]}->${rt.end[0]},${rt.end[1]}`;
         const path = Array.isArray(gpaths[key]) ? gpaths[key] : traceLine([rt.start, ...(boss && Array.isArray(rt.checkpoints) ? rt.checkpoints : []), rt.end]);
-        pushRoute(path, a.n, false, a.hp / cnt, a.spd / cnt, dwell);
+        pushRoute(path, a.n, a.air, a.hp / cnt, a.spd / cnt, dwell); // a hovering enemy: ground tiles, air unit
       }
     }
   }

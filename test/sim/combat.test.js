@@ -118,8 +118,8 @@ test('element bursts on enemies ("·我方" terms): burn 7000 元素伤害 + RES
   assert.equal(e.findBuff('palsy').stacks, ELEMENT.neural.enemy.palsy);
   assert.ok(!e.s.flags.stun, 'enemies are not stunned by a neural burst');
   assert.equal(h.hooksOf('elementBurst').length, 2);
-  // element fragility multiplies 元素伤害
-  h.b.addBuff(e, { key: 'test:ef', mods: { elemTakenMul: 1.5 } });
+  // 元素脆弱 (elementalTakenMul) multiplies 元素伤害; the gauge's 元素损伤倍率 (elemTakenMul) does not
+  h.b.addBuff(e, { key: 'test:ef', mods: { elementalTakenMul: 1.5, elemTakenMul: 3 } });
   const hp2 = e.hp;
   h.b.dealDamage(null, e, { amount: 100, type: 'elemental', element: 'burn' });
   approx(hp2 - e.hp, 150);

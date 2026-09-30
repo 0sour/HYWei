@@ -1,16 +1,22 @@
 // render/app.js — battlefield view (DESIGN §9). PixiJS 7 (global PIXI) + pixi-spine (PIXI.spine), loaded on demand
 // from /vendor when the page did not include them as classic <script> tags.
 //
-//   const view = await createFieldView(host, { data, assets, audio, settings, padding })
+//   const view = await createFieldView(host, { data, assets, audio, settings, padding, hud })
 //   view.setStage(stage)                        procedural tiles + devices (data/stages.json entry)
 //   view.setCamera(kind, { rect, side, padding, instant })   'prep'|'normal'|'unite'|'boss'('hidden'); animated
+//                                               — the prep cameras (own board / Final Assault half) keep the bench
+//                                               and the field clear of `hud(kind, size)` = { top, bottom } px of
+//                                               DOM HUD along the top / bottom edge (projection.js clearHud; user
+//                                               playtest #5 item 9: the shop bar covered the bench on phones)
 //   view.setPrep(privateState, { editable, canPlace })       hand/temp/board pieces; editable enables drag & drop
 //   view.enterBattle(fieldMeta)                 m.field { fieldId, kind, rect, stageId, units: [UnitInfo] }
 //   view.pushSnapshot(snap); view.pushEvents(ev | { ev, gt })  b.snap / b.ev wire frames as received (game time in
 //                                               `gt`; a numeric `t` is accepted for raw Battle snapshots / recordings)
 //                                               — 100 ms interpolation buffer; b.snap `down` keeps knocked-out
 //                                               operators on the field under a redeploy ring and `elem` draws the
-//                                               element gauges (user playtest #4 items 8 / 9, render/units.js)
+//                                               element gauges (user playtest #4 items 8 / 9, render/units.js); a
+//                                               'die' with reason FORCED_EXIT (an operator entering 联防 knocked out,
+//                                               user playtest #5 item 2) goes straight to the held pose, no burst
 //   view.setLocalFeed({ on, speed })            frames come from the local sim every frame (client-side combat):
 //                                               ~2-frame buffer at the battle's game speed
 //   view.highlightTiles(tiles, style)           [[r,c]] | [{row,col}]; style 'legal'|'illegal'|'range'|'rangeStand'|
@@ -25,9 +31,10 @@
 // there): every "which unit is under the pointer" — prep press / click / detail / drag start / hover (pieceAt), battle
 // clicks and hover (battleUnitAt), the pen (penUnitAt) — is render/pick.js over the tile under the pointer (groundTile:
 // raised tops first); battle enemies, which walk between tiles, by their ground position (flying ones by their drawn
-// body). A dragged piece is held under the pointer — a unit with its drawn feet DRAG_HOLD_TILES below it (the pointer
-// on its body), an item plate centred on it — and drops on the tile under the pointer (render/drag.js); an item
-// dropped on a unit's tile equips that unit.
+// body; a huge boss also anywhere on its hit area — data/enemies.json `hitArea`, user playtest #5). A dragged piece
+// is held under the pointer — a unit with its drawn feet DRAG_HOLD_TILES below it (the pointer on its body), an item
+// plate centred on it — and drops on the tile under the pointer (render/drag.js); an item dropped on a unit's tile
+// equips that unit.
 //   Direction step (ui/facingWheel.js, research 09 §1.2):
 //   view.tileScreen(row, col) → { x, y, s, poly: [[x,y]×4] } (client px: tile-top centre, px per tile, corners) | null
 //   view.holdPiece(uid, {row,col} | null)       keep a dropped prep piece standing on a tile while its direction is
@@ -93,7 +100,7 @@ import { BoardScene } from './board3d/scene.js';
 import { AREAS, areaFor, unionAreas } from './board3d/layout.js';
 import { layoutPen, penSignature } from './pen.js';
 import { IDENTITY, bossPrepField, tilesToDisp } from './prepfield.js';
-import { pickOnTile, pickBattle } from './pick.js';
+import { pickOnTile, pickBattle, hitRectAt } from './pick.js';
 
 const VENDOR = { pixi: '/vendor/pixi.min.js', spine: '/vendor/pixi-spine.js' };
 const PIECE_DIRS = new Set(['UP', 'RIGHT', 'DOWN', 'LEFT']);
@@ -121,7 +128,7 @@ export const DRAG_HOLD_TILES = 0.45;
  * tile it is drawn on, or — `walks` (battle enemies) — by its ground position and its drawn body (feet to head, on
  * screen; a flying one by its body alone).
  */
-function pickUnitOf(v, walks = false) {
+function pickUnitOf(v, walks = false, hitArea = null) {
   // a knocked-out operator lying on its tile waiting to redeploy (b.snap `down`, user playtest #4 item 9) is on that tile
   // too: a press there selects it; other dead / dying views are gone
   if (!v || v.destroyed || (v.alive === false && !v.down)) return null;
@@ -129,7 +136,10 @@ function pickUnitOf(v, walks = false) {
   const sc = v.screen;
   const body = walks && sc && sc.s > 0 && !v.culled ? { x: sc.x, top: Number.isFinite(sc.top) ? sc.top : sc.y, feet: sc.y, s: sc.s } : null;
   const tile = walks ? null : { row: Math.round(v.y), col: Math.round(v.x) };
-  return { tile, x: v.x, y: v.y, fly: walks && !!v.flying, body, depth: v.root && !v.root.destroyed ? v.root.zIndex : 0, ref: v };
+  // a huge boss (data `hitArea`): its hit area on the ground and a body box as wide as it are pickable (render/pick.js)
+  const area = walks && !v.flying ? hitRectAt(v.x, v.y, hitArea) : null;
+  if (area && body) body.hw = hitArea.w / 2;
+  return { tile, x: v.x, y: v.y, fly: walks && !!v.flying, body, area, depth: v.root && !v.root.destroyed ? v.root.zIndex : 0, ref: v };
 }
 
 let pixiPromise = null;
@@ -176,13 +186,15 @@ export function viewKind(kind, opts) {
 
 /** 3D areas without the enemy preview pen block (the own field / both normal halves); see `boardArea`. */
 const AREA_NO_PEN = Object.freeze({
-  normal: Object.freeze(AREAS.normal.filter((a) => a.r1 <= 12)),
-  unite: Object.freeze(AREAS.unite.filter((a) => a.r1 <= 12)),
+  normal: Object.freeze(AREAS.normal.filter((a) => a.r1 <= 13)),
+  unite: Object.freeze(AREAS.unite.filter((a) => a.r1 <= 13)),
 });
 
 /**
- * 3D area built for a view kind (viewKind): the enemy preview pen (rows 13–18) only for the 'pen' camera — the prep,
- * battle and 联防 cameras show the field alone (user playtest #2 item 6); the boss kinds build the boss field.
+ * 3D area built for a view kind (viewKind): the enemy preview pen (rows 14–18) only for the 'pen' camera — the prep,
+ * battle and 联防 cameras show the field alone (user playtest #2 item 6) with its separator rows 6 and 13 (the row-13
+ * devices blow into the field: act2 m01's blowers, user playtest #5 item 6; the boss field's row-6 devices are drawn
+ * with the boss field only — board3d/layout.js stageDevices); the boss kinds build the boss field.
  */
 export function boardArea(vk) {
   if (vk === 'pen') return AREAS.normal;
@@ -200,15 +212,32 @@ export function bandFor(kind) {
   return kind === 'pen' ? [6, 18] : [6, 13];
 }
 
+/**
+ * Active field rows [r0, r1] of a view kind for the 2D board (render/tiles.js `setView` field: drawn rows outside it are
+ * dim scenery without devices): the normal / 联防 / prep fields live between the separator walls (rows 6–13, the
+ * devices on the row-13 wall included; the row-6 wall's belong to the boss field — tiles.js _stageDevices); the pen
+ * camera adds the pen (6–18); the boss field 0–6.
+ */
+export function fieldRows(kind) {
+  return kind === 'boss' || kind === 'hidden' || kind === 'bossPrep' ? [0, 6] : kind === 'pen' ? [6, 18] : [6, 13];
+}
+
 /** Are the pen's figures shown for a view kind (a camera flight shows them when either end is the pen)? */
 export const penShown = (vk, prevVk = null) => vk === 'pen' || prevVk === 'pen';
 
 /**
+ * 'die' reason of an operator that enters the battle already knocked out — a 联防 helper's operator down at the end of
+ * its own combat, deployed and forced out at once (server/sim/constants.js FORCED_EXIT, user playtest #5 item 2): its
+ * view goes straight to the held knocked-down pose (UnitView.die(true)) without the death burst; b.snap `down` keeps it.
+ */
+export const FORCED_EXIT = 'forcedExit';
+
+/**
  * Generic death particles for a battle unit's 'die' event: never for stage devices, nor for a summon used up by its
  * own effect (user playtest #2 item 4: 香槟炸弹's blast — sim fx `{ consumed: true, id }` before its 'die' — is its end,
- * not a knock-out).
+ * not a knock-out), nor for an operator entering the battle knocked out (FORCED_EXIT).
  */
-export const showsDeathFx = (info, consumed = false) => !consumed && info?.kind !== 'device';
+export const showsDeathFx = (info, consumed = false, reason = null) => !consumed && reason !== FORCED_EXIT && info?.kind !== 'device';
 
 /** '2d' | '3d' | 'auto' board preference: `?board=` in the page URL (dev), else the view option. */
 export function boardPreference(opt) {
@@ -307,7 +336,8 @@ export function releaseGl(renderer) {
  * Create the battlefield view inside `host` (an element sized by CSS; the canvas fills it).
  * @param {HTMLElement} host
  * @param {{ data?: any, assets?: any, audio?: any, settings?: { damageNumbers?: boolean, quality?: string },
- *           padding?: object|((kind:string, size:{width:number,height:number}) => object) }} [opts]
+ *           padding?: object|((kind:string, size:{width:number,height:number}) => object),
+ *           hud?: {top:number,bottom:number}|((kind:'prep'|'bossPrep', size:{width:number,height:number}) => {top:number,bottom:number}|null) }} [opts]
  */
 export async function createFieldView(host, options = {}) {
   if (!host || typeof host.appendChild !== 'function') throw new TypeError('createFieldView: host element required');
@@ -392,7 +422,7 @@ export async function createFieldView(host, options = {}) {
   let destroyed = false;
   let mode = 'idle';          // 'idle' | 'prep' | 'battle'
   let stageRec = null;
-  let cam = presetCamera('prep', { width: s0.width, height: s0.height, padding: defaultPadding('prep', s0) });
+  let cam = presetCamera('prep', { width: s0.width, height: s0.height, padding: defaultPadding('prep', s0) }, { hud: hudBands('prep', s0) });
   let camFrom = null, camTo = null, camT0 = 0, camKind = 'prep', camOpts = {}, camMs = CAMERA_MS;
   let pendingView = null;     // tile band/focus to apply when the camera transition ends
   const views = new Map();    // key → view (prep: 'p:'+uid; battle: unit id)
@@ -463,7 +493,7 @@ export async function createFieldView(host, options = {}) {
   ctx.createBox = () => switchableBox({ board: () => board3d, pixi: () => tiles.createBox() });
   const impostors = new ImpostorAtlas(app.renderer);
   ctx.impostors = impostors;
-  tiles.setView(bandFor('prep'), camRect(), fieldFor('prep'));
+  tiles.setView(bandFor('prep'), camRect(), fieldRows('prep'));
   // the real board art of the local client (optional): wait briefly so the first frame already uses it; a late
   // arrival swaps the atlas in place
   const artPromise = loadBoardArt(assets).then((art) => {
@@ -575,6 +605,14 @@ export async function createFieldView(host, options = {}) {
     return { top: h * 0.13, bottom: h * 0.12, left: Math.min(170, w * 0.09), right: w * 0.05 };
   }
 
+  // the HUD bands the prep cameras keep the bench / field clear of (projection.js clearHud; user playtest #5 item 9):
+  // `opts.hud` = (kind, size) => { top, bottom } | null, or a fixed object; none → the plain official framing
+  function hudBands(kind, sz) {
+    if (kind !== 'prep' && kind !== 'bossPrep') return null;
+    if (typeof opts.hud === 'function') { try { return opts.hud(kind, sz) || null; } catch { return null; } }
+    return opts.hud && typeof opts.hud === 'object' ? opts.hud : null;
+  }
+
   function camRect() {
     const k = viewKind(camKind, camOpts);
     if (k === 'pen') return { r0: 14, r1: 18, c0: 7, c1: 13 };
@@ -590,21 +628,21 @@ export async function createFieldView(host, options = {}) {
     let rect = o.rect ? normRect(o.rect) : null;
     if (k === 'prep') rect = rect ? { ...rect, r0: Math.min(rect.r0, GEO.HAND_ROW) } : null;
     // official configBlackBoard framing (render/projection.js presetCamera); the padding only matters for the
-    // fitted fallback (custom rects, portrait viewports)
+    // fitted fallback (custom rects, portrait viewports); a prep camera keeps the bench and the field clear of the HUD
+    const vk = viewKind(kind, o); // (a 'prep' camera on the boss rows = the Final Assault prep)
     return presetCamera(k, { width: sz.width, height: sz.height, padding: o.padding || defaultPadding(k, sz) }, {
       rect, side: o.side, half: !!o.half, shop: o.shop, fit: !!o.fit, config: stageRec?.config || null,
+      hud: hudBands(vk, sz),
     });
   }
 
-  // rows drawn per camera kind (module `bandFor`): the normal/unite/prep fields live between the separator walls
-  // (rows 6–13); the enemy preview pen behind them (rows 14–18) only for the pen camera; the boss field below (0–6)
-  function fieldFor(kind) { return kind === 'boss' || kind === 'hidden' || kind === 'bossPrep' ? [0, 6] : kind === 'pen' ? [6, 18] : [6, 13]; }
+  // rows drawn per camera kind: module `bandFor`; the active field rows: module `fieldRows`
 
   function setCamera(kind, options) {
     if (destroyed) return false;
     let o = options && typeof options === 'object' ? options : {};
     const prevView = viewKind(camKind, camOpts);
-    const prevBand = bandFor(prevView), prevField = fieldFor(prevView);
+    const prevBand = bandFor(prevView), prevField = fieldRows(prevView);
     const nextKind = typeof kind === 'string' ? kind : 'normal';
     // the enemy pen is a detour of the prep camera: remember where it came from; the same kind asked again without
     // framing options goes back to exactly that camera (Final Assault half, shop state…)
@@ -622,7 +660,7 @@ export async function createFieldView(host, options = {}) {
     else if (vk === 'bossPrep') setPrepField(bossPrepField(camOpts.side === 'R' ? 'R' : 'L'));
     const target = targetCamera(camKind, camOpts);
     const band = bandFor(vk);
-    const field = fieldFor(vk);
+    const field = fieldRows(vk);
     const focus = camRect();
     board3d?.setFocus(focus);
     camMs = Number.isFinite(o.ms) && o.ms >= 0 ? o.ms : (vk === 'pen' || prevView === 'pen' ? PEN_CAMERA_MS : CAMERA_MS);
@@ -1109,7 +1147,9 @@ export async function createFieldView(host, options = {}) {
     const units = [];
     for (const v of views.values()) {
       if (!v.info || v.info.kind === 'device') continue;
-      const u = pickUnitOf(v, v.info.side !== 'ally');
+      const enemy = v.info.side !== 'ally';
+      // a huge boss: its hit area (data/enemies.json `hitArea`, the sim's hit rectangle) is pickable too
+      const u = pickUnitOf(v, enemy, enemy ? data.enemy(v.info.defId)?.hitArea ?? null : null);
       if (u) units.push(u);
     }
     const hit = pickBattle(units, groundTile(x, y), x, y);
@@ -1323,7 +1363,7 @@ export async function createFieldView(host, options = {}) {
       case 'die': {
         const v = views.get(e[1]);
         const used = consumedIds.delete(e[1]);
-        if (v && v.alive) { v.die(); if (showsDeathFx(v.info, used)) fx.death(v); }
+        if (v && v.alive) { v.die(e[2] === FORCED_EXIT); if (showsDeathFx(v.info, used, e[2])) fx.death(v); }
         break;
       }
       case 'leak': {
@@ -1341,6 +1381,13 @@ export async function createFieldView(host, options = {}) {
         if (e[4] && typeof e[4] === 'object' && e[4].consumed && e[4].id != null) {
           consumedIds.add(e[4].id);
           if (consumedIds.size > 200) consumedIds.delete(consumedIds.values().next().value);
+        }
+        // an enemy's mode change (掠海漂移体 → 爬行模式, user playtest #5 item 1): its view switches clip set
+        // (UnitView.setForm); the info keeps it for a view built later
+        if (e[1] === 'phase' && e[4] && typeof e[4] === 'object' && e[4].id != null) {
+          const inf = infos.get(e[4].id);
+          if (inf) inf.form = typeof e[4].kind === 'string' ? e[4].kind : null;
+          views.get(e[4].id)?.setForm?.(e[4].kind);
         }
         fx.simFx(e[1], Number(e[2]), Number(e[3]), e[4]);
         break;

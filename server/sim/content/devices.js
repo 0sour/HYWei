@@ -354,9 +354,12 @@ function tickMire(battle, st, u) {
   battle.addBuff(u, { key: BUFF[TERRAIN.mire], refresh: 'replace', mods: { aspd: M.aspdPer * n, moveMul: Math.max(0, 1 + M.movePer * n) } });
 }
 
-/** Terrain code under a unit (0 = none). Flyers and hidden units ignore ground terrain; smog only helps allies. */
+/**
+ * Terrain code under a unit (0 = none). Air units (Unit.isFlying: flyers, hovering 近地悬浮 and levitated enemies) and
+ * hidden units ignore ground terrain; smog only helps allies.
+ */
 function terrainFor(battle, st, u) {
-  if (u.hidden || u.motion === 'FLY') return 0;
+  if (u.hidden || u.isFlying) return 0;
   let k;
   if (u.side === 'ally') k = u.tileR * COLS + u.tileC;
   else {

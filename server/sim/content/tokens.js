@@ -60,6 +60,8 @@
 
 import { COLS, ROWS, MOVE_SCALE } from '../constants.js';
 import { absoluteRangeKeys, sortEnemyTargets, canTargetEnemy } from '../targeting.js';
+import { bodyInKeys, bodyOnTile } from '../body.js';
+import { hasHp } from '../damage.js';
 import { genericKit } from './generic.js';
 import { normDir, localOrder } from '../dir.js';
 
@@ -169,20 +171,22 @@ function scheduleLifetime(battle, unit, seconds) {
   battle.after(s, () => { if (unit.alive && unit.deploySeq === seq) battle.retreat(unit, { reason: 'expired', permanent: true }); }, { owner: unit });
 }
 
-/** Enemies (visible) standing on any of the absolute tile keys. Auras/bursts hit stealthed enemies too. */
+/** Visible enemies whose body is on any of the absolute tile keys (sim/body.js); auras / bursts hit stealthed ones. */
 function enemiesOnKeys(battle, keys) {
   const set = keys instanceof Set ? keys : new Set(keys);
   const out = [];
   for (const e of battle.enemies) {
     if (!e.alive || e.hidden) continue;
-    const r = Math.round(e.y), c = Math.round(e.x);
-    if (r < 0 || r >= ROWS || c < 0 || c >= COLS) continue;
-    if (set.has(r * COLS + c)) out.push(e);
+    if (bodyInKeys(e, set)) out.push(e);
   }
   return out;
 }
 
-/** Appear burst: damage (optional) + status (optional) on the enemies of `grid` around the token. Returns victims. */
+/**
+ * Appear burst: damage (optional) + status (optional) on the enemies of `grid` around the token. Returns victims. Air
+ * units (Unit.isFlying) are hit too **[ASSUMED]**: PRTS has no 对空 note on any of them — 沙之碑 (蜜蜡 S2), 迷迭香的战术装备
+ * ("对自身攻击范围内的敌人造成晕眩"), “耀阳”, 纸偶 (风丸 折纸生花) — so a stun here also drops a hovering 掠海漂移体.
+ */
 function burst(battle, unit, { grid, amount = 0, type = 'phys', stun = 0, hits = 1, source = unit, fx = 'summonBurst' }) {
   const keys = absoluteRangeKeys(grid || GRID_3X3, unit.tileR, unit.tileC, unit.dir, 0);
   const victims = enemiesOnKeys(battle, keys);
@@ -451,7 +455,10 @@ function seaborn(bb, raw, def) {
   };
 }
 
-/** “耀阳” (耀骑士临光 S3): appear burst (true, owner ATK × atk_scale, stun), blocks 2, lasts while the owner's skill runs. */
+/**
+ * “耀阳” (耀骑士临光 S3): appear burst (true, owner ATK × atk_scale, stun — air units too [ASSUMED: no 对空 note on PRTS
+ * “耀阳”]), blocks 2, lasts while the owner's skill runs.
+ */
 function radiantSword(bb, raw, def) {
   const grid = def?.skill?.rangeGrid ?? GRID_PLUS;
   // 精锐 owner's module (isToken part): "攻击被阻挡的敌人时攻击力提升至115%" — any blocked enemy
@@ -759,7 +766,9 @@ function champagne(bb) {
         let hit = null;
         for (const e of battle.enemies) {
           if (!e.alive || e.hidden || e.isFlying) continue;
-          if (Math.abs(e.x - unit.tileC) <= 0.5 && Math.abs(e.y - unit.tileR) <= 0.5 && (!hit || e.spawnSeq < hit.spawnSeq)) hit = e;
+          // touching its tile: a huge enemy on any tile of its body (body.js)
+          const on = e.hitArea ? bodyOnTile(e, unit.tileR, unit.tileC) : Math.abs(e.x - unit.tileC) <= 0.5 && Math.abs(e.y - unit.tileR) <= 0.5;
+          if (on && (!hit || e.spawnSeq < hit.spawnSeq)) hit = e;
         }
         if (!hit) return;
         const hits = battle.time - unit.deployedAt >= extraAfter - 1e-9 ? 2 : 1;
@@ -885,8 +894,8 @@ function yanyouFallbackDef(battle) {
  *   * normal attack: rangeRadius 2.0, arts, 3 targets ("可同时攻击3个目标", talent 1.attack@max_target);
  *   * every damage it deals adds burn = ATK × 2.ep_damage_ratio (20 %: "自身造成伤害时，附加攻击力20%的灼燃损伤"; the
  *     official 下半 notice: "祛恶之焰附带的灼燃损伤调整为基于炎佑的攻击力") — normal attacks AND flame ticks;
- *   * 元素脆弱 aura: enemies within YANYOU_FRAGILE_RADIUS (1.5, PRTS "自身<固定半径>半径1.5范围内") take element damage
- *     × 2.damage_scale (1.2);
+ *   * 元素脆弱 aura: enemies within YANYOU_FRAGILE_RADIUS (1.5, PRTS "自身<固定半径>半径1.5范围内") take 元素伤害 (burst
+ *     damage) × 2.damage_scale (1.2) — not the gauge fill (damage.js);
  *   * immune to element damage ("即将受到元素损伤前取消此元素损伤");
  *   * 祛恶之焰 [模式乙] (the 炎 bond's mode, Skill_2; cooldown / initCooldown 15, atk_scale 0.6, hit_duration 20,
  *     range_radius 1.0): "触发索敌和普通攻击相同：锁定1个目标持续施法，最多持续20秒，每秒对目标周围半径1.0范围内的所有
@@ -985,10 +994,12 @@ function yanyouKit(bb, raw) {
       unit.base.blockCnt = 0;
       const speed = moveSpeed * MOVE_SCALE;
       onDeploy(battle, unit, () => { unit.mem.keysAt = null; refreshKeys(unit); });
-      // every damage it deals adds burn (not the burn itself, not element bursts)
+      // every damage it deals adds burn (not the burn itself, not element bursts; not a killing blow — the hook runs
+      // before the kill, at 0 HP: no burst on the corpse)
       if (epRatio > 0) {
         battle.on('damaged', (ctx) => {
-          if (ctx.source !== unit || !ctx.target || ctx.target.side !== 'enemy' || !ctx.target.alive) return;
+          const t = ctx.target;
+          if (ctx.source !== unit || !t || t.side !== 'enemy' || !hasHp(t)) return;
           if (ctx.type === 'element' || ctx.type === 'elemental' || !(ctx.amount > 0)) return;
           battle.dealDamage(unit, ctx.target, { type: 'element', element: 'burn', amount: unit.s.atk * epRatio, tags: ['yanyou'] });
         }, { owner: unit });

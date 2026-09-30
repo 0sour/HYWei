@@ -277,6 +277,9 @@ export class SkillRuntime {
       if (this.healSkill) return b.injuredAlliesInKeys(keys, u).length > 0;
       if (b.enemiesInKeys(keys, u, u.profile).length > 0) return true;
     }
+    // the enemies a melee unit blocks are always its targets (Battle.blockedTargets), in range or not — PRTS 卫戍协议/帮助
+    // "敌人被近战干员自身阻挡" satisfies the target condition of the basic strategy
+    if (!this.healSkill && u.blocking.length && b.blockedTargets(u, u.profile).length > 0) return true;
     return !this.healSkill && this.triggerRanges.length > 0 && this._extraTriggerSatisfied();
   }
 

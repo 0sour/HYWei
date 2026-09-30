@@ -1424,6 +1424,11 @@ function definedFields(over) {
   return out;
 }
 
+/**
+ * enemy_database attribute → enemies.json stat. The two element resistances (PRTS 元素 / 游戏数据基础 / enemy pages):
+ * `epResistance` (EP_RESISTANCE) = 损伤抵抗, % off element gauge fills → `elementRes`; `epDamageResistance` = 元素抗性,
+ * % off 元素伤害 (element HP damage) → `elementDmgRes` (sim: server/sim/damage.js).
+ */
 const ENEMY_STAT_FIELDS = {
   maxHp: 'maxHp', atk: 'atk', def: 'def', magicResistance: 'res', moveSpeed: 'moveSpeed',
   baseAttackTime: 'bat', attackSpeed: 'aspd', blockCnt: 'blockCnt', massLevel: 'massLevel',
@@ -1543,6 +1548,27 @@ function enemyAttrPower(ctx, key, level) {
 }
 
 /**
+ * Huge units' hit areas (巨型单位：受击判定区域) by prefab (enemy_database `prefabKey`: a season `_2` copy with the same
+ * prefab shares it) → enemies.json `hitArea`: a rectangle `w` tiles along the columns (长) × `h` along the rows (宽),
+ * centred on the unit's position moved `dx` columns right and `dy` rows up (row 0 = the bottom). The collider lives in
+ * the prefab, not in the game tables — values from PRTS (user playtest #5 item 10):
+ *   假想敌：胄 / 假想敌：管 / 盐风主教昆图斯 "巨型单位：受击判定区域为长4.95、宽2.95的长方形，向上偏移1.0";
+ *   假想敌：管 隐秘核心 (enemy_9021_acduml_2, its own prefab) "…向上偏移1.0，向右偏移1.0";
+ *   卫戍协议：盟约 下半/PRTS盟约记录 "卫戍协议中的阿利斯泰尔，帝国余晖和“萨米的意志”为特殊版本，拥有与普通版本不同的受击判定
+ *   区域（为长4.95宽2.95的长方形，向上偏移1）".
+ * [ASSUMED] 胄's hidden-core copy (enemy_9013_acstmk_2, prefab enemy_9013_acstmk) keeps the upward offset although its
+ * PRTS section lists none — one prefab, one collider. 假想敌：铳 and 卢西恩 are regular units (no such talent).
+ */
+const HIT_AREAS = Object.freeze({
+  enemy_9013_acstmk: { w: 4.95, h: 2.95, dx: 0, dy: 1 },
+  enemy_9021_acduml: { w: 4.95, h: 2.95, dx: 0, dy: 1 },
+  enemy_9021_acduml_2: { w: 4.95, h: 2.95, dx: 1, dy: 1 },
+  enemy_1521_dslily: { w: 4.95, h: 2.95, dx: 0, dy: 1 },
+  enemy_9032_aclionk: { w: 4.95, h: 2.95, dx: 0, dy: 1 },
+  enemy_9033_acdeer: { w: 4.95, h: 2.95, dx: 0, dy: 1 },
+});
+
+/**
  * Build data/enemies.json: base stats at the season level (randomEnemyAttributeDict.level, 0 for
  * all), with the season-wide override level (level_autochess_enemy_data) applied.
  */
@@ -1611,6 +1637,7 @@ function buildEnemies(ctx) {
     const abilities = (hb?.abilityList || []).map((a) => ({ text: stripRich(a.text), textRaw: richRaw(a.text), format: a.textFormat || 'NORMAL' }));
     const name = mv(data.name) || hb?.name || key;
     const descRaw = mv(data.description);
+    const hitArea = HIT_AREAS[mv(data.prefabKey) || key] || null;
     out[key] = {
       key, name, level: wantLevel, rank: mv(data.levelType, 'NORMAL'), handbookIndex: hb?.enemyIndex || null,
       desc: stripRich(descRaw), descRaw: richRaw(descRaw),
@@ -1630,6 +1657,7 @@ function buildEnemies(ctx) {
       inactiveIn: inactiveIn.get(key) || [],
       seasonOverride: override ? Object.keys(definedFields(override)) : null,
       iconId: key, spine: mv(data.prefabKey) || key,
+      ...(hitArea ? { hitArea: { ...hitArea } } : {}),
     };
   }
   return out;

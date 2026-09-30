@@ -12,12 +12,36 @@
 //     pointer's point on the ground, or its drawn body (on screen: the upright line from its feet to its head, in its px
 //     per tile), whichever is nearer, so a press on a tall enemy's / a boss's body picks it too; a flying enemy (drawn in
 //     the air, over whatever tile it crosses) by its drawn body alone.
+//   * a huge boss (巨型单位, data `hitArea` — the sim's hit rectangle, server/sim/body.js; user playtest #5 item 10) is
+//     also picked by a press anywhere on its drawn body — its hit area on the ground (the 5 × 3 tiles under the model)
+//     or the upright box from its feet to its head as wide as that area — counted as AREA_PICK tile away, so an ally
+//     standing on the pressed tile, or a regular enemy near the pointer, still wins.
 //   * an ally's tile and an enemy both qualify → the nearer one (distance in tiles to the pointer's point), ties → the
 //     ally, then the front-most.
 // (Replaces the drawn-body shapes and the 1-px render probe of v2.2, DESIGN §17.2: the player aims at the grid.)
 
 /** Battle enemies are picked within this many tiles of the pointer's ground point or of their drawn body on screen. */
 export const ENEMY_REACH = 0.6;
+/**
+ * A press on a huge boss's hit area (not near its feet / drawn body line) counts as this far — farther than any ally
+ * on the pressed tile (≤ √0.5) or any enemy within ENEMY_REACH, so those win [ASSUMED].
+ */
+export const AREA_PICK = 1;
+
+/**
+ * World rectangle (tiles: x = col, y = row) of a hit area `{ w, h, dx, dy }` for a unit at (x, y) — the same rectangle
+ * as server/sim/body.js hitRect: `w` along the columns × `h` along the rows, centred `dx` columns right / `dy` rows up.
+ * @returns {{ x0: number, x1: number, y0: number, y1: number } | null}
+ */
+export function hitRectAt(x, y, a) {
+  if (!a || !(a.w > 0) || !(a.h > 0) || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const cx = x + (Number(a.dx) || 0), cy = y + (Number(a.dy) || 0);
+  return { x0: cx - a.w / 2, x1: cx + a.w / 2, y0: cy - a.h / 2, y1: cy + a.h / 2 };
+}
+const inArea = (A, g) => !!A && !!g && g.x >= A.x0 && g.x <= A.x1 && g.y >= A.y0 && g.y <= A.y1;
+/** Screen point inside a huge body's upright box: `hw` tiles (its px per tile) either side of its x, feet up to head. */
+const inBox = (b, px, py) => !!b && b.hw > 0 && b.s > 0 && Math.abs(px - b.x) <= b.hw * b.s
+  && py >= Math.min(b.top, b.feet) && py <= Math.max(b.top, b.feet);
 
 const EPS = 1e-9;
 const isTile = (t) => !!t && Number.isInteger(t.row) && Number.isInteger(t.col);
@@ -39,10 +63,13 @@ function bodyDist(b, px, py) {
  * @typedef {{ row: number, col: number, x?: number, y?: number }} PickGround the tile under the pointer and the pointer's
  *   point on its top (world tiles: x = col, y = row), or null off the grid
  * @typedef {{ tile?: { row: number, col: number } | null, x?: number, y?: number, depth?: number, fly?: boolean,
- *   body?: { x: number, top: number, feet: number, s: number } | null }} PickUnit
+ *   body?: { x: number, top: number, feet: number, s: number, hw?: number } | null,
+ *   area?: { x0: number, x1: number, y0: number, y1: number } | null }} PickUnit
  *   `tile`: the tile it stands on (null: it walks — a battle enemy); `x`, `y`: its ground position (world tiles);
- *   `body`: an enemy's drawn body on screen (px: x, head `top`, `feet`; `s` px per tile there); `fly`: in the air — its
- *   ground position does not count; `depth`: draw order (larger = in front)
+ *   `body`: an enemy's drawn body on screen (px: x, head `top`, `feet`; `s` px per tile there; `hw`: a huge boss's half
+ *   width in tiles); `fly`: in the air — its
+ *   ground position does not count; `area`: a huge boss's hit rectangle on the ground (world tiles, hitRectAt);
+ *   `depth`: draw order (larger = in front)
  */
 
 /**
@@ -87,7 +114,10 @@ export function pickBattle(units, ground, px, py) {
     else {
       d = bodyDist(u.body, px, py);
       if (!u.fly && onGround && Number.isFinite(u.x) && Number.isFinite(u.y)) d = Math.min(d, Math.hypot(u.x - ground.x, u.y - ground.y));
-      if (!(d <= ENEMY_REACH)) continue;
+      if (!(d <= ENEMY_REACH)) {
+        if (u.fly || !(inBox(u.body, px, py) || (onGround && inArea(u.area, ground)))) continue;
+        d = AREA_PICK;
+      }
     }
     if (d < Infinity && better(u, d)) { best = u; bd = d; }
   }

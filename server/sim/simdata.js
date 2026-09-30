@@ -25,6 +25,7 @@
 //   getSimData()      the injected data (browser) or the generated data (Node), or null.
 
 import { resolveRecordLoadout, composeStats, composeTalents, loadoutRecord } from '../../shared/loadoutRecord.js';
+import { normHitArea } from './body.js';
 
 // ---------------------------------------------------------------------------------------------------------------
 // generic helpers
@@ -258,6 +259,7 @@ export function normalizeEnemy(key, e) {
     epDamageResistance: num(st.elementDmgRes ?? extra.epDamageResistance ?? e.epDamageResistance, 0),
     hpRecoveryPerSec: num(st.hpRecoveryPerSec ?? extra.hpRecoveryPerSec ?? e.hpRecoveryPerSec, 0),
     notCountInTotal: !!(e.notCountInTotal),
+    hitArea: normHitArea(e.hitArea),   // huge units only (body.js); null = a point
     tags: e.tags ?? [],
     abilities: e.abilities ?? [],
     skills: e.skills ?? [],

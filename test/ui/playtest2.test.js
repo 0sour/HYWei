@@ -26,7 +26,8 @@ describe('6: the enemy pen only with the pen camera', () => {
   test('prep / battle / 联防 cameras draw no pen rows and build no pen area; the pen camera does', () => {
     for (const k of ['prep', 'normal', 'unite']) {
       assert.ok(bandFor(k)[1] <= 13, `${k}: 2D rows ${bandFor(k)}`);
-      assert.ok(maxRow(boardArea(k)) <= 12, `${k}: 3D area rows ≤ 12`);
+      // the field and its separator rows (row 13 carries devices blowing into the field, user playtest #5 item 6)
+      assert.ok(maxRow(boardArea(k)) <= 13, `${k}: 3D area rows ≤ 13 (no pen rows 14–18)`);
       assert.equal(penShown(k), false, `${k}: pen figures hidden`);
     }
     for (const k of ['boss', 'hidden', 'bossPrep']) {
@@ -44,8 +45,8 @@ describe('6: the enemy pen only with the pen camera', () => {
   });
 
   test('the field areas are the official ones minus the pen block', () => {
-    assert.deepEqual(boardArea('normal'), AREAS.normal.filter((a) => a.r1 <= 12));
-    assert.deepEqual(boardArea('unite'), AREAS.unite.filter((a) => a.r1 <= 12));
+    assert.deepEqual(boardArea('normal'), AREAS.normal.filter((a) => a.r1 <= 13));
+    assert.deepEqual(boardArea('unite'), AREAS.unite.filter((a) => a.r1 <= 13));
     assert.ok(boardArea('normal').some((a) => a.r0 <= 6 && a.r1 >= 12 && a.c0 === 0 && a.c1 >= 10), 'own field + bench');
   });
 

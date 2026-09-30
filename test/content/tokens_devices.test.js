@@ -478,7 +478,7 @@ test('炎佑: spawnYanyou — flying ally, bond stats, 3 targets with burn + ele
   assert.ok(burned, 'burn gauge');
   const frag = h.enemies().find((e) => e.findBuff('elemFragile'));
   assert.ok(frag, 'elemental fragility (元素脆弱 status)');
-  approx(frag.s.elemTakenMul, 1.2, 1e-9);
+  approx(frag.s.elementalTakenMul, 1.2, 1e-9);
   assert.ok(h.runUntil(() => y.skill.activations >= 1, 10), '祛恶之焰');
   approx(y.skill.lastStart, 15, 1.5, 'first flame after initCooldown');
   h.run(2);
@@ -885,8 +885,8 @@ test('炎佑 details: plain spawnToken works (enemy-shaped record), burn gauge =
   assert.equal(y.motion, 'FLY');
   const e = h.enemy('enemy_dummy');
   assert.ok(h.runUntil(() => y.stats.attacks >= 1 && e.elem.burn > 0, 5));
-  // the hit's own 元素脆弱 (×1.2) lands before its burn fill
-  approx(e.elem.burn, 1000 * 0.2 * 1.2, 1e-6, 'gauge per hit');
+  // 元素脆弱 raises 元素伤害 only ("受到的元素伤害提升"), never the gauge fill (damage.js)
+  approx(e.elem.burn, 1000 * 0.2, 1e-6, 'gauge per hit');
   assert.ok(h.runUntil(() => h.hooksOf('elementBurst').length > 0, 20), 'burn burst');
   const burst = h.hooksOf('damaged').find((c) => c.type === 'elemental' && c.target === e);
   assert.ok(burst, 'elemental burst damage');

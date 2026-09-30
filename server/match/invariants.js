@@ -96,7 +96,9 @@ export function collectViolations(m, { limit = 25 } = {}) {
     }
     // board
     let deployed = 0;
-    const dmap = ps.deployMap();
+    // a pure read (Match.deployMapFor: the field the player deploys on now) — PlayerState.deployMap() would update the
+    // player's cached field / legality flag, and this checker must not change when a later recompute moves pieces
+    const dmap = typeof m.deployMapFor === 'function' ? m.deployMapFor(ps) : ps.deployMap();
     for (const [k, p] of ps.board) {
       const [r, c] = parseKey(k);
       if (!(r >= FIELD.r0 && r <= FIELD.r1 && c >= FIELD.c0 && c <= FIELD.c1)) fail(`${id}: piece outside the board at ${k}`);

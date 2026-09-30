@@ -13,13 +13,15 @@
 // like the official client and exactly where the render engine puts them (gameLogic penPlacement = render/pen.js
 // layoutPen: rows 14–18 × cols 7–13, upper gate rows 17–18, lower gate 14–15, row 16 empty, ≤ 50 models, ≤ 3 per tile);
 // tapping one emits pieceClick { enemyKey, preview: true, unit: { side: 'enemy', defId } }. setCamera('bossPrep') (the
-// Final Assault prep) keeps the own board here — every coordinate the UI exchanges is a board coordinate anyway.
+// Final Assault prep) keeps the own board layout here — every coordinate the UI exchanges is a board coordinate anyway —
+// but draws the tiles of the player's half of the boss field (gameLogic fieldTile, the legality the highlights use: act2
+// m01's fence tiles are floor there, not the normal field's walls; user playtest #5 item 7).
 
 import { render } from '../../vendor/preact.module.js';
 import { html, TierChip } from './components.js';
 import { GEO } from '../../../shared/constants.js';
 import { chessAvatarUrl, itemIconUrl, tokenAvatarUrl, enemyIconUrl } from './assetUrls.js';
-import { tileKey, hasFlag, UF, penPlacement, PEN } from './gameLogic.js';
+import { tileKey, hasFlag, UF, penPlacement, PEN, fieldTile } from './gameLogic.js';
 
 const DRAG_PX = 6;
 const DMG_TTL = 900;
@@ -37,6 +39,24 @@ function unitArt(m, info) {
   return null;
 }
 
+/** Look of the stage tile (row, col) on the fallback board (stage coordinates). */
+export function fallbackTileClass(stage, row, col) {
+  const rows = stage?.rows;
+  const glyph = Array.isArray(rows) && typeof rows[row] === 'string' ? rows[row][col] : 'r';
+  const t = stage?.tiles?.[glyph];
+  if (glyph === 'S') return 'gate';
+  if (glyph === 'E') return 'goal';
+  if (!t) return 'void';
+  if (t.tileKey === 'tile_forbidden') return 'void';
+  if (t.height === 'HIGH') return t.buildable === 'NONE' ? 'void' : 'high';
+  if (t.special === 'mire' || glyph === 'm') return 'mire';
+  if (glyph === 'g') return 'smog';
+  if (glyph === 'd') return 'deep';
+  if (glyph === 'i') return 'infect';
+  if (t.buildable === 'NONE') return 'lane';
+  return 'floor';
+}
+
 /**
  * Create the DOM fallback view.
  * @param {HTMLElement} host
@@ -52,7 +72,7 @@ export function createFallbackView(host, opts = {}) {
   host.appendChild(root);
 
   const st = {
-    stage: null, camera: 'prep', rect: { ...GEO.NORMAL_RECT }, side: 'L',
+    stage: null, camera: 'prep', rect: { ...GEO.NORMAL_RECT }, side: 'L', deployField: 'normal',
     mode: 'prep', priv: null, editable: false, canPlace: null,
     field: null, units: new Map(), snapUnits: new Map(), highlight: new Map(), hlGroups: new Map(), held: new Map(), dirs: new Map(),
     drag: null, hoverTarget: null, floats: [], settings: { damageNumbers: true, ...(opts.settings || {}) },
@@ -196,21 +216,10 @@ export function createFallbackView(host, opts = {}) {
   }
 
   // ---- tiles ----------------------------------------------------------------------------------------------
+  // the stage tile a board tile shows: in a boss round's prep the player's half of the boss field (fieldTile)
   function tileClass(row, col) {
-    const rows = st.stage?.rows;
-    const glyph = Array.isArray(rows) && typeof rows[row] === 'string' ? rows[row][col] : 'r';
-    const t = st.stage?.tiles?.[glyph];
-    if (glyph === 'S') return 'gate';
-    if (glyph === 'E') return 'goal';
-    if (!t) return 'void';
-    if (t.tileKey === 'tile_forbidden') return 'void';
-    if (t.height === 'HIGH') return t.buildable === 'NONE' ? 'void' : 'high';
-    if (t.special === 'mire' || glyph === 'm') return 'mire';
-    if (glyph === 'g') return 'smog';
-    if (glyph === 'd') return 'deep';
-    if (glyph === 'i') return 'infect';
-    if (t.buildable === 'NONE') return 'lane';
-    return 'floor';
+    const [r, c] = st.mode === 'prep' ? fieldTile(st.deployField, row, col) : [row, col];
+    return fallbackTileClass(st.stage, r, c);
   }
 
   function dropState(target) {
@@ -369,6 +378,7 @@ export function createFallbackView(host, opts = {}) {
       if (kind === 'pen') { schedule(); return; } // the board keeps its rect for the way back
       if (o && o.rect && Number.isFinite(o.rect.r0)) st.rect = { ...o.rect };
       else if (kind === 'prep' || kind === 'bossPrep' || kind === 'normal') st.rect = { ...GEO.NORMAL_RECT };
+      st.deployField = kind === 'bossPrep' ? (o?.side === 'R' ? 'bossR' : 'bossL') : 'normal';
       if (kind === 'bossPrep') st.camera = 'prep';
       else if (kind === 'unite') st.rect = { ...GEO.UNITE_RECT };
       else if (kind === 'boss') st.rect = { ...GEO.BOSS_RECT };

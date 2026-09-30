@@ -2,9 +2,12 @@
 // autochess board at runtime (DESIGN §15): pure JS, no three import (tested in Node; render/board3d/scene.js turns
 // the buckets into merged BufferGeometries).
 //
-//   const board = buildBoard(stage, { uv: resolveUvTable(tiles), crate?: objMesh })
+//   const board = buildBoard(stage, { uv: resolveUvTable(tiles), crate?: objMesh, area?: AREAS.normal })
 //   → { grid, buckets: { board, decal, pipe }, gates: [{ r, c, kind: 'start'|'end' }], devices: [...],
 //       terrain: { water, mire, smog, infection: [[r,c]…] }, edges: [...cyan field edge strips], bounds, stats }
+// `devices` = the active stage devices standing on a built tile — the separator row 13 included (act2 m01's blowers at
+// the top edge of the normal / 联防 field); the boss field's (rows ≤ 6: its row-6 blowers) only when the boss field is
+// built — user playtest #5 item 6 (stageDevices).
 //
 // World space = render/projection.js: x = col, y = row, z = height (up); tile (r,c) covers [c±½]×[r±½].
 // Heights follow render/style.js TILE_H (the Pixi layers stand units on the same tops: tiles.js heightAt).
@@ -45,10 +48,16 @@ const CONTENT_OF = (g) => g !== '#' && g !== 'X';
  * ((6,11),(12,20)), leftBoss ((0,0),(6,10)), rightBoss ((0,11),(6,20)); enemy_place_rect ((14,7),(18,13)) + the
  * separator in front of it). The official prep / battle view shows only the player's own field and the preview pen
  * (the island ends under the bench row); 联防 joins both normal halves; the Final Assault builds the boss field.
+ * The normal / 联防 field rects also take the separator row 13 above the field (like leftBoss takes row 6 above the
+ * boss field): the devices standing on it act on the field — act2 m01's 源石流发生装置 #001/#002 (#101/#102) at (13, 5 /
+ * 9 / 13 / 17) blow DOWN into rows 12–10 — and the official normal rounds show those machines at the field's top edge
+ * (user playtest #5 item 6: the wind lanes worked but the blowers were missing; the 2D board always drew row 13). The
+ * row-6 wall under the bench is built in these views too (in leftNormal), without the boss field's devices on it
+ * (stageDevices).
  */
 export const AREAS = Object.freeze({
-  normal: Object.freeze([Object.freeze({ r0: 6, r1: 12, c0: 0, c1: 10 }), Object.freeze({ r0: 13, r1: 18, c0: 6, c1: 14 })]),
-  unite: Object.freeze([Object.freeze({ r0: 6, r1: 12, c0: 0, c1: 20 }), Object.freeze({ r0: 13, r1: 18, c0: 6, c1: 14 })]),
+  normal: Object.freeze([Object.freeze({ r0: 6, r1: 13, c0: 0, c1: 10 }), Object.freeze({ r0: 13, r1: 18, c0: 6, c1: 14 })]),
+  unite: Object.freeze([Object.freeze({ r0: 6, r1: 13, c0: 0, c1: 20 }), Object.freeze({ r0: 13, r1: 18, c0: 6, c1: 14 })]),
   boss: Object.freeze([Object.freeze({ r0: 0, r1: 6, c0: 0, c1: 20 })]),
   all: Object.freeze([Object.freeze({ r0: 0, r1: 18, c0: 0, c1: 20 })]),
 });
@@ -431,7 +440,7 @@ export function buildBoard(stage, opts = {}) {
     }
   }
 
-  const devices = opts.devices === false ? [] : stageDevices(stage, grid);
+  const devices = opts.devices === false ? [] : stageDevices(stage, grid, opts.area || null);
   for (const d of devices) {
     if (d.kind === 'platform' || d.kind === 'sealedFloor' || d.kind === 'waterPlatform') slabDevice(board, decal, UVT, d, grid);
   }
@@ -478,9 +487,23 @@ export function tube(g, a, b, rad, seg = 8, col = [1, 1, 1]) {
 
 const DEVICE_KINDS = new Set(['crate', 'platform', 'mound', 'blower', 'turret', 'waterPlatform', 'bush', 'sealedFloor']);
 
-/** Active stage devices standing on drawn tiles: `{ kind, r, c, dir, z0, key, alias }`. */
-export function stageDevices(stage, grid) {
+/** The boss field's top wall — the row under the normal field's bench (rows ≤ this one are the boss field's). */
+export const BOSS_WALL_ROW = 6;
+
+/**
+ * Active stage devices standing on drawn tiles: `{ kind, r, c, dir, z0, key, alias, rangeTiles }` — every visible
+ * predefined token of the level is a scene object, a device on the separator row 13 included (act2 m01's 源石流发生装置
+ * #001 / #002 blow DOWN into the normal field: the official normal rounds show them at its top edge although row 13
+ * lies outside every configBlackBoard area rect, user playtest #5 item 6). The boss field's devices (rows ≤ 6, its top
+ * wall under the bench included: act2 m01's #201 / #202 blow DOWN into rows 5–3) are drawn only when `area` builds the
+ * boss field (a rect below row 6): the official normal cameras never show that wall — it lies under the shop bar in
+ * prep and off-screen in battle and in the shop-collapsed prep view — while the remake's prep view showed the boss
+ * round's machines under the bench ("反而在关底吹风机的贴图又出现了"). `area` null = the whole map. The 2D board
+ * (render/tiles.js _stageDevices) follows the same rule.
+ */
+export function stageDevices(stage, grid, area = null) {
   const list = Array.isArray(stage?.devices) ? stage.devices : [];
+  const bossShown = !area || area.some((a) => a.r0 < BOSS_WALL_ROW);
   const out = [];
   for (const d of list) {
     if (!d || !Array.isArray(d.pos) || !Number.isInteger(d.pos[0]) || !Number.isInteger(d.pos[1])) continue;
@@ -488,6 +511,7 @@ export function stageDevices(stage, grid) {
     const active = typeof d.active === 'boolean' ? d.active : !d.hidden;
     if (!active) continue;
     const [r, c] = d.pos;
+    if (r <= BOSS_WALL_ROW && !bossShown) continue;
     const t = grid?.[r]?.[c];
     if (!t || !t.drawn) continue;
     out.push({ kind: d.role, r, c, dir: ['UP', 'DOWN', 'LEFT', 'RIGHT'].includes(d.dir) ? d.dir : 'UP', z0: t.h, key: d.key || null, alias: d.alias || null, rangeTiles: Array.isArray(d.rangeTiles) ? d.rangeTiles : null });

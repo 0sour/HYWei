@@ -23,8 +23,9 @@
 // ctx.triggerGarrisons(uid, eventType) re-runs another piece's garrisons (铃兰, "触发…的获得时效果", 特质相同).
 // Items: onEquip / onArt / onDestroy go to the item's own handler only; every other hook runs for items equipped on
 // owned chess (ev.source.holder). Dispatch order per player: global → band → bonds → garrisons (board reading order,
-// then hand) → equipped items → effects (insertion order). Every call is try/catch-guarded; nested dispatch depth
-// is capped (MAX_DEPTH) so content can never loop the server.
+// then hand) → equipped items → effects (insertion order); onPrice runs the priced chess's own 特质 first (购买价格为N
+// sets the price the discounts and caps of bonds / strategies then act on — user playtest #5). Every call is
+// try/catch-guarded; nested dispatch depth is capped (MAX_DEPTH) so content can never loop the server.
 
 import { itemKey } from './gamedata.js';
 import { boardOrder, parseKey, tileKey } from './board.js';
@@ -188,6 +189,8 @@ export class EffectDispatcher {
     this.depth++;
     try {
       const reg = this.registry;
+      // 0. onPrice: the priced chess's own 特质 first — 购买价格为N defines the price every other modifier acts on
+      if (hook === 'onPrice') this._garrisons(ps, hook, ev);
       // 1. globals
       for (const [key, h] of reg.globals()) this._call(ps, key, h, hook, { kind: 'global', key }, ev);
       // 2. band
@@ -202,8 +205,8 @@ export class EffectDispatcher {
         const h = reg.get(key);
         if (h) this._call(ps, key, h, hook, { kind: 'bond', key, bondId, bond: ps.bonds[bondId] ?? null }, ev);
       }
-      // 4. garrisons
-      this._garrisons(ps, hook, ev);
+      // 4. garrisons (onPrice: already run as step 0)
+      if (hook !== 'onPrice') this._garrisons(ps, hook, ev);
       // 5. equipped items (not for the item-specific hooks)
       if (hook !== 'onEquip' && hook !== 'onArt' && hook !== 'onDestroy') {
         for (const holder of ownedChess(ps)) {

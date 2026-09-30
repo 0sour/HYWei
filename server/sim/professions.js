@@ -21,7 +21,10 @@
 // Behaviour per subprofession is documented in docs/SIM.md §Professions. Front / side tests use the unit's direction
 // (`dir`, sim/dir.js): offsets are compared in its facing-RIGHT frame.
 
-import { toLocal } from './dir.js';
+import { toLocal, frontOf } from './dir.js';
+import { absoluteRangeKeys } from './targeting.js';
+import { bodyInKeys, bodyKeys, bodyOnTile } from './body.js';
+import { COLS } from './constants.js';
 
 const P = (o) => Object.freeze(o);
 const num = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -239,19 +242,24 @@ const installSkywalker = (battle, unit) => {
 };
 
 /** Target's tile offset from the unit in the unit's facing-RIGHT frame ([dRow, dCol], sim/dir.js toLocal). */
-const localOffset = (unit, target) => toLocal(Math.round(target.y) - unit.tileR, Math.round(target.x) - unit.tileC, unit.dir);
+/** The target (its body: a huge enemy's every tile — body.js) on a tile of `grid` around the unit (its facing frame). */
+const inTraitGrid = (unit, target, grid) => bodyInKeys(target, absoluteRangeKeys(grid, unit.tileR, unit.tileC, unit.dir, 0));
 
-const inTraitGrid = (unit, target, grid) => {
-  const [dr, dc] = localOffset(unit, target);
-  for (const [r, c] of grid) if (r === dr && c === dc) return true;
-  return false;
-};
-
-/** 'reaperrange' default front test: the target stands on the unit's own line, at or ahead of it along its facing. */
+/**
+ * 'reaperrange' default front test: the target stands on the unit's own line, at or ahead of it along its facing — a
+ * huge enemy when any tile of its body does (body.js).
+ */
 const onFrontLine = (unit, target) => {
   const [fr, fc] = unit.fwd;
-  const [lateral] = localOffset(unit, target);
-  return lateral === 0 && (target.x - unit.x) * fc + (target.y - unit.y) * fr >= 0;
+  const lateral = (r, c) => toLocal(r - unit.tileR, c - unit.tileC, unit.dir)[0];
+  if (!target.hitArea) {
+    return lateral(Math.round(target.y), Math.round(target.x)) === 0 && (target.x - unit.x) * fc + (target.y - unit.y) * fr >= 0;
+  }
+  for (const k of bodyKeys(target)) {
+    const r = Math.floor(k / COLS), c = k % COLS;
+    if (lateral(r, c) === 0 && (c - unit.tileC) * fc + (r - unit.tileR) * fr >= 0) return true;
+  }
+  return false;
 };
 
 // --------------------------------------------------------------------------------------------------------------
@@ -269,7 +277,7 @@ export const SUB = Object.freeze({
       const n = Math.max(1, (unit.profile.shockTimes ?? 2) - 1);
       for (let i = 1; i <= n; i++) {
         battle.after(0.3 * i, () => {
-          for (const e of battle.enemiesInRadius(info.x, info.y, unit.profile.splashRadius || 1)) {
+          for (const e of battle.enemiesInRadius(info.x, info.y, unit.profile.splashRadius || 1, true)) { // splash: 中点判定
             if (e.isFlying) continue;
             battle.dealDamage(unit, e, { amount: unit.s.atk * (unit.profile.shockScale ?? 0.5), type: 'phys', isSplash: true, tags: ['aftershock'] });
           }
@@ -342,8 +350,8 @@ export const SUB = Object.freeze({
   lord: P({ canHitFly: true,
     dmgMul: (battle, unit, target) => {
       if (target.blockedBy === unit) return 1;
-      const [dr, dc] = localOffset(unit, target);
-      return dr === 0 && (dc === 0 || dc === 1) ? 1 : (unit.profile.rangedScale ?? 0.8);
+      const [fr, fc] = frontOf(unit.tileR, unit.tileC, unit.dir);
+      return bodyOnTile(target, unit.tileR, unit.tileC) || bodyOnTile(target, fr, fc) ? 1 : (unit.profile.rangedScale ?? 0.8);
     } }),
   musha: P({ noHeal: true, install: installSelfHealOnHit(false) }),
   reaper: P({ noHeal: true, allInRange: true, install: installSelfHealOnHit(true) }),

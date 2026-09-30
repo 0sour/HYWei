@@ -25,6 +25,18 @@
 // an official shop-view screenshot gave col 5.17, row 2.40, height 11.57 at 30°/40°.) Screens narrower than 16:9
 // back the camera off like the client (up to 4:3: Δ = (0, −1.4, −2.8)·t). `presetCamera` returns these official
 // cameras; `fitCamera` (frame any rect inside a padded viewport) remains for custom rects and portrait viewports.
+//
+// HUD clearance of the prep views (user playtest #5 item 9, `clearHud`): the official shop camera puts the bench's
+// near edge right on the shop bar's top and the field's back row right under the bond strip at 16:9 (both measured
+// flush at 1920×1080). The remake's HUD is sized in rem with a 40 px floor (css/theme.css), so on screens shorter
+// than 432 CSS px (phones in landscape) it is taller than the official one relative to the screen and the shop bar
+// covered the lower part of bench pads 3–9 (29 % at 844×390, 46 % at the user's Android = 756×366, 51 % at 800×360;
+// the Final Assault prep alike). With `opts.hud` (the px bands the HUD covers along the top and bottom edge) the
+// official prep camera is kept whenever the band from the bench's near edge to the field's back row fits between them
+// — every desktop viewport measured (the Final Assault bench, 1.2 px lower, is nudged up < 3 px at 16:9) — and
+// otherwise panned and, only when the band is taller than the space, zoomed out (844×390: ×0.90, 756×366: ×0.84,
+// 800×360: ×0.83): a 2D pan / zoom of the image (principal point and focal length), so the perspective and the
+// three.js camera stay the official ones.
 
 export const DEG = Math.PI / 180;
 
@@ -57,15 +69,22 @@ export const OFFICIAL_PARAMS = Object.freeze({
 /** Default optics of the fitted (non-official) cameras: the official pitch; dist is a moderate lens. */
 export const DEFAULT_OPTICS = Object.freeze({ tilt: OFFICIAL.pitch, dist: 16 });
 
+/** Tile-top heights (tiles) of the prep band's edges (render/style.js TILE_H): bench pads, raised high ground. */
+const KEEP_Z_BENCH = 0.16, KEEP_Z_HIGH = 0.42;
+
 /**
  * Rects framed by each camera kind (inclusive tile bounds), framing parameters of the fitted fallback, and the
  * official configBlackBoard param(s) of the kind (`official`: side → param key; `half` for the ‹ › half views).
+ * `keep` (prep views): the band `clearHud` keeps clear of the HUD — `near` = world row (y) of the bench's near edge
+ * (hand row 7 / boss row 0) with the pads' tops at `zNear`, `far` = the field's back edge (row 12 / boss row 5) with
+ * its raised tops at `zFar`.
  */
 export const CAMERA_PRESETS = Object.freeze({
   prep: Object.freeze({
     rect: Object.freeze({ r0: 7, r1: 12, c0: 0, c1: 10 }), margin: 0.35, headroom: 1.25, tilt: 30, dist: 13,
     official: Object.freeze({ L: 'left_shop_camera_param', R: 'left_shop_camera_param' }),
     officialNoShop: Object.freeze({ L: 'left_prepare_camera_param', R: 'left_prepare_camera_param' }),
+    keep: Object.freeze({ near: 6.5, zNear: KEEP_Z_BENCH, far: 12.5, zFar: KEEP_Z_HIGH }),
   }),
   normal: Object.freeze({
     rect: Object.freeze({ r0: 9, r1: 12, c0: 0, c1: 10 }), margin: 0.45, headroom: 1.35, tilt: 30, dist: 13,
@@ -85,6 +104,7 @@ export const CAMERA_PRESETS = Object.freeze({
     rect: Object.freeze({ r0: 0, r1: 5, c0: 0, c1: 10 }), margin: 0.35, headroom: 1.25, tilt: 30, dist: 13,
     official: Object.freeze({ L: 'left_boss_shop_camera_param', R: 'right_boss_shop_camera_param' }),
     officialNoShop: Object.freeze({ L: 'left_boss_prepare_camera_param', R: 'right_boss_prepare_camera_param' }),
+    keep: Object.freeze({ near: -0.5, zNear: KEEP_Z_BENCH, far: 5.5, zFar: KEEP_Z_HIGH }),
   }),
   pen: Object.freeze({
     rect: Object.freeze({ r0: 14, r1: 18, c0: 7, c1: 13 }), margin: 0.3, headroom: 1.2, tilt: 30, dist: 11,
@@ -346,6 +366,47 @@ export function officialCamera(param, viewport, opts) {
   return new Camera({ tx: cx, ty: cy + height * Math.tan(t), tz: 0, tilt: pitch, dist, scale: focal / dist, cx: W / 2, cy: H / 2 });
 }
 
+/** Overlap (px) between the kept band and a HUD band that still counts as clear (float noise). */
+const HUD_TOLERANCE = 0.5;
+/** Gap (px) an adjusted camera leaves between the kept band and the HUD when there is room (no seam under an edge). */
+const HUD_GAP = 1;
+
+/**
+ * Keep a band of the board clear of the HUD (see the header). `hud` = { top, bottom }: CSS px the HUD covers along
+ * the viewport's top edge (top bar + bond strip) and bottom edge (the shop bar); `keep` = { near, zNear?, far, zFar? }:
+ * world rows (y) of the band's near and far edge, at the heights zNear / zFar. Returns `cam` itself when the band
+ * fits between the HUD bands; else a new camera whose image is panned vertically by the smallest shift that clears
+ * the HUD (by up to HUD_GAP where there is room) or — only when the band is taller than the space between — zoomed
+ * out about the viewport's centre so it fills that space less HUD_GAP at both ends. The screen y of a horizontal
+ * world line is the same at every x (the camera has no roll), so one point per edge decides.
+ * @param {Camera} cam
+ * @param {{ top?: number, bottom?: number }|null} hud
+ * @param {{ near: number, zNear?: number, far: number, zFar?: number }|null} keep
+ * @param {{ width: number, height: number }} viewport CSS px
+ * @returns {Camera}
+ */
+export function clearHud(cam, hud, keep, viewport) {
+  if (!cam || !hud || typeof hud !== 'object' || !keep) return cam;
+  const W = Math.max(1, finite(viewport?.width, 1)), H = Math.max(1, finite(viewport?.height, 1));
+  const top = Math.max(0, finite(hud.top, 0)), bottom = H - Math.max(0, finite(hud.bottom, 0));
+  if (!(bottom - top > 16)) return cam; // no usable space: keep the official framing
+  const yNear = cam.project(cam.tx, keep.near, finite(keep.zNear, 0)).y;
+  const yFar = cam.project(cam.tx, keep.far, finite(keep.zFar, 0)).y;
+  if (!Number.isFinite(yNear) || !Number.isFinite(yFar) || !(yNear > yFar)) return cam;
+  if (yNear <= bottom + HUD_TOLERANCE && yFar >= top - HUD_TOLERANCE) return cam;
+  const spare = bottom - top - (yNear - yFar);
+  const gap = spare >= 0 ? Math.min(HUD_GAP, spare / 2) : HUD_GAP;
+  const lo = top + gap, hi = bottom - gap;
+  const f = spare >= 0 ? 1 : (hi - lo) / (yNear - yFar);
+  const out = cam.clone();
+  // image transform x' = xc + f·(x − xc), y' = lo + f·(y − yFar) (zoom) or y' = y + dy (pan, the smallest shift
+  // that puts [yFar, yNear] inside [lo, hi]): scale the focal length by f and move the principal point accordingly
+  out.scale = cam.scale * f;
+  out.cx = W / 2 + f * (cam.cx - W / 2);
+  out.cy = f < 1 ? lo + f * (cam.cy - yFar) : cam.cy + Math.min(Math.max(0, lo - yFar), hi - yNear);
+  return out.update();
+}
+
 const sameRect = (a, b) => !!a && !!b && a.r0 === b.r0 && a.r1 === b.r1 && a.c0 === b.c0 && a.c1 === b.c1;
 
 /**
@@ -354,6 +415,8 @@ const sameRect = (a, b) => !!a && !!b && a.r0 === b.r0 && a.r1 === b.r1 && a.c0 
  * viewport is narrower than 4:3 (portrait), `opts.fit` is set, or `opts.rect` is a custom rect — then the rect is
  * fitted into the padded viewport (`fitCamera`). `opts.side` 'L'|'R' picks the side's param (right boss half);
  * `opts.half` frames only that half of a unite/boss field; `opts.shop === false` uses the shop-collapsed prep camera.
+ * `opts.hud` = { top, bottom } (CSS px of HUD along the top / bottom edge): the official prep / Final Assault prep
+ * camera keeps the bench and the field clear of it (`clearHud`, the preset's `keep` band).
  */
 export function presetCamera(kind, viewport, options) {
   const opts = options && typeof options === 'object' ? options : {};
@@ -374,7 +437,8 @@ export function presetCamera(kind, viewport, options) {
     const key = table[side];
     const cfg = opts.config && typeof opts.config === 'object' ? opts.config : null;
     const param = (cfg && parseCameraParam(cfg[key])) || parseCameraParam(OFFICIAL_PARAMS[key]);
-    return officialCamera(param, { width: W, height: H }, opts);
+    const cam = officialCamera(param, { width: W, height: H }, opts);
+    return preset.keep && opts.hud ? clearHud(cam, opts.hud, preset.keep, { width: W, height: H }) : cam;
   }
   if (!rect) {
     rect = { ...preset.rect };

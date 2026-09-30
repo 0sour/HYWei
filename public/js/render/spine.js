@@ -12,6 +12,7 @@
 //   deploy()                              'Start' once, then base
 //   die()                                 die clip once (callers fade out afterwards)
 //   stunned (setBase('stun'))             stun clip, or the current track frozen at timeScale 0
+//   setForm(roles, change)                another clip set of the skeleton (an enemy's mode), after a change clip
 //   update(dt)                            advances the skeleton (autoUpdate is off: one clock for everything)
 // Attack mode lasts until ~1.4 attack intervals without a new attack, then the end clip (if any) and base.
 
@@ -114,6 +115,25 @@ export class SpineActor {
     this.roles = clip ? { ...anims, skill: clip } : anims;
   }
 
+  /**
+   * Another clip set of the same skeleton — an enemy's mode (render/units.js FORMS: 掠海漂移体's 爬行模式 plays its *_02
+   * clips): `roles` override the manifest roles (null = back to them); `change` = a transition clip played once first
+   * (also while stunned: the pose it ends in is the one a stun then holds).
+   */
+  setForm(roles, change = null) {
+    const anims = this.entry?.anims || {};
+    this.roles = roles ? { ...anims, ...roles } : anims;
+    if (this.dead) return;
+    if (change && this.has(change)) {
+      this.stunWanted = this.mode === 'stun';
+      this.frozen = false;
+      this.mode = 'change';
+      this._play(change, false, { mix: 0.08 });
+      this.changeUntil = this.clock + this.dur(change);
+    } else if (this.mode === 'base') this._play(this._baseName(), true);
+    else if (this.mode === 'stun' && this.has(this.roles.stun?.loop)) this._play(this.roles.stun.loop, true);
+  }
+
   has(name) { return !!name && this.names.has(name); }
   dur(name) { const d = this.durations[name]; return typeof d === 'number' && d > 0 ? d : this._durFromData(name); }
 
@@ -159,6 +179,8 @@ export class SpineActor {
   setBase(base) {
     if (this.dead) return;
     const b = base === 'move' || base === 'stun' ? base : 'idle';
+    // a mode change clip plays out first; the resting state it lands in is remembered
+    if (this.mode === 'change') { this.stunWanted = b === 'stun'; if (b !== 'stun') this.base = b; return; }
     if (b === 'stun') { this._enterStun(); return; }
     if (this.mode === 'stun') this._leaveStun();
     if (b === this.base && this.mode !== 'stun') return;
@@ -339,6 +361,12 @@ export class SpineActor {
         break;
       case 'deploy':
         if (this.clock >= this.deployUntil) { this.mode = 'base'; this._play(this._baseName(), true); }
+        break;
+      case 'change':
+        if (this.clock >= this.changeUntil) {
+          this.mode = 'base';
+          if (this.stunWanted) { this.stunWanted = false; this._enterStun(); } else this._play(this._baseName(), true);
+        }
         break;
       default: break;
     }

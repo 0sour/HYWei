@@ -451,7 +451,8 @@ describe('user playtest #3 items 1 and 7 (mock match, headless Chrome)', { skip 
     // a board unit back onto the free bench slot 5: the finger on the slot → lands; on the shop bar below it → back
     const unit = await page.evaluate(() => { const u = globalThis.__MOCK__.S().priv.board[0]; return { uid: u.uid, row: u.row, col: u.col }; });
     const slot = await tileSpot(page, 7, 5);
-    // the first point below the slot's centre that the shop bar covers (it overlaps the lower half of bench slots 4–9)
+    // the first point below the slot's centre that the shop bar covers (it starts right below the bench — the prep
+    // camera keeps the bench clear of it, user playtest #5 item 9; before, it overlapped the lower half of slots 4–9)
     const bar = await page.evaluate((p) => {
       const cv = globalThis.__SP_VIEW__.raw.debug.app.view;
       for (let dy = 2; dy < 80; dy += 2) { const el = document.elementFromPoint(p.x, p.y + dy); if (el && el !== cv && el.closest('.shopbar')) return { x: p.x, y: p.y + dy + 3 }; }

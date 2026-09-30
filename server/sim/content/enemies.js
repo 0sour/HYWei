@@ -11,6 +11,8 @@
 //   list [abilities], times, hitShield, atkType, immune, … }`. An ability is a plain object with optional methods
 //   spawn(b,e,a,ab) · dealt(c,…) ('damaged' by one of e's ATTACKS on an ally, non-element) · taken(c,…) ('damaged' on e,
 //   non-element) · hitIn(c,…) ('hit' on e, late: after every other hit handler) · hitOut(c,…) ('hit' from e, early) ·
+//   (`c.source` is null for 无来源 damage — element bursts; target-side reactions that must still fire, e.g. damage
+//   sharing, read `c.source || c.credit`, `credit` naming the unit that filled the gauge) ·
 //   before(c,…) (beforeAttack of e) · attack(c,…) · blocked(c,…) · killed(c,…) (return true = revived; the kill is then
 //   hidden from later 'kill' handlers) · death(c,…) · status(c,…) (statusApplied on e) · burst(c,…) (elementBurst on e)
 //   · tick(b,e,a,dt) every `iv` s (every tick when iv is 0) · skill: `cd`/`left`(=icd)/`cond`/`fire` (cooldown runs
@@ -22,7 +24,11 @@
 //   rebirth of Reborn.duration s, untargetable and inert, then the new form); artsBarrier() — "吸收法术伤害的屏障"
 //   (absorbs arts after RES); frontGuard() — "来自正面的伤害降低" (facing = walking direction or the bigger crowd);
 //   unbalanced() — 失衡 detection (displacement beyond the enemy's own speed; engine displace() has no hook);
-//   attackLoop() — normal attacks for data-unarmed enemies once a form arms them.
+//   attackLoop() — normal attacks for data-unarmed enemies once a form arms them; float() — 近地悬浮 (an air unit that
+//   keeps its ground path, Unit.isFlying; kitSyufo / kitParrot lose it when stunned). `e.profile.canTarget(ally)` = the
+//   enemy's own target rule (只攻击地面单位 …), applied by the engine to the candidates before its priority order; a
+//   special priority (优先攻击防御力最高的… / 生命上限最高的…) sorts by its key, ties by taunt then latest deployed
+//   (targeting.js aggroCmp — PRTS 索敌: 特殊优先级 → 仇恨值).
 //
 // Special types (factions.json):
 //   FLY        — engine (FLY motion, ranged-only targeting). Flyer kits below (御4, 护障, 寒霜, 萨科塔之翼/眼, 黑云 …).
@@ -49,7 +55,7 @@
 // Custom hook: 'lpLoss' {amount, reason, source} — leader "扣除目标生命" effects; also summed into result.lpLoss.
 
 import { TICK, MOVE_SCALE, ELEMENT, ATTACK_PAUSE } from '../constants.js';
-import { canTargetAlly, sortAllyTargets, sortEnemyTargets } from '../targeting.js';
+import { canTargetAlly, sortAllyTargets, aggroCmp } from '../targeting.js';
 import { mitigate } from '../damage.js';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -59,6 +65,9 @@ import { mitigate } from '../damage.js';
 export const EROSION = 'erosion';
 /** Official erosion burst on operators (gamedata_const termDescriptionDict ba.dt.erosion; engine constants ELEMENT.erosion.ally). */
 export const EROSION_BURST = Object.freeze({ defDown: ELEMENT.erosion.ally.defDown, physDamage: ELEMENT.erosion.ally.damage });
+/** 假想敌：淤困: element damage its host's burst spreads to the allies of the 4 tiles around (PRTS 假想敌：淤困 "附着对象元素爆发时
+ *  …对附着对象及周围4格内的所有我方单位…造成1000同类型元素损伤"; the host itself is in its 爆发冷却). */
+const PARASITE_SPREAD = 1000;
 /** Death-explosion radius when the enemy has no official radius [ASSUMED]. */
 const BOOM_RADIUS = 1.25;
 /** Pollution zone radius of 萨卡兹枯朽战车's ranged 污染秽蚀 [ASSUMED]. */
@@ -115,7 +124,7 @@ const ELK_FAIL_SCALE = 2;
 const STATE = new WeakMap();
 function stOf(b) {
   let st = STATE.get(b);
-  if (!st) { st = { lpLoss: 0, floats: 0, freedAll: false, deathWatch: new Set() }; STATE.set(b, st); }
+  if (!st) { st = { lpLoss: 0, freedAll: false, deathWatch: new Set() }; STATE.set(b, st); }
   return st;
 }
 
@@ -252,21 +261,7 @@ function onDamaged(b, c) {
 
 function onBeforeAttack(b, c) {
   const a = c.attacker;
-  if (!a) return;
-  if (a.side === 'enemy') { if (a.mem.ab) dispatch(b, a, 'before', c); return; }
-  // 近地悬浮 (ba.float "无法被阻挡或近战攻击"): melee operators cannot hit floating enemies — they pick others instead
-  if (stOf(b).floats > 0 && a.profile && a.profile.attack !== 'ranged' && c.targets) {
-    const ok = (t) => !(t.mem && t.mem.ab && t.mem.ab.float);
-    const kept = c.targets.filter(ok);
-    if (kept.length === c.targets.length) return;
-    if (!kept.length && a.rangeKeys && c.targets.some((t) => t.side === 'enemy')) {
-      const prof = c.profile || a.profile;
-      const cands = b.enemiesInKeys(a.rangeKeys, a, prof).filter(ok);
-      sortEnemyTargets(b, a, cands, prof.priority);
-      kept.push(...cands.slice(0, Math.max(1, Math.floor(prof.maxTargets || 1))));
-    }
-    c.targets = kept;
-  }
+  if (a && a.side === 'enemy' && a.mem.ab) dispatch(b, a, 'before', c);
 }
 
 function onKill(b, c) {
@@ -467,16 +462,20 @@ export function expose(b, u, dur, scale) {
   b.fx('expose', { x: u.x, y: u.y, id: u.id });
 }
 
-/** Final HP damage the pipeline would deal for a phys/arts/true `dmg` before shields (mitigation is linear in the amount). */
+/**
+ * Final HP damage the pipeline would deal for a phys/arts/true/elemental `dmg` before shields (mitigation is linear in
+ * the amount) — the same terms as damage.js dealDamage (元素伤害: 元素抗性 + elementalTakenMul, no dmgTakenMul).
+ */
 export function expectedFinal(src, tgt, dmg) {
-  const ts = tgt.s, ss = src && src.s ? src.s : null, ty = dmg.type;
+  const ts = tgt.s, ss = src && src.s && !dmg.sourceless ? src.s : null, ty = dmg.type; // 无来源 (bursts): no source stats
   const v = mitigate(dmg.amount, ty, ts, {
     defIgnorePct: (dmg.defIgnorePct || 0) + (ss ? ss.defIgnorePct : 0), defIgnoreFlat: (dmg.defIgnoreFlat || 0) + (ss ? ss.defIgnoreFlat : 0),
     resIgnorePct: (dmg.resIgnorePct || 0) + (ss ? ss.resIgnorePct : 0), resIgnoreFlat: (dmg.resIgnoreFlat || 0) + (ss ? ss.resIgnoreFlat : 0),
+    elementalRes: ty === 'elemental' ? (tgt.def?.epDamageResistance ?? 0) : 0,
   });
-  let mul = (dmg.mul ?? 1) * ts.dmgTakenMul;
+  let mul = (dmg.mul ?? 1) * (ty === 'elemental' ? 1 : ts.dmgTakenMul); // 脆弱 skips 元素伤害 (damage.js)
   if (ss) mul *= ss.dmgDealtMul * (ty === 'phys' ? ss.physDealtMul : ty === 'arts' ? ss.artsDealtMul : 1);
-  mul *= ty === 'phys' ? ts.physTakenMul : ty === 'arts' ? ts.artsTakenMul : ts.trueTakenMul;
+  mul *= ty === 'phys' ? ts.physTakenMul : ty === 'arts' ? ts.artsTakenMul : ty === 'elemental' ? ts.elementalTakenMul : ts.trueTakenMul;
   const f = v * mul;
   return Number.isFinite(f) && f > 0 ? f : 0;
 }
@@ -608,12 +607,23 @@ const refraction = (res, hpPct = 0) => ({
   },
 });
 
-/** 近地悬浮: unblockable, immune to melee attacks. */
-const float = () => ({
-  spawn(b, e, a, ab) { ab.float = true; stOf(b).floats++; b.addBuff(e, { key: 'ab:float', flags: { unblockable: true }, persist: true }); },
-  hitIn(c, b, e) { const s = c.source; if (c.dmg.isAttack && s && s.side === 'ally' && s.profile && s.profile.attack !== 'ranged') c.dmg.cancel = true; },
-  death(c, b) { stOf(b).floats = Math.max(0, stOf(b).floats - 1); },
-});
+/**
+ * 近地悬浮 (ba.float "无法被阻挡或近战攻击"; PRTS 术语释义: "此类效果开始时，单位强制解除阻挡，随后行动方式变为飞行（算作空中
+ * 单位）… 无论飞行与否，单位只会采用地面寻路"): while floating the enemy carries the 'ab:float' buff — unblockable, an air unit for
+ * every targeting / ground-only rule (flag `float` ⇒ Unit.isFlying: melee operators, 迷迭香's ground-only shots and
+ * splash, ground traps and terrain skip it; ranged attacks hit it) with 失衡免疫 (`noDisplace`, "初始模式：近地悬浮，失衡
+ * 免疫" on the enemies' PRTS pages) — its `motion` stays WALK, so it keeps the ground path (and 浮空 can still lift it:
+ * Battle.applyStatus refuses data flyers only). Losing the float is each
+ * enemy's own ability (PRTS; 缚地 "使部分近地悬浮敌人掉落" is "实为敌人自身的能力"): kitSyufo, kitParrot.
+ */
+const FLOAT_KEY = 'ab:float';
+const setFloat = (b, e, on) => {
+  if (on) b.addBuff(e, { key: FLOAT_KEY, flags: { unblockable: true, float: true, noDisplace: true }, persist: true });
+  else b.removeBuff(e, FLOAT_KEY);
+};
+const float = () => ({ spawn(b, e) { setFloat(b, e, true); } });
+/** The enemies whose kit spawns them hovering (float()): the match's bot counts them as air units (bot.js fieldModel). */
+export const HOVER_KEYS = Object.freeze(['enemy_2025_syufo', 'enemy_10045_parrot']);
 
 /** "生命值首次降至一半以下时，在数秒内陷入恐惧" (SelfFear). */
 const selfFear = (ab) => ({
@@ -1030,12 +1040,77 @@ function kitDsubrl(ab, e) {
   return [hitAllInRadius(e.base.rangeRadius || 1.6), ep('neural', T(ab, 'EpDamage.ep_damage_ratio') ?? 0), resist(['sluggish'])];
 }
 
+/** 掠海漂移体 爬行模式: the stun it takes on dropping (PRTS "进入爬行模式并晕眩0.5秒"; not in its blackboard). */
+const SYUFO_CRAWL_STUN = 0.5;
+/** 吉兆飞鳞 【失温坠落】: the stun when a freeze ends (PRTS "冻结结束时，获得0.05秒晕眩"). */
+const PARROT_CHILL_STUN = 0.05;
+
+/**
+ * 掠海漂移体 (PRTS): 初始模式 近地悬浮 + 失衡免疫, 不会攻击飞行单位; 受晕眩/无法行动/沉睡/冻结/缚地影响后进入爬行模式 for
+ * good and is stunned 0.5 s — a ground unit (blockable, melee operators hit it) that "仅进行阻挡攻击" (only its blocker).
+ * The engine has 晕眩 / 冻结 / 沉睡 (no operator here applies 无法行动 or 缚地). Erosion on every attack.
+ */
+function kitSyufo(ab) {
+  return [float(), ep('erosion', T(ab, 'EpDamage.attack@ep_damage_ratio') ?? 0), {
+    spawn(b, e) { e.profile.canTarget = (u) => !u.isFlying; },
+    status(c, b, e, a) {
+      if (a.crawl || !(c.status === 'stun' || c.status === 'freeze' || c.status === 'sleep')) return;
+      a.crawl = true;
+      setFloat(b, e, false);
+      e.profile.melee = true;
+      b.applyStatus(e, 'stun', { duration: SYUFO_CRAWL_STUN, source: null });
+      b.fx('phase', { x: e.x, y: e.y, id: e.id, kind: 'crawl' });
+    },
+  }];
+}
+
+/**
+ * 吉兆飞鳞 (PRTS): 近地悬浮 (失衡免疫), no normal attack; 受晕眩/无法行动/沉睡/缚地影响后进入晕眩模式 — the float is off, it
+ * cannot be blocked and is stunned `Stun.duration` (8) s — and floats again once none of those effects holds it
+ * (初始模式); 冻结 grounds it only when the freeze ends (【失温坠落】: 0.05 s stun). 首次受到伤害后 its speed is ×
+ * `M0SpeedUp.move_speed` for `M0SpeedUp.duration` s ("最终提升至300%"; never in 晕眩模式, dropped when its mode
+ * changes). 搬运模式 (carrying a 寻险水手) needs a level checkpoint (`ThrowEnemy.checkpoint` 0 = never) — not in this mode.
+ */
+function kitParrot(ab) {
+  const down = T(ab, 'Stun.duration') ?? 0;
+  return [float(), {
+    taken(c, b, e, a) {
+      if (a.ran || a.down) return;
+      a.ran = true;
+      b.addBuff(e, { key: 'ab:parrotRun', duration: T(ab, 'M0SpeedUp.duration') ?? 0, mods: { moveMul: T(ab, 'M0SpeedUp.move_speed') ?? 1 } });
+    },
+    status(c, b, e, a) {
+      if (c.status === 'freeze') { a.chill = true; return; }
+      if (a.down || !(c.status === 'stun' || c.status === 'sleep')) return;
+      a.down = true;
+      setFloat(b, e, false);
+      b.removeBuff(e, 'ab:parrotRun');
+      b.addBuff(e, { key: 'ab:parrotDown', flags: { unblockable: true }, persist: true });
+      if (down > 0) b.applyStatus(e, 'stun', { duration: down, source: null });
+      b.fx('phase', { x: e.x, y: e.y, id: e.id, kind: 'grounded' });
+    },
+    tick(b, e, a) {
+      if (a.chill && !e.s.flags.freeze) { a.chill = false; b.applyStatus(e, 'stun', { duration: PARROT_CHILL_STUN, source: null }); }
+      // "离开上述异常效果影响后进入初始模式": s.flags.stun also holds while asleep / frozen (units.js), so a sleep that
+      // outlasts the mode stun keeps it down
+      if (a.down && !e.s.flags.stun) {
+        a.down = false;
+        b.removeBuff(e, 'ab:parrotDown');
+        b.removeBuff(e, 'ab:parrotRun');
+        setFloat(b, e, true);
+        b.fx('phase', { x: e.x, y: e.y, id: e.id, kind: 'float' });
+      }
+    },
+  }];
+}
+
 function kitTank(ab) {
   const every = (T(ab, 'Empty.sp') ?? 2) + 1, melee = T(ab, 'Empty.attack@chuang_atk_scale') ?? 1;
   const s = ab.sk.PollutedRangedAtk ? ab.sk.PollutedRangedAtk.bb : {};
   return [{
-    spawn(b, e, a) { a.n = 0; },
-    before(c, b, e) { c.targets = c.targets.filter((u) => u.ground); },           // 只攻击地面单位
+    // 只攻击地面单位 — PRTS 萨卡兹枯朽战车 天赋 "普通攻击只攻击位于低地的我方单位，且不会攻击飞行单位" (a candidate filter,
+    // ai.js enemyAttack: a FLY ally such as the 炎佑 dragon on a low tile is no target either)
+    spawn(b, e, a) { a.n = 0; e.profile.canTarget = (u) => !!u.ground && !u.isFlying; },
     hitOut(c, b, e) { if (c.dmg.isAttack && c.target === e.blockedBy) c.dmg.amount *= melee; }, // 近战攻击造成更高伤害
     attack(c, b, e, a) {
       a.n++;
@@ -1113,17 +1188,28 @@ function kitJazz(ab, e) {
     spawn(b, e2) { e2.profile.noAttack = true; },
     tick(b, e2) { e2.profile.noAttack = !revealed(e2); },      // 平时不攻击，失去隐匿时反击
   }, s ? {
-    sil: true, cd: s.cd, icd: s.icd, cond: (b, e2) => revealed(e2),
+    // 狂欢式演奏 (PRTS 节日爵士乐手, 反击模式): "仅攻击范围内存在我方单位时可触发：锁定目标持续施法，最多持续10.6s，每0.5s对目标
+    // 造成攻击力20%的法术伤害和攻击力10%的灼燃损伤 ※施法期间受到沉默影响后，立即结束技能" — ONE locked target (its own
+    // priority: the blocker first), floor(10.6 / 0.5) = 21 ticks at 0.5 … 10.5 s. The channel also ends when that target
+    // is gone, makes no normal attacks meanwhile and is never re-cast over itself — the 10 s cooldown (enemy_database
+    // skill 'fire') runs out mid-channel, the next cast waits for its end [ASSUMED "持续施法", as 死亡之眼].
+    sil: true, cd: s.cd, icd: s.icd, cond: (b, e2) => revealed(e2) && !(e2.mem.jazzChannel && !e2.mem.jazzChannel.cancelled) && targetsNear(b, e2, r).length > 0,
     fire(b, e2) {
       const dur = s.bb['enemy_cnvsax[cd].duration'] ?? 0, iv = s.bb.hit_interval ?? 0.5;
-      let left = dur;
-      b.fx('zone', { x: e2.x, y: e2.y, r, dur, kind: 'jazzFire', id: e2.id });
+      const t = byPriority(e2, targetsNear(b, e2, r))[0];
+      if (!t || !(dur > 0) || !(iv > 0)) return;
+      const n = Math.max(1, Math.floor(dur / iv + 1e-9));
+      const buff = b.addBuff(e2, { key: 'ab:channel', duration: dur, flags: { disarm: true } });
+      let k = 0;
+      const end = () => { h.cancel(); e2.mem.jazzChannel = null; if (buff) b.removeBuff(e2, buff); };
       const h = b.every(iv, () => {
-        if (!e2.alive || e2.s.flags.silence) { h.cancel(); return; }
-        for (const u of b.alliesInRadius(e2.x, e2.y, r)) { hurt(b, e2, u, e2.s.atk * (s.bb.atk_scale ?? 0), 'arts'); elem(b, e2, u, 'burn', e2.s.atk * (s.bb.ep_damage_ratio ?? 0)); }
-        left -= iv;
-        if (left <= 1e-6) h.cancel();
+        if (!e2.alive || e2.s.flags.silence || !t.alive || !t.deployed) { end(); return; }
+        b.fx('beam', { x: e2.x, y: e2.y, from: e2.id, to: t.id, kind: 'jazzFire' });
+        hurt(b, e2, t, e2.s.atk * (s.bb.atk_scale ?? 0), 'arts');
+        elem(b, e2, t, 'burn', e2.s.atk * (s.bb.ep_damage_ratio ?? 0));
+        if (++k >= n) end();
       }, { owner: e2 });
+      e2.mem.jazzChannel = h;
     },
   } : null];
 }
@@ -1204,6 +1290,21 @@ function kitExposeOnDeath(ab) {
   return [{ sil: true, death(c, b, e) { if (c.reason !== 'killed') return; b.fx('explode', { x: e.x, y: e.y, r, kind: 'expose' }); for (const u of b.alliesInRadius(e.x, e.y, r)) expose(b, u, dur, scale); } }];
 }
 
+/**
+ * 淤困's "受到的元素损伤提高至130%" on its host: an `elementHit` multiplier (SIM.md §7.2 — every "受到的元素损伤±N%"; on an
+ * operator at priority 20, before a 损伤屏障), never 元素伤害. One battle-wide handler, installed with the first host.
+ */
+function ensureParasiteHook(b) {
+  const st = stOf(b);
+  if (st.parasiteHook) return;
+  st.parasiteHook = true;
+  b.on('elementHit', (c) => {
+    const bf = c.target && c.dmg && c.dmg.type === 'element' ? c.target.findBuff('ab:parasite') : null;
+    const m = bf && bf.data ? bf.data.epMul : 1;
+    if (m > 0 && m !== 1) c.dmg.mul *= m;
+  }, { priority: 20 });
+}
+
 function kitParasite(ab) {
   const scale = T(ab, '1.atk_scale') ?? 0, elMul = T(ab, '1.ep_damage_scale') ?? 1;
   return [taunt(-1), {
@@ -1213,9 +1314,11 @@ function kitParasite(ab) {
       if (a.host && a.host !== host) { b.removeBuff(a.host, 'ab:parasite'); a.host = null; }
       if (!host || a.host === host) return;
       a.host = host;
+      ensureParasiteHook(b);
       b.fx('beam', { x: e.x, y: e.y, from: e.id, to: host.id, kind: 'parasite' });
       b.addBuff(host, {
-        key: 'ab:parasite', visible: true, interval: 1, mods: { elemTakenMul: elMul }, data: { src: e, spread: e.s.atk * elMul },
+        // "受到的元素损伤提高至130%": a 元素损伤 multiplier on the element hit (ensureParasiteHook), not 元素伤害
+        key: 'ab:parasite', visible: true, interval: 1, data: { src: e, spread: PARASITE_SPREAD, epMul: elMul },
         onTick: ({ battle, unit }) => { if (e.alive) battle.dealDamage(e, unit, { amount: e.s.atk * scale, type: 'arts', canDodge: false, tags: ['enemyAbility', 'parasite'] }); },
       });
     },
@@ -1295,12 +1398,9 @@ function kitRegen(ab) {
 function kitSteal(ab) {
   const n = T(ab, 'DamageOrBullet.attack@minus_bullet') ?? 1;
   return [selfFear(ab), {
-    // PRTS “萨科塔之眼”: "不会攻击飞行单位" (the 炎佑 is one) — its next ground target in range instead
-    before(c, b, e) {
-      if (!c.targets || !c.targets.some((t) => t.isFlying)) return;
-      const l = targetsNear(b, e, e.base.rangeRadius).filter((t) => !t.isFlying);
-      c.targets = byPriority(e, l).slice(0, 1);
-    },
+    // PRTS “萨科塔之眼” 天赋: "不会攻击飞行单位" (the 炎佑 dragon is one) — a candidate filter (ai.js enemyAttack): its next
+    // ground target in range instead
+    spawn(b, e) { e.profile.canTarget = (u) => !u.isFlying; },
     hitOut(c, b, e) {
       if (!c.dmg.isAttack) return;
       const t = c.target;
@@ -1389,10 +1489,11 @@ function kitFlameVine(ab) {
     dealt(c, b, e, a) {
       const t = c.target;
       if (a.first) {
-        // 首次攻击对目标和周围造成法术伤害和灼燃损伤, then the ATK ramp ends
+        // 首次攻击 (PRTS 灼藤): every other ally of the target's 3×3 (range x-4, tile test) takes 100 % ATK arts splash and
+        // everyone there 25 % ATK burn; then the ATK ramp ends and later attacks add 20 %
         a.first = false;
-        b.fx('explode', { x: t.x, y: t.y, r: 1, kind: 'flameVine' });
-        for (const u of alliesInTiles(b, t.tileR, t.tileC, 'plus', 1)) { if (u !== t) hurt(b, e, u, e.s.atk, 'arts'); elem(b, e, u, 'burn', e.s.atk * first); }
+        b.fx('explode', { x: t.x, y: t.y, r: 1.5, kind: 'flameVine' });
+        for (const u of alliesInTiles(b, t.tileR, t.tileC, 'box', 1)) { if (u !== t) hurt(b, e, u, e.s.atk, 'arts'); elem(b, e, u, 'burn', e.s.atk * first); }
         b.removeBuff(e, 'ab:pow');
       } else elem(b, e, t, 'burn', e.s.atk * normal);
     },
@@ -1496,14 +1597,14 @@ function kitLeaderMisc(key, ab, e) {
       return [bar, lowHpBuff(T(ab, 'enrage.hp_ratio') ?? 0.5, { dmgDealtMul: T(ab, 'enrage.damage_scale') ?? 1 }),
         // 【唱沙】 the highest-max-HP unit on the field and everything in its cross: physical `damage`
         skill(ds, (b, e2) => {
-          const t = allTargets(b, e2).sort((p, q) => q.s.maxHp - p.s.maxHp || q.deploySeq - p.deploySeq)[0];
+          const t = allTargets(b, e2).sort((p, q) => q.s.maxHp - p.s.maxHp || aggroCmp(p, q))[0];
           if (!t) return;
           b.fx('telegraph', { x: t.tileC, y: t.tileR, r: DRIFT_REACH, kind: 'driftSand', tiles: 'plus', id: e2.id });
           for (const u of alliesInTiles(b, t.tileR, t.tileC, 'plus', DRIFT_REACH)) hurt(b, e2, u, ds.bb.damage ?? 0, 'phys');
         }, { cond: (b, e2) => allTargets(b, e2).length > 0 }),
         // 【沙狱】 the lowest-max-HP unit and those around it: ATK −`atk` and `damage` arts per second for `duration` s
         skill(ss, (b, e2) => {
-          const t = allTargets(b, e2).sort((p, q) => p.s.maxHp - q.s.maxHp || q.deploySeq - p.deploySeq)[0];
+          const t = allTargets(b, e2).sort((p, q) => p.s.maxHp - q.s.maxHp || aggroCmp(p, q))[0];
           if (!t) return;
           const dur = ss.bb.duration ?? 0, x = t.x, y = t.y;
           b.fx('zone', { x, y, r: SANDSTORM_RADIUS, dur, kind: 'sandStorm', id: e2.id });
@@ -1771,7 +1872,7 @@ function kitWarden(ab) {
 function kitXi(ab) {
   const cross = ab.sk.CrossAttack, sb = ab.sk.ShieldBurst, sb2 = ab.sk.ShieldBurstReborn;
   const P = { form2: false };
-  const byDist = (b, e) => allTargets(b, e).sort((p, q) => Math.hypot(p.x - e.x, p.y - e.y) - Math.hypot(q.x - e.x, q.y - e.y) || q.deploySeq - p.deploySeq);
+  const byDist = (b, e) => allTargets(b, e).sort((p, q) => Math.hypot(p.x - e.x, p.y - e.y) - Math.hypot(q.x - e.x, q.y - e.y) || aggroCmp(p, q));
   const crossAt = (b, e, t) => {
     const r0 = t.tileR, c0 = t.tileC;
     b.fx('telegraph', { x: c0, y: r0, r: XI_CROSS_REACH, kind: 'xiCross', tiles: 'plus', id: e.id });
@@ -1982,7 +2083,7 @@ export const KITS = Object.freeze({
   enemy_1389_winbab_2: kitStealth,                                   // 访问团强攻冠军 · stealth (供暖器 priority n/a)
   enemy_1404_msnip: kitCrossbow,                                     // 重弩突袭者 · stealth + 直击 (row/column bolt: arts + stun, reveals itself)
   enemy_10031_cnvsld: kitStealth,                                    // 业余竞演者 · stealth
-  enemy_10034_cnvsax: kitJazz,                                       // 节日爵士乐手 · stealth, attacks only when revealed; fire aura (arts + burn)
+  enemy_10034_cnvsax: kitJazz,                                       // 节日爵士乐手 · stealth, attacks only when revealed; channel on one target (arts + burn)
   enemy_10042_prtrop: kitStealth,                                    // 架桥船工 · stealth (bridges n/a)
   enemy_10042_prtrop_2: kitStealth,                                  // 扶桥老手 · stealth
   enemy_9008_acbunn: kitBoneSpike,                                   // 假想敌：骨刺 · stealth; hits 3 targets while stealthed
@@ -2033,15 +2134,15 @@ export const KITS = Object.freeze({
   enemy_1305_mhslim: kitEp('burn', 'EpDamage.attack@ep_damage_ratio'),        // 灼热源石虫 · burn on hit
   enemy_1305_mhslim_2: kitEp('burn', 'EpDamage.attack@ep_damage_ratio'),      // 炽焰源石虫 · burn on hit
   enemy_2021_syfish: kitEp('erosion', 'EpDamage.attack@ep_damage_ratio'),     // 骨海漂流体 · erosion on hit
-  enemy_2025_syufo: (ab) => [float(), ep('erosion', T(ab, 'EpDamage.attack@ep_damage_ratio') ?? 0)], // 掠海漂移体 · 近地悬浮 + erosion
+  enemy_2025_syufo: kitSyufo,                                        // 掠海漂移体 · 近地悬浮 (drops to 爬行模式 when stunned) + erosion
   enemy_1229_darmy: kitEp('apoptosis', 'epdamage.attack@ep_damage_ratio'),    // 萨卡兹王庭军战士 · apoptosis on hit
   enemy_1229_darmy_2: kitEp('apoptosis', 'epdamage.attack@ep_damage_ratio'),  // 萨卡兹王庭军精锐战士 · apoptosis on hit
   enemy_1275_dwlock_2: kitDeathEye,                                  // 萨卡兹王庭军精锐术师 · apoptosis on hit + DeathEye channel → group apoptosis
   enemy_1439_dslntf: kitNucleus,                                     // 元核孽生者 · first damage: combat state (speed ×, neural pulse around)
   enemy_1439_dslntf_2: kitNucleus,                                   // 异光体孽生者 · same
-  enemy_9007_acelem: kitParasite,                                    // 假想敌：淤困 · taunt −1; parasitises its blocker (arts/s, element taken ×, burst spreads)
+  enemy_9007_acelem: kitParasite,                                    // 假想敌：淤困 · taunt −1; parasitises its blocker (arts/s, element taken ×, its burst spreads 1000)
   enemy_10065_ftzlc: kitIgnitable,                                   // 卷心籽 · ignited by 灼藤 → arts death blast
-  enemy_10067_ftsjc: kitFlameVine,                                   // 灼藤 · ATK ramps until the 1st attack (AoE arts + burn), burn on hit, ignites 卷心籽
+  enemy_10067_ftsjc: kitFlameVine,                                   // 灼藤 · ATK ramps until the 1st attack (3×3 arts + burn), burn on hit, ignites 卷心籽
 
   // --- DOT 持续
   enemy_1234_dsubrl: kitDsubrl,                                      // 深溟巢涌者 · pulse hits every ally in range + neural; 抵抗, immune 停顿
@@ -2254,7 +2355,7 @@ export const KITS = Object.freeze({
       },
     }];
   },
-  enemy_10045_parrot: (ab) => [float(), { taken(c, b, e, a) { if (a.on) return; a.on = true; b.addBuff(e, { key: 'ab:parrotRun', duration: T(ab, 'M0SpeedUp.duration') ?? 0, mods: { moveMul: 1 + (T(ab, 'M0SpeedUp.move_speed') ?? 0) } }); } }], // 吉兆飞鳞 · 近地悬浮; sprints when first hit
+  enemy_10045_parrot: kitParrot,                                     // 吉兆飞鳞 · 近地悬浮 (grounded 8 s when stunned); sprints when first hit
   enemy_10087_hlchgr: (ab) => [{                                     // 圣堂剑士 · spends ammo (every 6 s, max 5) for permanent speed/ATK
     iv: T(ab, 'SkillTrigger.interval') ?? 6,
     tick(b, e, a) {
@@ -2386,7 +2487,8 @@ function chaliceShare(b, c) {
     if (!a || !(a.share > 0) || Math.hypot(o.x - t.x, o.y - t.y) > a.r) continue;
     const part = c.dmg.amount * a.share;
     c.dmg.amount -= part;
-    b.dealDamage(c.source, o, { amount: part, type: c.dmg.type, canDodge: false, tags: [...(c.dmg.tags || []), 'chalice'] });
+    // a 无来源 burst's share stays 无来源, credited like the burst (damage.js)
+    b.dealDamage(c.dmg.sourceless ? c.credit : c.source, o, { amount: part, type: c.dmg.type, canDodge: false, sourceless: c.dmg.sourceless, tags: [...(c.dmg.tags || []), 'chalice'] });
     break;
   }
 }

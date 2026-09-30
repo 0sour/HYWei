@@ -71,7 +71,8 @@ export class Unit {
     this.deployedAt = -Infinity;
     this.deathAt = -Infinity;
     this.respawnAt = Infinity;
-    this.deploySeq = 0;
+    this.deploySeq = 0;         // deployment counter; also the identity of one deployment (content: `seq === u.deploySeq`)
+    this.aggroSeq = 0;          // 仇恨 order (the later the more attacked): = deploySeq, except summons of the initial deployment
     this.spawnSeq = 0;
     this.elem = { burn: 0, neural: 0, necrosis: 0, apoptosis: 0, erosion: 0 };
     this.burstPending = null;   // { [element]: true } while that element's burst resolves (damage.js burstLocked)
@@ -142,7 +143,8 @@ export class Unit {
       physTakenMul: m('physTakenMul'),
       artsTakenMul: m('artsTakenMul'),
       trueTakenMul: m('trueTakenMul'),
-      elemTakenMul: m('elemTakenMul'),
+      elemTakenMul: m('elemTakenMul'),           // 元素损伤倍率: element gauge fills (damage.js applyElement)
+      elementalTakenMul: m('elementalTakenMul'), // 元素脆弱: 元素伤害 (the 'elemental' HP damage type)
       healingDealtMul: m('healingDealtMul'),
       healingTakenMul: m('healingTakenMul'),
       atkScaleMul: m('atkScaleMul'),
@@ -169,8 +171,17 @@ export class Unit {
 
   hasFlag(k) { return !!this.s.flags[k]; }
 
-  /** Ground unit: enemies that WALK and aren't levitated; ally units standing on a LOW tile. */
-  get isFlying() { return this.motion === 'FLY'; }
+  /**
+   * Air unit (空中单位) for every targeting / ground-only rule: FLY movers, and enemies that hover (近地悬浮, buff flag
+   * `float` — PRTS 术语释义 ba.float "算作空中单位"; they keep walking the ground path) or are levitated (浮空, gamedata_const
+   * ba.levitate "变为空中单位"). Movement and pathing read `motion`, never this.
+   */
+  get isFlying() {
+    if (this.motion === 'FLY') return true;
+    if (this.side !== 'enemy') return false;
+    const f = this.s.flags;
+    return !!(f.float || f.levitate);
+  }
 
   get hpRatio() { const mh = this.s.maxHp; return mh > 0 ? this.hp / mh : 0; }
 

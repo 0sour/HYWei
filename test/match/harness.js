@@ -173,7 +173,7 @@ function legacyInvariants(m) {
     const all = [...ps.board.values(), ...ps.hand.filter(Boolean), ...ps.temp.filter(Boolean)];
     for (const p of all) if (p.kind === 'chess') chessUids.add(p.uid);
     let deployed = 0;
-    const dmap = ps.deployMap();
+    const dmap = m.deployMapFor(ps); // a pure read (as server/match/invariants.js): no PlayerState cache touched
     for (const [k, p] of ps.board) {
       const [r, c] = k.split(',').map(Number);
       assert.ok(r >= FIELD.r0 && r <= FIELD.r1 && c >= FIELD.c0 && c <= FIELD.c1, `piece outside the board ${k}`);

@@ -8,8 +8,8 @@
 // Conventions shared by the kits of this file:
 // - `base_attack_time` in skill blackboards is an absolute delta in seconds (AK attribute ADDITION: 烛煌 1.6 s − 1.3 s,
 //   号角 2.8 s − 1.2 s, 白面鸮 2.85 s − 1.8 s, 寒檀 2.9 s − 2.4 s); it is converted into `batPct` of the chess's base BAT.
-// - 元素伤害 (elemental HP damage, not a gauge) is the engine DamageInfo type 'elemental' (no DEF/RES/dodge, × elemTakenMul),
-//   with `element` set for the client colour.
+// - 元素伤害 (elemental HP damage, not a gauge) is the engine DamageInfo type 'elemental' (no DEF/RES/dodge,
+//   × elementalTakenMul = 元素脆弱), with `element` set for the client colour.
 // - Mechanics missing from the chess text follow the PRTS 备注 of the base operator (verified 2026-09-28): 号角 S3 overload
 //   is the second half of the 24 s duration; 圣约送葬人's extra attack consumes no ammo; 夕 S1 splash 1.7; 烛煌 revive stun
 //   radius 1.7; 寒檀 icicles splash 1.5 and cycle left row → right row → own row; 失重 = weight −1 level; 魔王 motes orbit
@@ -29,9 +29,10 @@
 //   'meltdown', 'soul', 'sleepGuard', 'weightless'; engine kinds used: 'dodge'.
 
 import { COLS } from '../../constants.js';
+import { bodyInKeys, bodyInRadius, bodyKeys } from '../../body.js';
 import { absoluteRangeKeys, sortEnemyTargets } from '../../targeting.js';
 import { frontOf, rotateOffset, toLocal } from '../../dir.js';
-import { mitigate } from '../../damage.js';
+import { mitigate, hasHp } from '../../damage.js';
 
 // ---- text-only constants (the official blackboards carry no key for these) --------------------------------------
 /** 华法琳 S1 "只当目标生命值不满一半时才会触发"; 山 module "生命值高于50%时". */
@@ -77,8 +78,8 @@ const HORN_S2_OVERLOAD_AT = 0.5;
 // ---- helpers ------------------------------------------------------------------------------------------------------
 const num = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 const on = (u) => !!u && u.alive && u.deployed && !u.removed;
-const tileKey = (u) => Math.round(u.y) * COLS + Math.round(u.x);
-const inRange = (unit, x) => !!unit.rangeKeySet && unit.rangeKeySet.has(tileKey(x));
+/** In the unit's current range: an ally by its tile, an enemy by its body (a huge one's every tile — sim/body.js). */
+const inRange = (unit, x) => !!unit.rangeKeySet && bodyInKeys(x, unit.rangeKeySet);
 const talent = (chess, i) => (chess?.talents || []).find((t) => t && t.index === i)?.bb ?? {};
 const talentRec = (chess, i) => (chess?.talents || []).find((t) => t && t.index === i) ?? null;
 const traitBb = (chess) => chess?.trait?.bb ?? {};
@@ -158,7 +159,7 @@ function meleeAttacker(e, t) {
 /** Enemy not moving along its route (blocked, stunned, rooted, waiting…). */
 const isStill = (e) => !!(e.blockedBy || !e.moving || e.s.flags.stun || e.s.flags.noMove || !(e.s.moveSpeed > 0));
 
-/** Elemental HP damage (元素伤害): engine type 'elemental' (× elemTakenMul in the pipeline, never trueTakenMul). */
+/** Elemental HP damage (元素伤害): engine type 'elemental' (× elementalTakenMul in the pipeline, never trueTakenMul). */
 function elementHit(battle, src, tgt, amount, tag, element = null) {
   if (!tgt || !tgt.alive || !(amount > 0)) return 0;
   return battle.dealDamage(src, tgt, { amount, type: 'elemental', element, canDodge: false, tags: ['element', tag] });
@@ -264,7 +265,7 @@ function enemiesInGrid(battle, unit, grid, n = 0, { ignoreStealth = false } = {}
   let list;
   if (ignoreStealth) {
     const set = new Set(keys);
-    list = battle.enemies.filter((e) => e.alive && !e.hidden && e.deployed && !e.s.flags.untargetable && set.has(Math.round(e.y) * COLS + Math.round(e.x)));
+    list = battle.enemies.filter((e) => e.alive && !e.hidden && e.deployed && !e.s.flags.untargetable && bodyInKeys(e, set));
   } else list = battle.enemiesInKeys(keys, unit, { canHitFly: true });
   sortEnemyTargets(battle, unit, list, null);
   return n > 0 && list.length > n ? list.slice(0, n) : list;
@@ -591,7 +592,7 @@ const KITS = {
       const dmgTick = unit.mem.blazeAcc2 >= 1 - 1e-9;
       if (dmgTick) unit.mem.blazeAcc2 -= 1;
       for (const e of battle.enemies) {
-        if (!e.alive || e.hidden || e.isFlying || !tiles.has(Math.round(e.y) * COLS + Math.round(e.x))) continue;
+        if (!e.alive || e.hidden || e.isFlying || !bodyInKeys(e, tiles)) continue;
         battle.addBuff(e, { key: `blaze2:ground:${unit.id}`, duration: AURA_DUR, mods: { moveMul: Math.max(0, 1 + num(bb.move_speed)) } });
         if (!dmgTick) continue;
         const d = battle.dealDamage(unit, e, { amount: unit.s.atk * num(bb.atk_scale), type: 'arts', isSkill: true, tags: ['skill', 'blazeGround'] });
@@ -759,7 +760,9 @@ const KITS = {
   // T1 本性的坚守: heal 100 (160 below 50 %) on every hit taken. T2 血脉的哺养: per kill +120 max HP / +30 ATK (×9),
   // other Abyssal Hunters +50 %. Module (elite): healing received ×1.2.
   // S1 必须促成的接触 (instant): the anchor lands on the best enemy of the skill range (beyond his own range, unblocked
-  // first) and drags up to max_target enemies around it (RING1) in front of him (中等力度), atk_scale × ATK phys each.
+  // first) and drags up to max_target enemies around it (RING1) in front of him (中等力度), atk_scale × ATK phys each;
+  // a 捕网 — ground enemies only ([ASSUMED] like 雪雉's "不对空" net). S3's anchor blast has no such note: it hits air
+  // units too [ASSUMED].
   // S2 必须维系的界限 (toggle, 持续时间无限): T1 ×talent_scale, block +1, max HP +, ATK +.
   chess_char_5_05_a: (bb, chess, def) => {
     const t0 = talent(chess, 0), t1 = talent(chess, 1), tb = traitBb(chess);
@@ -778,9 +781,11 @@ const KITS = {
             // unblocked ground enemies, then the usual target order
             const list = enemiesInGrid(battle, unit, skillGrid(chess, def) ?? unit.rangeGrid);
             const reach = (e) => inRange(unit, e);
-            const main = list.find((e) => !reach(e) && !e.blockedBy && !e.isFlying) ?? list.find((e) => !e.blockedBy && !e.isFlying) ?? list.find((e) => !e.isFlying) ?? list[0];
+            // the anchor is a 捕网 (PRTS 备注 "实际效果为捕网而非拖拽"); 雪雉's 捕网 is "不对空" (PRTS 雪雉 备注) — [ASSUMED] the same
+            // for this one: it never lands on or catches air units (FLY, 近地悬浮, 浮空)
+            const main = list.find((e) => !reach(e) && !e.blockedBy && !e.isFlying) ?? list.find((e) => !e.blockedBy && !e.isFlying) ?? list.find((e) => !e.isFlying);
             if (!main) return;
-            const near = battle.enemiesInRadius(main.x, main.y, RING1).filter((e) => !e.s.flags.untargetable && !e.s.flags.sleep)
+            const near = battle.enemiesInRadius(main.x, main.y, RING1).filter((e) => !e.isFlying && !e.s.flags.untargetable && !e.s.flags.sleep)
               .sort((a, b) => (a === main ? -1 : b === main ? 1 : 0) || dist(a, main) - dist(b, main) || a.spawnSeq - b.spawnSeq)
               .slice(0, Math.max(1, num(bb.max_target, 2)));
             const fr = unit.tileR + unit.fwd[0], fc = unit.tileC + unit.fwd[1];
@@ -874,7 +879,8 @@ const KITS = {
   // max HP and take −10 % phys damage afterwards. Reaper trait (heal per hit, module 60) comes from the profession.
   // S1 玫影觅迹 (instant, attack SP): next attack atk_scale × ATK, twice. S2 绯红壁合 (duration): no attacks; blood sickles
   // on herself and on one other ground unit (the ally with the most enemies around it) cut every enemy around them (RING1)
-  // for atk_scale × ATK phys every `interval` s. Module REA-Y (elite): ASPD +12 with ≥ 2 enemies in range.
+  // for atk_scale × ATK phys every `interval` s — ground enemies only unless the carrier has taken off (PRTS 备注).
+  // Module REA-Y (elite): ASPD +12 with ≥ 2 enemies in range.
   chess_char_5_06_a: (bb, chess, def) => {
     const t0 = talent(chess, 0), t1 = talent(chess, 1), tb = traitBb(chess);
     const hpScale = num(bb['attack@max_hp_scale'], 0.6), defScale = num(bb['attack@def_scale'], 1), resScale = num(bb['attack@magic_resistance_scale'], 1);
@@ -900,7 +906,11 @@ const KITS = {
               unit.mem.sickleAcc -= iv;
               for (const a of unit.mem.sickles || []) {
                 if (!a.alive || !a.deployed) continue;
+                // PRTS 备注 "被添加血镰的单位处于起飞时，血镰可对空": a sickle on the ground spares air units (FLY, 近地悬浮, 浮空);
+                // 起飞 = an airborne skywalker (蒂比's skill: off the ground, flag blockFly)
+                const air = !a.ground && !!a.s.flags.blockFly;
                 for (const e of battle.enemiesInRadius(a.x, a.y, RING1)) {
+                  if (e.isFlying && !air) continue;
                   battle.dealDamage(unit, e, { amount: unit.s.atk * num(bb.atk_scale), type: 'phys', isSkill: true, tags: ['skill', 'bloodSickle'] });
                 }
               }
@@ -1224,7 +1234,7 @@ const KITS = {
             unit.mem.flares = fl.filter((f) => f.until > battle.time + 1e-9);
             const r = num(bb.projectile_range, 1.7);
             for (const f of unit.mem.flares) for (const e of battle.enemies) {
-              if (e.alive && !e.hidden && Math.hypot(e.x - f.x, e.y - f.y) <= r + 1e-9) battle.applyStatus(e, 'reveal', { duration: AURA_DUR, source: unit });
+              if (e.alive && !e.hidden && bodyInRadius(e, f.x, f.y, r)) battle.applyStatus(e, 'reveal', { duration: AURA_DUR, source: unit });
             }
           }, { owner: unit });
         }
@@ -1616,7 +1626,8 @@ const KITS = {
   // ---------------------------------------------------------------------------------------------------------------
   // 归溟幽灵鲨 — dollkeeper. S2 生存的渴望 (15/17 s): ATK/ASPD +, HP never below 1; afterwards she counts as knocked out
   // (→ substitute, or death if already one). T1 拥抱自我: the substitute slows nearby enemies −40 % and deals 40 % ATK
-  // arts/s to them. T2 阿戈尔的深邃: Abyssal Hunters in the team max HP +20 %. Module (elite): substitute ATK +15 %.
+  // arts/s to them (PRTS 备注 "伤害与减速不可对空": ground enemies only). T2 阿戈尔的深邃: Abyssal Hunters in the team
+  // max HP +20 %. Module (elite): substitute ATK +15 %.
   // S1 生存的技巧 (duration): swaps HP ratios with the other operator of the skill area (周围) with the lowest HP ratio,
   // ATK +. S3 生存的重压 (duration): BAT +1 s, hits every blocked enemy, ATK +, max HP +; an attacked enemy whose HP ratio
   // is ≥ hers takes attack@atk_scale_ex × ATK phys more, otherwise she loses attack@hp_ratio of her max HP.
@@ -1667,11 +1678,11 @@ const KITS = {
           const slow = num(t0.move_speed), scale = num(t0.atk_scale);
           whileOn(battle, unit, AURA_IV, () => {
             if (!unit.trait.doll || !slow) return;
-            for (const e of battle.unitsInGrid(unit, aroundGrid, { side: 'enemy' })) battle.addBuff(e, { key: 'ghost2:embrace', duration: AURA_DUR, mods: { moveMul: Math.max(0, 1 + slow) } });
+            for (const e of battle.unitsInGrid(unit, aroundGrid, { side: 'enemy' })) if (!e.isFlying) battle.addBuff(e, { key: 'ghost2:embrace', duration: AURA_DUR, mods: { moveMul: Math.max(0, 1 + slow) } });
           });
           whileOn(battle, unit, 1, () => {
             if (!unit.trait.doll || !(scale > 0)) return;
-            for (const e of battle.unitsInGrid(unit, aroundGrid, { side: 'enemy' })) battle.dealDamage(unit, e, { amount: unit.s.atk * scale, type: 'arts', tags: ['talent', 'embrace'] });
+            for (const e of battle.unitsInGrid(unit, aroundGrid, { side: 'enemy' })) if (!e.isFlying) battle.dealDamage(unit, e, { amount: unit.s.atk * scale, type: 'arts', tags: ['talent', 'embrace'] });
           });
         } },
         { install(battle, unit) { // 阿戈尔的深邃
@@ -1704,9 +1715,10 @@ const KITS = {
   },
 
   // ---------------------------------------------------------------------------------------------------------------
-  // 凛御银灰 — S2 御敌的锋锐 (2 charges): the 6 front-most enemies in the skill range take 260 % ATK phys, cold + reveal
-  // for 4 s; the waiting (knocked-out) op nearest to 风雪之眼 by cost gets −11 redeploy cost (right side guard/caster/
-  // sniper first); waiting ops left of the eye (cost < eye cost) cast the AoE with their own ATK when they redeploy (≤2).
+  // 凛御银灰 — S2 御敌的锋锐 (2 charges; PRTS 备注 "可对空"): the 6 front-most enemies in the skill range take 260 % ATK
+  // phys, cold + reveal for 4 s; the waiting (knocked-out) op nearest to 风雪之眼 by cost gets −11 redeploy cost (right
+  // side guard/caster/sniper first); waiting ops left of the eye (cost < eye cost) cast the AoE with their own ATK when
+  // they redeploy (≤2).
   // T1 开放性开局: ops left of the eye and himself: +4 SP at deployment, redeploy time −20 %.
   // T2 雪境先驱: Kjerag ops freeze-immune, DEF +60, 1.5 % max HP/s regen; doubled after 15 s on the field.
   // The eye follows the selected skill (its overrideTokenKey: S1 eagle1 cost 16, S2 eagle2 14, S3 eagle3 19).
@@ -1846,13 +1858,15 @@ const KITS = {
         const tok = battle.tokenDef(eyeId, unit); // the owner's skill variant (DESIGN §16)
         unit.mem.eyeCost = num(tok?.stats?.cost, 14);
         if (selectedId(chess, def) === 'skchr_svash2_3') {
-          // S3: every attack hits the enemies of the skill range on the target's line (his facing frame)
+          // S3: every attack hits the enemies of the skill range on the target's line (his facing frame): the line of
+          // the target's position; another enemy is on it when its body is (a huge one: any tile — body.js)
           battle.on('beforeAttack', (c) => {
             if (c.attacker !== unit || !unit.skill?.active || !c.targets.length) return;
             const main = c.targets[0];
-            const lat = (e) => toLocal(Math.round(e.y) - unit.tileR, Math.round(e.x) - unit.tileC, unit.dir)[0];
-            const l0 = lat(main);
-            const line = battle.enemiesInKeys(unit.rangeKeys, unit, unit.profile).filter((e) => e !== main && lat(e) === l0);
+            const lat = (r, cc) => toLocal(r - unit.tileR, cc - unit.tileC, unit.dir)[0];
+            const l0 = lat(Math.round(main.y), Math.round(main.x));
+            const onLine = (e) => bodyKeys(e).some((k) => lat(Math.floor(k / COLS), k % COLS) === l0);
+            const line = battle.enemiesInKeys(unit.rangeKeys, unit, unit.profile).filter((e) => e !== main && onLine(e));
             if (line.length) c.targets = [main, ...line];
           }, { owner: unit, priority: 10 });
         }
@@ -2424,7 +2438,8 @@ const KITS = {
             if (c.source !== unit || c.type === 'element' || c.target.side !== 'enemy' || !c.target.alive || !c.dmg) return;
             // (S1 has no attack override: its attacks are the skill's while it runs)
             const skillAtk = c.dmg.isSkill || (sid === 'skchr_nymph_1' && !!unit.skill?.active);
-            if (skillAtk && c.dmg.isAttack && ep > 0 && c.amount > 0) {
+            // (not on a killing blow: the target is at 0 HP here — no burst on the corpse)
+            if (skillAtk && c.dmg.isAttack && ep > 0 && c.amount > 0 && hasHp(c.target)) {
               battle.dealDamage(unit, c.target, { type: 'element', element: 'apoptosis', amount: c.amount * ep, tags: ['skill', 'nymph'] });
             }
             if (c.dmg.isAttack && c.target.alive) soul(battle, unit, c.target, c.dmg.isSkill ? Math.max(skillSoul, soulBase) : soulBase);

@@ -37,6 +37,47 @@ export function hudPadding(kind, size) {
   return { top: clampH(rem * 1.95), bottom: clampH(rem * 1.0), left: rem * 2.25, right: rem * 1.05 };
 }
 
+/**
+ * HUD geometry (rem) the prep cameras keep clear (they mirror the CSS; test/ui/playtest5-ui.test.js checks the rules):
+ * the bond strip's bottom edge (css/screens/game.css .gm__bonds top 1.36rem + a .bslot: disc .52rem + name ≈
+ * 2.15rem measured) and the shop bar's top edge above the viewport's bottom (css/screens/game-shop.css .shopbar
+ * bottom .2rem + .shopbar__row padding .1rem ×2 + card height 2.24rem, plus its 2 px + 1 px borders). The shop bar
+ * sits on the viewport's bottom edge even on a notched phone (css/devices.css, DESIGN §18.1).
+ */
+export const HUD_REM = Object.freeze({ bondStripBottom: 2.16, shopBarTop: 2.64, shopBarBorderPx: 3 });
+
+/**
+ * CSS px of HUD along the top edge (top bar + bond strip) and the bottom edge (the shop bar) of the viewport during
+ * prep — the own board ('prep') or the Final Assault half ('bossPrep'); null for every other camera. The prep camera
+ * keeps the bench / temp rows and the field's back row clear of them (render/projection.js clearHud; user playtest
+ * #5 item 9: the rem floor of 40 px makes the HUD relatively taller on phones in landscape and the shop bar covered
+ * the bench). The prep camera is the shop camera whether or not the bar is collapsed, so the band assumes the bar —
+ * also for an eliminated player's own board (no shop bar: the band only costs size there, while a camera following
+ * the bar's presence would have to re-frame whenever it appears, e.g. when the private state arrives after the prep
+ * camera was set). Scouting a teammate's board uses the 'normal' camera: no band. An armed shop card (two-tap buy,
+ * css/screens/game-shop.css .scard.is-armed) rises 4 px above the bar's top on a phone and covers the bench pads'
+ * near corners by ≈ 3 px while it stays armed — less than under the unchanged official camera at 1920×1080 (13 px
+ * above the bar, ≈ 11 px over the pads).
+ * @param {string} kind
+ * @param {{ width: number, height: number }} size
+ * @returns {{ top: number, bottom: number }|null}
+ */
+export function hudBands(kind, size) {
+  if (kind !== 'prep' && kind !== 'bossPrep') return null;
+  let rem = 100;
+  let safeTop = 0;
+  try {
+    rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 100;
+    // the HUD layer starts below the top safe-area inset (css/devices.css .gm__hud)
+    safeTop = Math.max(0, document.querySelector('.gm__hud')?.getBoundingClientRect().top || 0);
+  } catch { /* ignore */ }
+  const h = size?.height || 1080;
+  return {
+    top: Math.min(h * 0.4, safeTop + rem * HUD_REM.bondStripBottom),
+    bottom: Math.min(h * 0.4, rem * HUD_REM.shopBarTop + HUD_REM.shopBarBorderPx),
+  };
+}
+
 function renderPref() {
   try {
     const q = new URLSearchParams(globalThis.location?.search || '').get('render');
@@ -82,7 +123,7 @@ export function guardView(view, kind) {
  */
 export async function mountFieldView(host) {
   const pref = renderPref();
-  const opts = { data, assets: data.get('assets'), audio, settings: settingsStore.get(), padding: hudPadding };
+  const opts = { data, assets: data.get('assets'), audio, settings: settingsStore.get(), padding: hudPadding, hud: hudBands };
   if (pref !== 'fallback') {
     try {
       // the shared asset store (public/js/assets.js) keeps its Spine cache across remounts (next match, reconnect)

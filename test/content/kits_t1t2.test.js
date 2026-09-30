@@ -441,7 +441,7 @@ test('1_14 格雷伊: 静电场 停顿 on the attacked target, ×talent_scale du
   done(h1); done(h2);
 });
 
-test('1_15 盟约·辅助干员 (hidden): 迭代元素 18 % ATK 神经损伤 per hit; skill 2 targets + ASPD; elite boost vs ELITE', () => {
+test('1_15 盟约·辅助干员 (hidden): 迭代元素 18 % ATK 神经 + 灼燃 + 凋亡 per damage; skill 2 targets + ASPD; elite boost vs ELITE', () => {
   const id = 'chess_char_1_15_a', bb = bbOf(id), t = tal(id);
   const h = run({ defs: { enemies: { e: dummy('e') } }, units: [{ chessId: id, row: 10, col: 4, carryState: READY }], enemies: [{ key: 'e', pos: [10, 5] }, { key: 'e', pos: [10, 6] }] });
   const u = h.unit(id);
@@ -450,7 +450,9 @@ test('1_15 盟约·辅助干员 (hidden): 迭代元素 18 % ATK 神经损伤 per
   approx(u.s.aspd - u.base.aspd, bb.attack_speed);
   assert.equal(h.hooksOf('attack').find((c) => c.attacker === u).targets.length, bb['attack@max_target']);
   const el = dealt(h, u, (c) => c.type === 'element');
-  assert.ok(el.length >= 2 && el.every((c) => c.dmg.element === 'neural'));
+  assert.ok(el.length >= 6);
+  // every damage she deals attaches all three, in the official order (神经 "（优先）", then 灼燃, then 凋亡)
+  for (let i = 0; i + 2 < el.length; i += 3) assert.deepEqual(el.slice(i, i + 3).map((c) => c.dmg.element), ['neural', 'burn', 'apoptosis']);
   for (const c of el) approx(c.amount, u.s.atk * t.ep_damage_ratio);
   done(h);
 
@@ -724,7 +726,32 @@ test('2_05 哈洛德: 重症优先 heals the heaviest element load first with ×
   assert.equal(first.targets[0], elem, 'element-damaged ally first');
   approx(elem.elem.neural, 900 - u.s.atk * tbOf(id).ep_heal_ratio * bb.trait_scale, 'recovery ×1.6');
   h.run(0.3);
-  approx(elem.s.elemTakenMul, 1 - t.ep_damage_resistance, '我即军营');
+  // 我即军营 cuts the 元素损伤 (gauge fill) of an ally over half, on the hit itself — not elemTakenMul (元素伤害 / 元素脆弱)
+  assert.ok(elem.elem.neural > 500, 'still over half');
+  const b0 = elem.elem.burn;
+  h.b.dealDamage(null, elem, { type: 'element', element: 'burn', amount: 100 });
+  approx(elem.elem.burn - b0, 100 * (1 - t.ep_damage_resistance), '我即军营');
+  approx(elem.s.elemTakenMul, 1, 'no 元素伤害 / 元素脆弱 change');
+  // under half: no cut
+  const n0 = low.elem.neural;
+  h.b.dealDamage(null, low, { type: 'element', element: 'neural', amount: 100 });
+  approx(low.elem.neural - n0, 100, 'gauge under half: full fill');
+  done(h);
+});
+
+test('2_05 哈洛德 (user playtest #5 #3): 侵蚀 counts as element damage for 重症优先 and 我即军营', () => {
+  const id = 'chess_char_2_05_a', t = tal(id);
+  const h = run({ units: [{ chessId: id, row: 10, col: 4, carryState: READY }, { chessId: 'chess_char_1_02_a', row: 10, col: 5 }, { chessId: 'chess_char_1_10_a', row: 11, col: 5 }] });
+  const u = h.unit(id), low = h.unit('chess_char_1_02_a'), eroded = h.unit('chess_char_1_10_a');
+  h.step();
+  low.hp = low.s.maxHp * 0.3;
+  eroded.elem.erosion = 900;
+  h.step();
+  const first = h.hooksOf('attack').find((c) => c.attacker === u);
+  assert.equal(first.targets[0], eroded, 'the eroded ally is the heaviest element load');
+  const e0 = eroded.elem.erosion;
+  h.b.dealDamage(null, eroded, { type: 'element', element: 'erosion', amount: 100 });
+  approx(eroded.elem.erosion - e0, 100 * (1 - t.ep_damage_resistance), '我即军营 on an eroded ally over half');
   done(h);
 });
 

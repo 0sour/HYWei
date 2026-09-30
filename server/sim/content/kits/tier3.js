@@ -29,6 +29,7 @@
 
 import { absoluteRangeKeys, sortEnemyTargets, canTargetEnemy } from '../../targeting.js';
 import { COLS } from '../../constants.js';
+import { bodyDist, bodyInKeys, bodyOnTile, bodyTileReach } from '../../body.js';
 import { normalizeChess, normalizeSkill } from '../../simdata.js';
 import { tacticalPoint as sharedTacticalPoint } from '../tokens.js';
 
@@ -80,8 +81,8 @@ function profileMul(battle, unit, target) {
 /** Targetable enemies within `r` tiles of (x, y), nearest first (spawn order breaks ties), excluding `skip`. */
 function enemiesAround(battle, unit, x, y, r, skip = null) {
   const out = battle.enemiesInRadius(x, y, r).filter((e) => !(skip && skip.has(e)) && canTargetEnemy(unit, e, { canHitFly: true }));
-  const d2 = (e) => (e.x - x) ** 2 + (e.y - y) ** 2;
-  return out.sort((a, b) => d2(a) - d2(b) || (a.spawnSeq ?? a.id) - (b.spawnSeq ?? b.id));
+  const d = (e) => bodyDist(e, x, y);
+  return out.sort((a, b) => d(a) - d(b) || (a.spawnSeq ?? a.id) - (b.spawnSeq ?? b.id));
 }
 /**
  * "范围内存在地面敌人时攻击速度+N" (能天使 MAR-Y trait, 空弦 MAR-Y talent): ASPD buff `key` while at least `cnt` ground
@@ -104,6 +105,8 @@ function groundAspd(key, aspd, cnt = 1) {
 const AROUND_R = 1.5;
 const alive = (u) => !!(u && u.alive && u.deployed);
 const tileKeyOf = (u) => (u.side === 'ally' ? u.tileR * COLS + u.tileC : Math.round(u.y) * COLS + Math.round(u.x));
+/** On a tile of `set`: an ally by its tile, an enemy by its body (every tile a huge enemy occupies — sim/body.js). */
+const onTiles = (x, set) => (x.side === 'ally' ? set.has(tileKeyOf(x)) : bodyInKeys(x, set));
 const gridKeys = (grid, u, ext = 0) => absoluteRangeKeys(grid || [[0, 0]], u.tileR, u.tileC, u.dir, ext);
 const fx = (battle, kind, u, extra = {}) => battle.fx(kind, { x: u.x, y: u.y, id: u.id, ...extra });
 const copyGrid = (g) => (Array.isArray(g) && g.length ? g.map((p) => [p[0], p[1]]) : null);
@@ -171,7 +174,7 @@ function aura(battle, unit, o) {
       const list = o.side === 'ally' ? battle.allyUnits : battle.enemies;
       for (const x of list) {
         if (!x.alive || !x.deployed || x.hidden || x.kind === 'device') continue;
-        if (!set.has(tileKeyOf(x)) || (o.filter && !o.filter(x))) continue;
+        if (!onTiles(x, set) || (o.filter && !o.filter(x))) continue;
         const mods = typeof o.mods === 'function' ? o.mods(x) : o.mods;
         if (!mods) continue;
         battle.addBuff(x, { key: o.key, duration: dur, refresh: 'extend', mods, source: unit, tags: ['aura'] });
@@ -391,7 +394,8 @@ const KITS = {
   //      大买家: coin at skill start + coin & ATK stack per trait payment; 破财消灾: DP-paid revive (cost doubles)
   //      S1 仗义疏财 (passive, 2 coins): an attack spends a coin to heal the most injured ally (< 70 % HP) of the 8
   //      surrounding tiles for attack@heal_scale × ATK. S3 千金一掷 (持续时间无限): attacks hit twice, kills give a coin;
-  //      closing it spends every coin on random enemies of the front range (atk_scale phys + small push forward).
+  //      closing it spends every coin on random ground enemies of the front range (atk_scale phys + small push forward;
+  //      PRTS 备注: 地面敌方单位, 弹道不可对空).
   //      Auto-close (the mode casts everything itself; the player's "主动关闭" is not available): once the purse is full
   //      (10) and an enemy stands in range. 精锐 module MER-Y: ATK +4 % per trait payment (≤ 5 stacks).
   chess_char_3_04_a: (bb, chess, def) => {
@@ -420,7 +424,7 @@ const KITS = {
           if (!bomb.alive || !bomb.deployed) return;
           for (const e of battle.enemies) {
             if (!e.alive || e.hidden || e.isFlying || e.s.flags.untargetable) continue;
-            if (Math.round(e.x) !== bomb.tileC || Math.round(e.y) !== bomb.tileR) continue;
+            if (!bodyOnTile(e, bomb.tileR, bomb.tileC)) continue;
             // first enemy touching it; after switchT s on the field the bomb deals its damage one extra time
             const hits = battle.time - bomb.deployedAt >= switchT - 1e-9 ? 2 : 1;
             for (let i = 0; i < hits && e.alive; i++) {
@@ -467,15 +471,18 @@ const KITS = {
             kind: 'toggle',
             attack: { hits: 2 },
             onTick({ battle, unit, skill }) {
-              if ((unit.mem.coins ?? 0) >= full && enemiesOn(battle, unit, unit.rangeKeys).length) skill.end('manual');
+              if ((unit.mem.coins ?? 0) >= full && enemiesOn(battle, unit, unit.rangeKeys, 0, { ...unit.profile, canHitFly: false }).length) skill.end('manual');
             },
             onEnd({ battle, unit, reason }) {
               if (reason !== 'manual' || !unit.alive) return;
               const n = unit.mem.coins ?? 0;
               unit.mem.coins = 0;
               let spent = 0;
+              // PRTS 备注: 【金币标记】 goes on "前方范围内的地面敌方单位与自身阻挡的所有单位" and the coins are "弹道（不可对空）" —
+              // air units (FLY, 近地悬浮, 浮空) are never paid
+              const ground = { ...unit.profile, canHitFly: false };
               for (let i = 0; i < n; i++) {
-                const e = battle.rng.pick(enemiesOn(battle, unit, unit.rangeKeys));
+                const e = battle.rng.pick(enemiesOn(battle, unit, unit.rangeKeys, 0, ground));
                 if (!e) break;
                 spent++;
                 battle.dealDamage(unit, e, { amount: unit.s.atk * cash, type: 'phys', isSkill: true, tags: ['skill', 'swire2Cash'] });
@@ -596,11 +603,17 @@ const KITS = {
     return kit;
   },
 
-  // ---- 3_06 菲莱 · 本源铁卫 — S2 冥河诅咒: stops attacking, HP +; when attacked blasts ground enemies around (arts +
-  //      apoptosis, aoe_cd); ATK + once hit by element damage; 神河谕使: element taken −10 %, +SP on apoptosis
-  //      精锐 module PRP-X: own element damage ×ep_damage_scale while blocking
+  // ---- 3_06 菲莱 · 本源铁卫 — S2 冥河诅咒: stops attacking, HP +; when attacked blasts the ground enemies of the 3×3
+  //      around her (PRTS 备注: range x-4; arts + ep_damage_ratio × ATK apoptosis, aoe_cd); ATK + once hit by element
+  //      damage; 神河谕使: 元素损伤 taken −damage_resistance, +SP on apoptosis
+  //      精锐 module PRP-X "阻挡敌人时，自身造成的元素损伤提升15%": EVERY element fill she deals (the S2 blast, a 灼燃维式重锤
+  //      she carries …) ×ep_damage_scale while she blocks — an `elementHit` multiplier, like 余's
   //      S1 灵河护佑 (TAKE_DAMAGE): HP +, clears her element gauges and gives a shield_value 损伤屏障 (absorbs element
   //      damage — gauge fills — until spent or the skill ends)
+  // 神河谕使 and the barrier act on the element hit before it lands (PRTS 备注: "减伤与技力回复效果于伤害计算前处理；即使
+  // 受到0点的凋亡损伤依然可以回复技力", "损伤屏障于伤害计算前、第一天赋后处理"): the talent's cut and SP first (priority 20),
+  // then the barrier absorbs what is left (`dmg.amount × dmg.mul`). The cut is a 元素损伤 multiplier (PRTS 元素 "受到的
+  // 元素损伤 = 损伤值 × (1 − 损伤抵抗 × 0.01)，后续可应用元素损伤倍率提升/降低等效果"), not `elemTakenMul` (元素伤害 / 元素脆弱).
   chess_char_3_06_a: (bb, chess, def) => {
     const d = defOf(chess, def);
     const t0 = talentBb(d, 0);
@@ -612,13 +625,13 @@ const KITS = {
     const ep = num(bb.ep_damage_ratio, 0);
     const cd = num(bb.aoe_cd, 2);
     const epScale = num(tb.ep_damage_scale, 1);
-    // 损伤屏障 of S1: absorbs the gauge gain an element hit would add (after her element-taken multipliers)
+    const cut = Math.max(0, Math.min(1, num(t0.damage_resistance)));
+    // 损伤屏障 of S1: absorbs the gauge gain an element hit would add (after 神河谕使)
     const installBarrier = (battle, unit) => {
       battle.on('elementHit', (ctx) => {
         if (ctx.target !== unit || !(unit.mem.philaeBarrier > 0) || !unit.skill?.active) return;
         const dmg = ctx.dmg;
-        const f = num(dmg.mul, 1) * unit.s.elemTakenMul * (1 - Math.max(0, Math.min(1, num(unit.def?.epDamageResistance, 0))));
-        const eff = num(dmg.amount) * f;
+        const eff = num(dmg.amount) * num(dmg.mul, 1);
         if (!(eff > 0)) return;
         const take = Math.min(unit.mem.philaeBarrier, eff);
         unit.mem.philaeBarrier -= take;
@@ -648,36 +661,47 @@ const KITS = {
         }),
       }),
       talents: [{ install(battle, unit) {
-        battle.addBuff(unit, { key: 'talent:philae_elem', mods: { elemTakenMul: 1 - num(t0.damage_resistance) }, persist: true, allowDead: true });
+        // 神河谕使 (every skill): 元素损伤 taken ×(1 − damage_resistance); "受到凋亡损伤时回复2点技力" — even for 0 damage
+        battle.on('elementHit', (ctx) => {
+          const dmg = ctx.dmg;
+          if (ctx.target !== unit || !dmg || dmg.type !== 'element') return;
+          if (dmg.element === 'apoptosis' && !unit.skill?.active) giveSp(unit, num(t0.sp), 'talent');
+          if (cut > 0) dmg.mul *= 1 - cut;
+        }, { owner: unit, priority: 20 });
       } }],
       install(battle, unit) {
         if (sel === S1) installBarrier(battle, unit);
+        // module PRP-X: her element damage ×ep_damage_scale while she blocks
+        if (epScale > 1) {
+          battle.on('elementHit', (ctx) => {
+            if (ctx.source === unit && ctx.dmg?.type === 'element' && ctx.target?.side === 'enemy' && unit.blocking.length) ctx.dmg.mul *= epScale;
+          }, { owner: unit });
+        }
         battle.on('damaged', (ctx) => {
           if (ctx.target !== unit || !unit.alive) return;
           const sk = unit.skill;
           if (ctx.type === 'element') {
-            // 神河谕使 (every skill): "受到凋亡损伤时回复2点技力"
-            if (ctx.dmg?.element === 'apoptosis' && !(sk && sk.active)) giveSp(unit, num(t0.sp), 'talent');
             if (isS2 && sk && sk.active && !unit.findBuff('skill:philae_rage')) battle.addBuff(unit, { key: 'skill:philae_rage', mods: { atkPct: num(bb.atk) }, visible: true });
             return;
           }
           if (!isS2 || !sk || !sk.active || !ctx.dmg?.isAttack || !ctx.source || ctx.source.side !== 'enemy') return;
           if (battle.time < (unit.mem.philaeCd ?? -Infinity)) return;
           unit.mem.philaeCd = battle.time + cd;
-          const epMul = unit.blocking.length ? epScale : 1;
-          for (const e of battle.enemiesInRadius(unit.x, unit.y, 1.5)) {
+          // "周围的地面敌人" = range x-4, the 3×3 tiles around her (PRTS 备注)
+          for (const e of battle.unitsInGrid(unit, NINE, { side: 'enemy' })) {
             if (e.isFlying) continue;
             battle.dealDamage(unit, e, { amount: unit.s.atk * scale, type: 'arts', canDodge: false, isSkill: true, tags: ['skill', 'counter'] });
-            if (ep > 0 && e.alive) battle.dealDamage(unit, e, { type: 'element', element: 'apoptosis', amount: unit.s.atk * ep * epMul, tags: ['skill'] });
+            if (ep > 0 && e.alive) battle.dealDamage(unit, e, { type: 'element', element: 'apoptosis', amount: unit.s.atk * ep, tags: ['skill'] });
           }
-          fx(battle, 'aoe', unit, { radius: 1.5, dmgType: 'arts', skill: 'philae_2' });
+          fx(battle, 'aoe', unit, { radius: 1.5, tiles: 'box', dmgType: 'arts', skill: 'philae_2' }); // box: the 3×3 tiles
         }, { owner: unit });
       },
     };
   },
 
   // ---- 3_07 见行者 · 推击手 (hidden) — S2 惊爆射击: push every enemy in the skill range forward + stun (longer when
-  //      slammed into a wall, collided enemies stunned too); 技巧射击: ignore DEF vs heavy enemies;
+  //      slammed into a wall, collided enemies stunned too; air units too [ASSUMED: "范围内所有敌人", no 对空 note on
+  //      PRTS] — a 失衡免疫 enemy is not pushed but still stunned); 技巧射击: ignore DEF vs heavy enemies;
   //      精锐 module PUS-X: redeployed on a ranged tile ⇒ half the deployment cost back
   chess_char_3_07_a: (bb, chess, def) => {
     const d = defOf(chess, def);
@@ -693,7 +717,7 @@ const KITS = {
         kind: 'instant',
         onStart({ battle, unit }) {
           const keys = new Set(gridKeys(skillGrid ?? unit.rangeGrid, unit));
-          const victims = battle.enemies.filter((e) => e.alive && !e.hidden && !e.s.flags.untargetable && keys.has(tileKeyOf(e)));
+          const victims = battle.enemies.filter((e) => e.alive && !e.hidden && !e.s.flags.untargetable && onTiles(e, keys));
           const pushed = new Set(victims);
           const dist = 0.5 + 0.5 * force; // engine displacement convention (docs/SIM.md §12)
           for (const e of victims) {
@@ -844,7 +868,7 @@ const KITS = {
         battle.on('kill', (ctx) => {
           const v = ctx.victim;
           if (!unit.skill?.active || !alive(unit) || v.side !== 'enemy' || !isNormalEnemy(v)) return;
-          if (!unit.rangeKeySet?.has(tileKeyOf(v))) return;
+          if (!unit.rangeKeySet || !onTiles(v, unit.rangeKeySet)) return;
           unit.mem.hainiMul = Math.min(upMax, (unit.mem.hainiMul ?? 1) + up);
         }, { owner: unit });
       } }],
@@ -971,8 +995,9 @@ const KITS = {
   //      剑盾骑士: hurt-SP skills of the team also gain SP on attack; 仁慈: attacks sleeping enemies (first, ×atk_scale);
   //      精锐 module GUA-Y: damage taken −15 %
   //      S1 光芒涌动 (TAKE_DAMAGE, charges): next attack ×atk_scale phys + heals the most injured ally of the 3×3 (herself
-  //      included) for heal_scale × ATK; S2 慑敌辉光: ATK +, puts every ground enemy on her own tile to sleep (for the
-  //      skill's duration: no own value in the data) and heals every ally of the skill range by ATK × ratio each second;
+  //      included) for heal_scale × ATK; S2 慑敌辉光: ATK +, puts every ground enemy on her own tile and every enemy she
+  //      blocks to sleep (PRTS 备注; for the skill's duration: no own value in the data) and heals every ally of the
+  //      skill range by ATK × ratio each second;
   //      精锐 module GUA-X: her heals on allies under hp_ratio HP × heal_scale
   chess_char_3_12_a: (bb, chess, def) => {
     const d = defOf(chess, def);
@@ -984,7 +1009,7 @@ const KITS = {
     const mercy = num(t1.atk_scale, 1);
     const sleepersInRange = (battle, unit) => {
       const set = unit.rangeKeySet;
-      return set ? battle.enemies.filter((e) => e.alive && !e.hidden && e.s.flags.sleep && !e.s.flags.untargetable && !e.isFlying && set.has(tileKeyOf(e))) : [];
+      return set ? battle.enemies.filter((e) => e.alive && !e.hidden && e.s.flags.sleep && !e.s.flags.untargetable && !e.isFlying && onTiles(e, set)) : [];
     };
     const kit = {
       trait: { hitSleep: true }, // 仁慈: 自身可以攻击…沉睡的目标 (沉睡 = 无敌 for everyone else)
@@ -1027,8 +1052,11 @@ const KITS = {
             onStart({ battle, unit, skill }) {
               const dur = skill.timeLeft > 0 ? skill.timeLeft : Math.max(0.1, num(s.duration, 10));
               let n = 0;
+              // PRTS 备注: "技能生效对象实际为“自身这格内的所有地面敌人及自身阻挡的敌人”，即使阻挡的是飞行敌人" — a blocked
+              // enemy stands at the block radius, outside her tile (Battle._checkBlock)
               for (const e of battle.enemies) {
-                if (!e.alive || e.hidden || e.isFlying || Math.round(e.x) !== unit.tileC || Math.round(e.y) !== unit.tileR) continue;
+                if (!e.alive || e.hidden) continue;
+                if (e.blockedBy !== unit && (e.isFlying || !bodyOnTile(e, unit.tileR, unit.tileC))) continue;
                 if (battle.applyStatus(e, 'sleep', { duration: dur, source: unit })) n++;
               }
               fx(battle, 'aoe', unit, { radius: 0.5, skill: 'blemsh_2', status: 'sleep', n });
@@ -1180,7 +1208,7 @@ const KITS = {
             const r = (k / COLS) | 0, c = k % COLS;
             if (!freeTile(battle, r, c) || !battle.grid.canStand(r, c, { ranged: true })) continue;
             let s = 0;
-            for (const e of foes) if (Math.abs(Math.round(e.y) - r) <= reach && Math.abs(Math.round(e.x) - c) <= reach) s++;
+            for (const e of foes) if (bodyTileReach(e, r, c) <= reach) s++;
             const dd = Math.abs(r - unit.tileR) + Math.abs(c - unit.tileC);
             if (s > bs || (s === bs && dd < bd)) { best = [r, c]; bs = s; bd = dd; }
           }
@@ -1301,7 +1329,7 @@ const KITS = {
             if (dp > 0) { battle.addDp(unit.ownerId, dp); fx(battle, 'dp', unit, { n: dp }); }
           } },
         }),
-        skchr_vulpis_2: (s) => {
+        skchr_vulpis_2: (s) => { // 坠刃拷问 — air units too (PRTS 备注 "※可对空")
           const grid = copyGrid(s.rangeGrid);
           const n = Math.max(1, Math.floor(num(s.bb.max_target, 6)));
           return {

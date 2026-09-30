@@ -491,12 +491,16 @@ test('coin / refresh counters: 溯光星源 121 per 3 spent, 阿罗玛 122 / 安
 // ---------------------------------------------------------------------------------------------------------------------
 // price, items, refreshes, funds
 
-test('SERVER_CHESS_PRICE: 至简 13 costs its bb.price (2; the text says 1), 红豆 04 (hidden) costs 1', () => {
+test('SERVER_CHESS_PRICE: 购买价格为1 — bb.price is the discount off the tier price (至简 Ⅲ 3 − 2, 红豆 Ⅰ 2 − 1; user playtest #5)', () => {
   for (const { gid, g, owners } of idsOf('SERVER_PRICE', 'SERVER_CHESS_PRICE')) {
+    const n = Number(/购买价格为(\d+)/.exec(g.desc)?.[1]);
+    assert.equal(n, 1, `${gid}: the official text`);
     for (const owner of owners) {
       const s = setup();
-      s.ps.shop.slots[0] = { kind: 'chess', id: owner, basePrice: s.m.gd.chessPrice(owner), frozen: false, sold: false };
-      assert.equal(s.ps.priceOf(s.ps.shop.slots[0]), g.bb.price, `${gid} ${owner}`);
+      const tierPrice = s.m.gd.chessPrice(owner);
+      assert.equal(tierPrice - g.bb.price, n, `${gid} ${owner}: tier price − bb.price = the text's price`);
+      s.ps.shop.slots[0] = { kind: 'chess', id: owner, basePrice: tierPrice, frozen: false, sold: false };
+      assert.equal(s.ps.priceOf(s.ps.shop.slots[0]), n, `${gid} ${owner}`);
     }
     cover(gid);
   }
@@ -504,20 +508,25 @@ test('SERVER_CHESS_PRICE: 至简 13 costs its bb.price (2; the text says 1), 红
   s.ps.shop.slots[0] = { kind: 'chess', id: 'chess_char_3_13_a', basePrice: 3, frozen: false, sold: false };
   const funds = s.ps.funds;
   assert.deepEqual(s.m.handle('p_0', { t: 'g.buy', slot: 0 }), { ok: true });
-  assert.equal(s.ps.funds, funds - 2);
+  assert.equal(s.ps.funds, funds - 1, '至简 costs 1');
+  assert.equal(GR('garrison_13_a').bb.price, 2);
   assert.equal(GR('garrison_13_b').bb.price, 2);
 });
 
-test('regression: 购买价格 replaces the base price but keeps discounts applied earlier in the dispatch (远见-style −1)', () => {
+test('regression: 购买价格为1 runs before the other price modifiers (远见 −1 never below 1 leaves 至简 at 1)', () => {
   const s = setup();
-  s.m.dispatcher.registry.global('gar_test_disc', { onPrice(ctx) { ctx.modifyPrice(-1); } });
+  const seen = [];
+  s.m.dispatcher.registry.global('gar_test_seen', { onPrice(ctx, ev) { seen.push(ev.price); } });
   try {
     s.ps.shop.slots[0] = { kind: 'chess', id: 'chess_char_3_13_a', basePrice: 3, frozen: false, sold: false };
     s.ps.shop.slots[1] = { kind: 'chess', id: 'chess_char_1_02_a', basePrice: 2, frozen: false, sold: false };
-    assert.equal(s.ps.priceOf(s.ps.shop.slots[0]), 1, '至简 2 − 1');
+    assert.equal(s.ps.priceOf(s.ps.shop.slots[0]), 1);
+    assert.deepEqual(seen, [1], 'a global modifier already sees 至简 at 1');
+    s.ps.counters['bondaddon:visi:disc'] = 2;             // 远见 150 layers: every chess −1, never below 1
+    assert.equal(s.ps.priceOf(s.ps.shop.slots[0]), 1, '至简 3 − 2 = 1; 远见 leaves it at 1');
     assert.equal(s.ps.priceOf(s.ps.shop.slots[1]), 1, 'other chess: 2 − 1');
   } finally {
-    s.m.dispatcher.registry.unregister('global:gar_test_disc');
+    s.m.dispatcher.registry.unregister('global:gar_test_seen');
   }
 });
 

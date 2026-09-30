@@ -2,32 +2,60 @@
 //
 // dealDamage order: (element → gauge path) | invulnerable? → 'hit' hook (mutable DamageInfo, may set cancel)
 //   → dodge (phys/arts, canDodge) → mitigation (phys: DEF, arts: RES, true: none)
-//   → × source dmgDealtMul (× phys/artsDealtMul) × target dmgTakenMul × type-taken mul × dmg.mul
+//   → × source dmgDealtMul (× phys/artsDealtMul) × target dmgTakenMul (not for 元素伤害) × type-taken mul × dmg.mul
 //   → shields (hit-negating barriers first, then HP shields) → HP loss (boss pool routing) → 'damaged' hook
 //   → SP-on-hurt / TAKE_DAMAGE trigger → fatal/kill.
 // Phys: max(A − max(0, D×(1−defIgnorePct) − defIgnoreFlat), 5 %·A); Arts: max(A×(1 − R′/100), 5 %·A) with
-// R′ = max(0, R×(1−resIgnorePct) − resIgnoreFlat); True: A.
-// Element damage ('element' type + element) fills a gauge instead of HP (1000; enemy leaders 2000), reduced by the
-// target's 损伤抵抗 (data `epResistance`, a percentage: PRTS 元素 "受到的元素损伤 = 损伤值 × (1 − 损伤抵抗 × 0.01)").
+// R′ = max(0, R×(1−resIgnorePct) − resIgnoreFlat); True: A; Elemental (元素伤害): max(A×(1 − 元素抗性/100), 5 %·A)
+// (PRTS 游戏数据基础 DMG_e; 元素抗性 = the target's data `epDamageResistance`: 0 on every enemy in data/enemies.json).
+// Element damage ('element' type + element, 元素损伤) fills a gauge instead of HP (1000; enemy leaders 2000):
+//   gain = amount × dmg.mul × target elemTakenMul (元素损伤倍率: "受到的元素损伤提高/降低…") × max(5 %, 1 − 损伤抵抗/100)
+// with 损伤抵抗 = the target's data `epResistance` (EP_RESISTANCE, a percentage: PRTS 元素 "受到的元素损伤 = 损伤值 ×
+// (1 − 损伤抵抗 × 0.01)，后续可应用元素损伤倍率"; the 5 % floor of DMG_e — PRTS 游戏数据基础 "目标受到元素损伤时也可以使用
+// 该公式计算，只需要将 D 值改为目标的损伤抵抗即可"; in data/enemies.json only 转译基底·α has 10, every other enemy — 海嗣
+// included — 0; newer event enemies of the full enemy_database go up to 15, operators are all 0). No
+// source-side multiplier touches it (a kit scales its own amount), no gauge ever decays (EP_RECOVERY_PER_SEC 0), and
+// 元素脆弱 (`elementalTakenMul`, "受到的元素伤害提升") never scales it — only 元素伤害.
 // A full gauge bursts with the official term-table effects (constants.js ELEMENT), which differ by the side hit:
 //   operators (enemy damage):  burn 1200 arts + RES −20 10 s · neural stun 10 s, then 1000 true · apoptosis 15 s: 阻回
 //     (noSp) + 静默 (no skill activation), −1 SP/s, 100 arts/s · erosion permanent DEF −100, then 800 phys (10 s).
 //   enemies (operator damage, "·我方"): burn 7000 元素伤害 + RES −20 (10 s) · neural 3 麻痹, then 6000 元素伤害 (10 s) ·
 //     apoptosis 15 s: 50 % weaken recovering over the burst + 800 元素伤害/s · erosion 5000 元素伤害 + permanent DEF −120 (8 s).
 //   necrosis (legacy spare gauge): 12 s of 100 true dmg/s and ATK −20 %.
+// Burst damage is 无来源 (PRTS 元素 "元素爆发通常造成无来源的伤害"; PRTS 伤害分类: 无来源 = "无法被追溯伤害来源", yet "无来源
+// 伤害的击杀也能追溯击杀来源"): DamageInfo `sourceless` — the damage-dealt multipliers and penetration of the unit that
+// filled the gauge do not apply (the target's own RES cuts do, "可享受法抗减少效果"), and the `hit` / `damaged` / `fatal`
+// hooks get `source: null`, so no content keyed on the attacker (ATK ×1.5 vs 海怪, 精准狙击镜, bond / module 伤害提升,
+// reflect, "受到来自…的伤害") touches it; the hook ctx's `credit` and the kill / stats keep the filler ("元素爆发本身来源于
+// 造成“爆条”的元素损伤的来源").
 // 爆发冷却 (PRTS 元素, "阻回" after a burst): for the burst's duration (the `<el>Burst` buff) NO element of the unit can
 // fill or be recovered (reduceElement) — the bursting gauge shows full — and when it ends EVERY gauge of the unit
 // resets to 0. A burst that is still resolving (its `elementBurst` hook runs before the `<el>Burst` lock exists) already
 // counts as locked (`unit.burstPending[el]`), so a hook that spreads an element back (淤困 parasite hosts next to each
 // other) cannot re-burst the unit recursively. The unit's shown gauge (the fullest, "当前损伤元素") and its cooldown
 // travel in b.snap `elem` (elementView).
-// 元素伤害 (HP damage of an element) is the DamageInfo type 'elemental' (+ optional `element` for display): no DEF/RES,
-// no dodge, × source dmgDealtMul × target dmgTakenMul × elemTakenMul. Sleeping units (沉睡: 无敌) take no damage
-// unless the attacker's profile has `hitSleep` or the damage carries `ignoreSleep`.
+// 元素伤害 (HP damage of an element) is the DamageInfo type 'elemental' (+ optional `element` for display): no DEF/RES
+// (元素抗性 instead), no dodge, × source dmgDealtMul × target elementalTakenMul (元素脆弱) only — the target's
+// dmgTakenMul (脆弱 and the other "受到的伤害±" effects) does not scale it: ba.fragile is "受到的物理、法术、真实伤害提升"
+// (gamedata_const termDescriptionDict), 元素伤害 has its own ba.elementfragile [ASSUMED for the damage_resistance-type
+// cuts, which share the multiplier]. An element fill on a target with no HP left (hasHp: a lethal hit's `damaged` hook
+// runs before battle.kill, while the target is still `alive` at 0 HP) is refused, so nothing bursts on a corpse.
+// Element healing (reduceElement) lowers every element type by the amount, each on its own (PRTS 菲莱 备注: "清除元素损伤"
+// = "一次等同于自身最大元素值的全类型元素损伤治疗"). Sleeping units (沉睡: 无敌) take no damage unless the attacker's profile
+// has `hitSleep` or the damage carries `ignoreSleep`.
 
 import { MIN_DAMAGE_RATIO, ELEMENT, ELEMENT_ORDER, PALSY_MAX } from './constants.js';
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/**
+ * Alive AND still has HP (a boss: its pool's HP). A `damaged` hook sees a lethal hit before `battle.kill`, while the
+ * target is still `alive` at 0 HP — element riders attached to that damage (and applyElement itself) skip such a
+ * target, or a burst resolves on the corpse (a second fatal, 烛煌 熔点引爆's heal, 妮芙's stack …).
+ */
+export function hasHp(u) {
+  return !!u && u.alive && (u.bossPool ? u.bossPool.hp > 0 : u.hp > 0);
+}
 
 /** Normalise a DamageInfo descriptor. */
 export function makeDamageInfo(d = {}) {
@@ -52,6 +80,7 @@ export function makeDamageInfo(d = {}) {
     cancel: false,
     noSp: !!d.noSp,
     ignoreSleep: !!d.ignoreSleep,
+    sourceless: !!d.sourceless,
     attackId: d.attackId ?? 0,
   };
 }
@@ -61,7 +90,10 @@ function sleepBlocks(target, source, dmg) {
   return !!target.s.flags.sleep && !dmg.ignoreSleep && !(source && source.profile && source.profile.hitSleep);
 }
 
-/** Pure mitigation formula (exported for tests). */
+/**
+ * Pure mitigation formula (exported for tests). `target` = the target's stats; `ign.elementalRes` = its 元素抗性
+ * (epDamageResistance) for 'elemental' damage.
+ */
 export function mitigate(amount, type, target, ign = {}) {
   if (type === 'phys') {
     const D = target.def ?? 0;
@@ -72,6 +104,10 @@ export function mitigate(amount, type, target, ign = {}) {
     const R = target.res ?? 0;
     const eff = Math.max(0, R * (1 - clamp01(ign.resIgnorePct ?? 0)) - (ign.resIgnoreFlat ?? 0));
     return Math.max(amount * (1 - Math.min(100, eff) / 100), MIN_DAMAGE_RATIO * amount);
+  }
+  if (type === 'elemental') {
+    const D = Math.max(0, Math.min(100, Number.isFinite(ign.elementalRes) ? ign.elementalRes : 0));
+    return Math.max(amount * (1 - D / 100), MIN_DAMAGE_RATIO * amount);
   }
   return amount;
 }
@@ -115,14 +151,18 @@ export function dealDamage(battle, source, target, dmgIn) {
   if (!target || !target.alive || target.removed || target.hidden || !target.deployed) return 0;
   const dmg = dmgIn && dmgIn._norm ? dmgIn : makeDamageInfo(dmgIn);
   if (dmg.type === 'element') return applyElement(battle, source, target, dmg);
+  // 无来源 (dmg.sourceless, element bursts): hooks see no source — nothing keyed on "damage dealt by X" (ATK-up vs a
+  // tag, 伤害提升 items / bonds / modules, reflect, "受到来自…的伤害") can recognise it; `credit` names the unit that still
+  // gets the stats and the kill (PRTS 伤害分类 无来源 ③)
+  const hs = dmg.sourceless ? null : source;
   let ts = target.s;
-  if (ts.flags.invulnerable || sleepBlocks(target, source, dmg)) return 0;
+  if (ts.flags.invulnerable || sleepBlocks(target, hs, dmg)) return 0;
   if (battle._hooks.hit) {
-    battle.emit('hit', { source, target, dmg });
+    battle.emit('hit', { source: hs, target, dmg, credit: source });
     if (dmg.cancel || !target.alive || !target.deployed) return 0;
     if (dmg.type === 'element') return applyElement(battle, source, target, dmg);
     ts = target.s; // handlers may have changed the target's buffs (fragile, invulnerable, dodge…): never use stale stats
-    if (ts.flags.invulnerable || sleepBlocks(target, source, dmg)) return 0;
+    if (ts.flags.invulnerable || sleepBlocks(target, hs, dmg)) return 0;
   }
   const type = dmg.type;
   // dodge
@@ -141,16 +181,19 @@ export function dealDamage(battle, source, target, dmgIn) {
     const counts = !(ts.flags.hitCountArts && !ts.flags.hitCount && type === 'phys');
     return applyHpLoss(battle, source, target, absorbShields(battle, target, counts ? 1 : 0), dmg);
   }
-  const ss = source && source.s ? source.s : null;
+  // 无来源 damage (element bursts) takes nothing from its source's stats; the source still gets the credit below
+  const ss = source && source.s && !dmg.sourceless ? source.s : null;
   let final = mitigate(dmg.amount, type, ts, {
     defIgnorePct: dmg.defIgnorePct + (ss ? ss.defIgnorePct : 0),
     defIgnoreFlat: dmg.defIgnoreFlat + (ss ? ss.defIgnoreFlat : 0),
     resIgnorePct: dmg.resIgnorePct + (ss ? ss.resIgnorePct : 0),
     resIgnoreFlat: dmg.resIgnoreFlat + (ss ? ss.resIgnoreFlat : 0),
+    elementalRes: type === 'elemental' ? (target.def?.epDamageResistance ?? 0) : 0,
   });
-  let mul = dmg.mul * ts.dmgTakenMul;
+  // 脆弱 / "受到的伤害±" (dmgTakenMul) scale 物理、法术、真实 only; 元素伤害 takes 元素脆弱 alone (header)
+  let mul = dmg.mul * (type === 'elemental' ? 1 : ts.dmgTakenMul);
   if (ss) mul *= ss.dmgDealtMul * (type === 'phys' ? ss.physDealtMul : type === 'arts' ? ss.artsDealtMul : 1);
-  mul *= type === 'phys' ? ts.physTakenMul : type === 'arts' ? ts.artsTakenMul : type === 'elemental' ? ts.elemTakenMul : ts.trueTakenMul;
+  mul *= type === 'phys' ? ts.physTakenMul : type === 'arts' ? ts.artsTakenMul : type === 'elemental' ? ts.elementalTakenMul : ts.trueTakenMul;
   final *= mul;
   if (!(final > 0) || !Number.isFinite(final)) final = 0;
   final = absorbShields(battle, target, final);
@@ -163,6 +206,7 @@ export function dealDamage(battle, source, target, dmgIn) {
 export function applyHpLoss(battle, source, target, amount, dmg) {
   if (!target.alive) return 0;
   let dealt = 0;
+  const hs = dmg && dmg.sourceless ? null : source; // the source hooks see (无来源: none; `credit` keeps it)
   if (target.bossPool) {
     const pool = target.bossPool;
     const before = pool.hp;
@@ -180,7 +224,7 @@ export function applyHpLoss(battle, source, target, amount, dmg) {
     if (target.hp <= 0) {
       target.hp = 0;
       if (battle._hooks.fatal) {
-        const fctx = { unit: target, source, dmg, amount, prevented: false };
+        const fctx = { unit: target, source: hs, credit: source, dmg, amount, prevented: false };
         battle.emit('fatal', fctx);
         if (fctx.prevented && target.alive) { if (target.hp < 1) target.hp = Math.min(1, target.s.maxHp); }
       }
@@ -197,7 +241,7 @@ export function applyHpLoss(battle, source, target, amount, dmg) {
     const shown = dmg.type === 'element' ? dmg.element : dmg.type === 'elemental' ? (dmg.element || 'true') : dmg.type;
     battle._ev(['dmg', target.id, Math.round(amount), shown]);
   }
-  if (battle._hooks.damaged) battle.emit('damaged', { source, target, amount, type: dmg ? dmg.type : 'true', dmg });
+  if (battle._hooks.damaged) battle.emit('damaged', { source: hs, target, amount, type: dmg ? dmg.type : 'true', dmg, credit: source });
   if (target.side === 'ally' && target.skill && dmg && !dmg.noSp && dmg.type !== 'element') battle._skills.onDamaged(target);
   const dead = target.bossPool ? target.bossPool.hp <= 0 : target.hp <= 0;
   if (dead && target.alive) battle.kill(target, source);
@@ -246,10 +290,21 @@ export function elementView(u, now) {
   return [best, fill, 0, 0];
 }
 
+/**
+ * The share of an element hit that reaches `target`'s gauge (header): its 元素损伤倍率 (`elemTakenMul`) × max(5 %,
+ * 1 − 损伤抵抗 / 100) — the factor applyElement uses after the `elementHit` hook, exported for content that previews a
+ * gauge gain.
+ */
+export function elementIntake(target) {
+  const res = Number(target && target.def ? target.def.epResistance : 0) || 0;
+  return target.s.elemTakenMul * Math.max(MIN_DAMAGE_RATIO, 1 - clamp01(res / 100));
+}
+
 /** Element gauge accumulation + burst. Fires `elementHit` { source, target, dmg } first (mutable amount/mul, cancel). */
 export function applyElement(battle, source, target, dmg) {
   const el = dmg.element;
   if (!el || !(el in target.elem)) return 0;
+  if (!hasHp(target)) return 0; // a killing blow's rider: the target is dead, nothing fills or bursts (header)
   if (target.s.flags.invulnerable || sleepBlocks(target, source, dmg)) return 0;
   if (burstLocked(target, el)) return 0;
   if (battle._hooks.elementHit) {
@@ -258,8 +313,8 @@ export function applyElement(battle, source, target, dmg) {
     if (dmg.type !== 'element') return dealDamage(battle, source, target, dmg); // a handler converted it
   }
   const max = target.gaugeMax;
-  // 损伤抵抗 (official EP_RESISTANCE = data epResistance, a percentage)
-  let amt = dmg.amount * dmg.mul * target.s.elemTakenMul * (1 - clamp01((target.def?.epResistance ?? 0) / 100));
+  // 元素损伤倍率 × max(5 %, 1 − 损伤抵抗 %) — official EP_RESISTANCE = data epResistance
+  let amt = dmg.amount * dmg.mul * elementIntake(target);
   if (!(amt > 0) || !Number.isFinite(amt)) return 0;
   target.elem[el] = Math.min(max, target.elem[el] + amt);
   battle._ev(['dmg', target.id, Math.round(amt), el]);
@@ -290,7 +345,8 @@ function resolveBurst(battle, source, target, el) {
   if (battle._hooks.elementBurst) battle.emit('elementBurst', { source, target, element: el });
   if (!target.alive) { reset(); return; }
   const tags = ['burst', el];
-  const hit = (amount, type) => battle.dealDamage(source, target, { amount, type, element: el, canDodge: false, tags });
+  // 无来源 damage credited to `source` (header)
+  const hit = (amount, type) => battle.dealDamage(source, target, { amount, type, element: el, canDodge: false, sourceless: true, tags });
   const lock = (duration, extra = {}) => {
     if (!(duration > 0)) { reset(); return null; }
     return battle.addBuff(target, { key: `${el}Burst`, duration, visible: true, onExpire: reset, onRemove: reset, ...extra, flags: { burstLock: true, ...(extra.flags || {}) } });
@@ -298,7 +354,7 @@ function resolveBurst(battle, source, target, el) {
   if (el === 'necrosis') {
     lock(cfg.duration, {
       mods: { atkMul: 1 - cfg.atkDownPct }, interval: 1,
-      onTick: () => battle.dealDamage(source, target, { amount: cfg.dps, type: 'true', canDodge: false, tags: ['burst', 'necrosis'] }),
+      onTick: () => battle.dealDamage(source, target, { amount: cfg.dps, type: 'true', canDodge: false, sourceless: true, tags: ['burst', 'necrosis'] }),
     });
     return;
   }
@@ -319,11 +375,11 @@ function resolveBurst(battle, source, target, el) {
     }
   } else if (el === 'apoptosis') {
     if (enemy) {
-      // 50 % 虚弱 that recovers linearly over the burst, 800 元素伤害 per second
+      // 50 % 虚弱, 800 元素伤害 per second; each second the 虚弱 drops to 50 % × 剩余时间 ÷ 总持续时间 (PRTS 元素)
       lock(c.duration, {
         mods: { atkMul: 1 - c.weaken }, interval: 1,
         onTick: ({ buff }) => {
-          buff.mods = { atkMul: 1 - c.weaken * Math.max(0, buff.timeLeft - 1) / c.duration };
+          buff.mods = { atkMul: 1 - c.weaken * Math.max(0, buff.timeLeft) / c.duration };
           target.markDirty();
           hit(c.elemDps, 'elemental');
         },
@@ -354,17 +410,18 @@ export function palsyBuff(n) {
 }
 
 /**
- * Reduce an element gauge (e.g. wandermedic "回复元素损伤"). Returns the amount removed. Nothing recovers during a
- * burst cooldown ("爆发冷却状态下，单位所有类型的元素值均无法损失、无法被其他手段回复").
+ * Element healing (e.g. wandermedic "回复元素损伤"): lowers element `el`, or — without `el` — EVERY element type, each
+ * by `amount` on its own (PRTS 菲莱 备注: clearing = "一次等同于自身最大元素值（通常为1000）的全类型元素损伤治疗").
+ * Returns the total removed. Nothing recovers during a burst cooldown ("爆发冷却状态下，单位所有类型的元素值均无法损失、
+ * 无法被其他手段回复").
  */
 export function reduceElement(target, amount, el = null) {
   let removed = 0;
-  if (!target || !target.elem || burstLocked(target)) return 0;
+  if (!target || !target.elem || burstLocked(target) || !(amount > 0)) return 0;
   const els = el ? [el] : Object.keys(target.elem);
   for (const k of els) {
-    const take = Math.min(target.elem[k], amount - removed);
+    const take = Math.min(target.elem[k] || 0, amount);
     if (take > 0) { target.elem[k] -= take; removed += take; }
-    if (removed >= amount) break;
   }
   return removed;
 }

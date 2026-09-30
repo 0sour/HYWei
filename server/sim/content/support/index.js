@@ -18,8 +18,11 @@
 import { getData } from '../../../data.js';
 import { COLS } from '../../constants.js';
 import { frontOf, offsetTile } from '../../dir.js';
+import { bodyInKeys, bodyDist, bodyInRadius, bodyOnTile, bodyTileReach } from '../../body.js';
 
 export { COLS };
+/** Where an enemy can be hit (a huge enemy's whole hit rectangle, sim/body.js) — for every range test on enemies. */
+export { bodyInKeys, bodyDist, bodyInRadius, bodyOnTile, bodyTileReach };
 
 // =====================================================================================================================
 // numbers & data
@@ -249,10 +252,17 @@ export function rowMates(battle, u) {
   for (const a of battle.allyUnits) if (a.kind === 'op' && a.ownerId === u.ownerId && onField(a) && a.tileR === u.tileR) out.push(a);
   return out;
 }
-/** Enemy / ally tile key used by range sets (`unit.rangeKeySet`). */
+/** Tile key used by range sets (`unit.rangeKeySet`): an ally's tile, an enemy's position tile (range tests: onKeys). */
 export const tileKey = (u) => (u.side === 'ally' ? u.tileR * COLS + u.tileC : Math.round(u.y) * COLS + Math.round(u.x));
+/** Is `target` on a tile of `keys` (Set or array)? An ally: its tile; an enemy: its body (a huge one: every tile). */
+export const onKeys = (target, keys) => {
+  if (!target || !keys) return false;
+  if (target.side !== 'ally') return bodyInKeys(target, keys);
+  const k = tileKey(target);
+  return keys instanceof Set ? keys.has(k) : keys.includes(k);
+};
 /** Is `target` inside `u`'s current attack range (grid ranges)? */
-export const inRange = (u, target) => !!(u && target && u.rangeKeySet && u.rangeKeySet.has(tileKey(target)));
+export const inRange = (u, target) => !!(u && target && u.rangeKeySet && onKeys(target, u.rangeKeySet));
 
 // =====================================================================================================================
 // battle: buffs, fx, per-battle state

@@ -36,6 +36,24 @@ test('field model: the round\'s routes traced over the own board, weighted by th
   m.dispose();
 });
 
+test('field model: 近地悬浮 enemies (掠海漂移体) walk the ground path but count as air units (no blocker credit, anti-air needed)', () => {
+  const h = soloBot({ seed: 2 }).start();
+  const m = h.m;
+  h.run(() => m.phase === PHASE.PREP && m.round === 2);
+  const groundRi = new Set(m.wave.routes.map((r, i) => (r.motion !== 'FLY' ? i : -1)).filter((i) => i >= 0));
+  const before = fieldModel(m);
+  assert.ok(before.ground.size > 0);
+  m.wave = { ...m.wave, spawns: m.wave.spawns.map((s) => (groundRi.has(s.routeIndex) && s.tag !== 'boss' ? { ...s, enemyKey: 'enemy_2025_syufo' } : s)) };
+  m._botPath = null;
+  const model = fieldModel(m);
+  const hover = m.wave.spawns.filter((s) => s.enemyKey === 'enemy_2025_syufo').reduce((a, s) => a + Math.max(1, s.count || 1), 0);
+  assert.ok(hover > 0);
+  assert.ok(model.flyTotal >= hover, `${model.flyTotal} ≥ ${hover}`);
+  const hov = model.routes.filter((r) => r.fly && r.tiles.some((k) => before.ground.has(k)));
+  assert.ok(hov.length > 0, 'an air route on the ground path tiles');
+  m.dispose();
+});
+
 test('layout planner: legal distinct tiles; blockers on the enemy road, ranged units cover it without standing on it', () => {
   const h = soloBot({ seed: 3 }).start();
   const m = h.m;

@@ -35,7 +35,7 @@ import {
   num, itemRecord, itemKeyOf, buffsOf, isOp, onField, unitBonds, isMember, bondActive, isGroundOp, frontTile,
   alliesAround, passiveBuff, fxOn, battleStore, contentInfo, itemsOf,
 } from '../support/index.js';
-import { mitigate } from '../../damage.js';
+import { mitigate, hasHp } from '../../damage.js';
 
 // =====================================================================================================================
 // data helpers
@@ -244,9 +244,10 @@ function hammerAcquire(battle, rt, u) {
   hs.scope = S;
   hs.aspdCur = 0;
   S.every(0.5, () => hammerRefresh(battle, rt, u, hs), { immediate: true });
-  // 灼燃: arts damage also deals burn (元素损伤) = damage_scale × damage × m
+  // 灼燃: arts damage also deals burn (元素损伤) = damage_scale × damage × m — not on a killing blow (the hook runs
+  // before the kill, at 0 HP: no burst on the corpse)
   S.on('damaged', (c) => {
-    if (c.source !== u || c.type !== 'arts' || !(c.amount > 0) || isProc(c.dmg) || !c.target || c.target.side !== 'enemy' || !c.target.alive) return;
+    if (c.source !== u || c.type !== 'arts' || !(c.amount > 0) || isProc(c.dmg) || !c.target || c.target.side !== 'enemy' || !hasHp(c.target)) return;
     const p = hammerParams(hs, 'burn');
     if (!p) return;
     const m = hammerMul(battle, rt, u, hs, 'burn');

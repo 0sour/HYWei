@@ -5,8 +5,10 @@
 //   b.step(); b.finished; b.forceEnd(reason); b.time; b.result(); b.snapshot(); b.drainEvents(); b.on/off(...)
 //
 // Construction creates every ally unit (undeployed) and installs content (kits + domain modules). The first
-// step() (or an explicit start()) deploys everything (top→bottom, left→right; mirrored for the right boss side),
-// fires `deploy` (initial) for each unit and then `battleStart`.
+// step() (or an explicit start()) deploys everything (operators top→bottom, left→right — mirrored for the right boss
+// side —, then the summon pieces the same way; the players of a shared field side by side), fires `deploy` (initial)
+// for each unit, forces out the operators that enter already knocked out (`carryState.down`, 联防: constants.js
+// FORCED_EXIT — down on their tile, redeploy timer running) and then fires `battleStart`.
 // Tick order: scheduled callbacks → spawns → DP → buffs → enemies (attack, move, block) → enemy index →
 //   allies (skill tick, attack) → projectiles → redeploys → boss sync → `tick` hook → release hooks of removed units →
 //   time += TICK → end checks. A forceEnd() requested mid-step ends the step after the current phase (docs/SIM.md §1.4).
@@ -18,14 +20,15 @@
 // Robustness: every content callback and every step phase is wrapped; errors are logged once per key and the
 // battle continues. After MAX_INTERNAL_ERRORS the battle force-ends as a timeout.
 
-import { TICK, ROWS, COLS, DP_DEFAULTS, DOWN_STATE, MAX_BATTLE_TIME, MAX_INTERNAL_ERRORS, COLD_FREEZE_DURATION, OBSTACLE_DEVICES, EVENT_BUFFER_CAP, BOSS_ROW_OFFSET, MAX_HOOK_DEPTH, MAX_ALIVE_ENEMIES, LEVITATE_HALF_WEIGHT, RESIST_DEFAULT, RESIST_PALSY_DECAY } from './constants.js';
+import { TICK, ROWS, COLS, BLOCK_RADIUS_SQ, DP_DEFAULTS, DOWN_STATE, FORCED_EXIT, MAX_BATTLE_TIME, MAX_INTERNAL_ERRORS, COLD_FREEZE_DURATION, OBSTACLE_DEVICES, EVENT_BUFFER_CAP, BOSS_ROW_OFFSET, MAX_HOOK_DEPTH, MAX_ALIVE_ENEMIES, LEVITATE_HALF_WEIGHT, RESIST_DEFAULT, RESIST_PALSY_DECAY } from './constants.js';
 import { GEO } from '../../shared/constants.js';
 import { createRng } from './rng.js';
 import { Grid } from './grid.js';
 import { Unit } from './units.js';
 import { makeBuff, STATUS, RESIST_STATUSES } from './buffs.js';
 import { dealDamage as pipeDamage, heal as pipeHeal, applyHpLoss, makeDamageInfo, reduceElement, palsyBuff, elementView } from './damage.js';
-import { absoluteRangeKeys, canTargetEnemy } from './targeting.js';
+import { absoluteRangeKeys, canTargetEnemy, meleeUnit } from './targeting.js';
+import { bodyKeys, bodyInKeys, bodyInRadius } from './body.js';
 import { normDir, mirrorDir, localOrder, localBefore } from './dir.js';
 import { ProjectileSystem } from './projectiles.js';
 import { SkillRuntime } from './skills.js';
@@ -319,12 +322,40 @@ export class Battle {
     if (this.started) return;
     this.started = true;
     this._safe(() => this._spawnStageDevices(), 'stageDevices');
-    for (const ps of this.players) {
-      const order = ps.units.filter((u) => u.kind === 'op' || u.kind === 'token').slice().sort((a, b) =>
-        b.homeR - a.homeR || (ps.mirror ? b.homeC - a.homeC : a.homeC - b.homeC) || a.id - b.id);
-      for (const u of order) this._safe(() => this._deploy(u, { initial: true }), 'initialDeploy', u);
+    // PRTS 卫戍协议/帮助: "按从上到下>从左到右的顺序部署。优先部署干员，随后为召唤物（如果有）" — per player the operators
+    // top row first, left to right within a row (the mirrored right boss side: right to left in field columns,
+    // research 01 §4.3 "嘲諷優先鏡射"), then the summon pieces in the same order. [ASSUMED] On a shared field (联防, boss)
+    // the players' fields deploy at the same time (PRTS: one unit after another with a fixed delay, from the battle
+    // start), so the i-th operators of all players come in together (in `players` order), then the summons likewise
+    const seq0 = this._deploySeq;
+    const lists = this.players.map((ps) => ps.units.filter((u) => u.kind === 'op' || u.kind === 'token').slice().sort((a, b) =>
+      b.homeR - a.homeR || (ps.mirror ? b.homeC - a.homeC : a.homeC - b.homeC) || a.id - b.id));
+    for (const kind of ['op', 'token']) {
+      const per = lists.map((l) => l.filter((u) => u.kind === kind));
+      const n = Math.max(0, ...per.map((l) => l.length));
+      for (let i = 0; i < n; i++) for (const l of per) if (l[i]) this._safe(() => this._deploy(l[i], { initial: true }), 'initialDeploy', l[i]);
+    }
+    // 仇恨 (targeting.js sortAllyTargets: the later deployed is attacked first): every summon that came in during the
+    // initial deployment — also one an operator's deploy brought along (a tactician's 援军, a start-of-battle summon)
+    // — ranks after all the operators (of every player on the field [ASSUMED]), in the order it came
+    const summons = this.allyUnits.filter((u) => u.kind === 'token' && u.alive && u.deployed && u.deploySeq > seq0).sort((a, b) => a.deploySeq - b.deploySeq);
+    for (const t of summons) t.aggroSeq = ++this._deploySeq;
+    // 联防 (PRTS 卫戍协议/帮助 "部署完成后…上一阶段为退场状态的干员强制退场"): an operator knocked out at the end of its
+    // own combat is withdrawn right after the deployment — down on its tile, its redeploy timer starting now (re-read
+    // after battleStart below; DESIGN §5.5). Its HP ratio is the end-of-phase one (0, as after kill()) until it
+    // redeploys at full HP.
+    for (const u of this.allyUnits) {
+      if (u.kind === 'op' && u.alive && u.carry && u.carry.down === true) {
+        this._safe(() => { u.hp = 0; this.retreat(u, { reason: FORCED_EXIT }); }, 'forcedExit', u);
+      }
     }
     this.emit('battleStart', {});
+    // redeploy-time effects that start with the battle (机变 征召 "所有干员的再部署时间-50%", added by a battleStart
+    // handler) cover the operators forced out above too: their timer is re-read with them, as a later knock-out's is
+    for (const u of this.allyUnits) {
+      if (u.kind !== 'op' || u.alive || u.removed || u.removeReason !== FORCED_EXIT) continue;
+      u.respawnAt = u.deathAt + Math.max(0, u.base.respawnTime * u.persist.redeployMul * u.s.redeployMul);
+    }
   }
 
   step() {
@@ -741,6 +772,7 @@ export class Battle {
     e.alive = true;
     e.deployed = true;
     e.blockWeight = def.blockCnt ?? 1;
+    e.hitArea = def.hitArea ?? null;   // 巨型单位 hit rectangle (body.js); null = a point
     e.lpr = def.lpr;
     e.mods = opts.mods ?? null;
     e.tag = opts.tag ?? null;
@@ -804,6 +836,7 @@ export class Battle {
     u.x = C0; u.y = R0; u.tileR = R0; u.tileC = C0;
     u.blocking = [];
     u.deploySeq = ++this._deploySeq;
+    u.aggroSeq = u.deploySeq;
     u.deployedAt = this.time;
     u.atkCd = 0;
     u.lastAttackAt = -Infinity;
@@ -1001,28 +1034,66 @@ export class Battle {
   // =============================================================================================================
   // blocking
 
-  /** Try to block enemy `e` at its current tile. Returns true if it became blocked. */
+  /**
+   * Try to block enemy `e` where it stands. Returns true if it is (now) blocked. Official contact rule (constants.js
+   * BLOCK_RADIUS, PRTS 游戏数据基础 §阻挡半径): the enemy's position within the blocker's block radius of the blocker's
+   * centre (ground 0.7071 — the tile's circumscribed circle, reaching 0.21 tile into the side neighbours; air 0.8944;
+   * devices 0.4472), and the blocker has free capacity for the enemy's block weight. Checked every tick for every
+   * unblocked enemy, moving or not, so an enemy overlapping an operator is taken over as soon as its blocker is gone or
+   * the operator's capacity frees up (user playtest #5 item 4). Several blockers in contact → the nearest [ASSUMED],
+   * ties → the first in row-then-column scan order.
+   */
   _checkBlock(e) {
     if (e.blockedBy || e.hidden || !e.alive) return !!e.blockedBy;
     const f = e.s.flags;
     if (f.unblockable || f.levitate || f.fear) return false;
-    const r = Math.round(e.y), c = Math.round(e.x);
-    if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return false;
-    const u = this._occ[r * COLS + c];
-    if (!u || !u.alive || !u.deployed || u.hidden || u.s.flags.noBlock || u.s.flags.sleep) return false;
+    const r0 = Math.round(e.y), c0 = Math.round(e.x);
+    const w = e.blockWeight ?? 1;
+    let u = null, bd = Infinity;
+    const fly = e.isFlying;
+    for (let r = r0 - 1; r <= r0 + 1; r++) {
+      if (r < 0 || r >= ROWS) continue;
+      for (let c = c0 - 1; c <= c0 + 1; c++) {
+        // a diagonal neighbour's centre is ≥ √0.5 away: out of reach of the ground (and device) radius
+        if (c < 0 || c >= COLS || (!fly && r !== r0 && c !== c0)) continue;
+        const o = this._occ[r * COLS + c];
+        if (!o || !this._blockerFor(o, e, w)) continue;
+        const d2 = (e.x - c) * (e.x - c) + (e.y - r) * (e.y - r);
+        const r2 = o.kind === 'device' ? BLOCK_RADIUS_SQ.device : fly ? BLOCK_RADIUS_SQ.fly : BLOCK_RADIUS_SQ.ground;
+        if (d2 < r2 && d2 < bd) { u = o; bd = d2; }
+      }
+    }
+    if (!u) return false;
+    e.blockedBy = u;
+    u.blocking.push(e);
+    e.moving = false;
+    if (this._hooks.blocked) this.emit('blocked', { blocker: u, enemy: e });
+    return true;
+  }
+
+  /**
+   * The enemies ally `u` blocks that it may target with `profile` — always selectable by a melee blocker, inside its
+   * range or not ("可以选择且优先选择阻挡单位", PRTS 选择器; ai.js acquireTargets, the skills' DEFAULT trigger). A ranged
+   * operator on a melee tile gets none: it attacks what its range holds (targeting.js meleeUnit, PRTS 索敌的概念
+   * "阻挡（近战限定）").
+   */
+  blockedTargets(u, profile) {
+    const out = [];
+    if (!u || !u.blocking || !u.blocking.length || !meleeUnit(u)) return out;
+    for (const e of u.blocking) if (e.blockedBy === u && canTargetEnemy(u, e, profile)) out.push(e);
+    return out;
+  }
+
+  /** Can ally/device `u` block enemy `e` (block weight `w`) right now — everything but the contact distance. */
+  _blockerFor(u, e, w) {
+    if (!u.alive || !u.deployed || u.hidden || u.s.flags.noBlock || u.s.flags.sleep) return false;
     if (e.isFlying && !(u.s.flags.blockFly || (u.profile && u.profile.blockFly))) return false;
     if (!e.isFlying && !u.ground) return false;
     const cap = u.s.blockCnt;
     if (cap <= 0) return false;
     let used = 0;
     for (const x of u.blocking) used += x.blockWeight ?? 1;
-    const w = e.blockWeight ?? 1;
-    if (used + w > cap) return false;
-    e.blockedBy = u;
-    u.blocking.push(e);
-    e.moving = false;
-    if (this._hooks.blocked) this.emit('blocked', { blocker: u, enemy: e });
-    return true;
+    return used + w <= cap;
   }
 
   _unblock(e) {
@@ -1182,6 +1253,10 @@ export class Battle {
     if (!(duration > 0)) return false;
     const immune = target.def && target.def.immune;
     if (!opts.force && tpl.immune && immune && immune.has(tpl.immune)) return false;
+    // 浮空 Buff (PRTS 异常效果: "若单位数据上为飞行单位且不持有缚地异常或是持有浮空异常则Buff取消"; 行动方式 "行动类型（数据）为
+    // 飞行的单位、以及已持有浮空异常的单位无法被施加浮空Buff"): refused on data flyers (`motion` FLY) and units already
+    // levitated — a hovering 近地悬浮 enemy is WALK in its data, so it can be levitated (no 缚地 / 浮空强化 in this mode)
+    if (key === 'levitate' && (target.motion === 'FLY' || target.s.flags.levitate)) return false;
     if (this._hooks.beforeStatus) {
       const c = this.emit('beforeStatus', { source: opts.source ?? null, target, status: key, duration, value, cancel: false });
       if (c.cancel || !target.alive) return false;
@@ -1291,13 +1366,14 @@ export class Battle {
   /**
    * HP loss that ignores DEF/RES, dodge and shields (流失). May kill. opts: { source, silent, tags, from } — `from` = the
    * DamageInfo this loss derives from (damage passed on to a leader, split, shared…): its tags are inherited and it is
-   * kept as `dmg.origin`, so `damaged` handlers that skip their own tagged damage also skip what it turned into.
+   * kept as `dmg.origin`, so `damaged` handlers that skip their own tagged damage also skip what it turned into; a loss
+   * derived from 无来源 damage (`from.sourceless`, element bursts) is 无来源 too (hooks see no source, `source` is credited).
    */
   loseHp(target, amount, { source = null, silent = false, tags = null, from = null } = {}) {
     if (!target || !target.alive || !(amount > 0)) return 0;
     const t = ['hpLoss'];
     for (const list of [from && from.tags, tags]) if (Array.isArray(list)) for (const x of list) if (!t.includes(x)) t.push(x);
-    return applyHpLoss(this, source, target, amount, { type: 'true', tags: t, noSp: true, silent, origin: from ?? null });
+    return applyHpLoss(this, source, target, amount, { type: 'true', tags: t, noSp: true, silent, origin: from ?? null, sourceless: !!(from && from.sourceless) });
   }
 
   reduceElement(target, amount, element = null) { return reduceElement(target, amount, element); }
@@ -1307,11 +1383,19 @@ export class Battle {
   // =============================================================================================================
   // queries
 
+  /**
+   * Tile buckets of the living enemies: a regular enemy on the tile of its position, a huge one (body.js) on every tile
+   * it occupies.
+   */
   _buildEnemyIndex() {
     for (const k of this._ebUsed) this._eb[k].length = 0;
     this._ebUsed.length = 0;
     for (const e of this.enemies) {
       if (!e.alive || e.hidden) continue;
+      if (e.hitArea) {
+        for (const k of bodyKeys(e)) { const b = this._eb[k]; if (!b.length) this._ebUsed.push(k); b.push(e); }
+        continue;
+      }
       const r = Math.round(e.y), c = Math.round(e.x);
       if (r < 0 || r >= ROWS || c < 0 || c >= COLS) continue;
       const k = r * COLS + c;
@@ -1321,14 +1405,14 @@ export class Battle {
     }
   }
 
-  /** Targetable enemies standing on any of `keys` (absolute tile keys). */
+  /** Targetable enemies whose body is on any of `keys` (absolute tile keys; a huge enemy is listed once). */
   enemiesInKeys(keys, attacker, profile) {
     const out = [];
     if (!keys) return out;
     for (let i = 0; i < keys.length; i++) {
       const b = this._eb[keys[i]];
       if (!b || !b.length) continue;
-      for (const e of b) if (e.alive && canTargetEnemy(attacker, e, profile)) out.push(e);
+      for (const e of b) if (e.alive && (!e.hitArea || !out.includes(e)) && canTargetEnemy(attacker, e, profile)) out.push(e);
     }
     return out;
   }
@@ -1364,7 +1448,7 @@ export class Battle {
     const list = want === 'enemy' ? this.enemies : this.allyUnits;
     for (const x of list) {
       if (!x.alive || !x.deployed || x.hidden) continue;
-      if (set.has(Math.round(x.y) * COLS + Math.round(x.x))) out.push(x);
+      if (bodyInKeys(x, set)) out.push(x);
     }
     return out;
   }
@@ -1375,11 +1459,17 @@ export class Battle {
     return this.allyUnits.filter((a) => a.alive && a.deployed && !a.hidden && a.kind !== 'device' && set.has(a.tileR * COLS + a.tileC));
   }
 
-  enemiesInRadius(x, y, r) {
+  /**
+   * Living enemies whose body (body.js: a huge enemy's hit rectangle, else its position) is within `r` of (x, y).
+   * `centre` = a 中点判定 radius — splash around a struck / marked target (PRTS 作战机制: "中点判定…案例：阻挡，酒神1天赋的1.3
+   * 溅射半径"): every enemy counts by its position (判定中心), a huge one too.
+   */
+  enemiesInRadius(x, y, r, centre = false) {
     const out = [];
     const r2 = r * r + 1e-9;
     for (const e of this.enemies) {
       if (!e.alive || e.hidden) continue;
+      if (e.hitArea && !centre) { if (bodyInRadius(e, x, y, r)) out.push(e); continue; }
       const dx = e.x - x, dy = e.y - y;
       if (dx * dx + dy * dy <= r2) out.push(e);
     }
@@ -1558,6 +1648,7 @@ export class Battle {
     u.markDirty();
     u.hp = u.s.maxHp;
     u.deploySeq = ++this._deploySeq;
+    u.aggroSeq = u.deploySeq;
     u.deployedAt = this.time;
     u.rangeKeys = [];
     this._occ[row * COLS + col] = u;
@@ -1618,9 +1709,11 @@ export class Battle {
   /**
    * Displace an enemy (hook/push). dir = {x,y} (normalised internally), distance in tiles. Heavier enemies move
    * less: effective = distance × clamp(1 − 0.25·(massLevel − force), 0, 1) (current massLevel: 失重 counts).
+   * 失衡免疫 (flag `noDisplace`: 近地悬浮, 浮空 — PRTS 异常效果 "不会被位移影响") ⇒ no movement. The tiles it may cross
+   * follow its movement (`motion`): a hovering enemy walks the ground, so it stays on ground-passable tiles.
    */
   displace(e, dir, distance, { force = 1 } = {}) {
-    if (!e || !e.alive || e.side !== 'enemy' || e.isBoss) return 0;
+    if (!e || !e.alive || e.side !== 'enemy' || e.isBoss || e.s.flags.noDisplace) return 0;
     const len = Math.hypot(dir.x, dir.y);
     if (!(len > 0)) return 0;
     const eff = distance * Math.max(0, Math.min(1, 1 - 0.25 * Math.max(0, e.s.massLevel - force)));
@@ -1631,7 +1724,7 @@ export class Battle {
     while (moved + 1e-9 < eff) {
       const nx = e.x + ux * stepLen, ny = e.y + uy * stepLen;
       const r = Math.round(ny), c = Math.round(nx);
-      const ok = e.isFlying ? this.grid.inRect(r, c) : this.grid.groundPassable(r, c);
+      const ok = e.motion === 'FLY' ? this.grid.inRect(r, c) : this.grid.groundPassable(r, c);
       if (!ok) break;
       e.x = nx; e.y = ny; moved += stepLen;
     }
@@ -1863,12 +1956,12 @@ export class Battle {
 
   /**
    * A knocked-out operator waiting to redeploy on its own tile (DESIGN §5.5: after its respawn time, when the tile is
-   * free and DP ≥ cost): killed — not withdrawn, not removed for good — after it was deployed. The client keeps its
-   * model on the field knocked down with a redeploy countdown (b.snap `down`, render/units.js); summons, devices and
-   * enemies simply leave.
+   * free and DP ≥ cost): killed — or entering the battle knocked out (FORCED_EXIT, 联防) — not withdrawn, not removed
+   * for good, after it was deployed. The client keeps its model on the field knocked down with a redeploy countdown
+   * (b.snap `down`, render/units.js); summons, devices and enemies simply leave.
    */
   isDown(u) {
-    return !!u && u.side === 'ally' && u.kind === 'op' && !u.alive && !u.removed && u.removeReason === 'killed'
+    return !!u && u.side === 'ally' && u.kind === 'op' && !u.alive && !u.removed && (u.removeReason === 'killed' || u.removeReason === FORCED_EXIT)
       && u.deploySeq > 0 && Number.isFinite(u.respawnAt);
   }
 

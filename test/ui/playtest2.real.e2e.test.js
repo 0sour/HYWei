@@ -201,12 +201,16 @@ async function untilPrep(c, pred, what, timeout = 90000) {
   }
 }
 
+// The field's 3D area ends at its separator row 13 — the row-13 devices blow into the field (act2 m01's blowers, user
+// playtest #5 item 6: render/app.js boardArea) — and the enemy preview pen starts at row 14.
+const NO_PEN_R1 = 13;
+
 function assertNoPen(v, tag) {
   assert.deepEqual(v.orphans, [], `${tag}: no stale unit sprite of another field`);
   assert.equal(v.penVisible, 0, `${tag}: no pen figure`);
   assert.equal(v.penRowsDrawn, false, `${tag}: no pen rows drawn (${v.band})`);
   assert.ok(v.band && v.band[1] <= 13, `${tag}: drawn rows ${v.band}`);
-  if (v.area3d != null) assert.ok(v.area3d <= 12, `${tag}: 3D area without the pen block (${v.area3d})`);
+  if (v.area3d != null) assert.ok(v.area3d <= NO_PEN_R1, `${tag}: 3D area without the pen block (${v.area3d})`);
 }
 
 describe('user playtest #2 item 6 — 前往查看 → 返回战场 in combat (real server)', { skip: !ENABLED && 'set SP_E2E=1 (Chrome + public/assets)' }, () => {

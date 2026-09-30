@@ -10,6 +10,7 @@
 // The view keeps every public coordinate in BOARD space (the server's, g.move targets, canPlace, highlightTiles,
 // tileScreen, holdPiece, setPieceDir): only what is drawn and picked goes through this transform. Pure functions.
 
+/** Board row → display (boss-field) row: row − 7 (server/match/board.js BOARD_ROWS_ABOVE_BOSS is +7, the inverse). */
 export const BOSS_ROW_SHIFT = -7;
 export const MAX_COL = 20;
 

@@ -25,14 +25,14 @@ export const ADD_KEYS = Object.freeze([
 /** Multiplicative mod keys (product; ^ stacks). */
 export const MUL_KEYS = Object.freeze([
   'atkMul', 'defMul', 'hpMul', 'resMul', 'moveMul', 'dmgDealtMul', 'dmgTakenMul', 'physTakenMul', 'artsTakenMul',
-  'trueTakenMul', 'elemTakenMul', 'healingDealtMul', 'healingTakenMul', 'spRecoveryMul', 'redeployMul',
+  'trueTakenMul', 'elemTakenMul', 'elementalTakenMul', 'healingDealtMul', 'healingTakenMul', 'spRecoveryMul', 'redeployMul',
   'atkScaleMul', 'physDealtMul', 'artsDealtMul',
 ]);
 /** Boolean flag keys (OR). `taunt` is also accepted as a numeric mod. */
 export const FLAG_KEYS = Object.freeze([
   'stun', 'freeze', 'sleep', 'silence', 'disarm', 'stealth', 'invulnerable', 'unblockable', 'levitate', 'fear',
   'cold', 'reveal', 'bind', 'noHeal', 'untargetable', 'blockFly', 'noMove', 'noSp', 'burstLock', 'hidden',
-  'noBlock', 'tremble', 'hitCount', 'hitCountArts', 'attract',
+  'noBlock', 'tremble', 'hitCount', 'hitCountArts', 'attract', 'float', 'noDisplace',
 ]);
 
 /**
@@ -58,7 +58,9 @@ export const STATUS = Object.freeze({
   fragile: { mods: (v) => ({ dmgTakenMul: 1 + (v ?? 0.3) }), valued: 0.3 },
   artsFragile: { mods: (v) => ({ artsTakenMul: 1 + (v ?? 0.3) }), valued: 0.3 },
   physFragile: { mods: (v) => ({ physTakenMul: 1 + (v ?? 0.3) }), valued: 0.3 },
-  elemFragile: { mods: (v) => ({ elemTakenMul: 1 + (v ?? 0.2) }), valued: 0.2 },
+  // 元素脆弱 (ba.elementfragile "受到的元素伤害提升相应比例（同名效果取最高）"): 元素伤害 (the 'elemental' HP damage) only —
+  // never the element gauge (元素损伤 has its own multiplier, `elemTakenMul`; damage.js)
+  elemFragile: { mods: (v) => ({ elementalTakenMul: 1 + (v ?? 0.2) }), valued: 0.2 },
   silence: { flags: { silence: true }, immune: 'silence' },
   // 恐惧: 无法被阻挡并四散逃跑 (no attacks, unblockable, stops advancing along its route)
   fear: { flags: { fear: true, unblockable: true }, immune: 'feared' },
@@ -68,10 +70,12 @@ export const STATUS = Object.freeze({
   stealth: { flags: { stealth: true } },
   reveal: { flags: { reveal: true } },
   invulnerable: { flags: { invulnerable: true } },
-  // 浮空: 无法移动、攻击及使用技能; 对重量大于3的单位持续时间减半
-  levitate: { flags: { levitate: true, stun: true, unblockable: true }, immune: 'levitate' },
-  // 麻痹: value = stacks (default 1, max 3); each stack cancels one enemy normal attack; lasts until consumed
-  palsy: { palsy: true },
+  // 浮空: 变为空中单位 (Unit.isFlying)，无法移动、攻击及使用技能; 对重量大于3的单位持续时间减半; the state holds 不可阻挡 +
+  // 失衡免疫 (noDisplace: "不会被位移影响", PRTS 异常效果)
+  levitate: { flags: { levitate: true, stun: true, unblockable: true, noDisplace: true }, immune: 'levitate' },
+  // 麻痹: value = stacks (default 1, max 3); each stack cancels one enemy normal attack; lasts until consumed; honours
+  // 麻痹免疫 (enemy_database palsyImmune, e.g. 假想敌：铳 — PRTS 元素: a 神经 burst gives 麻痹 only "若单位不具有麻痹免疫")
+  palsy: { palsy: true, immune: 'palsy' },
   // value = taunt level delta (default +1)
   taunt: { mods: (v) => ({ taunt: v ?? 1 }) },
   // value = ATK fraction removed (default 0.3)

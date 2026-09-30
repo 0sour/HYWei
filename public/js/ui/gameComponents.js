@@ -139,9 +139,31 @@ export function PieceThumb({ piece, size = 'md', class: cls, badge }) {
     golden=${!!piece.golden} tier=${piece.tier} size=${size} class=${cls} badge=${badge} />`;
 }
 
+/**
+ * A regular gear centred in the 24×24 box (even-odd path): `teeth` trapezoid teeth (width tipW at the tip circle
+ * rTip, rootW at the root circle rRoot; the first one straight up), arcs along both circles, and a round hole. The
+ * settings button's gear (user playtest #5 item 8): the hand-written path it replaces had teeth of different sizes
+ * and spacing on a rim that was not round (it bulged at 9 o'clock and was cut flat elsewhere) — a deformed icon.
+ * @param {{ teeth?: number, rTip?: number, rRoot?: number, tipW?: number, rootW?: number, rHole?: number }} [o]
+ */
+export function gearPath({ teeth = 8, rTip = 10, rRoot = 7.4, tipW = 3.2, rootW = 4.4, rHole = 3.3 } = {}) {
+  const c = 12;
+  const f = (v) => String(Math.round(v * 100) / 100 + 0);
+  const pt = (a, r) => `${f(c + r * Math.cos(a))} ${f(c + r * Math.sin(a))}`;
+  const at = Math.asin(tipW / 2 / rTip), ar = Math.asin(rootW / 2 / rRoot), step = (2 * Math.PI) / teeth;
+  let d = `M${pt(-Math.PI / 2 - ar, rRoot)}`;
+  for (let i = 0; i < teeth; i++) {
+    const t = -Math.PI / 2 + i * step;
+    d += `L${pt(t - at, rTip)}A${f(rTip)} ${f(rTip)} 0 0 1 ${pt(t + at, rTip)}L${pt(t + ar, rRoot)}`
+      + `A${f(rRoot)} ${f(rRoot)} 0 0 1 ${pt(t + step - ar, rRoot)}`;
+  }
+  return `${d}ZM${f(c)} ${f(c - rHole)}A${f(rHole)} ${f(rHole)} 0 1 0 ${f(c)} ${f(c + rHole)}`
+    + `A${f(rHole)} ${f(rHole)} 0 1 0 ${f(c)} ${f(c - rHole)}Z`;
+}
+
 /** Extra 24×24 glyphs used by the in-match HUD (original shapes). */
-const GLYPHS = {
-  gear: 'M10.3 2h3.4l.5 2.6c.6.2 1.2.5 1.7.9l2.5-.9 1.7 2.9-2 1.8c.1.6.1 1.2 0 1.8l2 1.8-1.7 2.9-2.5-.9c-.5.4-1.1.7-1.7.9l-.5 2.6h-3.4l-.5-2.6c-.6-.2-1.2-.5-1.7-.9l-2.5.9L2 14.9l2-1.8a6 6 0 0 1 0-1.8L2 9.5l1.7-2.9 2.5.9c.5-.4 1.1-.7 1.7-.9zM12 8.8a3.2 3.2 0 1 0 0 6.4 3.2 3.2 0 0 0 0-6.4z',
+export const GLYPHS = Object.freeze({
+  gear: gearPath(),
   eye: 'M12 5c5 0 9 4.5 10 7-1 2.5-5 7-10 7S3 14.5 2 12c1-2.5 5-7 10-7zm0 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4z',
   emote: 'M8.2 2h7.6L22 8.2v7.6L15.8 22H8.2L2 15.8V8.2zM8.5 8.5v3h2v-3zm5 0v3h2v-3zM7.8 14.2a5.5 5.5 0 0 0 8.4 0l-1.5-1.3a3.5 3.5 0 0 1-5.4 0z',
   dp: 'M13 2 4 13.5h6.2L9 22l11-12.5h-6.4z',
@@ -152,7 +174,7 @@ const GLYPHS = {
   back: 'M10 5 3 12l7 7 1.4-1.4L6.8 13H21v-2H6.8l4.6-4.6z',
   flag: 'M5 2h2v20H5zm3 1h11l-2.5 4.5L19 12H8z',
   target: 'M11 2h2v3.1A7 7 0 0 1 18.9 11H22v2h-3.1A7 7 0 0 1 13 18.9V22h-2v-3.1A7 7 0 0 1 5.1 13H2v-2h3.1A7 7 0 0 1 11 5.1zm1 5a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm0 3a2 2 0 1 1 0 4 2 2 0 0 1 0-4z',
-};
+});
 
 /** Extra HUD glyph. */
 export function GIcon({ name, class: cls, title }) {

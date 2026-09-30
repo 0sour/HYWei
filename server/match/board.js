@@ -10,12 +10,22 @@
 // `tileOverrides { 'r,c': 'melee'|'ranged'|'none' }` force a class. The result equals stages[id].deployTiles.normal
 // for the unmodified stage (asserted in test/match/board.test.js).
 //
+// Deploy field (user playtest #5 item 7): in the prep of a boss round (最终攻势 / 隐秘核心) the player deploys on ITS
+// half of the boss field (research 09 §1.2, official ConvertChessPositionInfoToBossMap / player_map_ud_offset 7 /
+// player_map_lr_boundary_col 10), so legality reads the tiles and devices THERE: `field` 'bossL' → board (r, c) is
+// stage tile (r − 7, c); 'bossR' (the second player of a pair, mirrored) → (r − 7, 20 − c); 'normal' → (r, c). Board
+// coordinates stay the same everywhere (the server's board, g.move, the sim input); only the tile read changes. E.g.
+// act2 m01's 1×3 fenced tiles (tile_fence_bound, LOW / buildable ALL) at boss (3–5, 8) and (3–5, 12) = board
+// (10–12, 8), which are '#' on the normal field. The result equals stages[id].deployTiles.bossLeft / bossRight
+// mapped to board coordinates (test/match/playtest5-deploy.test.js).
+//
 // Tokens follow their own `position` (ALL ⇒ any deployable tile, MELEE ⇒ melee tiles, RANGED ⇒ any deployable).
 // Facing: board pieces carry `dir` ∈ UP|RIGHT|DOWN|LEFT (server/sim/dir.js); `pieceDir` reads it (absent ⇒ RIGHT),
 // `parseDir` validates an intent's optional direction.
 
 import { GEO } from '../../shared/constants.js';
 import { DEFAULT_DIR, isDir } from '../sim/dir.js';
+import { BOSS_ROW_OFFSET, COLS } from '../sim/constants.js';
 
 export const FIELD = GEO.FIELD; // { r0: 9, r1: 12, c0: 2, c1: 10 }
 export const tileKey = (r, c) => `${r},${c}`;
@@ -29,22 +39,49 @@ export const inField = (r, c) => Number.isInteger(r) && Number.isInteger(c) && r
 const OBSTACLE_ROLES = new Set(['crate', 'mound']);
 const PLATFORM_ROLES = new Set(['platform']);
 
+/** Deploy fields: the own normal board, or the player's half of the boss field (left / mirrored right). */
+export const DEPLOY_FIELDS = Object.freeze(['normal', 'bossL', 'bossR']);
+/**
+ * How many rows a board row lies below its boss-field row: board row = boss-field row + 7 (official
+ * player_map_ud_offset 7; = −sim BOSS_ROW_OFFSET). Note the sign: render/prepfield.js BOSS_ROW_SHIFT is −7 (board →
+ * display row), the opposite direction.
+ */
+export const BOARD_ROWS_ABOVE_BOSS = -BOSS_ROW_OFFSET;
+/** Mirror column of the right boss half: board col c ↔ field col 20 − c (sim Battle.mapTile). */
+export const BOSS_MIRROR_COL = COLS - 1;
+const fieldOf = (f) => (DEPLOY_FIELDS.includes(f) ? f : 'normal');
+
+/** The stage tile [row, col] a board tile (r, c) stands on in deploy field `field`. */
+export function fieldTile(field, r, c) {
+  const f = fieldOf(field);
+  if (f === 'normal') return [r, c];
+  return [r - BOARD_ROWS_ABOVE_BOSS, f === 'bossR' ? BOSS_MIRROR_COL - c : c];
+}
+
+/** Inverse of fieldTile: the board tile of stage tile (r, c) in deploy field `field`. */
+export function boardTileOf(field, r, c) {
+  const f = fieldOf(field);
+  if (f === 'normal') return [r, c];
+  return [r + BOARD_ROWS_ABOVE_BOSS, f === 'bossR' ? BOSS_MIRROR_COL - c : c];
+}
+
 /**
  * @param {object|null} stage data/stages.json entry
- * @param {{ deviceOverrides?: Record<string, boolean>, tileOverrides?: Record<string, string> }} [opts]
- * @returns {Map<string, 'melee'|'ranged'>}
+ * @param {{ deviceOverrides?: Record<string, boolean>, tileOverrides?: Record<string, string>, field?: 'normal'|'bossL'|'bossR' }} [opts]
+ * @returns {Map<string, 'melee'|'ranged'>} keyed by BOARD tile 'r,c' (rows 9–12, cols 2–10)
  */
-export function buildDeployMap(stage, { deviceOverrides = {}, tileOverrides = {} } = {}) {
+export function buildDeployMap(stage, { deviceOverrides = {}, tileOverrides = {}, field = 'normal' } = {}) {
   /** @type {Map<string, 'melee'|'ranged'>} */
   const map = new Map();
   const rows = stage && Array.isArray(stage.rows) ? stage.rows : null;
   const legend = stage && stage.tiles && typeof stage.tiles === 'object' ? stage.tiles : {};
   for (let r = FIELD.r0; r <= FIELD.r1; r++) {
-    const line = rows && typeof rows[r] === 'string' ? rows[r] : null;
     for (let c = FIELD.c0; c <= FIELD.c1; c++) {
+      const [sr, sc] = fieldTile(field, r, c);
+      const line = rows && typeof rows[sr] === 'string' ? rows[sr] : null;
       let cls = null;
       if (line) {
-        const g = line[c];
+        const g = line[sc];
         const t = g != null && Object.hasOwn(legend, g) ? legend[g] : null;
         if (t) {
           const b = t.buildable;
@@ -61,7 +98,7 @@ export function buildDeployMap(stage, { deviceOverrides = {}, tileOverrides = {}
   const devices = stage && Array.isArray(stage.devices) ? stage.devices : [];
   for (const d of devices) {
     if (!d || !Array.isArray(d.pos)) continue;
-    const [r, c] = d.pos;
+    const [r, c] = boardTileOf(field, d.pos[0], d.pos[1]);
     if (!inField(r, c)) continue;
     let active;
     if (d.alias != null && deviceOverrides && Object.hasOwn(deviceOverrides, d.alias)) active = !!deviceOverrides[d.alias];

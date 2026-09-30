@@ -392,6 +392,10 @@ describe('user playtest #2 — UI fixes (mock harness, headless Chrome)', { skip
     };
   });
 
+  // The field's 3D area ends at its separator row 13 — the row-13 devices blow into the field (act2 m01's blowers, user
+  // playtest #5 item 6: render/app.js boardArea) — and the enemy preview pen starts at row 14.
+  const NO_PEN_R1 = 13;
+
   test('6: the enemy pen shows only in the pen view — never with the prep board (after 返回战场) or any battle', { skip: skipUnless('pen'), timeout: 5 * 60 * 1000 }, async () => {
     const { page, problems } = await open('phase=PREP', { w: 1920, h: 1080 });
     let s = await penState(page);
@@ -399,7 +403,7 @@ describe('user playtest #2 — UI fixes (mock harness, headless Chrome)', { skip
     assert.ok(s.pen > 0, 'the pen holds the next round\'s enemies');
     assert.equal(s.penVisible, 0, 'prep board: no pen figure shown');
     assert.equal(s.penRowsDrawn, false, 'prep board: pen rows not drawn');
-    if (s.board3d) assert.ok(s.area3d <= 12, `prep board: 3D area without the pen (${s.area3d})`);
+    if (s.board3d) assert.ok(s.area3d <= NO_PEN_R1, `prep board: 3D area without the pen (${s.area3d})`);
     await page.screenshot({ path: path.join(OUT, 'fix-pen-prep.png') });
     await page.click('.enemybtn');
     await page.waitForFunction(() => document.querySelector('.gm')?.dataset.camera === 'pen', { timeout: 3000 });
@@ -416,7 +420,7 @@ describe('user playtest #2 — UI fixes (mock harness, headless Chrome)', { skip
     s = await penState(page);
     assert.equal(s.penVisible, 0, 'back on the board (返回战场): no pen figure');
     assert.equal(s.penRowsDrawn, false, 'back on the board: pen rows not drawn');
-    if (s.board3d) assert.ok(s.area3d <= 12, 'back on the board: no pen area');
+    if (s.board3d) assert.ok(s.area3d <= NO_PEN_R1, `back on the board: no pen area (${s.area3d})`);
     await page.screenshot({ path: path.join(OUT, 'fix-pen-back.png') });
     assert.deepEqual(problems, []);
     await page.close();
@@ -428,7 +432,7 @@ describe('user playtest #2 — UI fixes (mock harness, headless Chrome)', { skip
       const b = await penState(o.page);
       assert.equal(b.penVisible, 0, `${phase}: no pen figure`);
       assert.equal(b.penRowsDrawn, false, `${phase}: pen rows not drawn`);
-      if (b.board3d) assert.ok(b.area3d <= 12, `${phase}: no pen area (${b.area3d})`);
+      if (b.board3d) assert.ok(b.area3d <= NO_PEN_R1, `${phase}: no pen area (${b.area3d})`);
       await o.page.screenshot({ path: path.join(OUT, `fix-pen-${phase.toLowerCase()}.png`) });
       assert.deepEqual(o.problems, [], phase);
       await o.page.close();

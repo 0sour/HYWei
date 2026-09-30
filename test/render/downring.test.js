@@ -1,13 +1,15 @@
 // test/render/downring.test.js — user playtest #4 items 8 and 9, client side: render/interp.js carries b.snap `elem`
 // (the element gauge a unit shows) and `down` (knocked-out operators waiting to redeploy); render/units.js keeps a
 // knocked-out operator on its tile in its held Die pose under a redeploy ring (countdown → "DP" / "!" → redeploy)
-// and draws the official element icon beside the bars (headless fake PIXI, test/render/fakepixi.js).
+// and draws the official element icon beside the bars (headless fake PIXI, test/render/fakepixi.js). User playtest #5
+// item 2: an operator entering 联防 knocked out ('die' reason FORCED_EXIT) goes straight to the held pose, no burst.
 
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { installFakePixi, fakeViewCtx } from './fakepixi.js';
 import { presetCamera } from '../../public/js/render/projection.js';
 import { SnapshotBuffer, normalizeSnapshot, TUPLE } from '../../public/js/render/interp.js';
+import { FORCED_EXIT as SIM_FORCED_EXIT } from '../../server/sim/constants.js';
 
 let fake, UnitView, DOWN_STATE, DOWN_LOOK, T;
 before(async () => {
@@ -100,6 +102,28 @@ describe('knocked-down operator (UnitView.setDown)', () => {
     frames(v, 2, 1 / 60, () => 12);
     assert.ok(v._downRing.root.visible);
     assert.equal(v._downRing.text.text, '18');
+  });
+
+  test('an operator entering the battle knocked out (联防, reason FORCED_EXIT): the held pose at once, no death burst, then its ring', async () => {
+    const { FORCED_EXIT, showsDeathFx } = await import('../../public/js/render/app.js');
+    assert.equal(FORCED_EXIT, SIM_FORCED_EXIT, 'the renderer mirrors the sim reason');
+    const info = { side: 'ally', kind: 'chess' };
+    assert.equal(showsDeathFx(info, false, FORCED_EXIT), false, 'no death particles');
+    assert.equal(showsDeathFx(info, false, 'killed'), true, 'a knock-out keeps them');
+    const v = view();
+    frames(v, 2);
+    v.die(true);                          // b.ev ['die', id, 'forcedExit'] (render/app.js handleEvent)
+    assert.equal(v.alive, false);
+    assert.ok(v.dieT >= 30, 'no fall: the end of the Die clip');
+    v.setDown([1, 70, 70, DOWN_STATE.COUNTING], 0.03);   // b.snap down, same frame
+    frames(v, 240, 1 / 60, () => 2);
+    assert.equal(v.remove, false, 'stays on its tile');
+    assert.ok(v._downRing.root.visible);
+    assert.equal(v._downRing.text.text, '68');
+    const w = view({ id: 2 });
+    frames(w, 2);
+    w.die();
+    assert.ok(w.dieT < 1, 'an ordinary death still plays the clip from its start');
   });
 
   test('leaving the `down` list without a redeploy fades the view out; a normal death still fades', () => {

@@ -143,11 +143,12 @@ test('attract: the enemy is released, walks (own speed) to the point, waits ther
   assert.equal(e().blockedBy, null, 'released');
   assert.ok(e().s.flags.unblockable && e().s.flags.attract);
   assert.equal(h.hooksOf('statusApplied').at(-1).entered, true);
-  const [x0, y0] = [e().x, e().y];
-  h.run(1);
-  // grid path: back to its tile centre (9,6), then down the column — axis-aligned legs
-  approx(Math.abs(e().x - x0) + Math.abs(e().y - y0), 0.5, 0.02, 'own speed (1 × MOVE_SCALE) along the path');
-  h.run(4.2);
+  // grid path: back to the centre of the tile it stands on, then on to the point (it was blocked 0.71 tile in front of
+  // the guard — the block radius — i.e. on (9,7))
+  let walked = 0, [px, py] = [e().x, e().y];
+  for (let i = 0; i < 30; i++) { h.step(); walked += Math.hypot(e().x - px, e().y - py); [px, py] = [e().x, e().y]; }
+  approx(walked, 0.5, 0.02, 'own speed (1 × MOVE_SCALE) along the path');
+  h.run(5);
   approx(e().x, 6, 1e-6); approx(e().y, 11, 1e-6, 'arrived');
   h.run(1);
   approx(e().y, 11, 1e-6, 'waits there');

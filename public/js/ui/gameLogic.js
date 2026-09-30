@@ -5,7 +5,10 @@
 //
 //   Board = own normal field (GEO.FIELD rows 9–12, cols 2–10). Melee chess stand on `melee` deploy tiles
 //   (LOW, buildable ALL/MELEE); ranged chess on `melee ∪ rangedOnly` (stages.json → deployTiles.normal,
-//   derived from the tile legend when missing). Tokens follow their own `position`.
+//   derived from the tile legend when missing). Tokens follow their own `position`. In the prep of a boss round
+//   (最终攻势 / 隐秘核心) the tiles are the player's half of the boss field (`deployFieldOf`: 'bossL' / mirrored
+//   'bossR', board (r, c) = stage tile (r − 7, c) / (r − 7, 20 − c)) like the server's deploy map (server/match/
+//   board.js field; user playtest #5 item 7) — board coordinates stay the same.
 //   Hand = 10 slots (index = col). Temp slots are server-filled only (no move target).
 //   Dropping onto an occupied tile/slot swaps (both pieces must be legal at their new spots);
 //   an EQUIP item dropped onto a chess piece equips it (tokens can't carry items); an Arts (MAGIC) item
@@ -18,6 +21,7 @@ import { GEO, PHASE, UF } from '../../../shared/constants.js';
 import { resolveLoadout, loadoutOptions, MODULE_NONE } from '../../../shared/protocol.js';
 import { resolveRecordLoadout, loadoutRecord } from '../../../shared/loadoutRecord.js';
 import { layoutPen } from '../render/pen.js';
+import { BOSS_ROW_SHIFT, MAX_COL } from '../render/prepfield.js';
 import { bossLevelSeconds } from './matchStatus.js';
 
 // ---- small helpers -------------------------------------------------------------------------------
@@ -81,6 +85,32 @@ export function prepCamera(pub, myId) {
   const idx = alive.findIndex((p) => p.playerId === myId);
   if (idx < 0) return normal; // eliminated / unknown: no board of its own on the boss field
   return { kind: 'bossPrep', opts: { side: idx % 2 === 1 ? 'R' : 'L' } };
+}
+
+/**
+ * The field the own pieces are deployed on (server/match/Match.js deployFieldOf): 'bossL' / 'bossR' in the prep of a
+ * boss round (the same pairing as `prepCamera`), else 'normal'. Placement legality (`placementContext` → `deployMap`
+ * with `field`) reads that field's tiles.
+ * @returns {'normal'|'bossL'|'bossR'}
+ */
+export function deployFieldOf(pub, myId) {
+  const cam = prepCamera(pub, myId);
+  return cam.kind === 'bossPrep' ? (cam.opts.side === 'R' ? 'bossR' : 'bossL') : 'normal';
+}
+
+/**
+ * The stage tile [row, col] of board tile (r, c) on deploy field `field` (server/match/board.js fieldTile): the boss
+ * prep's display transform (render/prepfield.js bossPrepField: row − 7, the right half mirrored col c → 20 − c).
+ */
+export function fieldTile(field, r, c) {
+  if (field !== 'bossL' && field !== 'bossR') return [r, c];
+  return [r + BOSS_ROW_SHIFT, field === 'bossR' ? MAX_COL - c : c];
+}
+
+/** The board tile of stage tile (r, c) on deploy field `field` (server/match/board.js boardTileOf). */
+export function boardTileOf(field, r, c) {
+  if (field !== 'bossL' && field !== 'bossR') return [r, c];
+  return [r - BOSS_ROW_SHIFT, field === 'bossR' ? MAX_COL - c : c];
 }
 
 /** Banner shown when a phase starts: { title, sub?, tone } or null. */
@@ -515,13 +545,22 @@ export function shopBlockReason(kind, { priv, editable, slot, getChess, getItem 
 // ---- placement (canPlace mirror) ------------------------------------------------------------------------
 
 /**
- * Deployable tiles of the own normal field for a stage record.
+ * Deployable tiles of the own board for a stage record, in board coordinates: the normal field (default), or — `field`
+ * 'bossL' / 'bossR' — the player's half of the boss field (always derived from the legend + active devices, like the
+ * server's deploy map on that field).
  * @param {any} stage stages.json record
+ * @param {'normal'|'bossL'|'bossR'} [field]
+ * @param {{ deviceOverrides?: Record<string, boolean>, tileOverrides?: Record<string, string> }} [overrides] boss field
+ *   only (the normal field takes them folded into the stage: `effectiveStage`)
  * @returns {{ melee: Set<string>, ranged: Set<string> }} ranged = melee ∪ rangedOnly
  */
-export function deploySets(stage) {
+export function deploySets(stage, field = 'normal', overrides = {}) {
   const melee = new Set();
   const ranged = new Set();
+  if (field === 'bossL' || field === 'bossR') {
+    for (const [k, cls] of deployMap(stage, { ...(isObj(overrides) ? overrides : {}), field })) { ranged.add(k); if (cls === 'melee') melee.add(k); }
+    return { melee, ranged };
+  }
   const inField = (r, c) => r >= GEO.FIELD.r0 && r <= GEO.FIELD.r1 && c >= GEO.FIELD.c0 && c <= GEO.FIELD.c1;
   const dt = stage?.deployTiles?.normal;
   if (isObj(dt) && Array.isArray(dt.melee)) {
@@ -585,21 +624,24 @@ export function stageOverrides(priv, getEffect = () => null) {
 
 /**
  * Deploy classes of the own board — mirror of server/match/board.js buildDeployMap (legend + active devices +
- * overrides): 'melee' (melee and ranged) or 'ranged' (ranged only) per 'r,c'.
+ * overrides, on deploy field `field`): 'melee' (melee and ranged) or 'ranged' (ranged only) per board 'r,c'.
+ * @param {any} stage
+ * @param {{ deviceOverrides?: Record<string, boolean>, tileOverrides?: Record<string, string>, field?: 'normal'|'bossL'|'bossR' }} [o]
  * @returns {Map<string, 'melee'|'ranged'>}
  */
-export function deployMap(stage, { deviceOverrides = {}, tileOverrides = {} } = {}) {
+export function deployMap(stage, { deviceOverrides = {}, tileOverrides = {}, field = 'normal' } = {}) {
   const F = GEO.FIELD;
   const inField = (r, c) => Number.isInteger(r) && Number.isInteger(c) && r >= F.r0 && r <= F.r1 && c >= F.c0 && c <= F.c1;
   const map = new Map();
   const rows = Array.isArray(stage?.rows) ? stage.rows : null;
   const legend = isObj(stage?.tiles) ? stage.tiles : {};
   for (let r = F.r0; r <= F.r1; r++) {
-    const line = rows && typeof rows[r] === 'string' ? rows[r] : null;
     for (let c = F.c0; c <= F.c1; c++) {
+      const [sr, sc] = fieldTile(field, r, c);
+      const line = rows && typeof rows[sr] === 'string' ? rows[sr] : null;
       let cls = null;
       if (line) {
-        const g = line[c];
+        const g = line[sc];
         const t = g != null && Object.hasOwn(legend, g) ? legend[g] : null;
         if (t) {
           const b = t.buildable;
@@ -612,7 +654,7 @@ export function deployMap(stage, { deviceOverrides = {}, tileOverrides = {} } = 
   }
   for (const d of Array.isArray(stage?.devices) ? stage.devices : []) {
     if (!isObj(d) || !Array.isArray(d.pos)) continue;
-    const [r, c] = d.pos;
+    const [r, c] = boardTileOf(field, d.pos[0], d.pos[1]);
     if (!inField(r, c)) continue;
     let active;
     if (d.alias != null && isObj(deviceOverrides) && Object.hasOwn(deviceOverrides, d.alias)) active = !!deviceOverrides[d.alias];
@@ -676,11 +718,12 @@ export function indexPieces(priv) {
 
 /**
  * Build the placement context for `canPlace`. The deploy tiles include the player's stage overrides (terrain 机变
- * cards, `stageOverrides`), like the server's per-player deploy map.
- * @param {{ priv:any, stage:any, editable:boolean, getChess?:(id:string)=>any, getToken?:(id:string)=>any, getItem?:(id:string)=>any,
- *   getEffect?:(id:string)=>any }} o
+ * cards, `stageOverrides`), like the server's per-player deploy map, on the field the pieces are deployed on
+ * (`field` = `deployFieldOf(pub, myId)`: the own board, or the player's half of the boss field in a boss round).
+ * @param {{ priv:any, stage:any, editable:boolean, field?:'normal'|'bossL'|'bossR', getChess?:(id:string)=>any,
+ *   getToken?:(id:string)=>any, getItem?:(id:string)=>any, getEffect?:(id:string)=>any }} o
  */
-export function placementContext({ priv, stage, editable, getChess = () => null, getToken = () => null, getItem = () => null, getEffect = () => null }) {
+export function placementContext({ priv, stage, editable, field = 'normal', getChess = () => null, getToken = () => null, getItem = () => null, getEffect = () => null }) {
   const pieces = indexPieces(priv);
   const boardAt = new Map();
   for (const e of pieces.values()) if (e.area === 'board') boardAt.set(tileKey(e.row, e.col), e);
@@ -690,8 +733,13 @@ export function placementContext({ priv, stage, editable, getChess = () => null,
   let deployed = 0;
   for (const e of pieces.values()) if (e.area === 'board' && e.piece.kind === 'chess') deployed += 1;
   const count = Number.isInteger(priv?.deployCount) ? priv.deployCount : deployed;
-  const deploy = deploySets(effectiveStage(stage, stageOverrides(priv, getEffect)));
-  return { priv, pieces, boardAt, handAt, deploy, cap, count, editable: !!editable, getChess, getToken, getItem };
+  const ov = stageOverrides(priv, getEffect);
+  // the own normal board keeps the data's deploy tiles (with the terrain overrides folded in); the boss field of a
+  // boss round's prep is read from the legend + its devices under the same overrides (server deploy map, field)
+  const deploy = field === 'bossL' || field === 'bossR'
+    ? deploySets(stage, field, ov)
+    : deploySets(effectiveStage(stage, ov));
+  return { priv, pieces, boardAt, handAt, deploy, cap, count, field, editable: !!editable, getChess, getToken, getItem };
 }
 
 /** Deploy position ('MELEE'|'RANGED') of a chess/token piece, or null for items. */

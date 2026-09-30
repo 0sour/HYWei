@@ -34,11 +34,10 @@
 // say), `death` 10 (不屈, the bond slot of the revive/redeploy convention); everything else 0.
 
 import { absoluteRangeKeys, canTargetEnemy } from '../../../targeting.js';
-import { COLS } from '../../../constants.js';
 import { localOrder, localBefore } from '../../../dir.js';
 import {
   num, bondRecord, buffParams, bondTier, bondLayers, isMember, isElite, isGroundOp, onField, playerOps, passiveBuff,
-  fxOn, N4, N8,
+  fxOn, N4, N8, bodyInKeys,
 } from '../../support/index.js';
 
 export const ID = Object.freeze({
@@ -216,7 +215,6 @@ function updateAura(battle, st) {
 
 function raidTile(battle, u, e) {
   const er = Math.round(e.y), ec = Math.round(e.x);
-  const ek = er * COLS + ec;
   const ranged = u.def?.position === 'RANGED';
   const grid = u.rangeGrid || [[0, 0]];
   const ext = num(u.s.rangeExtend);
@@ -226,7 +224,7 @@ function raidTile(battle, u, e) {
       const r = er + dr, c = ec + dc;
       if (!battle.grid.inRect(r, c) || battle.isReservedTile(r, c)) continue;
       if (!battle.grid.canStand(r, c, { ranged })) continue;
-      const covers = absoluteRangeKeys(grid, r, c, u.dir, ext).includes(ek) ? 0 : 1;
+      const covers = bodyInKeys(e, absoluteRangeKeys(grid, r, c, u.dir, ext)) ? 0 : 1;
       const d = Math.max(Math.abs(dr), Math.abs(dc)) + 0.01 * (Math.abs(dr) + Math.abs(dc));
       // last tie-break: the offset in the unit's facing-RIGHT frame (sim/dir.js localOrder; for a RIGHT-facing unit the
       // plain tile-key order), so the landing tile turns with its direction

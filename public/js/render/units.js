@@ -20,6 +20,10 @@
 // a dark disc, a mint arc filling as the respawn timer runs and the seconds left; once the timer is done and it still
 // waits, a full amber ring with "DP" (not enough DP) or a red ring with "!" (its tile is taken). `onDeploy` (the
 // redeploy) plays the deploy clip and restores the normal look; `setDown(null)` on a dead view lets it fade out.
+// An operator that enters a battle already knocked out (联防, user playtest #5 item 2: sim 'die' reason 'forcedExit')
+// goes down with `die(true)`: straight to the held end of the clip, no fall.
+// Enemy modes (sim fx 'phase' { id, kind } → `setForm(kind)`): 掠海漂移体 dropping to 爬行模式 (user playtest #5 item 1)
+// plays its skeleton's 'Change' clip once, then the crawl set (*_02) — FORMS; a view built later keeps the mode.
 // Element gauges (item 8, b.snap `elem` → sample `el` / `elFill` / `elUntil` / `elDur`): the official element icon
 // beside the bars (PRTS 元素: operators the element's disc with its glyph, enemies a smaller plain disc of the
 // element's colour) inside a white ring of the remaining 元素值 (1 − fill); during a 爆发冷却 the ring refills over
@@ -73,6 +77,25 @@ export const DOWN_LOOK = Object.freeze({
 });
 /** Element ring diameter in tiles (operators; enemies ×0.8) and its pixel clamp. */
 const EL_RING = 0.3;
+
+/**
+ * Enemy modes drawn with another clip set of the same skeleton (sim fx 'phase' kind → UnitView.setForm), per Spine
+ * id: 掠海漂移体 (PRTS: 受晕眩/沉睡/冻结影响后进入爬行模式 — for good) crawls on its *_02 clips after 'Change'. The mode's
+ * roles override the manifest's (data/assets.json anims); 吉兆飞鳞's 晕眩模式 is its Stun clip already.
+ */
+export const FORMS = Object.freeze({
+  enemy_2025_syufo: Object.freeze({
+    crawl: Object.freeze({
+      change: 'Change',
+      roles: Object.freeze({
+        idle: 'Idle_02', deploy: 'Idle_02', die: 'Die_02',
+        move: Object.freeze({ begin: null, loop: 'Move_02', end: null }),
+        attack: Object.freeze({ begin: null, loop: 'Attack_02', end: null, via: 'attackAny' }),
+        skill: Object.freeze({ begin: null, loop: 'Attack_02', end: null, via: 'attack', index: 0, idle: null }),
+      }),
+    }),
+  }),
+});
 
 /**
  * Keep `obj` in the right layer: the surface container of block row round(y) when it lies on a raised top at
@@ -168,6 +191,7 @@ export class UnitView {
     this.shake = 0;
     this.screen = { x: 0, y: 0, s: 1, top: 0 };
     this.destroyed = false;
+    this.form = typeof info.form === 'string' ? info.form : null;   // an enemy's mode (setForm, FORMS)
 
     // --- display objects
     this.shadow = new P.Sprite(ctx.shadowTex || shadowTexture());
@@ -275,6 +299,9 @@ export class UnitView {
       this.spineReady = true;
       this.swapT = swap ? 1 : 0;
       this.actor.spine.alpha = swap ? 1 : 0;
+      // a mode the unit is already in (a model built or rebuilt after the change): its clip set, no change clip
+      const f = this._formSpec();
+      if (f) this.actor.setForm(f.roles);
       // replay current state (a dead model resumes its Die clip where it would be — a knocked-down one holds its end)
       if (!this.alive) {
         const d = this.actor.die();
@@ -285,6 +312,26 @@ export class UnitView {
         this.actor.setBase(this._baseFromAnim());
       }
     }, () => { this._releaseEntry(entry); /* keep the fallback */ });
+  }
+
+  _formSpec() {
+    return this.form ? FORMS[this.info.spine || this.info.defId]?.[this.form] || null : null;
+  }
+
+  /**
+   * The unit changed mode (sim fx 'phase' { id, kind }): the mode's clip set (FORMS) after its change clip; a kind with
+   * no clip set of its own goes back to the manifest clips. Kept for a model built later.
+   */
+  setForm(kind) {
+    const k = typeof kind === 'string' ? kind : null;
+    if (k === this.form) return;
+    const had = !!this._formSpec();
+    this.form = k;
+    this.info.form = k;
+    const f = this._formSpec();
+    if (!this.actor) return;
+    if (f) this.actor.setForm(f.roles, f.change || null);
+    else if (had) this.actor.setForm(null);
   }
 
   // ---- HUD -------------------------------------------------------------------------------------------------
@@ -495,7 +542,11 @@ export class UnitView {
     if (on) this.statuses.add(key); else this.statuses.delete(key);
   }
 
-  die() {
+  /**
+   * The unit died: its Die clip plays, then it fades (unless it stays down, setDown). `instant`: it starts on the held
+   * end of the clip — a unit that is already down (a field joined mid-battle, an operator entering 联防 knocked out).
+   */
+  die(instant = false) {
     if (!this.alive) return;
     this.alive = false;
     const d = this.actor ? this.actor.die() : 0;
@@ -503,6 +554,7 @@ export class UnitView {
     this.dieT = 0;
     this.dying = clamp(d / rate, 0.35, 1.6) + 0.55;
     this.dieDur = this.dying;
+    if (instant) { this.dieT = 30; if (this.actor) this.actor.update(30); }
   }
 
   revive() {
@@ -528,10 +580,7 @@ export class UnitView {
       if (!this.alive) { this.dying = 0.55; this.dieDur = 0.55; }
       return;
     }
-    if (this.alive) {
-      this.die();
-      if (instant) { this.dieT = 30; if (this.actor) this.actor.update(30); }
-    }
+    if (this.alive) this.die(instant);
     if (this.zTarget == null) this.z = this.zTarget = groundZ(this.ctx, this.x, this.y); // never synced: its tile top
     this.dying = 0; // no death fade while down
     const dn = this.down || (this.down = { until: 0, total: 0, state: DOWN_STATE.COUNTING });

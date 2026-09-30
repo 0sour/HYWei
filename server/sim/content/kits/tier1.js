@@ -7,8 +7,8 @@
 // Profession defaults (professions.js) are reused: kits only add what the trait text / module says beyond them.
 //
 // Covered (normal + elite): 1_01 隐现 1_02 角峰 1_03 惊蛰 1_04 深巡 1_05 红豆(H) 1_06 刺玫 1_07 普罗旺斯 1_08 德克萨斯
-// 1_09 跃跃 1_10 古米 1_11 地灵(H) 1_12 艾丝黛尔 1_13 波登可 1_14 格雷伊 1_15 盟约·辅助干员(H) 1_16 锡人(H) 1_17 深靛
-// 1_18 宴 1_19 野鬃 1_20 雷蛇.  (H = hidden in the shop pool, still authored.)
+// 1_09 跃跃 1_10 古米 1_11 地灵(H) 1_12 艾丝黛尔 1_13 波登可 1_14 格雷伊 1_16 锡人(H) 1_17 深靛
+// 1_18 宴 1_19 野鬃 1_20 雷蛇.  (H = hidden in the shop pool, still authored.) 1_15 盟约·辅助干员(H) lives in tier6.js.
 // Operator loadouts (DESIGN §16): every selectable non-default skill of the 16 visible chess is authored in the kit's
 // `skills: { [skillId]: SkillSpec }` map from its own SkillRecord (skillRec / skillBbOf — Lv4 normal, Lv7 elite);
 // talents / traits read the resolved record, so a module choice ('none' ⇒ traitBase / talentsBase, module.active
@@ -22,6 +22,7 @@
 import { COLS } from '../../constants.js';
 import { absoluteRangeKeys, sortEnemyTargets } from '../../targeting.js';
 import { frontOf, offsetTile } from '../../dir.js';
+import { bodyInKeys, bodyOnTile, bodyTileReach } from '../../body.js';
 
 // =================================================================================================================
 // shared helpers (named exports; content/index.js only merges the default export)
@@ -51,8 +52,10 @@ export const moduleOn = (chess) => !!(chess?.module && chess.module.active);
 
 export const up = (u) => !!u && u.alive && u.deployed;
 export const posKey = (u) => Math.round(u.y) * COLS + Math.round(u.x);
-/** Chebyshev tile distance between two units. */
-export const cheb = (a, b) => Math.max(Math.abs(Math.round(a.y) - Math.round(b.y)), Math.abs(Math.round(a.x) - Math.round(b.x)));
+/** Chebyshev tile distance between two units (a huge enemy: from the nearest tile it occupies — sim/body.js). */
+export const cheb = (a, b) => (b.hitArea ? bodyTileReach(b, Math.round(a.y), Math.round(a.x))
+  : a.hitArea ? bodyTileReach(a, Math.round(b.y), Math.round(b.x))
+    : Math.max(Math.abs(Math.round(a.y) - Math.round(b.y)), Math.abs(Math.round(a.x) - Math.round(b.x))));
 /** Normal attack hit on its primary target (no splash, no chain jump). */
 export const isMainHit = (dmg) => !!dmg && dmg.isAttack && !dmg.isSplash && !(dmg.tags && dmg.tags.includes('chain'));
 /** Damage ctx caused by an enemy's attack. */
@@ -152,7 +155,7 @@ export function installReveal(battle, unit, interval = 0.2) {
   battle.every(interval, () => {
     if (!up(unit) || !unit.rangeKeySet) return;
     for (const e of battle.enemies) {
-      if (!e.alive || e.hidden || !e.s.flags.stealth || !unit.rangeKeySet.has(posKey(e))) continue;
+      if (!e.alive || e.hidden || !e.s.flags.stealth || !bodyInKeys(e, unit.rangeKeySet)) continue;
       const was = !!e.s.flags.reveal;
       if (battle.applyStatus(e, 'reveal', { duration: interval + 0.1, source: unit }) && !was) battle.fx('reveal', { x: e.x, y: e.y, id: e.id });
     }
@@ -544,7 +547,7 @@ export default {
           }
           if (!isMainHit(dmg)) return;
           const [fr, fc] = frontOf(unit.tileR, unit.tileC, unit.dir);
-          const front = Math.round(target.y) === fr && Math.round(target.x) === fc;
+          const front = bodyOnTile(target, fr, fc);
           const p = front ? num(t.prob2) : num(t.prob);
           if (p > 0 && battle.rng.chance(p)) {
             dmg.amount *= num(t.atk_scale, 1);
@@ -557,8 +560,8 @@ export default {
 
   // ---------------------------------------------------------------------------------------------------------------
   // 1_08 德克萨斯 剑雨: +cost DP; every enemy around (skill grid) takes two hits of atk_scale × ATK arts and is
-  // stunned `stun` s. 战术快递: +cost initial DP. (Elite hidden runtime_cost −4 "首次部署时部署费用-4": the initial
-  // deployment is free in battle ⇒ no effect.)
+  // stunned `stun` s — air units too (PRTS 备注 "※可对空"). 战术快递: +cost initial DP. (Elite hidden runtime_cost −4
+  // "首次部署时部署费用-4": the initial deployment is free in battle ⇒ no effect.)
   // Alternate S1 冲锋号令·γ型 (AUTO, no target): +cost DP at once. An AUTO skill keeps its normal rule in this mode
   // (research 03 §1.4: only MANUAL skills are converted by the trigger table) ⇒ it fires as soon as SP is full.
   chess_char_1_08_a: (bb, chess, def) => ({
@@ -724,7 +727,7 @@ export default {
         battle.on('death', (ctx) => {
           const e = ctx.unit;
           if (e.side !== 'enemy' || ctx.reason !== 'killed' || !up(unit)) return;
-          const near = grid ? absoluteRangeKeys(grid, unit.tileR, unit.tileC, unit.dir, 0).includes(posKey(e)) : cheb(unit, e) <= 1;
+          const near = grid ? bodyInKeys(e, absoluteRangeKeys(grid, unit.tileR, unit.tileC, unit.dir, 0)) : cheb(unit, e) <= 1;
           if (near) battle.heal(unit, unit, unit.s.maxHp * num(t.hp_ratio), { self: true, tags: ['talent'] });
         }, { owner: unit });
         if (tb.damage_resistance != null) {
@@ -800,28 +803,7 @@ export default {
     };
   },
 
-  // ---------------------------------------------------------------------------------------------------------------
-  // 1_15 盟约·辅助干员 (hidden, band 优等生) 战术咏唱·双型: ASPD +attack_speed, attack@max_target targets.
-  // 迭代元素: each hit adds ep_damage_ratio × ATK element damage — 神经 first, else 灼燃, else 凋亡 (the first element
-  // not bursting on the target); targets not in a burst are preferred. Elite module: ep_damage_ratio_boss vs
-  // ELITE/BOSS enemies.
-  chess_char_1_15_a: (bb, chess) => {
-    const t = talentBb(chess, 0);
-    const ratio = num(t.ep_damage_ratio), ratioBoss = num(t.ep_damage_ratio_boss, ratio);
-    return {
-      trait: {
-        priority: 'notBurst',
-        afterHit(battle, u, target) {
-          if (!target || !target.alive || target.side !== 'enemy' || !(ratio > 0)) return;
-          const el = ['neural', 'burn', 'apoptosis'].find((k) => !target.findBuff(k + 'Burst'));
-          if (!el) return;
-          const r = target.def?.rank === 'ELITE' || target.def?.rank === 'BOSS' || target.isBoss ? ratioBoss : ratio;
-          battle.dealDamage(u, target, { type: 'element', element: el, amount: u.s.atk * r, tags: ['talent'] });
-        },
-      },
-      skill: { kind: 'duration', mods: { aspd: num(bb.attack_speed) }, targeting: { maxTargets: Math.max(1, Math.floor(num(bb['attack@max_target'], 1))) } },
-    };
-  },
+  // 1_15 盟约·辅助干员 (hidden, band 优等生): its kit is tier6.js `pithst` (迭代元素 — one implementation only).
 
   // ---------------------------------------------------------------------------------------------------------------
   // 1_16 锡人 (hidden tier-1 entry of chess_char_2_19): see tinmanKit.

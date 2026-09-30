@@ -10,7 +10,7 @@
 // reinforcement …) are kept and built upon.
 //
 // Simplifications (one line per id; see also the report of the content phase):
-//  1_15 盟约·辅助干员  element pick = neural → burn → apoptosis, skipping the elements already bursting on the target.
+//  1_15 盟约·辅助干员  every damage she deals attaches all three elements, neural → burn → apoptosis (see pithst).
 //  6_01 蕾缪安   locks every 0.5 s while an enemy is in range (ends early — and bombs — when the range empties);
 //                the shells then follow one every 0.3 s (PRTS), each landing 0.3 s after it is fired [ASSUMED flight];
 //                the 1.5 radius (PRTS "碰撞箱判定") is read as the centre distance like every engine radius; knocked
@@ -102,6 +102,8 @@ import { absoluteRangeKeys, sortEnemyTargets, canTargetEnemy } from '../../targe
 import { aggregateMods } from '../../buffs.js';
 import { COLS, ROWS } from '../../constants.js';
 import { rotateOffset } from '../../dir.js';
+import { bodyDist, bodyInKeys, bodyInRadius, bodyKeys } from '../../body.js';
+import { hasHp } from '../../damage.js';
 import { summonToken, TOKEN_IDS } from '../tokens.js';
 
 // ------------------------------------------------------------------------------------------------------------------
@@ -279,8 +281,9 @@ function onElementHit(battle, unit, fn) {
   }, { owner: unit });
 }
 
+/** Deal `amount` of element `el` (元素损伤) — nothing on a target at 0 HP (a lethal hit's `damaged` hook, see hasHp). */
 const elementDmg = (battle, src, tgt, el, amount, tags = ['skill']) =>
-  (amount > 0 && tgt && tgt.alive ? battle.dealDamage(src, tgt, { type: 'element', element: el, amount, tags }) : 0);
+  (amount > 0 && hasHp(tgt) ? battle.dealDamage(src, tgt, { type: 'element', element: el, amount, tags }) : 0);
 
 /**
  * 鼓舞 (ba.inspire "获得额外附加的基础属性加成（同类属性取最高）"): +`val` ATK after the target's own multipliers (flat
@@ -325,23 +328,44 @@ function aura(battle, unit, period, fn) {
 // ------------------------------------------------------------------------------------------------------------------
 // 盟约·辅助干员 chess_char_1_15 (巫役) — S1 战术咏唱·双型; 迭代元素
 
+/** 迭代元素's elements in the order they are applied: 神经损伤 "（优先）", then 灼燃损伤, then 凋亡损伤. */
+export const PITHST_ELEMENTS = Object.freeze(['neural', 'burn', 'apoptosis']);
+
+/**
+ * 迭代元素 "攻击同时附带18%攻击力的神经损伤（优先）、灼燃损伤、凋亡损伤；优先攻击未处于损伤爆发的目标":
+ *   * timing = every damage she deals (PRTS 盟约·辅助干员 corrects "攻击同时" to "造成伤害时"): HP damage > 0 — a dodged
+ *     or fully absorbed hit deals none; her own element fills and the bursts they cause never re-trigger it; a killing
+ *     blow attaches nothing (the target is dead — no burst on the corpse);
+ *   * each such damage attaches ep_damage_ratio × ATK of ALL THREE elements, 神经 first, then 灼燃, then 凋亡 (user
+ *     playtest #5 #3: the kit used to pick one element "not bursting" — but a burst's 爆发冷却 locks every gauge of the
+ *     unit, so it only ever filled 神经). PRTS 元素: when one unit applies several elements that would each fill their
+ *     gauge, the element applied first bursts — from her alone 神经 bursts (the "（优先）"), while her 灼燃 / 凋亡 add to
+ *     the gauges the team builds (余, 塑心 …). [ASSUMED: simultaneous application — the reading of the official text]
+ *   * elite module RIT-X "对精英和领袖敌人造成的元素损伤提升18%" = ep_damage_ratio_boss (0.2124) vs ELITE / BOSS enemies:
+ *     a talent ratio, not an "元素损伤提升" (PRTS 备注), so it changes nothing else she deals (e.g. a 灼燃维式重锤).
+ * The target pick prefers enemies not in a burst (`priority: 'notBurst'`).
+ */
 function pithst(bb, chess, def) {
   const t0 = tbb(def, 0);
   const ratio = num(t0.ep_damage_ratio);
-  const ratioBoss = num(t0.ep_damage_ratio_boss, ratio);   // elite module: ×1.18 vs elite/leader enemies
+  const ratioBoss = num(t0.ep_damage_ratio_boss, ratio);
   return {
     skill: {
       kind: 'duration',
       mods: { aspd: num(bb.attack_speed) },
       targeting: { maxTargets: Math.max(1, Math.floor(num(bb['attack@max_target'], 1))) },
     },
-    trait: {
-      priority: 'notBurst',
-      afterHit(battle, unit, target) {
-        if (!target || !target.alive || !(ratio > 0)) return;
-        const el = ['neural', 'burn', 'apoptosis'].find((k) => !target.findBuff(k + 'Burst'));
-        if (el) elementDmg(battle, unit, target, el, unit.s.atk * (isElite(target) ? ratioBoss : ratio), ['talent']);
-      },
+    trait: { priority: 'notBurst' },
+    install(battle, unit) {
+      if (!(ratio > 0)) return;
+      battle.on('damaged', (ctx) => {
+        const t = ctx.target, d = ctx.dmg;
+        // hasHp: a killing blow attaches nothing (the hook runs before battle.kill, see hasHp)
+        if (ctx.source !== unit || !t || t.side !== 'enemy' || !hasHp(t) || !(ctx.amount > 0)) return;
+        if (ctx.type === 'element' || ctx.type === 'elemental' || (d && d.tags && d.tags.includes('burst'))) return;
+        const amount = unit.s.atk * (isElite(t) ? ratioBoss : ratio);
+        for (const el of PITHST_ELEMENTS) elementDmg(battle, unit, t, el, amount, ['talent', 'pithst']);
+      }, { owner: unit });
     },
   };
 }
@@ -370,9 +394,8 @@ function ensureWanted(battle) {
     const lat = battle.allyUnits.filter((a) => live(a) && a.kind === 'op' && hasBond(a, 'lateranoShip'));
     for (const e of battle.enemies) {
       if (!e.alive || e.hidden || !isElite(e) || e.findBuff('lemuen:wanted')) continue;
-      const k = keyOf(e);
       // "停留超过8秒": a continuous stay — leaving every 拉特兰 range restarts the count
-      if (!lat.some((a) => a.rangeKeySet && a.rangeKeySet.has(k))) { W.time.delete(e); continue; }
+      if (!lat.some((a) => a.rangeKeySet && bodyInKeys(e, a.rangeKeySet))) { W.time.delete(e); continue; }
       const t = (W.time.get(e) ?? 0) + 0.25;
       W.time.set(e, t);
       if (t >= need - 1e-9) {
@@ -423,8 +446,8 @@ function lemuen(bb, chess, def) {
     battle.fx('bombard', { x, y, id: unit.id, r: d2 });
     for (const e of battle.enemiesInRadius(x, y, d2)) {
       if (e.s.flags.untargetable) continue;
-      const d = Math.hypot(e.x - x, e.y - y);
-      battle.dealDamage(unit, e, { amount: atk * (d <= d1 ? s1 : s2), type: 'phys', isSkill: true, isSplash: true, tags: ['skill', 'bombard'] });
+      const d = bodyDist(e, x, y);
+      battle.dealDamage(unit, e, { amount: atk * (d <= d1 + 1e-9 ? s1 : s2), type: 'phys', isSkill: true, isSplash: true, tags: ['skill', 'bombard'] });
     }
   };
   const bombard = (battle, unit, locks) => {
@@ -534,7 +557,7 @@ function lemuen(bb, chess, def) {
         battle.on('tick', () => { // wanted targets' tiles join her range (engine extra range keys, kept across rebuilds)
           if (!live(unit)) return;
           const keys = [];
-          for (const e of battle.enemies) if (e.alive && !e.hidden && e.findBuff('lemuen:wanted')) keys.push(keyOf(e));
+          for (const e of battle.enemies) if (e.alive && !e.hidden && e.findBuff('lemuen:wanted')) keys.push(...bodyKeys(e));
           const s = keys.join(',');
           if (s === sig) return;
           sig = s;
@@ -655,7 +678,7 @@ function sbell2(bb, chess, def) {
         if (dotAcc + 1e-9 < 1) return;
         dotAcc -= 1;
         for (const e of battle.enemies) {
-          if (e.alive && !e.hidden && !e.isFlying && snow.has(keyOf(e))) battle.dealDamage(unit, e, { amount: unit.s.atk * S2.dot, type: 'arts', isSkill: true, tags: ['skill', 'snow'] });
+          if (e.alive && !e.hidden && !e.isFlying && bodyInKeys(e, snow)) battle.dealDamage(unit, e, { amount: unit.s.atk * S2.dot, type: 'arts', isSkill: true, tags: ['skill', 'snow'] });
         }
       }, { owner: unit });
     } },
@@ -781,7 +804,8 @@ function yu(bb, chess, def) {
     // ep_damage_ratio × ATK 灼燃损伤 on the attacker (install below)
     skchr_yu_1: { kind: 'duration', mods: { hpPct: num(bb.max_hp), defPct: num(bb.def) } },
     // S2 厚礼上宾: atk_scale × ATK arts on every enemy of the skill range + the ground-reachable ones teleported onto his
-    // tile; block +block_cnt, HP / ATK +, normal attacks deal arts damage
+    // tile; block +block_cnt, HP / ATK +, normal attacks deal arts damage. The burst hits air units too [ASSUMED: no 对空
+    // note on PRTS]; the teleport takes ground units only ("地面可达目标")
     skchr_yu_2: {
       kind: 'duration',
       mods: { hpPct: num(bb.max_hp), atkPct: num(bb.atk), blockCnt: num(bb.block_cnt) },
@@ -1064,7 +1088,7 @@ function pasngr(bb, chess, def) {
       let best = null, bd = Infinity;
       for (const x of battle.enemiesInRadius(prev.x, prev.y, ch.radius || 1.8)) {
         if (hit.has(x.id) || !canTargetEnemy(unit, x, ANY)) continue;
-        const d = Math.hypot(x.x - prev.x, x.y - prev.y);
+        const d = bodyDist(x, prev.x, prev.y);
         if (d < bd - 1e-9) { bd = d; best = x; }
       }
       prev = best;
@@ -1132,7 +1156,7 @@ function pasngr(bb, chess, def) {
         const atk = num(t1.atk), spr = num(t1.sp_recovery_per_sec);
         aura(battle, unit, 0.25, () => {
           const near = new Set(absoluteRangeKeys(N4, unit.tileR, unit.tileC, 1, 0));
-          if (battle.enemies.some((e) => e.alive && !e.hidden && near.has(keyOf(e)))) return;
+          if (battle.enemies.some((e) => e.alive && !e.hidden && bodyInKeys(e, near))) return;
           battle.addBuff(unit, { key: 'pasngr:lone', mods: { atkPct: atk, spRecoveryFlat: spr }, duration: 0.4, refresh: 'replace' });
         });
       } },
@@ -1472,7 +1496,7 @@ function reed2(bb, chess, def) {
           battle.after(0, () => {
             if (!live(unit)) return;
             battle.fx('scorchBurst', { x, y, id: unit.id, r: aoeR });
-            for (const e of battle.enemiesInRadius(x, y, aoeR)) {
+            for (const e of battle.enemiesInRadius(x, y, aoeR, true)) { // splash around the victim: 中点判定
               if (!e.alive) continue;
               battle.dealDamage(unit, e, { amount: unit.s.atk * aoe, type: 'arts', isSkill: true, isSplash: true, tags: ['skill', 'scorch'] });
               scorch(battle, unit, e);
@@ -1552,12 +1576,16 @@ function cello(bb, chess, def) {
     install(battle, unit) {
       if (sid !== 'skchr_cello_2') return;
       const ratio = num(bb.ep_damage_ratio);
-      battle.on('damaged', (ctx) => {
-        const s = ctx.source, t = ctx.target;
-        if (!(ratio > 0) || !unit.skill?.active || !live(unit) || !s || !t || t.side !== 'enemy' || !t.alive || !(ctx.amount > 0)) return;
-        if (ctx.type === 'element' || ctx.type === 'elemental' || (s !== unit && s !== unit.mem.celloPartner)) return;
+      // PRTS 塑心 S2 备注: "受影响的干员即将造成伤害时，因该效果造成的凋亡损伤生效于当次触发的伤害之前，该造成的凋亡损伤的来源
+      // 始终为塑心" — a late `hit` handler (after every handler that may cancel the damage), so the 凋亡 lands while the
+      // target is alive and may burst before the damage; 无来源 bursts (source null) never trigger it. It rides the
+      // damage about to be dealt, so a hit dodged or absorbed afterwards still carried it [ASSUMED].
+      battle.on('hit', (ctx) => {
+        const s = ctx.source, t = ctx.target, d = ctx.dmg;
+        if (!(ratio > 0) || !unit.skill?.active || !live(unit) || !s || !t || t.side !== 'enemy' || !hasHp(t) || !d || d.cancel) return;
+        if (d.type === 'element' || d.type === 'elemental' || !(d.amount > 0) || (s !== unit && s !== unit.mem.celloPartner)) return;
         elementDmg(battle, unit, t, 'apoptosis', unit.s.atk * ratio);
-      }, { owner: unit });
+      }, { owner: unit, priority: -1000 });
     },
     skill: {
       kind: 'charges',
@@ -1591,10 +1619,9 @@ function cello(bb, chess, def) {
           battle.on('elementHit', (ctx) => {
             const t = ctx.target, d = ctx.dmg;
             if (!d || d.type !== 'element' || d.element !== 'apoptosis' || !t || t.side !== 'enemy') return;
-            const k = keyOf(t);
             let best = 1;
             for (const c of S.cellos) {
-              if (!live(c) || !(c.mem.celloWide || c.rangeKeySet?.has(k))) continue;
+              if (!live(c) || !(c.mem.celloWide || bodyInKeys(t, c.rangeKeySet))) continue;
               const v = scaled(c.mem.celloAmp, c);
               if (v > best) best = v;
             }
@@ -1636,7 +1663,7 @@ function nymph(bb, chess, def) {
     if (cur) { cur.data.scale = Math.max(cur.data.scale, scale); cur.timeLeft = Math.max(cur.timeLeft, burst.timeLeft); return; }
     battle.addBuff(t, {
       key, duration: Math.max(0.1, burst.timeLeft), interval: 1, source: unit, data: { scale },
-      // 元素伤害 = the 'elemental' damage type (no DEF/RES, × elemTakenMul)
+      // 元素伤害 = the 'elemental' damage type (no DEF/RES, × elementalTakenMul)
       onTick: ({ unit: e, buff }) => { if (e.findBuff('apoptosisBurst')) battle.dealDamage(unit, e, { amount: unit.s.atk * buff.data.scale, type: 'elemental', element: 'apoptosis', canDodge: false, tags: ['talent', 'elementDmg'] }); },
     });
   };
@@ -1669,7 +1696,7 @@ function nymph(bb, chess, def) {
         battle.on('deploy', ({ unit: u }) => { if (u === unit) unit.mem.nymphKey = 0; }, { owner: unit });
         battle.on('elementBurst', ({ target, element }) => {
           if (element !== 'apoptosis' || !live(unit) || !target || target.side !== 'enemy') return;
-          if (!fieldWide && !unit.rangeKeySet?.has(keyOf(target))) return;
+          if (!fieldWide && !bodyInKeys(target, unit.rangeKeySet)) return;
           unit.mem.nymphKey = Math.min(max, (unit.mem.nymphKey || 0) + 1);
           const n = unit.mem.nymphKey;
           battle.addBuff(unit, { key: 'nymph:key', mods: { atkPct: atk * n, aspd: fieldWide && n >= max ? as : 0 } });
@@ -2205,7 +2232,7 @@ function angel2(bb, chess, def) {
           sortEnemyTargets(battle, u, cands, null);
           const c = cands[0];
           battle.fx('airstrike', { x: c.x, y: c.y, id: unit.id, r: AIRSTRIKE_RADIUS });
-          for (const e of battle.enemiesInRadius(c.x, c.y, AIRSTRIKE_RADIUS)) {
+          for (const e of battle.enemiesInRadius(c.x, c.y, AIRSTRIKE_RADIUS, true)) { // splash around the target: 中点判定
             if (e.alive && !e.s.flags.untargetable) battle.dealDamage(unit, e, { amount: unit.s.atk * sc, type: 'phys', isSkill: true, isSplash: true, tags: ['talent', 'airstrike'] });
           }
         }, { owner: unit });
@@ -2374,7 +2401,7 @@ function qiubai(bb, chess, def) {
             if (!unit.alive || unit.deploySeq !== seq) return;
             const x = target.x, y = target.y; // (a fallen target keeps its last position)
             battle.fx('aoe', { x, y, id: unit.id });
-            for (const e of battle.enemiesInRadius(x, y, 1.2)) {
+            for (const e of battle.enemiesInRadius(x, y, 1.2, true)) { // splash around the target: 中点判定
               if (e.alive && !e.s.flags.untargetable) battle.dealDamage(unit, e, { amount: unit.s.atk * num(bb.aoe_scale, 1), type: 'arts', isSkill: true, isSplash: e !== target, tags: ['skill'] });
             }
           }, { owner: unit });
@@ -2463,7 +2490,7 @@ function halo2(bb, chess, def) {
             let best = null, bd = Infinity;
             for (const e of battle.enemiesInRadius(px, py, R)) {
               if (e === prev || !canTargetEnemy(unit, e, ANY)) continue;
-              const d = Math.hypot(e.x - px, e.y - py);
+              const d = bodyDist(e, px, py);
               if (d < bd - 1e-9) { bd = d; best = e; }
             }
             if (!best) break;
@@ -2487,7 +2514,7 @@ function halo2(bb, chess, def) {
           if (!target) return;
           const R = num(bb.ability_range_radius, 2), k = Math.max(0, Math.floor(num(bb.max_target, 2)));
           const near = battle.enemiesInRadius(target.x, target.y, R).filter((e) => e !== target && canTargetEnemy(unit, e, ANY))
-            .sort((a, b) => Math.hypot(a.x - target.x, a.y - target.y) - Math.hypot(b.x - target.x, b.y - target.y) || a.spawnSeq - b.spawnSeq)
+            .sort((a, b) => bodyDist(a, target.x, target.y) - bodyDist(b, target.x, target.y) || a.spawnSeq - b.spawnSeq)
             .slice(0, k);
           for (const e of near) {
             battle.fx('link', { x: e.x, y: e.y, id: unit.id, ids: [target.id, e.id] });
@@ -2523,7 +2550,7 @@ function halo2(bb, chess, def) {
         if (!isDef) return;
         battle.on('beforeAttack', (ctx) => {
           if (ctx.attacker !== unit || !unit.skill?.active) return;
-          const valid = (e) => e && e.alive && canTargetEnemy(unit, e, ANY) && unit.rangeKeySet?.has(keyOf(e));
+          const valid = (e) => e && e.alive && canTargetEnemy(unit, e, ANY) && bodyInKeys(e, unit.rangeKeySet);
           const keep = (unit.mem.haloLocks || []).filter(valid);
           for (const e of ctx.targets) if (keep.length < n && !keep.includes(e)) keep.push(e);
           ctx.targets = keep.slice(0, n);
@@ -2585,7 +2612,7 @@ function nearl2(bb, chess, def) {
     const keys = new Set(absoluteRangeKeys(N4, r, c, 1, 0));
     battle.fx('sunBurst', { x: c, y: r, id: unit.id });
     for (const e of battle.enemies) {
-      if (!e.alive || e.hidden || !keys.has(keyOf(e))) continue;
+      if (!e.alive || e.hidden || !bodyInKeys(e, keys)) continue;
       battle.dealDamage(unit, e, { amount: unit.s.atk * scale, type: 'true', isSkill: true, tags: ['skill'] });
       if (stun > 0 && e.alive) battle.applyStatus(e, 'stun', { duration: stun, source: unit });
     }
@@ -2673,7 +2700,7 @@ function nearl2(bb, chess, def) {
           if (b && (b === unit || b === unit.mem.sun)) ctx.dmg.type = 'true';
         }, { owner: unit });
       } },
-      { install(battle, unit) { // 不畏苦暗
+      { install(battle, unit) { // 不畏苦暗 — the 4 tiles around her, air units too [ASSUMED: no 对空 note on PRTS, like “耀阳”]
         const last = ensureDeployTracker(battle);
         const sc = num(t0.atk_scale), stun = num(t0.stun);
         const dawn = (times) => {
@@ -2803,7 +2830,7 @@ function whitw2(bb, chess, def) {
             let best = null, bd = Infinity, bestFree = null, bfd = Infinity;
             for (const e of battle.enemies) {
               if (!ok(e)) continue;
-              const dist = Math.hypot(e.x - d.x, e.y - d.y);
+              const dist = bodyDist(e, d.x, d.y);
               if (dist < bd - 1e-9) { bd = dist; best = e; }
               if (!taken.has(e) && dist < bfd - 1e-9) { bfd = dist; bestFree = e; }
             }
@@ -2814,7 +2841,7 @@ function whitw2(bb, chess, def) {
           if (!d.t) continue;
           const dx = d.t.x - d.x, dy = d.t.y - d.y, dist = Math.hypot(dx, dy), step = speed * dt;
           if (dist <= step) { d.x = d.t.x; d.y = d.t.y; } else { d.x += (dx / dist) * step; d.y += (dy / dist) * step; }
-          if (d.locked !== d.t && Math.hypot(d.t.x - d.x, d.t.y - d.y) <= R) {
+          if (d.locked !== d.t && bodyInRadius(d.t, d.x, d.y, R)) {
             d.locked = d.t;
             if (fear > 0) battle.applyStatus(d.t, 'fear', { duration: fear, source: unit });
             battle.fx('droneLock', { x: d.x, y: d.y, id: d.t.id, src: unit.id });
@@ -3088,29 +3115,44 @@ function agoat2(bb, chess, def) {
         }, { owner: unit });
       } },
       { install(battle, unit) { // 氤氲
+        // "普通治疗使目标每秒额外受到一次治疗量和元素损伤回复量为10%的增益治疗，持续6秒（最多叠加3层）" — PRTS 备注: "本天赋受
+        // 特性治疗倍率影响，使用缓存攻击力；叠加时，重置持续时间并更新缓存攻击力": a 10 % heal shaped like her normal one —
+        // HP heal_scale × ATK and 元素损伤 recovery heal_scale × the trait's ep_heal_ratio × ATK (0.5 / 0.6: 5 % / 6 %,
+        // it used to be the full 10 %) — per stack, with the ATK of the last application; a new stack refreshes them all.
         const sc = num(t0.heal_scale), dur = num(t0.duration, 6), max = Math.max(1, Math.floor(num(t0.max_stack_cnt, 3)));
         if (!(sc > 0)) return;
+        const epRatio = () => num(unit.profile?.heal?.elementHealRatio, num(tb.ep_heal_ratio, 0.5));
         battle.on('heal', (ctx) => {
           const t = ctx.target;
           if (ctx.source !== unit || ctx.opts?.hot || ctx.opts?.aura || ctx.opts?.regen || ctx.opts?.skillHeal || !t) return;
-          battle.addBuff(t, {
-            key: 'agoat2:mist', duration: dur, refresh: 'independent', maxStacks: max, interval: 1, source: unit,
-            onTick: ({ unit: a }) => {
-              const amt = unit.s.atk * sc;
-              battle.reduceElement(a, amt);
+          // keyed per 纯烬: two of them (co-op) each keep their own stacks, ATK and heal source
+          const b = battle.addBuff(t, {
+            key: `agoat2:mist:${unit.id}`, duration: dur, refresh: 'stack', stacks: 1, maxStacks: max, interval: 1, source: unit, data: {},
+            onTick: ({ unit: a, buff }) => {
+              const amt = num(buff.data.atk, unit.s.atk) * sc * Math.max(1, buff.stacks);
+              battle.reduceElement(a, amt * epRatio());
               if (a.hp < a.s.maxHp) battle.heal(unit, a, amt, { hot: true });
             },
           });
+          if (b) b.data.atk = unit.s.atk;
         }, { owner: unit });
       } },
       { install(battle, unit) { // 火山灰疗愈 (×talent_scale during S3)
+        // "受到的元素损伤降低" is a 元素损伤 multiplier applied on the element hit (PRTS 元素 "…后续可应用元素损伤倍率
+        // 提升/降低等效果"), not `elemTakenMul` (元素伤害 / 元素脆弱): the aura buff carries the cut, `elementHit` applies it
         const hp = num(t1.max_hp), er = num(t1.ep_damage_resistance), mulS = num(bb.talent_scale, 1);
         aura(battle, unit, 0.5, () => {
           const f = unit.skill?.active ? mulS : 1;
           for (const a of battle.alliesInGrid(unit)) {
-            battle.addBuff(a, { key: 'agoat2:ash', mods: { hpPct: hp * f, elemTakenMul: Math.max(0, 1 - er * f) }, duration: 0.75, refresh: 'replace' });
+            battle.addBuff(a, { key: 'agoat2:ash', mods: { hpPct: hp * f }, data: { epCut: Math.min(1, er * f) }, source: unit, duration: 0.75, refresh: 'replace' });
           }
         });
+        battle.on('elementHit', (ctx) => {
+          const d = ctx.dmg, b = ctx.target?.findBuff?.('agoat2:ash');
+          if (!b || b.source !== unit || !d || d.type !== 'element') return;
+          const cut = num(b.data?.epCut);
+          if (cut > 0) d.mul *= Math.max(0, 1 - cut);
+        }, { owner: unit, priority: 20 });
       } },
     ],
   };

@@ -143,14 +143,14 @@ test('#12 炎佑: 元素脆弱 aura within 1.5 of itself, immune to element dama
   const [near, far] = h.enemies();
   assert.ok(near.findBuff('elemFragile'), '1.2 away: 元素脆弱');
   assert.ok(!far.findBuff('elemFragile'), '3.2 away: none');
-  assert.ok(Math.abs(near.s.elemTakenMul - 1.2) < 1e-9, 'element damage ×1.2');
+  assert.ok(Math.abs(near.s.elementalTakenMul - 1.2) < 1e-9, '元素伤害 ×1.2');
   // element damage on the dragon is cancelled
   h.b.dealDamage(near, y, { type: 'element', element: 'burn', amount: 800 });
   assert.equal(y.elem.burn, 0, 'no burn gauge on 炎佑');
-  // normal hits: burn = ATK × 0.2 (× the 1.2 fragility) per hit
+  // normal hits: burn = ATK × 0.2 per hit — the 1.2 元素脆弱 (2.damage_scale) raises 元素伤害, never the gauge fill
   const before = near.elem.burn;
   assert.ok(h.runUntil(() => near.elem.burn > before, 5));
   const tal = h.b.data.rawToken(TOKEN_IDS.yanyou).talents.bb;
-  assert.ok(Math.abs(near.elem.burn - before - y.s.atk * tal['2.ep_damage_ratio'] * tal['2.damage_scale']) < 1e-6, `burn per hit ${near.elem.burn - before}`);
+  assert.ok(Math.abs(near.elem.burn - before - y.s.atk * tal['2.ep_damage_ratio']) < 1e-6, `burn per hit ${near.elem.burn - before}`);
   checkInvariants(h.b);
 });

@@ -15,6 +15,14 @@ export const COLS = GEO.COLS;
 export const MOVE_SCALE = 0.5;
 /** Ranged enemies stop moving this long after each attack (DESIGN §5.5). */
 export const ATTACK_PAUSE = 0.35;
+/**
+ * Block contact (PRTS 游戏数据基础 §阻挡半径; 作战机制 §碰撞体积与位置识别 "中点判定 … 案例: 阻挡"): an unblocked enemy whose
+ * position lies within the blocker's radius of the blocker's centre touches it — compared on squared distances, as the
+ * official client does. Ground blocking 0.70709997 (² 0.49999037); air blocking (起飞 / blockFly units against flyers)
+ * 0.8944 (² 0.79995137); devices override it (阻隔工事 / 障碍物 0.4472). Used by Battle._checkBlock (user playtest #5).
+ */
+export const BLOCK_RADIUS = Object.freeze({ ground: 0.70709997, fly: 0.8944, device: 0.4472 });
+export const BLOCK_RADIUS_SQ = Object.freeze({ ground: 0.49999037, fly: 0.79995137, device: 0.4472 * 0.4472 });
 /** Default projectile speed in tiles/s for ranged operators/enemies. */
 export const PROJECTILE_SPEED = 12;
 /**
@@ -38,7 +46,8 @@ export const ELEMENTS = Object.freeze(['burn', 'neural', 'necrosis', 'apoptosis'
  * Element bursts — official term table (gamedata_const termDescriptionDict):
  *   `ally` = an operator/summon hit by enemy damage (ba.dt.burning / neural / apoptosis / erosion),
  *   `enemy` = an enemy hit by operators (the "·我方" terms ba.dt.burning2 / neural2 / apoptosis2 / erosion2;
- *   `elemDamage` is 元素伤害: HP damage ignoring DEF/RES, × elemTakenMul).
+ *   `elemDamage` is 元素伤害: HP damage through 元素抗性 instead of DEF/RES, × elementalTakenMul = 元素脆弱).
+ * Burst damage is 无来源 (PRTS 元素): no damage-dealt multiplier or penetration of the unit that filled the gauge.
  * `duration` = the burst's 爆发冷却 (PRTS 元素 table "持续时间": 10 s, 凋亡 15 s, 侵蚀 on enemies 8 s — the operators'
  * 侵蚀 burst has its 10 s cooldown too): while it runs NO element of the unit fills or recovers, and when it ends every
  * gauge of the unit resets (damage.js).
@@ -93,6 +102,15 @@ export const DP_DEFAULTS = Object.freeze({ dpInit: 10, dpPerSec: 1, dpMax: 99 })
  * free (WAIT_TILE). render/units.js mirrors these codes.
  */
 export const DOWN_STATE = Object.freeze({ COUNTING: 0, WAIT_DP: 1, WAIT_TILE: 2 });
+/**
+ * Removal reason of an operator that enters a battle already knocked out: a 联防 helper's operator down at the end of
+ * its own combat (PlayerBattleInput `carryState.down`; PRTS 卫戍协议/帮助 §联防阶段 "上一阶段为退场状态的干员强制退场").
+ * Battle.start deploys it with everyone, then withdraws it at once with HP 0 — down on its own tile like a knocked-out
+ * operator (Battle.isDown, b.snap `down`), its redeploy timer running from then — without the knock-out hooks (`kill`,
+ * `death` with reason 'killed'), which fired in its own combat. render/app.js mirrors the string (no fall, no death
+ * burst).
+ */
+export const FORCED_EXIT = 'forcedExit';
 
 /** Safety cap for battles with an infinite time limit (boss rounds are force-ended by the match). */
 export const MAX_BATTLE_TIME = 3600;

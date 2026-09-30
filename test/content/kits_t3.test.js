@@ -191,9 +191,11 @@ test('3_06 菲莱: 冥河诅咒 no attacks, HP +, counter arts + apoptosis (cd),
     const u = h.unit(id);
     h.run(0.2);
     const e = h.enemy('enemy_h');
-    approx(u.s.elemTakenMul, 1 - t0.damage_resistance);
-    const sp0 = u.skill.sp;
+    // 神河谕使: a 元素损伤 multiplier on the hit (the gauge fill), not elemTakenMul (元素伤害 / 元素脆弱)
+    approx(u.s.elemTakenMul, 1);
+    const sp0 = u.skill.sp, a0 = u.elem.apoptosis;
     h.b.dealDamage(e, u, { type: 'element', element: 'apoptosis', amount: 10 });
+    approx(u.elem.apoptosis - a0, 10 * (1 - t0.damage_resistance), 1e-6, 'element taken −damage_resistance');
     approx(u.skill.sp, sp0 + t0.sp, 1e-6, '+SP on apoptosis');
     fill(u);
     assert.ok(h.runUntil(() => u.skill.active, 10));

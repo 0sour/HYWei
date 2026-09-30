@@ -15,8 +15,9 @@
 
 import { COLS, ELEMENT_GAUGE_MAX } from '../../constants.js';
 import { canTargetEnemy } from '../../targeting.js';
+import { bodyInKeys } from '../../body.js';
 import {
-  num, talentBb, moduleBb, traitBb, up, posKey, cheb, byEnemyAttack, onHitBy, onHitOn, onDamagedOn, enemiesInGrid,
+  num, talentBb, moduleBb, traitBb, up, cheb, byEnemyAttack, onHitBy, onHitOn, onDamagedOn, enemiesInGrid,
   alliesInGridOf, enemyInRange, statBuff, toggleBuff, installAura, spTimeBonus, freeTileAround, summonTileFree, instantKind,
   tinmanKit, batMod,
 } from './tier1.js';
@@ -48,8 +49,8 @@ function tokenLifetime(battle, tokId, owner, desc) {
   return m ? +m[1] : 0;
 }
 
-/** Largest element gauge of a unit. */
-const elemLoad = (a) => Math.max(a.elem.burn, a.elem.neural, a.elem.necrosis, a.elem.apoptosis);
+/** Largest element gauge of a unit (every element — 侵蚀 included: the bosses' attacks fill it on operators). */
+const elemLoad = (a) => Math.max(a.elem.burn, a.elem.neural, a.elem.necrosis, a.elem.apoptosis, a.elem.erosion ?? 0);
 
 /**
  * Whether the SELECTED skill of a loadout-resolved chess record is its default skill (DESIGN §16: `chess.skill` is the
@@ -211,7 +212,9 @@ export default {
   // ---------------------------------------------------------------------------------------------------------------
   // 2_05 哈洛德 重症优先: ASPD +attack_speed, heals the ally with the heaviest element damage first; on targets whose
   // gauge is over half, the element recovery is trait_scale × (the wandermedic trait: ep_heal_ratio × ATK).
-  // 我即军营: allies in range whose gauge is over half take −ep_damage_resistance element damage.
+  // 我即军营: allies in range whose gauge is over half take −ep_damage_resistance 元素损伤 — checked on the element hit
+  // itself (`elementHit`, a 元素损伤 multiplier: PRTS 元素 "…后续可应用元素损伤倍率提升/降低等效果"; not `elemTakenMul`,
+  // which is 元素伤害 / 元素脆弱); several 哈洛德 do not stack — the strongest cut applies.
   // S1 治疗强化·γ型 (alt): ATK +atk; the 重症优先 target order belongs to S2 only.
   chess_char_2_05_a: (bb, chess) => {
     const t = talentBb(chess, 0);
@@ -235,14 +238,17 @@ export default {
           if (cands.length) ctx.targets = cands.slice(0, Math.max(1, ctx.targets.length));
           unit.mem.haroldHalf = new Set(ctx.targets.filter((a) => elemLoad(a) > half).map((a) => a.id));
         }, { owner: unit });
-        const r = num(t.ep_damage_resistance);
+        const r = Math.max(0, Math.min(1, num(t.ep_damage_resistance)));
         if (r > 0) {
-          battle.every(0.2, () => {
-            if (!up(unit)) return;
-            for (const a of alliesInGridOf(battle, unit)) {
-              if (elemLoad(a) > half) battle.addBuff(a, { key: 'harold:camp', duration: 0.3, mods: { elemTakenMul: 1 - r }, source: unit, tags: ['talent'] });
-            }
-          }, { owner: unit });
+          battle.on('elementHit', (ctx) => {
+            const a = ctx.target, d = ctx.dmg;
+            if (!up(unit) || !a || a.side !== 'ally' || !d || d.type !== 'element' || !(elemLoad(a) > half)) return;
+            if (!(unit.rangeKeySet || new Set(unit.rangeKeys || [])).has(a.tileR * COLS + a.tileC)) return;
+            const prev = d.haroldCut || 0;               // the strongest 我即军营 of the hit only
+            if (r <= prev) return;
+            d.mul *= (1 - r) / (1 - prev);
+            d.haroldCut = r;
+          }, { owner: unit, priority: 20 });
         }
       } }],
     };
@@ -287,7 +293,7 @@ export default {
             unit.mem.papyrsHook = battle.on('beforeAttack', (ctx) => {
               if (ctx.attacker !== unit || !skill.active) return;
               const L = unit.mem.papyrsLock;
-              if (L && up(L) && unit.rangeKeySet?.has(posKey(L))) ctx.targets = [L];
+              if (L && up(L) && bodyInKeys(L, unit.rangeKeySet)) ctx.targets = [L];
             }, { owner: unit, priority: 10 });
             battle.fx('buff', { x: lock.x, y: lock.y, id: lock.id, kind: 'lock' });
           },
@@ -477,7 +483,7 @@ export default {
         if (s2) battle.on('beforeAttack', (ctx) => {
           if (ctx.attacker !== unit || !unit.skill?.active) return;
           const L = unit.mem.rockLock;
-          if (L && L.alive && unit.rangeKeySet?.has(posKey(L)) && canTargetEnemy(unit, L, ctx.profile || unit.profile)) ctx.targets = [L];
+          if (L && L.alive && bodyInKeys(L, unit.rangeKeySet) && canTargetEnemy(unit, L, ctx.profile || unit.profile)) ctx.targets = [L];
           else unit.mem.rockLock = ctx.targets[0] ?? null;
         }, { owner: unit });
         const iv = num(t.interval), max = Math.floor(num(t.max_stack_cnt)), v = num(t.atk);
@@ -497,7 +503,8 @@ export default {
   // ---------------------------------------------------------------------------------------------------------------
   // 2_11 风丸 纸艺·双影: lose hp_ratio of current HP, ATK +atk, summon the <替身> (overrideTokenKey) on a free melee tile
   // around her for the skill's duration [ASSUMED lifetime]. 折纸生花: whenever a <替身> appears (the summon, and the
-  // dollkeeper substitution) enemies on the 8 surrounding tiles take damage_scale × its ATK arts.
+  // dollkeeper substitution) enemies on the 8 surrounding tiles take damage_scale × its ATK arts — air units too [ASSUMED:
+  // no 对空 note on PRTS; the <替身> itself "可对空"].
   // Trait substitution: she fights with the <替身>'s stats (the engine already swaps in its HP; the kit swaps ATK/DEF
   // with flat deltas so %-buffs still apply). Elite module (PUM-X, trait atk): while substituted, ATK +atk.
   // S1 纸艺·迅击 (alt, attack SP): the next attack hits at atk_scale × ATK and she loses hp_ratio of her MAX HP (PRTS:
@@ -759,8 +766,9 @@ export default {
           onStart({ battle, unit, skill }) {
             if (unit.mem.sundial) battle.off(unit.mem.sundial);
             const p = num(bb.prob);
-            unit.mem.sundial = p > 0 ? onHitOn(battle, unit, ({ source, dmg }) => {
-              if (!skill.active || dmg.cancel || dmg.type !== 'phys' || !source || source.side !== 'enemy') return;
+            unit.mem.sundial = p > 0 ? onHitOn(battle, unit, ({ source, credit, dmg }) => { // 抵挡 is target-side: a 无来源 burst counts via its credit
+              const src = source || credit;
+              if (!skill.active || dmg.cancel || dmg.type !== 'phys' || !src || src.side !== 'enemy') return;
               if (battle.rng.chance(p)) { dmg.cancel = true; battle.fx('block', { x: unit.x, y: unit.y, id: unit.id }); }
             }, 5) : null;
           },

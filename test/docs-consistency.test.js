@@ -8,7 +8,9 @@
 // act in (never wiped at the round start), the 回环射手 boomerang and 蕾缪安's shells one by one, the live LP, the detail
 // card order and the static game data; user playtest #4 (DESIGN §18): picking by the tile under the pointer and the
 // dragged model held under it, a single human untimed, the strategy draft's one countdown, 机变 two taps, knocked-out
-// operators and the official element gauges, live stats, the shop-only items, skill summons, 炎佑.
+// operators and the official element gauges, live stats, the shop-only items, skill summons, 炎佑; user playtest #5
+// (DESIGN §19): blocking by contact radius, 联防 forced exit, huge-boss hit areas and 自缚, the element pipeline rules,
+// boss-field deployment, the phone prep camera — and the normative §3 / §5.1 / §5.5 / §6.1 / §7 lines that changed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -21,7 +23,10 @@ import { SOLO_RECONNECT_FALLBACK_SEC } from '../server/lobby.js';
 import { moduleTypeIconUrl } from '../public/js/ui/assetUrls.js';
 import { validateC2S } from '../shared/protocol.js';
 import { ERR, PHASE } from '../shared/constants.js';
-import { PROJECTILE_SPEEDS, BOOMERANG_RETURN_SPEED, ELEMENT, ELEMENT_ORDER, DOWN_STATE } from '../server/sim/constants.js';
+import { PROJECTILE_SPEEDS, BOOMERANG_RETURN_SPEED, ELEMENT, ELEMENT_ORDER, DOWN_STATE, BLOCK_RADIUS, FORCED_EXIT } from '../server/sim/constants.js';
+import { SELF_BOUND } from '../server/sim/content/bosses.js';
+import * as BOARD from '../server/match/board.js';
+import * as DAMAGE from '../server/sim/damage.js';
 import { SUB } from '../server/sim/professions.js';
 import { ENEMY_REACH } from '../public/js/render/pick.js';
 import { BAND_TURN_SECONDS } from '../server/match/Match.js';
@@ -302,4 +307,70 @@ test('user playtest #4 (DESIGN §18): picking by tile, timers, 机变 two taps, 
   assert.match(dataRow('displayType`, `placeable'), /DEFAULT \*\*and\*\* a talent summon/);
   assert.ok(!/ATK\/HP are \*\*replaced\*\*/.test(DATA_MD), 'DATA: 炎佑 stats are added (最终加算)');
   assert.match(DESIGN, /with no enemy on the field it stays where it is/);
+});
+
+test('user playtest #5 (DESIGN §19): blocking, 联防 forced exit, huge bosses, element pipeline, maps, phone camera — code and every doc agree', () => {
+  const sec = (n) => DESIGN.slice(DESIGN.indexOf(`## ${n}.`), DESIGN.indexOf(`## ${n + 1}.`) > 0 ? DESIGN.indexOf(`## ${n + 1}.`) : undefined);
+  const S19 = sec(19);
+  assert.match(DESIGN, /## 19\. User playtest #5 \(v2\.4\)/);
+  for (let i = 1; i <= 9; i++) assert.match(S19, new RegExp(`### 19\\.${i} `), `§19.${i}`);
+  for (let i = 1; i <= 11; i++) assert.match(S19.slice(0, S19.indexOf('### 19.1')), new RegExp(`#${i} `), `the intro maps report #${i}`);
+  // #4 blocking: the contact radius (code = §5.5 = SIM)
+  assert.deepEqual({ ...BLOCK_RADIUS }, { ground: 0.70709997, fly: 0.8944, device: 0.4472 });
+  const s55 = DESIGN.slice(DESIGN.indexOf('### 5.5'), DESIGN.indexOf('### 5.6'));
+  assert.match(s55, /ground 0\.7071/);
+  assert.match(s55, /takes the enemy over when its blocker dies, is withdrawn or is stunned/);
+  assert.ok(!/whose position enters its tile \(\|dx\|,\|dy\| ≤ 0\.5\)/.test(s55), '§5.5: the old same-tile block rule is gone');
+  assert.match(SIM, /taken over by another operator in contact with room, else they walk on/);
+  // #2 联防: carryState { down: true } → FORCED_EXIT (code = §5.1 / §5.5 / §6.1 / §18.3)
+  assert.equal(FORCED_EXIT, 'forcedExit');
+  assert.match(DESIGN, /carryState\?: \{ hpPct, sp, skillActive \} \| \{ down: true \}/);
+  assert.match(DESIGN, /or `FORCED_EXIT`, entering 联防 knocked out/);
+  assert.match(sec(6), /knocked out at the end of its own combat enters down/);
+  assert.match(PLAYING, /作战结束时已被击倒的干员在原位倒地/);
+  // #10 huge bosses: hit areas (§3), 自缚 (§7)
+  assert.equal(SELF_BOUND.length, 7);
+  assert.match(sec(3), /data `hitArea`/);
+  assert.match(sec(3), /`sim\/body\.js`/);
+  assert.match(sec(3), /中点判定/);
+  assert.match(sec(7), /`content\/bosses\.js SELF_BOUND`/);
+  assert.match(PLAYING, /自缚、无法被阻挡/);
+  // #3 elements: one hasHp, the pipeline guard, 脆弱 vs 元素伤害, element healing per type
+  assert.equal(typeof DAMAGE.hasHp, 'function');
+  for (const f of ['server/sim/content/kits/tier5.js', 'server/sim/content/kits/tier6.js', 'server/sim/content/items/battle.js']) {
+    assert.ok(!/const hasHp = /.test(readFileSync(join(ROOT, f), 'utf8')), `${f}: no local hasHp copy`);
+  }
+  assert.match(s55, /元素伤害 takes 元素脆弱 \(`elementalTakenMul`\) alone, not `dmgTakenMul`/);
+  assert.match(SIM, /lowers element\s+`el`, or every element type, each by `amount` on its own/);
+  assert.match(PLAYING, /无来源伤害/);
+  // audit rows as corrected by the reviews
+  assert.match(S19, /卢西恩 ATK 700 \(solo 600\)/);
+  assert.match(S19, /T2 1\.5 % max HP of HP and element per s with ≥ 4 operators on the field \(elite ≥ 2/);
+  assert.match(S19, /特制水上平台 are ×64/);
+  assert.match(S19, /756×366 CSS px/);
+  assert.ok(!/1\.5\/2 % max HP|×68|830×381|1500 \/ 750/.test(S19), '§19: no refuted audit figure');
+  // #7 boss-field deploy: the board row shift has one name, the opposite of prepfield's
+  assert.equal(BOARD.BOARD_ROWS_ABOVE_BOSS, 7);
+  assert.equal(BOARD.BOSS_ROW_SHIFT, undefined, 'board.js: no BOSS_ROW_SHIFT (render/prepfield.js has the opposite sign)');
+  assert.match(PLAYING, /关底战场上的半场/);
+  // #9 phone prep camera: §18.1's v2.3 figures superseded
+  assert.match(sec(18), /superseded by §19\.8/);
+  assert.ok(!/71 % now/.test(DESIGN), 'DESIGN §18.1: the v2.3 notched-phone figure is not current');
+  assert.ok(!/71 % now/.test(readFileSync(join(ROOT, 'public/css/devices.css'), 'utf8')), 'devices.css: no stale figure');
+  // #1 / #5 / #4 player guide
+  assert.match(PLAYING, /\*\*立刻接替阻挡\*\*/);
+  assert.match(PLAYING, /召唤物在所有干员之后/);
+  assert.match(PLAYING, /近地悬浮/);
+  // integration QA residuals: blocked-first / out-of-range selection is melee-only (code = §5.5 = §19.2 = SIM = PLAYING);
+  // the forced-out timer is re-read after battleStart; the gauge intake's 5 % floor; the boss field's devices
+  assert.match(s55, /\(1\) the enemies it blocks \(melee units only, in range or not\)/);
+  assert.match(s55, /a ranged operator on a melee tile blocks but attacks only what its range holds/);
+  assert.ok(!/every blocker, ranged ones on melee tiles included/.test(DESIGN), '§19.2: the old [ASSUMED] is gone');
+  assert.match(SIM, /A ranged operator standing on a melee tile blocks, but targets by its range alone/);
+  assert.match(PLAYING, /站在近战位的远程干员也能阻挡/);
+  assert.match(s55, /after which the forced-out operators' timers are re-read/);
+  assert.match(SIM, /Right after `battleStart`\s+its timer is re-read/);
+  assert.match(s55, /max\(0\.05, 1 − 损伤抵抗\/100\)/);
+  assert.match(SIM, /max\(5 %, 1 − 损伤抵抗 \/ 100\)/);
+  assert.match(S19, /the boss field's devices are drawn with the boss field only/);
 });

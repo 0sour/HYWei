@@ -972,7 +972,7 @@ test('圣约送葬人 T1 受选之人: the extra attack consumes no ammo and nev
   clean(h);
 });
 
-test('元素伤害 uses the engine elemental type: × elemTakenMul, never × trueTakenMul (烛煌 熔点引爆, 妮芙 失魂)', () => {
+test('元素伤害 uses the engine elemental type: × elementalTakenMul (元素脆弱), never × trueTakenMul (烛煌 熔点引爆, 妮芙 失魂)', () => {
   // one battle per burst: after a burst the enemy's gauges stay locked for its 爆发冷却 (damage.js)
   const arena = () => {
     const h = makeBattle({
@@ -983,7 +983,7 @@ test('元素伤害 uses the engine elemental type: × elemTakenMul, never × tru
     h.step();
     const e = h.enemy('enemy_dummy');
     h.b.addBuff(e, { key: 't:true', mods: { trueTakenMul: 2 } });
-    h.b.addBuff(e, { key: 't:elem', mods: { elemTakenMul: 1.5 } });
+    h.b.addBuff(e, { key: 't:elem', mods: { elementalTakenMul: 1.5 } });
     return { h, e, blaze: h.unit('chess_char_5_03_a'), nymph: h.unit('chess_char_5_22_a') };
   };
   const a = arena();
@@ -991,14 +991,14 @@ test('元素伤害 uses the engine elemental type: × elemTakenMul, never × tru
   const melt = tagged(a.h, 'blazeMelt', a.e);
   assert.equal(melt.length, 1);
   assert.equal(melt[0].type, 'elemental');
-  approx(melt[0].amount, a.blaze.s.atk * tal(a.blaze, 0).ep_damage_scale * 1.5, 1e-6, 'meltdown × elemTakenMul only');
+  approx(melt[0].amount, a.blaze.s.atk * tal(a.blaze, 0).ep_damage_scale * 1.5, 1e-6, 'meltdown × elementalTakenMul only');
   clean(a.h);
   const { h, e, nymph } = arena();
   h.b.dealDamage(null, e, { type: 'element', element: 'apoptosis', amount: 1000 });
   assert.ok(h.runUntil(() => tagged(h, 'nymphSoul', e).length > 0, 6));
   const soul = tagged(h, 'nymphSoul', e)[0];
   assert.equal(soul.type, 'elemental');
-  approx(soul.amount, nymph.s.atk * tal(nymph, 0).element_atk_scale * 1.5, 1e-6, '失魂 × elemTakenMul only');
+  approx(soul.amount, nymph.s.atk * tal(nymph, 0).element_atk_scale * 1.5, 1e-6, '失魂 × elementalTakenMul only');
   clean(h);
 });
 

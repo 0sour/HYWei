@@ -312,10 +312,19 @@ test('boss field with a shared pool: an emptied field (leader leaked) keeps runn
 });
 
 test('Final Assault h07_04 (pair): 昆图斯 walking into the objective does not end the field while the pool is full', { skip: !hasGeneratedData() && 'no generated data' }, () => {
-  // Regression: the official pair route of the leader has no wait step; with nobody blocking him he leaks at ~180 s
+  // Regression: the official pair route of the leader has no wait step; with nobody blocking him he leaked at ~180 s
   // and the field used to finish 'cleared' at once, ending the Final Assault as a defeat with team LP left.
+  // Officially he is 自缚 (PRTS 天赋; content/bosses.js SELF_BOUND, user playtest #5) and never walks it — the engine
+  // rule is still checked by lifting the 自缚 buff.
   const pool = new LocalBossPool(708750);
-  const h = makeBattle({ kind: 'boss', stageId: 'act2autochess_m02', rect: { r0: 0, r1: 5, c0: 0, c1: 20 }, waveTemplate: 'act1autochess_h07_04', sharedBoss: pool, units: [] });
+  const opts = { kind: 'boss', stageId: 'act2autochess_m02', rect: { r0: 0, r1: 5, c0: 0, c1: 20 }, waveTemplate: 'act1autochess_h07_04', sharedBoss: pool, units: [] };
+  const bound = makeBattle({ ...opts, sharedBoss: new LocalBossPool(708750) });
+  bound.run(400);
+  assert.ok(!bound.hooks.enemyLeak.some((x) => x.enemy.defId === 'enemy_1521_dslily'), '自缚: he stays');
+  assert.equal(bound.b.finished, false);
+  const h = makeBattle(opts);
+  assert.ok(h.runUntil(() => h.b.enemies.some((e) => e.defId === 'enemy_1521_dslily'), 5));
+  for (const e of h.b.enemies) if (e.defId === 'enemy_1521_dslily') h.b.removeBuff(e, 'boss:selfBound');
   assert.ok(h.runUntil(() => h.hooks.enemyLeak.some((x) => x.enemy.defId === 'enemy_1521_dslily'), 400), 'the leader leaks');
   h.run(200);
   assert.equal(h.b.finished, false);

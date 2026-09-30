@@ -14,7 +14,8 @@
 // it; a refused drop toasts the reason (gameLogic dropFailureReason / canPlace). Tapping an own piece selects it:
 // its underframe (ui/underframe.js: 撤退 / 出售 +N / 销毁), its rotated range tiles and its detail card; right-click /
 // long-press opens the detail card only. There is no drag-to-sell. The own board is drawn and checked with the
-// player's stage overrides (terrain 机变 cards: gameLogic stageOverrides / effectiveStage).
+// player's stage overrides (terrain 机变 cards: gameLogic stageOverrides / effectiveStage); in a boss round's prep the
+// legality reads the player's half of the boss field (gameLogic deployFieldOf, user playtest #5 item 7).
 // Shortcuts: R refresh, F freeze, D level-up, Space ready, Esc closes the topmost popup.
 // The UI never mutates match state locally; it re-renders from m.public / m.private / m.field pushes.
 // Client-side combat (DESIGN §14, m.public.combatMode 'client'): battles are simulated in this browser by
@@ -74,7 +75,7 @@ import {
   phaseMode, phaseBanner, isCombatPhase, showDeadPill, isBossPhase, placementContext, canPlace, boardTargets, dropIntent,
   snapHud, activeBubbles, shortcutFor, shortcutBlocked, closesOnFieldPress, phaseTotalSeconds, homeFieldId, ownFieldId, normalizeSp, sortedPlayers,
   countdownState, shopBlockReason, stageOverrides, effectiveStage, watchTarget, dropFailureReason,
-  previewEnemyKey, prepCamera, panelSide, panelSlots, bondPopupPlace, chessLoadout, unitLoadout,
+  previewEnemyKey, prepCamera, deployFieldOf, panelSide, panelSlots, bondPopupPlace, chessLoadout, unitLoadout,
 } from '../ui/gameLogic.js';
 import { toast } from '../ui/toasts.js';
 import { BriefingScreen } from './briefing.js';
@@ -227,17 +228,21 @@ function MatchScreen() {
 
   // latest values for event handlers bound once
   const live = useRef({});
+  // the field the own pieces are deployed on: the own board, or the player's half of the boss field in a boss round's
+  // prep (user playtest #5 item 7: legality and the legal-tile highlights read THOSE tiles, like the server)
+  const deployField = deployFieldOf(pub, myId);
   const placeCtx = useMemo(() => placementContext({
-    priv, stage: gd.stage(pub?.stageId), editable,
+    priv, stage: gd.stage(pub?.stageId), editable, field: deployField,
     getChess: gd.chess, getToken: gd.token, getItem: gd.item, getEffect: gd.effect,
-  }), [priv, pub?.stageId, editable, gd.ready]);
+  }), [priv, pub?.stageId, editable, gd.ready, deployField]);
   live.current = { pub, priv, field, editable, placeCtx, watching, home, myId, detail, drawer, bondOpen, emoteOpen, settingsOpen, exitOpen, drag, facing, sel, pen, collapsedNow: collapsed, localDone: false, canPause: false, paused };
 
   // ---- camera: every request goes through setCam, which remembers it for the pen's way back -----------------------
   // the own prep board: the normal board, or — in the prep of a boss round — the player's half of the boss field
-  // (research 09 §1.2: the right-hand player's board mirrored; gameLogic prepCamera). The DOM fallback view has no
-  // boss-field prep: it keeps the own board (every coordinate the UI handles is a board coordinate either way).
-  const prepCam = viewKind === 'fallback' ? prepCamera(null, myId) : prepCamera(pub, myId);
+  // (research 09 §1.2: the right-hand player's board mirrored; gameLogic prepCamera). The DOM fallback view keeps the
+  // own board's layout there (every coordinate the UI handles is a board coordinate either way) and draws the tiles of
+  // that half (ui/fallbackField.js: the legal fence tiles are floor, not the normal field's walls; user playtest #5 item 7).
+  const prepCam = prepCamera(pub, myId);
   const prepCamKey = `${prepCam.kind}:${prepCam.opts.side}`;
   const prepCamSeen = useRef(prepCamKey);                // the prep camera last requested
   const camRef = useRef({ kind: 'prep', opts: { rect: { ...GEO.NORMAL_RECT }, side: 'L' } });

@@ -7,7 +7,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   Camera, fitCamera, presetCamera, lerpCamera, pickTile, tileQuad, normRect, CAMERA_PRESETS, easeInOutCubic,
-  OFFICIAL, OFFICIAL_PARAMS, officialCamera, parseCameraParam, threeCameraParams, syncThreeCamera,
+  OFFICIAL, OFFICIAL_PARAMS, officialCamera, parseCameraParam, threeCameraParams, syncThreeCamera, clearHud,
 } from '../../public/js/render/projection.js';
 import * as THREE from 'three';
 
@@ -244,6 +244,140 @@ describe('pickTile / tileQuad', () => {
     const nearW = q[1].x - q[0].x, farW = q[2].x - q[3].x;
     assert.ok(nearW > farW && farW > 0);
     assert.ok(q[3].y < q[0].y);
+  });
+});
+
+describe('HUD clearance of the prep views (user playtest #5 item 9)', () => {
+  // the in-match HUD in rem (ui/fieldHost.js HUD_REM): the bond strip ends 2.16rem below the top, the shop bar starts
+  // 2.64rem + 3 px above the bottom; the root font size is clamp(40px, min(W / 19.2, H / 10.8), 240px) (css/theme.css)
+  const hudAt = (w, h) => {
+    const rem = Math.max(40, Math.min(w / 19.2, h / 10.8, 240));
+    return { top: 2.16 * rem, bottom: 2.64 * rem + 3 };
+  };
+  const band = (cam, kind) => {
+    const k = CAMERA_PRESETS[kind].keep;
+    return { near: cam.project(cam.tx, k.near, k.zNear).y, far: cam.project(cam.tx, k.far, k.zFar).y };
+  };
+  // phones in landscape (CSS px): iPhone 12–15 (19.5:9), iPhone Pro Max, Galaxy S20+ / 2400×1080 (20:9), 800×360,
+  // Xperia 21:9, 924×424, 740×360, and the user's Android: its screenshot is 2772×1272 px with the page drawn right of
+  // a 141 px black cutout band, i.e. 2631×1272 px at DPR ≈ 3.48 → 756×366 (its exit and 准备就绪 buttons match
+  // to ±1 px there), and 798×366 if the page also covered the cutout
+  const PHONES = [[844, 390], [932, 430], [915, 412], [914, 411], [800, 360], [960, 411], [756, 366], [798, 366], [924, 424], [740, 360]];
+  const DESKTOPS = [[1920, 1080], [1680, 1050], [1280, 720], [1366, 768], [1440, 900], [1536, 864], [1600, 900], [2560, 1440],
+    [3840, 2160], [2560, 1080], [3440, 1440], [1600, 1200], [1180, 820], [1024, 768], [1920, 1200]];
+  const cams = (kind, w, h, hud) => (kind === 'bossPrep' ? ['L', 'R'] : ['L']).map((side) => [side, presetCamera(kind, { width: w, height: h }, { side, hud })]);
+
+  test('reproduction: the official shop camera puts the bench under the shop bar on phones (844×390: ~11 px, 800×360: ~19 px, 756×366 as on the user\'s Android: ~17 px)', () => {
+    for (const [w, h] of [[844, 390], [800, 360], [756, 366]]) {
+      for (const kind of ['prep', 'bossPrep']) {
+        const b = band(presetCamera(kind, { width: w, height: h }), kind);
+        assert.ok(b.near > h - hudAt(w, h).bottom + 8, `${kind} ${w}×${h}: bench edge ${b.near} vs shop bar ${h - hudAt(w, h).bottom}`);
+      }
+    }
+  });
+
+  test('with the HUD bands the bench clears the shop bar and the back row the bond strip, as large as fits', () => {
+    for (const [w, h] of PHONES) {
+      const hud = hudAt(w, h);
+      const top = hud.top, bottom = h - hud.bottom;
+      for (const kind of ['prep', 'bossPrep']) {
+        for (const [side, cam] of cams(kind, w, h, hud)) {
+          const off = presetCamera(kind, { width: w, height: h }, { side });
+          const b = band(cam, kind), b0 = band(off, kind);
+          const tag = `${kind}/${side} ${w}×${h}`;
+          assert.ok(b.near <= bottom + 1e-6, `${tag}: bench edge ${b.near} above the shop bar ${bottom}`);
+          assert.ok(b.far >= top - 1e-6, `${tag}: back row ${b.far} below the bond strip ${top}`);
+          // the official perspective (a 2D pan / zoom of the image): same pinhole, pitch and target
+          for (const k of ['tx', 'ty', 'tz', 'tilt', 'dist']) assert.equal(cam[k], off[k], `${tag}: ${k}`);
+          const f = cam.scale / off.scale;
+          assert.ok(f <= 1 + 1e-12 && f > 0.8, `${tag}: zoom ${f}`);
+          // zoomed out only as far as needed: the band then fills the space between the HUD bands less 1 px each end
+          if (f < 1 - 1e-9) assert.ok(near(b.near - b.far, bottom - top - 2, 1e-6), `${tag}: fills the free space`);
+          else assert.ok(near(b.near - b.far, b0.near - b0.far, 1e-6), `${tag}: pan only`);
+        }
+      }
+    }
+  });
+
+  test('desktop viewports keep the official prep camera (16:9 is flush: bench on the shop bar, back row under the strip)', () => {
+    for (const [w, h] of DESKTOPS) {
+      const hud = hudAt(w, h);
+      assert.deepEqual(presetCamera('prep', { width: w, height: h }, { hud }).params(), presetCamera('prep', { width: w, height: h }).params(), `prep ${w}×${h}`);
+      // the Final Assault bench sits up to 1.2 px lower (under the bar's top edge at 16:9): nudged up < 3 px, no zoom
+      for (const [side, cam] of cams('bossPrep', w, h, hud)) {
+        const off = presetCamera('bossPrep', { width: w, height: h }, { side });
+        assert.equal(cam.scale, off.scale, `bossPrep/${side} ${w}×${h}: no zoom`);
+        assert.ok(cam.cy <= off.cy && off.cy - cam.cy < 3, `bossPrep/${side} ${w}×${h}: nudge ${off.cy - cam.cy}`);
+      }
+    }
+    // other camera kinds ignore the HUD bands; the fitted (portrait) prep camera too
+    for (const kind of ['normal', 'unite', 'boss', 'pen']) {
+      assert.deepEqual(presetCamera(kind, { width: 844, height: 390 }, { hud: hudAt(844, 390) }).params(), presetCamera(kind, { width: 844, height: 390 }).params(), kind);
+    }
+    assert.deepEqual(presetCamera('prep', { width: 390, height: 844 }, { hud: hudAt(390, 844) }).params(), presetCamera('prep', { width: 390, height: 844 }).params(), 'portrait');
+  });
+
+  test('clearHud: unchanged when clear, pan when the band fits, zoom about the centre when it does not; garbage-safe', () => {
+    const vp = { width: 1000, height: 500 };
+    const keep = { near: 6.5, zNear: 0.16, far: 12.5, zFar: 0.42 };
+    const cam = presetCamera('prep', vp);
+    const b0 = band(cam, 'prep');
+    const bandH = b0.near - b0.far;
+    assert.equal(clearHud(cam, { top: b0.far - 10, bottom: vp.height - b0.near - 10 }, keep, vp), cam, 'clear → same object');
+    assert.equal(clearHud(cam, { top: b0.far + 0.4, bottom: vp.height - b0.near + 0.4 }, keep, vp), cam, '≤ 0.5 px overlap is clear');
+    // the bottom band reaches 30 px over the bench, 60 px free above: pan up by 31 px (1 px gap), no zoom
+    const pan = clearHud(cam, { top: b0.far - 60, bottom: vp.height - b0.near + 30 }, keep, vp);
+    assert.equal(pan.scale, cam.scale);
+    assert.equal(pan.cx, cam.cx);
+    assert.ok(near(pan.cy - cam.cy, -31, 1e-9), `pan ${pan.cy - cam.cy}`);
+    // 5 px over the bench and only 6 px above the back row: the gap shrinks to half the spare pixel
+    const tight = clearHud(cam, { top: b0.far - 6, bottom: vp.height - b0.near + 5 }, keep, vp);
+    assert.equal(tight.scale, cam.scale);
+    assert.ok(near(tight.cy - cam.cy, -5.5, 1e-9), `tight ${tight.cy - cam.cy}`);
+    // top band over the back row: pan down
+    const down = clearHud(cam, { top: b0.far + 20, bottom: 0 }, keep, vp);
+    assert.ok(near(down.cy - cam.cy, 21, 1e-9));
+    // both: zoom out about the centre column to fill [top + 1, H − bottom − 1]
+    const hud = { top: b0.far + 20, bottom: vp.height - b0.near + 20 };
+    const z = clearHud(cam, hud, keep, vp);
+    const f = (bandH - 42) / bandH;
+    assert.ok(near(z.scale / cam.scale, f, 1e-9), `zoom ${z.scale / cam.scale}`);
+    const bz = band(z, 'prep');
+    assert.ok(near(bz.far, hud.top + 1, 1e-6) && near(bz.near, vp.height - hud.bottom - 1, 1e-6));
+    const c0 = cam.project(0, 9, 0), c1 = z.project(0, 9, 0);
+    assert.ok(near(c1.x - vp.width / 2, f * (c0.x - vp.width / 2), 1e-6), 'x shrinks towards the centre');
+    assert.ok(near(c1.s, f * c0.s, 1e-9), 'px per tile scales by f');
+    // no usable space / bad input: the official camera
+    for (const bad of [null, 'x', { top: 300, bottom: 300 }, { top: NaN, bottom: -5 }]) {
+      const out = clearHud(cam, bad, keep, vp);
+      assert.ok(out === cam || out.params().scale === cam.scale, JSON.stringify(bad));
+      for (const v of Object.values(out.params())) assert.ok(Number.isFinite(v));
+    }
+    assert.equal(clearHud(cam, hud, null, vp), cam);
+  });
+
+  test('an adjusted camera picks, projects and lerps like any other (bench, raised and low tiles; three.js too)', () => {
+    const heights = (r, c) => (r === 7 ? 0.16 : r === 12 && c === 4 ? 0.42 : 0);
+    for (const [w, h] of [[844, 390], [800, 360]]) {
+      const cam = presetCamera('prep', { width: w, height: h }, { hud: hudAt(w, h) });
+      for (let r = 7; r <= 12; r++) for (let c = 0; c <= 10; c++) {
+        const p = cam.project(c, r, heights(r, c));
+        const t = pickTile(cam, p.x, p.y, heights, [0.42, 0.16, 0]);
+        assert.deepEqual([t.row, t.col], [r, c], `${w}×${h} pick ${r},${c}`);
+      }
+      const three = syncThreeCamera(cam, new THREE.PerspectiveCamera(), w, h);
+      const v = new THREE.Vector3();
+      let worst = 0;
+      for (let r = 0; r < 19; r++) for (let c = 0; c < 21; c++) {
+        if (cam.depthOf(c, r, 0) < 0.5) continue;
+        const p = cam.project(c, r, 0);
+        v.set(c, r, 0).project(three);
+        worst = Math.max(worst, Math.abs((v.x + 1) / 2 * w - p.x), Math.abs((1 - v.y) / 2 * h - p.y));
+      }
+      assert.ok(worst < 1e-6, `${w}×${h} three.js: ${worst} px`);
+      const m = lerpCamera(presetCamera('normal', { width: w, height: h }), cam, 1).params();
+      for (const [k, x] of Object.entries(cam.params())) assert.ok(near(m[k], x, 1e-9), k);
+    }
   });
 });
 

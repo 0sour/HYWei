@@ -7,11 +7,17 @@
 // of the leg's target (grid.js, research 08 §3.4): from the tile it stands on the enemy walks straight to the centre
 // of `next[tile]`, then on to `next[next[tile]]` … (tile centre to tile centre, so the Bresenham line-of-sight check
 // of the smoothing guarantees it never clips a wall or crate corner); the plan is re-read when the grid version
-// changes (obstacles) or content displaces the enemy (route.pts = null). FLY legs fly straight between checkpoints. Ground enemies entering a
-// tile held by an ally with free block capacity get blocked. Blocked enemies fight their blocker (ranged ones may
-// pick anyone in range, blocker first). Unblocked ranged enemies attack allies within their radius and pause
-// ATTACK_PAUSE seconds after each attack. Reaching the final leg's end = leak. An `attract` (诱导) status suspends the
-// route: the enemy walks to the status point instead (moveAttracted) and re-plans its route when released.
+// changes (obstacles) or content displaces the enemy (route.pts = null). FLY legs fly straight between checkpoints; the
+// path always follows `motion` — a hovering (近地悬浮) enemy is an air unit for targeting and blocking (Unit.isFlying)
+// but walks the ground. An unblocked enemy touching an ally with free block capacity — within its block radius (0.7071
+// ground, 0.8944 air, devices 0.4472; Battle._checkBlock) — is blocked, moving or not, so an enemy overlapping an
+// operator is taken over once its blocker is gone. Blocked enemies fight their blocker (ranged ones may pick anyone in
+// range, blocker first); a melee blocker may always target the enemies it blocks, in range or not, a ranged operator on
+// a melee tile only what its range holds (acquireTargets, targeting.js meleeUnit).
+// Unblocked ranged enemies attack allies within their radius and pause ATTACK_PAUSE seconds after each attack; the
+// candidates pass the enemy's own rule (`e.profile.canTarget`) and are ordered blocker → taunt → latest deployed
+// (targeting.js sortAllyTargets). Reaching the final leg's end = leak. An `attract` (诱导) status suspends the route:
+// the enemy walks to the status point instead (moveAttracted) and re-plans its route when released.
 
 import { ATTACK_PAUSE, MOVE_SCALE, PROJECTILE_SPEEDS, PROJECTILE_SPEED, BOOMERANG_RETURN_SPEED, COLS } from './constants.js';
 import { sortEnemyTargets, sortAllyTargets, canTargetEnemy, canTargetAlly, tileKeyOf } from './targeting.js';
@@ -113,6 +119,10 @@ export function acquireTargets(b, u, prof) {
     if (t.length) return t;
   }
   const cands = b.enemiesInKeys(u.rangeKeys, u, prof);
+  // "可以选择且优先选择阻挡单位" (PRTS 选择器): the enemies a melee unit blocks are always selectable by it — the block
+  // radius (0.7071) reaches past its own tile, so a blocked enemy may stand outside a short range (user playtest #5 item
+  // 4); a ranged operator on a melee tile gets none (Battle.blockedTargets: "阻挡（近战限定）")
+  if (u.blocking.length) for (const e of b.blockedTargets(u, prof)) if (!cands.includes(e)) cands.push(e);
   if (!cands.length) return cands;
   if (prof.allInRange) return cands;
   const n = Math.max(1, Math.floor((prof.maxTargets || 1) + u.s.maxTargets));
@@ -210,11 +220,11 @@ export function resolveHit(b, u, prof, target, info, x, y) {
     if (each) each(target, dealtMain, 'main');
     x = target.x; y = target.y;
   }
-  // splash
+  // splash: a 中点判定 radius around the target's position — a huge enemy counts by its 判定中心 (Battle.enemiesInRadius)
   if (prof.splashRadius > 0) {
     const r = prof.splashRadius;
     const sc = prof.splashScale ?? 1;
-    for (const e of b.enemiesInRadius(x, y, r)) {
+    for (const e of b.enemiesInRadius(x, y, r, true)) {
       if (e === target) continue;
       if (prof.groundOnly && e.isFlying) continue;
       if (!prof.canHitFly && e.isFlying && !prof.splashHitsFly) continue;
@@ -484,7 +494,7 @@ function moveAttracted(b, e, dt) {
   if (!A.pts || A.ver !== b.grid.version) {
     const sr = Math.round(e.y), sc = Math.round(e.x);
     let pts = null;
-    if (!e.isFlying) {
+    if (e.motion !== 'FLY') { // (a hovering 近地悬浮 enemy is an air unit but walks the ground: motion decides the path)
       const path = b.grid.waypoints(sr, sc, A.r, A.c) || b.grid.waypoints(sr, sc, A.r, A.c, { ignoreObstacles: true });
       if (path) {
         pts = [];
@@ -583,18 +593,21 @@ function enemyAttack(b, e) {
   // Content may flip it with `e.profile.melee = false`.
   const melee = e.profile?.melee ?? def.applyWay === 'MELEE';
   const radius = melee ? 0 : e.base.rangeRadius;
+  // `e.profile.canTarget(ally)`: the enemy's own target rule (只攻击地面单位, 不会攻击飞行单位 …; content/enemies.js),
+  // applied to the candidates before the priority sort and the target count
+  const own = e.profile && typeof e.profile.canTarget === 'function' ? e.profile.canTarget : null;
   let targets = [];
   if (e.blockedBy) {
     const bl = e.blockedBy;
     if (radius > 0) {
       targets = b.alliesInRadius(e.x, e.y, radius, null).filter((a) => a === bl || canTargetAlly(e, a, true));
       if (!targets.includes(bl) && bl.alive) targets.push(bl);
-      sortAllyTargets(e, targets);
     } else if (bl.alive && bl.deployed) targets = [bl];
   } else if (radius > 0) {
     targets = b.alliesInRadius(e.x, e.y, radius, null).filter((a) => canTargetAlly(e, a, true));
-    sortAllyTargets(e, targets);
   }
+  if (own && targets.length) targets = targets.filter((a) => own(a));
+  if (targets.length > 1) sortAllyTargets(e, targets);
   if (!targets.length) return;
   // 麻痹 (ba.palsy): each stack interrupts one normal attack
   const palsy = e.buffs.length ? e.findBuff('palsy') : null;

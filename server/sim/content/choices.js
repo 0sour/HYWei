@@ -42,7 +42,9 @@
 //   global_special_choice_all_activated                  always on
 //   …prep_finish_bench_at_least / _at_most               on when params.prepOk (fallback: contentInfo.handUnits)
 //   global_special_choice_prep_finish_same_row_at_least  征召: on when, at battle start, some row holds ≥ count of
-//                                                        the player's deployed operators
+//                                                        the player's deployed operators ([ASSUMED] an operator
+//                                                        forced out at the start of 联防 — down on its tile — does
+//                                                        not count; the −50 % still covers its timer, Battle.start)
 //   env_gbuff_new_with_verify act1autochess_debuff_3 {value}   自愈: every damage instance an own unit (operator or
 //                                                        summon) takes heals it `value` (not HP loss 流失, not gauge
 //                                                        fills, not while a 禁疗 status is on)
@@ -394,7 +396,10 @@ function prepGateOn(battle, ps, ref, gate) {
   return n == null ? false : benchGate(gate, n);
 }
 
-/** Largest number of the player's deployed operators sharing one row. */
+/**
+ * Largest number of the player's deployed operators sharing one row ([ASSUMED] a knocked-out operator lying on its tile —
+ * one forced out at the start of 联防 — is not deployed and does not count).
+ */
 function maxRowOps(battle, pid) {
   const rows = new Map();
   for (const u of battle.allyUnits) if (isOwnOp(u, pid) && u.alive && u.deployed) rows.set(u.tileR, (rows.get(u.tileR) ?? 0) + 1);

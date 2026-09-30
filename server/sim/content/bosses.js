@@ -44,13 +44,15 @@
 //                            RES +45, animates 2; 斥退 at 999 s.
 //   boss_7 “萨米的意志”      冰凌 (its normal attack) hits a whole column; 自然涌动 stun + arts DoT; <50 %: damage taken
 //                            ×(1−0.6), 2 targets; Doom at 600 s (LP −30). Targets via fairOrder (two players alternate).
+// The huge leaders (SELF_BOUND: 胄 ×2, 管 ×2, 昆图斯, 阿利斯泰尔, 萨米的意志 — the 巨型单位 with a data `hitArea`) are
+// 自缚 + 无法被阻挡 (PRTS 天赋): a persistent noMove + unblockable buff from spawn, so they never walk their route.
 // Every leader (tag boss) ignores 侵蚀 gauge damage ("最终攻势中，敌方领袖不会受到侵蚀损伤").
 // LP effects ('lpLoss' hook + result.lpLoss) must be applied by the match (see the report of this module's owner).
 // fx kinds: 'beam' 'shell' 'explode' 'telegraph' 'charge' 'link' 'dash' 'column' 'tide' 'rockfall' 'tentacle' 'equip'
 //   'sword' 'vest' 'blink' 'summon' 'grow' 'phase' 'lpLoss' (x, y + extra {id, r, tiles, kind, tx, ty …}).
 
 import { MOVE_SCALE } from '../constants.js';
-import { canTargetAlly } from '../targeting.js';
+import { canTargetAlly, aggroCmp } from '../targeting.js';
 import { compileRoute } from '../ai.js';
 import { normalizeRoute } from '../simdata.js';
 import {
@@ -82,6 +84,17 @@ const ASPD_FLOOR = 20, CHARGE_RADIUS = 0.35;
 const LINK_WIDTH = 0.5;
 /** 碎铳之簧 bullet bounce falloff / reach [ASSUMED], combo = 十连击; tag of the damage share passed between springs. */
 const SPRING_BOUNCE_FALLOFF = 0.85, SPRING_BOUNCE_RANGE = 2, SPRING_COMBO_HITS = 10, SPRING_SHARE_TAG = 'springShare';
+/**
+ * Leaders that are 自缚 and cannot be blocked — the 天赋 line of every 巨型单位 page (PRTS 假想敌：胄 (both copies) "自缚、
+ * 不可阻挡", 假想敌：管 (+ 隐秘核心) / 盐风主教昆图斯 / 阿利斯泰尔，帝国余晖 / “萨米的意志” "自缚 … 无法被阻挡"). 自缚 (PRTS
+ * 异常效果 UNMOVABLE_PRIVATE) = 无法移动, like 束缚 but never recognised as 束缚: flag noMove, not bind. They stand where
+ * they spawn whatever their route says (the official routes walk to a goal; only the talent holds them), so their
+ * hit area (body.js) stays on the pipe block. These are exactly the enemies with a data `hitArea`.
+ */
+export const SELF_BOUND = Object.freeze([
+  'enemy_9013_acstmk', 'enemy_9013_acstmk_2', 'enemy_9021_acduml', 'enemy_9021_acduml_2', 'enemy_1521_dslily',
+  'enemy_9032_aclionk', 'enemy_9033_acdeer',
+]);
 /** 阿利斯泰尔: enemy SP per second [ASSUMED] and 莫非王土 delay after each 王权号令 [ASSUMED]. */
 const ENEMY_SP_PER_SEC = 1, ANIMATE_DELAY = 2;
 const EQUIP_KEYS = Object.freeze(['enemy_10028_vtswd', 'enemy_10029_vtshld', 'enemy_10030_vtwand']);
@@ -172,7 +185,7 @@ function branchSpawn(b, tpl, name, phaseIdx, { fallback = null, mods = null, at 
 export function install(battle) {
   ensureInstalled(battle);
   battle.on('enemySpawn', ({ enemy }) => onSpawn(battle, enemy), { priority: 90 });
-  // "最终攻势中，敌方领袖不会受到侵蚀损伤" (research 06 §10.1): leaders ignore erosion gauge damage
+  // "最终攻势中，敌方领袖不会受到侵蚀损伤" (PRTS 卫戍协议：盟约/PRTS盟约记录 规则; research 06 §10.1): leaders ignore erosion gauge damage
   battle.on('elementHit', (c) => { if (c.target && c.target.isBoss && c.dmg.element === 'erosion') c.dmg.cancel = true; }, { priority: 100 });
 }
 export function registerMeta() {}
@@ -180,6 +193,7 @@ export function registerMeta() {}
 function onSpawn(b, e) {
   const kit = BOSS_KITS[e.defId];
   if (typeof kit !== 'function') return;
+  if (SELF_BOUND.includes(e.defId)) b.addBuff(e, { key: 'boss:selfBound', persist: true, flags: { noMove: true, unblockable: true } });
   const tpl = templateOf(b);
   const ab = abOf(b, e);
   let list = [];
@@ -302,7 +316,7 @@ function kitHelm(ab, e, b, tpl) {
       cd: s1.cd, icd: s1.icd, cond: (b2) => shellTargets(b2).length > 0,
       fire(b2, e2) { // 【灭顶之灾】
         const n = P.low ? 2 : 1;
-        const ts = shellTargets(b2).sort((p, q) => q.s.atk - p.s.atk || q.deploySeq - p.deploySeq).slice(0, n);
+        const ts = shellTargets(b2).sort((p, q) => q.s.atk - p.s.atk || aggroCmp(p, q)).slice(0, n);
         for (const t of ts) fireShell(b2, e2, t);
       },
     },
@@ -398,7 +412,7 @@ function kitBlade(ab, e, b, tpl) {
     s && {
       cd: s.cd, icd: s.icd, cond: (b2) => P.state === 'hover' && opsOnly(allTargets(b2, e)).length > 0,
       fire(b2, e2) { // fly at the lowest-ATK operator
-        const t = opsOnly(allTargets(b2, e2)).sort((p, q) => p.s.atk - q.s.atk || p.deploySeq - q.deploySeq)[0];
+        const t = opsOnly(allTargets(b2, e2)).sort((p, q) => p.s.atk - q.s.atk || aggroCmp(p, q))[0];
         if (!t) return;
         P.state = 'dive'; P.hits = 0; P.target = { r: t.tileR, c: t.tileC };
         hover(b2, false);
@@ -425,7 +439,7 @@ function kitGun(ab, e, b) {
   const list = [
     {
       spawn(b2, e2) { b2.addBuff(e2, { key: 'boss:unblockable', persist: true, flags: { unblockable: true } }); setAspd(b2); },
-      before(c, b2, e2) { const l = targetsNear(b2, e2, range()); if (l.length) c.targets = [l.sort((p, q) => q.s.def - p.s.def || q.deploySeq - p.deploySeq)[0]]; }, // 优先攻击防御力最高的单位
+      before(c, b2, e2) { const l = targetsNear(b2, e2, range()); if (l.length) c.targets = [l.sort((p, q) => q.s.def - p.s.def || aggroCmp(p, q))[0]]; }, // 优先攻击防御力最高的单位
       attack(c, b2) {
         const t = c.targets[0];
         if (t === P.last) P.n = Math.min(maxN, P.n + 1); else { P.last = t; P.n = 0; }
@@ -451,7 +465,7 @@ function kitGun(ab, e, b) {
     s1 && {
       cd: s1.cd, icd: s1.icd, cond: (b2) => groundTargets(b2).length > 0 && !P.charge,
       fire(b2, e2) { // 【最终之罚】 charge at the highest-DEF ground unit
-        const t = groundTargets(b2).sort((p, q) => q.s.def - p.s.def || q.deploySeq - p.deploySeq)[0];
+        const t = groundTargets(b2).sort((p, q) => q.s.def - p.s.def || aggroCmp(p, q))[0];
         if (!t) return;
         const dur = T(ab, '3.duration') ?? 0;
         P.charge = { target: { x: t.x, y: t.y }, until: b2.time + dur, hit: new Set() };
@@ -531,13 +545,14 @@ function kitSpring(ab, e) {
       },
       burst(c, b) { if (kind === 'element' && P.up) drop(b); },  // 自身元素损伤爆发时，护盾消失
       taken(c, b, e2) {
-        if (!c.source || c.source.side !== 'ally' || !(c.amount > 0)) return;
+        const src = c.source || c.credit;                                      // a 无来源 burst still passes on (credited)
+        if (!src || src.side !== 'ally' || !(c.amount > 0)) return;
         if (c.dmg.tags && c.dmg.tags.includes(SPRING_SHARE_TAG)) return;       // a share never passes on again
         // 【盲信之誓】 受到伤害时以一定比例传递给假想敌：铳 (and, split, to the other springs — 隐秘核心 text)
         const g = gun(b);
-        if (g) b.loseHp(g, c.amount * PART_TRANSFER, { source: c.source, from: c.dmg });
+        if (g) b.loseHp(g, c.amount * PART_TRANSFER, { source: src, from: c.dmg });
         const others = b.enemies.filter((o) => o.alive && o !== e2 && isSpring(o));
-        for (const o of others) b.loseHp(o, (c.amount * PART_TRANSFER) / others.length, { source: c.source, from: c.dmg, tags: [SPRING_SHARE_TAG] });
+        for (const o of others) b.loseHp(o, (c.amount * PART_TRANSFER) / others.length, { source: src, from: c.dmg, tags: [SPRING_SHARE_TAG] });
       },
       tick(b, e2, a, dt) {
         if (!P.up && P.downAt != null && b.time - P.downAt >= regen) raise(b);
@@ -567,7 +582,7 @@ function kitSpring(ab, e) {
             b.fx('beam', { x: e2.x, y: e2.y, from: e2.id, to: t.id, kind: 'springBullet' });
             elem(b, e2, t, 'erosion', e2.s.atk * ratio * Math.pow(SPRING_BOUNCE_FALLOFF, k));
             const prev = t;
-            t = b.alliesInRadius(prev.x, prev.y, SPRING_BOUNCE_RANGE).filter((u) => !hit.has(u)).sort((p, q) => Math.hypot(p.x - prev.x, p.y - prev.y) - Math.hypot(q.x - prev.x, q.y - prev.y) || q.deploySeq - p.deploySeq)[0];
+            t = b.alliesInRadius(prev.x, prev.y, SPRING_BOUNCE_RANGE).filter((u) => !hit.has(u)).sort((p, q) => Math.hypot(p.x - prev.x, p.y - prev.y) - Math.hypot(q.x - prev.x, q.y - prev.y) || aggroCmp(p, q))[0];
           }
         } else { // 十连击
           b.fx('beam', { x: e2.x, y: e2.y, from: e2.id, to: t0.id, kind: 'springCombo' });
@@ -614,7 +629,7 @@ function kitEcho(ab, e) {
   return [
     {
       spawn(b, e2) { setHits(e2, e2.def.maxHp); hitCount(b, e2, true); e2.blockWeight = ECHO_BLOCK_WEIGHT; setEchoForm(b, e2, 'dark'); },
-      taken(c, b, e2) { if (c.source && c.source.side === 'ally') echoHit(b, e2); }, // 受到伤害时以自身为中心造成一次范围伤害
+      taken(c, b, e2) { const s = c.source || c.credit; if (s && s.side === 'ally') echoHit(b, e2); }, // 受到伤害时以自身为中心造成一次范围伤害 (a 无来源 burst too)
     },
     s && {
       cd: s.cd, icd: s.icd,
@@ -718,7 +733,7 @@ function kitQuintus(ab, e, b, tpl) {
   const list = [{
     spawn(b2, e2) { P.t0 = b2.time; P.stageAt = b2.time; e2.profile.maxTargets = 2; },
     before(c, b2, e2) { // 同时攻击防御最高的两个单位
-      const l = targetsNear(b2, e2, e2.base.rangeRadius || 99).sort((p, q) => q.s.def - p.s.def || q.deploySeq - p.deploySeq);
+      const l = targetsNear(b2, e2, e2.base.rangeRadius || 99).sort((p, q) => q.s.def - p.s.def || aggroCmp(p, q));
       if (l.length) c.targets = l.slice(0, 2);
     },
     dealt(c, b2, e2) { elem(b2, e2, c.target, 'neural', e2.s.atk * atkRatio); },
@@ -746,7 +761,7 @@ const QUINTUS = {
   },
   Rockfall(b, e, s, P) { // 【崩坍】 delayed strikes on the N highest-DEF units
     const n = ROCKFALL_TARGETS[Math.min(P.stage, ROCKFALL_TARGETS.length - 1)];
-    const ts = allTargets(b, e).sort((p, q) => q.s.def - p.s.def || q.deploySeq - p.deploySeq).slice(0, n);
+    const ts = allTargets(b, e).sort((p, q) => q.s.def - p.s.def || aggroCmp(p, q)).slice(0, n);
     for (const t of ts) {
       b.fx('rockfall', { x: t.x, y: t.y, id: t.id, dur: ROCKFALL_DELAY });
       b.after(ROCKFALL_DELAY, () => { if (e.alive && t.alive) hurt(b, e, t, e.s.atk * (s.bb.atk_scale ?? 0), 'phys'); }, { owner: e });

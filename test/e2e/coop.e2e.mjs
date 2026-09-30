@@ -746,7 +746,9 @@ async function observeAfterFinish(c) {
     });
     if (pen) {
       assert.equal(pen.visible, 0, '返回战场: no enemy pen figure');
-      assert.ok(pen.band[1] <= 13 && (pen.area == null || pen.area <= 12), `返回战场: no pen rows / area (${JSON.stringify(pen)})`);
+      // the 3D area ends at the field's separator row 13 (its devices blow into the field: act2 m01's blowers, user
+      // playtest #5 item 6); the pen starts at row 14
+      assert.ok(pen.band[1] <= 13 && (pen.area == null || pen.area <= 13), `返回战场: no pen rows / area (${JSON.stringify(pen)})`);
     }
   }
   c.note(`observed ${other.fieldId} after the own battle (${st.units} views) and went back`);
