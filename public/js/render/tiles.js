@@ -45,8 +45,6 @@ export const ROW_KEY = Object.freeze({ blocks: 0, devices: 0.01, surface: 0.02 }
 export const boxDepthKey = (cam, row) => -cam.depthOf(0, row + 0.45, 0) * 100;
 
 const ROWS = 19, COLS = 21;
-/** The boss field's top wall under the normal field's bench (= board3d/layout.js BOSS_WALL_ROW). */
-const BOSS_WALL_ROW = 6;
 const PLAYABLE_DIST = 2;         // margin tiles farther than this from a playable tile are not drawn
 const CLIFF_DEPTH = 0.62;        // how far the island's edge faces go down to the ground plane (tiles)
 /** Brightness of the board meshes (vertex colour above 1 lifts the mid-grey board art a little). */
@@ -364,9 +362,6 @@ export class TileField {
 
   _stageDevices() {
     const list = Array.isArray(this.stage?.devices) ? this.stage.devices : [];
-    // the boss field's devices (rows ≤ 6, its top wall under the bench included) only in the views of the boss field
-    // (board3d/layout.js stageDevices: the official normal cameras never show that wall; user playtest #5 item 6)
-    const bossShown = this.field[0] < BOSS_WALL_ROW;
     const out = [];
     for (const d of list) {
       if (!d || !Array.isArray(d.pos) || !Number.isInteger(d.pos[0]) || !Number.isInteger(d.pos[1])) continue;
@@ -374,10 +369,12 @@ export class TileField {
       const active = typeof d.active === 'boolean' ? d.active : !d.hidden;
       if (!active) continue;
       if (d.pos[0] < 0 || d.pos[0] >= ROWS || d.pos[1] < 0 || d.pos[1] >= COLS || d.pos[0] >= 14) continue;
-      if (d.pos[0] <= BOSS_WALL_ROW && !bossShown) continue;
       const gt = this.grid[d.pos[0]] && this.grid[d.pos[0]][d.pos[1]];
       // devices stand on the island (playable tiles + the ring around them, dist ≤ 1 — the 3D board's drawn tiles), not
-      // on the faded margin; the separator row 13 above the field included (act2 m01's blowers)
+      // on the faded margin. A device on the field's edge wall is drawn like any other (board3d/layout.js stageDevices):
+      // act2 m01's row-13 blowers top the field and its row-6 ones stand under the bench in the normal views, as in the
+      // official normal rounds (user playtest #5 item 6 and its follow-up); the airflow (_drawFlow) only covers drawn
+      // tiles, so the row-6 machines' shows in the Final Assault view alone
       if (gt && (!gt.drawn || gt.scenery || gt.dist > 1)) continue;
       out.push(d);
     }

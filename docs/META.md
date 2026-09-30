@@ -442,8 +442,8 @@ enemies by slot class; helpers' operators carry
 `{ hpPct, sp, skillActive }` from `unitsEnd` ("阵地以其当前状态"); an operator knocked out at the end of the helper's own
 combat carries `{ down: true }` (PRTS 卫戍协议/帮助: "部署完成后…上一阶段为退场状态的干员强制退场"): deployed, then forced out
 at once, it lies on its tile with the redeploy ring and redeploys like after any knock-out (docs/SIM.md §1.1; user
-playtest #5 item 2 — it used to stay out and vanish); its timer is its full redeploy time [ASSUMED: the official setup
-carries only hp / tech per operator], with the redeploy-time effects that start with the battle (机变 征召); summons are
+playtest #5 item 2 — it used to stay out and vanish); its timer is its full redeploy time (the official setup carries
+only hp / tech per operator; confirmed by the user), with the redeploy-time effects that start with the battle (机变 征召); summons are
 fielded as the board has them; `flags.layerGainsEnabled = false`; time limit = the round's combat limit.
 Every enemy still alive at the end (leaked again, or never spawned before the limit) costs its **source** player 1 LP.
 A client-run 联防 result may bill a survivor only to a leaker who sent that enemy in — a split / summon only to a leaker

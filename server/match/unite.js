@@ -11,8 +11,8 @@
 // `carryState: { down: true }`: PRTS "部署完成后，将对应单位的生命比例、技力修改至与上一阶段结束时相同（召唤物仅修改技力，
 // 上一阶段为退场状态的干员强制退场）" — the sim deploys it with everyone and forces it out at once (constants.js
 // FORCED_EXIT), so it lies on its own tile with the redeploy ring and comes back like after any knock-out (user
-// playtest #5 item 2: it used to be left out and vanished). Its timer is its full redeploy time [ASSUMED: the
-// official 联防 setup carries only hp / tech per operator (research 09 §3 HelpBattleInfo), no timer]. Summons are fielded as the board has
+// playtest #5 item 2: it used to be left out and vanished). Its timer is its full redeploy time (the official 联防
+// setup carries only hp / tech per operator, research 09 §3 HelpBattleInfo; the user confirmed it restarts). Summons are fielded as the board has
 // them (a summon's own end state is not carried: unitsEnd lists operators only). Enemies = the union of every leaker's
 // counted leaks (same stats: the SpawnSpec mods travel with the leak), routed on the escaped template (`escaped_single`
 // for 1 helper, `escaped_multi` for 2): walkers on its `lrsldr` action, flyers on `yokai`, tokens on `gopro_2` /

@@ -372,5 +372,13 @@ test('user playtest #5 (DESIGN §19): blocking, 联防 forced exit, huge bosses,
   assert.match(SIM, /Right after `battleStart`\s+its timer is re-read/);
   assert.match(s55, /max\(0\.05, 1 − 损伤抵抗\/100\)/);
   assert.match(SIM, /max\(5 %, 1 − 损伤抵抗 \/ 100\)/);
-  assert.match(S19, /the boss field's devices are drawn with the boss field only/);
+  // the user's follow-up: the boss field's row-6 blowers show in the normal views (code = §19.7); the 联防 timer restart
+  // is confirmed (§19.3)
+  assert.match(S19, /吹风机原版道中也该有/);
+  assert.match(S19, /the boss field's \(6,5\) \/ \(6,9\) on the wall under the bench/);
+  assert.ok(!/the boss field's devices are drawn with the boss field only/.test(DESIGN), '§19.7: the QA hiding rule is gone');
+  const layout = readFileSync(new URL('../public/js/render/board3d/layout.js', import.meta.url), 'utf8');
+  assert.ok(!/BOSS_WALL_ROW/.test(layout), 'no boss-field device filter in the 3D board');
+  assert.match(S19, /进联防复活时间确实是重新算/);
+  assert.ok(!/its full redeploy timer \[ASSUMED\]/.test(DESIGN), 'the full 联防 timer is no longer [ASSUMED]');
 });
