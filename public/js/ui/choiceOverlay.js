@@ -1,14 +1,20 @@
 // 机变 draft overlay (research 06 §4.4 / §11.5): family title | description, "倒计时结束后仍未选定将自动分配",
 // whose turn ("当前轮到你决策" / "{name} 正在决策…") with countdown, pick order with ✓ / ⌛ / … / door,
-// and a 3×2 grid (solo: 3 cards) of cards with icon, title, rich description, tier chip and the taker's
-// avatar badge. Picking takes two taps, like buying in the shop (user playtest #4 item 2 — extra enemies, items and
-// tactics were picked by a slip of the finger; research 09 §5 EventOnFirstClick → EventOnConfirm): the first tap on an
-// available card selects it (it lifts with a gold frame and a 确认选择 · 再次点击 strip; the header shows 确认选择), a
-// second tap on the same card — or 确认选择 — sends g.choice; a tap on another card moves the selection, a tap
-// elsewhere or Esc drops it. Cards are buttons (Tab / Enter work the same way). While the pick is in flight the card
-// shows a "选择中" strip with a sweeping bar (never a spinner over its text — user playtest #3 item 9), dropped as soon
-// as the pick shows in m.public (spBusy itself resets when the request settles, ≤ 8 s, or the phase moves on).
-// Untimed drafts (solo, a single-human match: sp.untimed) show no countdown and say so.
+// and a 3×2 grid (solo: 3 cards) of cards in the official layout (the official 悬赏 / 机密商店 / 战术 screenshots): a
+// framed icon at the top-left with the bold name beside it (tags under the name), the effect text across the card under
+// both, left-aligned; the tier chip on the icon's corner and the taker's round avatar alone at the top-right (their
+// name is its tooltip and part of the card's accessible name; a taken card's name wraps before it). The effect text
+// is the official rich text of the item / effect (items.json / effects.json `descRaw` — the detail card's text — while it
+// says what the server card's plain `desc` says: cardText), clamped by lines, and it fits the card on phones too (user
+// playtest #6 item 6: at 756×366 it used to sit below a large centred icon, clipped away). Picking takes two taps, like
+// buying in the shop (user playtest #4 item 2 — extra enemies, items and tactics were picked by a slip of the finger;
+// research 09 §5 EventOnFirstClick → EventOnConfirm): the first tap on an available card selects it (it lifts with a
+// gold frame and a 确认选择 · 再次点击 strip; the header shows 确认选择), a second tap on the same card — or 确认选择 —
+// sends g.choice; a tap on another card moves the selection, a tap elsewhere or Esc drops it. Cards are buttons (Tab /
+// Enter work the same way). While the pick is in flight the card shows a "选择中" strip with a sweeping bar (never a
+// spinner over its text — user playtest #3 item 9), dropped as soon as the pick shows in m.public (spBusy itself resets
+// when the request settles, ≤ 8 s, or the phase moves on). Untimed drafts (solo, a single-human match: sp.untimed) show
+// no countdown and say so.
 
 import { useEffect, useState } from '../../vendor/hooks.module.js';
 import { html, Icon, TierChip, Countdown, MicroLabel, Button } from './components.js';
@@ -19,6 +25,20 @@ import { sortedPlayers } from './gameLogic.js';
 import { data } from '../data.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
+
+const bare = (t) => String(t || '').replace(/\s+/g, '');
+
+/**
+ * A card's effect text: the card's own rich text, else the data's rich text (highlighted numbers, 下场作战, set bonuses,
+ * line breaks — the detail card's text) while it says what the server's plain `desc` says, else that plain text (a
+ * server-side wording the data does not have wins).
+ * @param {{ descRaw?: string, desc?: string }} card @param {string} rich items.json / effects.json descRaw
+ */
+export function cardText(card, rich) {
+  if (card.descRaw) return card.descRaw;
+  if (rich && (!card.desc || bare(richTextPlain(rich)) === bare(card.desc))) return rich;
+  return card.desc || rich || '';
+}
 
 /**
  * Resolve an sp card to display fields.
@@ -47,7 +67,7 @@ export function resolveSpCard(card, family) {
   return {
     kind,
     name: card.name || item?.name || eff?.name || bounty?.name || tactic?.name || '机变',
-    desc: card.descRaw || card.desc || item?.descRaw || item?.desc || eff?.descRaw || eff?.desc || bounty?.desc || tactic?.desc || '',
+    desc: cardText(card, item?.descRaw || eff?.descRaw || '') || item?.desc || eff?.desc || bounty?.desc || tactic?.desc || '',
     tier: Number.isFinite(card.tier) ? card.tier : item?.tier ?? bounty?.tier ?? null,
     icon,
     team: !!team,
@@ -190,21 +210,24 @@ export function ChoiceView({ pub, sp, myId, solo, busyIdx = null, total = null, 
           const can = cardPickable(sp, card, { myId, solo, busyIdx });
           const busy = pickBusy(busyIdx, card, mine);
           const isArmed = can && armed === card.idx;
+          const takerName = taker ? (card.takenBy === myId ? '你' : taker.name) : null;
           return html`<button key=${card.idx} type="button" class=${cx('spcard', `spcard--${r.kind}`, card.takenBy && 'is-taken', card.takenBy === myId && 'is-mine', can && 'is-pickable', isArmed && 'is-armed', busy && 'is-busy')}
-              aria-busy=${busy ? 'true' : undefined} aria-pressed=${can ? String(isArmed) : undefined}
-              disabled=${!can} onClick=${() => can && onTap(card.idx)} aria-label=${isArmed ? `${r.name}，已选中，再次点击确认` : r.name} title=${`${r.name}\n${richTextPlain(r.desc)}`}>
+              aria-busy=${busy ? 'true' : undefined} aria-pressed=${can ? String(isArmed) : undefined} disabled=${!can} onClick=${() => can && onTap(card.idx)}
+              aria-label=${isArmed ? `${r.name}，已选中，再次点击确认` : takerName ? `${r.name}，${takerName}已选择` : r.name} title=${`${r.name}\n${richTextPlain(r.desc)}`}>
             <span class="spcard__glow" aria-hidden="true"></span>
-            ${r.tier ? html`<${TierChip} tier=${r.tier} size="md" class="spcard__tier" />` : null}
-            <span class="spcard__icon"><${Img} src=${r.icon} fallback=${html`<${GIcon} name=${r.kind === 'bounty' ? 'target' : 'bolt'} />`} /></span>
-            <span class="spcard__body">
-              <b class="spcard__name">${r.name}</b>
-              <${RichText} text=${r.desc} class="spcard__desc" />
-              <span class="spcard__tags">
-                ${r.team ? html`<span class="spcard__tag spcard__tag--team">全队获得</span>` : null}
-                ${r.kind === 'bounty' && r.coin ? html`<span class="spcard__tag spcard__tag--coin">赏金 ${r.coin}</span>` : null}
+            <span class="spcard__head">
+              <span class="spcard__icon"><${Img} src=${r.icon} fallback=${html`<${GIcon} name=${r.kind === 'bounty' ? 'target' : 'bolt'} />`} /></span>
+              <span class="spcard__title">
+                <b class="spcard__name">${r.name}</b>
+                ${r.team || (r.kind === 'bounty' && r.coin) ? html`<span class="spcard__tags">
+                  ${r.team ? html`<span class="spcard__tag spcard__tag--team">全队获得</span>` : null}
+                  ${r.kind === 'bounty' && r.coin ? html`<span class="spcard__tag spcard__tag--coin">赏金 ${r.coin}</span>` : null}
+                </span>` : null}
               </span>
             </span>
-            ${taker ? html`<span class="spcard__taker" title=${`${taker.name} 已选择`}><${PlayerAvatar} player=${taker} size="sm" /><span>${card.takenBy === myId ? '你' : taker.name}</span></span>` : null}
+            <${RichText} text=${r.desc} class="spcard__desc" />
+            ${r.tier ? html`<${TierChip} tier=${r.tier} size="md" class="spcard__tier" />` : null}
+            ${taker ? html`<span class="spcard__taker" title=${`${taker.name} 已选择`}><${PlayerAvatar} player=${taker} size="sm" /></span>` : null}
             ${isArmed ? html`<span class="spcard__confirm" role="status"><b>确认选择</b><small>再次点击</small></span>` : null}
             ${busy ? html`<span class="spcard__busy" role="status">选择中</span>` : null}
           </button>`;

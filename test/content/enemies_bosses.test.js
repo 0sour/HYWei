@@ -561,7 +561,7 @@ for (const key of ['enemy_1270_nhstlk', 'enemy_1270_nhstlk_2']) {
 }
 
 for (const key of ['enemy_1272_nhtank', 'enemy_1272_nhtank_2']) {
-  test(`${nm(key)}: ground targets only, melee hits ×${tb(key, 'Empty.attack@chuang_atk_scale')}, every 3rd attack leaves a pollution zone`, () => {
+  test(`${nm(key)}: ground targets only, melee hits ×${tb(key, 'Empty.attack@chuang_atk_scale')}, 秽蚀轰击 (a pollution zone) on the 1st attack, then every 3rd`, () => {
     const hi = arena({ units: [{ chessId: 't_gun', row: 10, col: 2 }] });   // (10,2) is high ground
     hi.step();
     put(hi, key, [10, 3]);

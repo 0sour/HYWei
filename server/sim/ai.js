@@ -12,17 +12,21 @@
 // but walks the ground. An unblocked enemy touching an ally with free block capacity — within its block radius (0.7071
 // ground, 0.8944 air, devices 0.4472; Battle._checkBlock) — is blocked, moving or not, so an enemy overlapping an
 // operator is taken over once its blocker is gone. Blocked enemies fight their blocker (ranged ones may pick anyone in
-// range, blocker first); a melee blocker may always target the enemies it blocks, in range or not, a ranged operator on
-// a melee tile only what its range holds (acquireTargets, targeting.js meleeUnit).
+// range, blocker first); every blocker — a ranged operator on a melee tile included — may always target the enemies
+// it blocks, in range or not, whatever its facing, and targets them first (acquireTargets, Battle.blockedTargets;
+// user playtest #6: "阻挡了就一定要能打到").
 // Unblocked ranged enemies attack allies within their radius and pause ATTACK_PAUSE seconds after each attack; the
 // candidates pass the enemy's own rule (`e.profile.canTarget`) and are ordered blocker → taunt → latest deployed
-// (targeting.js sortAllyTargets). Reaching the final leg's end = leak. An `attract` (诱导) status suspends the route:
-// the enemy walks to the status point instead (moveAttracted) and re-plans its route when released.
+// (targeting.js sortAllyTargets). Reaching the final leg's end = leak. A `fear` (恐惧) status suspends the route: the
+// enemy runs between random checkpoints away from the fear's source (fear.js moveFeared; a self-inflicted fear
+// flutters inside its own tile); an `attract` (诱导) status walks it to the status point instead (moveAttracted);
+// both re-plan the route when released (恐惧 outranks 诱导).
 
-import { ATTACK_PAUSE, MOVE_SCALE, PROJECTILE_SPEEDS, PROJECTILE_SPEED, BOOMERANG_RETURN_SPEED, COLS } from './constants.js';
+import { ATTACK_PAUSE, ALLY_COLLIDER_RADIUS, MOVE_SCALE, PROJECTILE_SPEEDS, PROJECTILE_SPEED, BOOMERANG_RETURN_SPEED, COLS } from './constants.js';
 import { sortEnemyTargets, sortAllyTargets, canTargetEnemy, canTargetAlly, tileKeyOf } from './targeting.js';
 import { reduceElement } from './damage.js';
-import { OB_CRATE } from './grid.js';
+import { straightClear } from './grid.js';
+import { moveFeared, endFear } from './fear.js';
 
 // ---------------------------------------------------------------------------------------------------------------
 // profiles
@@ -99,7 +103,9 @@ export function enforceBlockCapacity(b, u) {
 /** Collect targets for an ally with profile `prof`. */
 export function acquireTargets(b, u, prof) {
   if (prof.heal && prof.dmgType === 'heal') {
-    const cands = b.injuredAlliesInKeys(u.rangeKeys, u, !!prof.heal.elementHealRatio);
+    let cands = b.injuredAlliesInKeys(u.rangeKeys, u, !!prof.heal.elementHealRatio);
+    // a heal restricted to allies at or below an HP ratio (塞雷娅 S1 急救 "血量小于等于一半")
+    if (prof.heal.hpAtMost > 0) cands = cands.filter((a) => a.hpRatio <= prof.heal.hpAtMost + 1e-9);
     if (!cands.length) return cands;
     let n = prof.heal.mode === 'multi' ? Math.max(1, prof.heal.count || 3) : 1;
     if (prof.maxTargets > n) n = Math.floor(prof.maxTargets);   // skill targeting override (e.g. heal 2 targets)
@@ -119,9 +125,9 @@ export function acquireTargets(b, u, prof) {
     if (t.length) return t;
   }
   const cands = b.enemiesInKeys(u.rangeKeys, u, prof);
-  // "可以选择且优先选择阻挡单位" (PRTS 选择器): the enemies a melee unit blocks are always selectable by it — the block
-  // radius (0.7071) reaches past its own tile, so a blocked enemy may stand outside a short range (user playtest #5 item
-  // 4); a ranged operator on a melee tile gets none (Battle.blockedTargets: "阻挡（近战限定）")
+  // "可以选择且优先选择阻挡单位" (PRTS 选择器): the enemies a unit blocks are always selectable by it — the block radius
+  // (0.7071) reaches past its own tile, so a blocked enemy may stand outside a short range or behind its facing (user
+  // playtest #5 item 4); a ranged operator on a melee tile too (user playtest #6: "阻挡了就一定要能打到")
   if (u.blocking.length) for (const e of b.blockedTargets(u, prof)) if (!cands.includes(e)) cands.push(e);
   if (!cands.length) return cands;
   if (prof.allInRange) return cands;
@@ -381,30 +387,6 @@ function planLeg(b, e, leg) {
   R.suffix = suf;
 }
 
-/**
- * Whether a straight move from (x, y) to the centre of tile p = {x: col, y: row} only crosses ground-walkable,
- * crate-free tiles (the start and end tiles excepted). Exact grid traversal (tile (r,c) spans c ± 0.5, r ± 0.5); a
- * line through a tile corner needs both side tiles clear (as the grid's Bresenham smoothing).
- */
-function straightClear(g, x, y, p) {
-  let c = Math.round(x), r = Math.round(y);
-  const dx = p.x - x, dy = p.y - y;
-  const sc = dx > 0 ? 1 : -1, sr = dy > 0 ? 1 : -1;
-  const ddx = dx !== 0 ? Math.abs(1 / dx) : Infinity, ddy = dy !== 0 ? Math.abs(1 / dy) : Infinity;
-  let tx = dx !== 0 ? (c + 0.5 * sc - x) / dx : Infinity;
-  let ty = dy !== 0 ? (r + 0.5 * sr - y) / dy : Infinity;
-  const clear = (rr, cc) => (rr === p.y && cc === p.x) || (g.walkable(rr, cc) && !(g.obstacle[rr * COLS + cc] & OB_CRATE));
-  for (let guard = 4 * COLS; guard > 0 && (r !== p.y || c !== p.x); guard--) {
-    if (tx >= 1 && ty >= 1) break;
-    if (Math.abs(tx - ty) < 1e-9) {
-      if (!clear(r, c + sc) || !clear(r + sr, c)) return false;
-      c += sc; r += sr; tx += ddx; ty += ddy;
-    } else if (tx < ty) { c += sc; tx += ddx; } else { r += sr; ty += ddy; }
-    if (!clear(r, c)) return false;
-  }
-  return true;
-}
-
 /** Estimated length of legs after index `idx` (cached per grid version). */
 function tailLength(b, e, idx) {
   const R = e.route;
@@ -475,23 +457,27 @@ export function updateEnemy(b, e, dt) {
   if (!e.hidden && b._checkBlock(e)) return;
   if (b.time < e.pauseUntil) return;
   if (e.s.flags.noMove) return;
+  // 恐惧 (ba.fear "无法被阻挡并四散逃跑"; PRTS 诱发移动: 恐惧 outranks 诱导): runs to random tiles of the fan away from
+  // its source — a self-inflicted fear flutters inside its own tile (fear.js); the route re-plans once it ends
+  if (e.s.flags.fear && !e.hidden) { moveFeared(b, e, dt); return; }
+  if (e.mem.fearMove) endFear(e);
   // 诱导 (ba.attract "无法被阻挡并向目标位置移动"): walks to the attract point instead of following its route
   if (e.s.flags.attract) { moveAttracted(b, e, dt); return; }
-  // 恐惧 (ba.fear "无法被阻挡并四散逃跑"): the enemy flees on the spot instead of advancing along its route
-  if (e.s.flags.fear) { e.moving = false; return; }
   advanceRoute(b, e, dt, R);
 }
 
 /**
- * 诱导: walk the enemy (own speed; ground: grid path re-planned when obstacles change, flyers: straight) to the point
- * of its `attract` status (Battle._setAttractPoint) and keep it there. Its route re-plans from wherever it stands
- * once the status ends (route.pts is reset whenever it moved).
+ * 诱导: walk the enemy (own speed; ground: grid path, flyers: straight) to the point of its `attract` status
+ * (Battle._setAttractPoint) and keep it there. The path re-plans from where the enemy stands when an obstacle changed
+ * or something else moved it since its last step (a push / pull, or a 恐惧 that outranked the 诱导 for a while) —
+ * a stale path would walk through walls. Its route re-plans from wherever it stands once the status ends (route.pts
+ * is reset whenever it moved).
  */
 function moveAttracted(b, e, dt) {
   let A = null;
   for (const x of e.buffs) if (x.status === 'attract' && x.data && x.data.attract) { A = x.data.attract; break; }
   if (!A) { e.moving = false; return; }
-  if (!A.pts || A.ver !== b.grid.version) {
+  if (!A.pts || A.ver !== b.grid.version || e.x !== A.px || e.y !== A.py) {
     const sr = Math.round(e.y), sc = Math.round(e.x);
     let pts = null;
     if (e.motion !== 'FLY') { // (a hovering 近地悬浮 enemy is an air unit but walks the ground: motion decides the path)
@@ -517,6 +503,7 @@ function moveAttracted(b, e, dt) {
     if (d <= dist) { e.x = p.x; e.y = p.y; dist -= d; A.i++; } else { e.x += (dx / d) * dist; e.y += (dy / d) * dist; dist = 0; }
     moved = true;
   }
+  A.px = e.x; A.py = e.y;
   e.moving = moved;
   if (moved && e.route) e.route.pts = null;
 }
@@ -593,6 +580,8 @@ function enemyAttack(b, e) {
   // Content may flip it with `e.profile.melee = false`.
   const melee = e.profile?.melee ?? def.applyWay === 'MELEE';
   const radius = melee ? 0 : e.base.rangeRadius;
+  // the range circle takes an ally whose 0.25 collider touches it (PRTS 作战机制 §碰撞体积: 索敌 uses the colliders)
+  const reach = radius > 0 ? radius + ALLY_COLLIDER_RADIUS : 0;
   // `e.profile.canTarget(ally)`: the enemy's own target rule (只攻击地面单位, 不会攻击飞行单位 …; content/enemies.js),
   // applied to the candidates before the priority sort and the target count
   const own = e.profile && typeof e.profile.canTarget === 'function' ? e.profile.canTarget : null;
@@ -600,11 +589,11 @@ function enemyAttack(b, e) {
   if (e.blockedBy) {
     const bl = e.blockedBy;
     if (radius > 0) {
-      targets = b.alliesInRadius(e.x, e.y, radius, null).filter((a) => a === bl || canTargetAlly(e, a, true));
+      targets = b.alliesInRadius(e.x, e.y, reach, null).filter((a) => a === bl || canTargetAlly(e, a, true));
       if (!targets.includes(bl) && bl.alive) targets.push(bl);
     } else if (bl.alive && bl.deployed) targets = [bl];
   } else if (radius > 0) {
-    targets = b.alliesInRadius(e.x, e.y, radius, null).filter((a) => canTargetAlly(e, a, true));
+    targets = b.alliesInRadius(e.x, e.y, reach, null).filter((a) => canTargetAlly(e, a, true));
   }
   if (own && targets.length) targets = targets.filter((a) => own(a));
   if (targets.length > 1) sortAllyTargets(e, targets);

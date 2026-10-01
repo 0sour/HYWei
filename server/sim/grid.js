@@ -34,7 +34,8 @@
 // platforms, research 08 §8 #1]) and CRATE (阻隔工事 devices — `setObstacle(r, c, on, 'crate')`: walkable at cost 1000,
 // blocks line of sight; an enemy that must cross one is blocked by the device and breaks it). Any change bumps
 // `version`, which invalidates the cached fields (enemies re-read their next step). `groundPassable` (placement,
-// displacement, content) still treats both kinds as occupied unless `ignoreObstacles`.
+// displacement, content) still treats both kinds as occupied unless `ignoreObstacles`. `straightClear` tells whether an
+// off-centre unit may walk straight to a tile centre (ai.js planLeg, fear.js: else it steps back to its tile centre).
 
 import { ROWS, COLS } from './constants.js';
 
@@ -426,4 +427,28 @@ export function bresenhamTiles(a, b) {
     out.push([r, c]);
   }
   return out;
+}
+
+/**
+ * Whether a straight move from (x, y) to the centre of tile p = {x: col, y: row} only crosses ground-walkable,
+ * crate-free tiles (the start and end tiles excepted). Exact grid traversal (tile (r,c) spans c ± 0.5, r ± 0.5); a
+ * line through a tile corner needs both side tiles clear (as the grid's Bresenham smoothing).
+ */
+export function straightClear(g, x, y, p) {
+  let c = Math.round(x), r = Math.round(y);
+  const dx = p.x - x, dy = p.y - y;
+  const sc = dx > 0 ? 1 : -1, sr = dy > 0 ? 1 : -1;
+  const ddx = dx !== 0 ? Math.abs(1 / dx) : Infinity, ddy = dy !== 0 ? Math.abs(1 / dy) : Infinity;
+  let tx = dx !== 0 ? (c + 0.5 * sc - x) / dx : Infinity;
+  let ty = dy !== 0 ? (r + 0.5 * sr - y) / dy : Infinity;
+  const clear = (rr, cc) => (rr === p.y && cc === p.x) || (g.walkable(rr, cc) && !(g.obstacle[rr * COLS + cc] & OB_CRATE));
+  for (let guard = 4 * COLS; guard > 0 && (r !== p.y || c !== p.x); guard--) {
+    if (tx >= 1 && ty >= 1) break;
+    if (Math.abs(tx - ty) < 1e-9) {
+      if (!clear(r, c + sc) || !clear(r + sr, c)) return false;
+      c += sc; r += sr; tx += ddx; ty += ddy;
+    } else if (tx < ty) { c += sc; tx += ddx; } else { r += sr; ty += ddy; }
+    if (!clear(r, c)) return false;
+  }
+  return true;
 }

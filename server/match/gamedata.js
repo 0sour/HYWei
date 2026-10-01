@@ -440,18 +440,28 @@ export class GameData {
   }
 
   /**
-   * Placeable (hand) tokens a chess sends to the hand when placed on the board: [{ tokenId, count }] — its TALENT
-   * summons (tokens.json `placeable`: 海嗣 / 狼群 / 流形); a skill's summon (赫默's drone, 巫恋's doll) only appears in
-   * battle when the skill fires (tools/build-data.mjs buildTokens).
+   * Placeable (hand) tokens a chess sends to the hand when placed on the board: [{ tokenId, count }] — its manually
+   * deployable summons (tokens.json `placeable`: 医疗探机, 诅咒娃娃, 海嗣, 狼群, 流形, 爬行号·防护单元; user playtest #6)
+   * that the chess makes under `loadout` ({ skillIndex } from shared/protocol.js resolveLoadout; absent ⇒ its default
+   * skill): the owner variant's `sources` (`bySkill[skillIndex]` for a non-default skill) name a talent or a skill —
+   * 赫默 / 巫恋 on S1 make no drone / doll. `count` = the summon's deploy limit (PRTS 卫戍协议/帮助 "根据召唤物部署数量
+   * 上限（非初始持有量），发送等量召唤物至手牌区": 凯瑟琳 2 of her 3 devices).
    */
-  placeableTokens(chessId) {
+  placeableTokens(chessId, loadout = null) {
     const c = this.chess(chessId);
     if (!c || !Array.isArray(c.tokens)) return [];
     const out = [];
     for (const tid of c.tokens) {
       const t = this.token(tid);
-      if (!t || t.kind !== 'summon' || t.displayType !== 'DEFAULT' || t.placeable !== true) continue;
-      const count = posIntOr(t.deployLimit, 1);
+      if (!t || t.kind !== 'summon' || t.placeable !== true) continue;
+      const vs = t.variants && typeof t.variants === 'object' ? t.variants : {};
+      const v = vs[chessId] ?? vs[String(chessId).replace(/_b$/, '_a')] ?? null;
+      if (v) {
+        const alt = loadout && Number.isInteger(loadout.skillIndex) && v.bySkill ? v.bySkill[loadout.skillIndex] : null;
+        const src = Array.isArray(alt?.sources) ? alt.sources : Array.isArray(v.sources) ? v.sources : [];
+        if (!src.includes('talent') && !src.includes('skill')) continue;
+      }
+      const count = posIntOr(v?.stats?.deployLimit, posIntOr(t.deployLimit, 1));
       out.push({ tokenId: tid, count: Math.min(count, 9) });
     }
     return out;

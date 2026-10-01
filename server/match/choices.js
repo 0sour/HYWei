@@ -3,7 +3,13 @@
 //
 // Generation (generateDraft): the family is a weighted pick from choices.schedule[modeId].rounds[r].families; the card
 // count is `cards` (co-op 6, solo 3):
-//   bounty  悬赏决策  distinct cards.bounty entries with tier ∈ bountyTiers whose enemy exists and is active in the mode
+//   bounty  悬赏决策  distinct cards.bounty entries with tier ∈ bountyTiers whose enemy exists and is active in the mode,
+//                     draft cards only (`draftBounty`, choices.json `draft`: the PRTS 下半 记录 §机变阶段 "敌人轮选" table —
+//                     never 战术特训, which only 法术教鞭 creates, nor the hidden 鸭爵 set; the 7 multi-round "之后 / 后续
+//                     的每场作战" cards stay in, as the table lists them); each card carries its official rich text
+//                     `descRaw` (the battles in blue "下场作战" / "两场作战"); a multi-round card lasts
+//                     MULTI_ROUND_BOUNTY_BATTLES battles and says so (`bountyBattles` / `bountyText`: the user's call
+//                     after playtest #6 — "我不记得有过多轮悬赏")
 //   supply  道具补给  random normal EQUIP shop items with tier in supplyTiers [lo, hi] (duplicates allowed)
 //   shop    机密商店  random normal EQUIP shop items of any tier I–VI (duplicates allowed); FREE — the official card
 //                     text is "无需消耗资金，获得装备补给" (research 01 A4/04 addendum), so the price is 0
@@ -31,6 +37,38 @@
 import { weightedPick } from './waves.js';
 
 export const FAMILY_NAMES = { bounty: '悬赏决策', supply: '道具补给', shop: '机密商店', tactic: '战术决策' };
+
+/**
+ * Battles a multi-round bounty card lasts (data `rounds` 99, official text "之后 / 后续的<@ba.vdown>每场</>作战":
+ * 山海众头目·多轮悬赏, 多轮悬赏·假想敌 ×6, 法术大师A2·多轮战术特训). The user does not remember any multi-round bounty
+ * (playtest #6 answer, "我不记得有过多轮悬赏"): until that is confirmed otherwise every such card lasts two battles,
+ * exactly like the "接下来两场作战" cards, and its text says so in the same blue (`bountyText`). `null` restores the
+ * official "每场" (every later battle, red text) everywhere: the draft, 教鞭 / 神秘顾客, the bounty list and the effects
+ * column (DESIGN §20).
+ */
+export const MULTI_ROUND_BOUNTY_BATTLES = 2;
+/** A multi-round bounty card ("之后 / 后续的每场作战"; choices.json `multiRound`, or data `rounds` ≥ 90). */
+export const isMultiRoundBounty = (c) => !!c && (c.multiRound === true || Number(c.rounds) >= 90);
+/** The battles a bounty card's enemies come for (MULTI_ROUND_BOUNTY_BATTLES for a multi-round card), 1–99. */
+export function bountyBattles(c) {
+  if (isMultiRoundBounty(c) && Number.isInteger(MULTI_ROUND_BOUNTY_BATTLES)) return MULTI_ROUND_BOUNTY_BATTLES;
+  const r = Number(c && c.rounds);
+  return Math.max(1, Math.min(99, Number.isInteger(r) ? r : 1));
+}
+const N_ZH = ['', '一', '两', '三', '四', '五'];
+/**
+ * A bounty text as the card lasts: a multi-round card's "之后的 / 后续每场作战" (rich `<@ba.vdown>每场</>` or plain) reads
+ * "接下来<@ba.vup>两场作战</>" like the official two-battle cards while MULTI_ROUND_BOUNTY_BATTLES is set; any other
+ * text is returned as is.
+ */
+export function bountyText(text, c) {
+  if (typeof text !== 'string' || !text || !isMultiRoundBounty(c) || !Number.isInteger(MULTI_ROUND_BOUNTY_BATTLES)) return text;
+  const n = MULTI_ROUND_BOUNTY_BATTLES;
+  const battles = `${N_ZH[n] || n}场作战`;
+  return text
+    .replace(/(?:之后的|后续的?)<@ba\.vdown>每场<\/>作战/g, `接下来<@ba.vup>${battles}</>`)
+    .replace(/(?:之后的|后续的?)每场作战/g, `接下来${battles}`);
+}
 
 function scheduleFor(gd, round) {
   const sch = gd.choices.schedule && gd.choices.schedule[gd.modeId];
@@ -104,17 +142,31 @@ export function cardTargetBonds(gd, effectId) {
   return out.length ? out : null;
 }
 
+/**
+ * A bounty card the 悬赏决策 draft may offer (choices.json cards.bounty `draft`, tools/build-data.mjs
+ * bountyDraftExclusion: the PRTS "敌人轮选" table — no 战术特训, no 鸭爵 set; user playtest #6 item 4). Data without the
+ * flag (older builds, test fixtures) falls back to the kill bounties.
+ */
+export function draftBounty(c) {
+  if (!c) return false;
+  if (typeof c.draft === 'boolean') return c.draft;
+  return c.payout !== 'perfect';
+}
+
 function buildCards(gd, rng, family, n, sch, { stageId = null, bondAvailable = null } = {}) {
   const cardsData = gd.choices.cards || {};
   if (family === 'bounty') {
     const tiers = Array.isArray(sch.bountyTiers) && sch.bountyTiers.length ? sch.bountyTiers : [1, 2];
-    const pool = (Array.isArray(cardsData.bounty) ? cardsData.bounty : []).filter((c) => c && tiers.includes(c.tier) && gd.enemy(c.enemyKey) && !gd.inactiveEnemies.has(c.enemyKey));
+    const pool = (Array.isArray(cardsData.bounty) ? cardsData.bounty : []).filter((c) => c && draftBounty(c) && tiers.includes(c.tier) && gd.enemy(c.enemyKey) && !gd.inactiveEnemies.has(c.enemyKey));
     const pick = pool.slice();
     rng.shuffle(pick);
-    return pick.slice(0, n).map((c) => ({
-      kind: 'bounty', id: c.effectId, name: c.name, desc: c.desc || '', tier: c.tier, coin: c.coin, payout: c.payout,
-      rounds: c.rounds, enemyKey: c.enemyKey, count: c.count,
-    }));
+    return pick.slice(0, n).map((c) => {
+      const eff = typeof gd.effect === 'function' ? gd.effect(c.effectId) : null;
+      return {
+        kind: 'bounty', id: c.effectId, name: c.name, desc: bountyText(c.desc || '', c), descRaw: bountyText((eff && eff.descRaw) || null, c), tier: c.tier, coin: c.coin,
+        payout: c.payout, rounds: bountyBattles(c), enemyKey: c.enemyKey, count: c.count,
+      };
+    });
   }
   if (family === 'supply' || family === 'shop') {
     let lo = 1;
@@ -144,7 +196,7 @@ function buildCards(gd, rng, family, n, sch, { stageId = null, bondAvailable = n
 /** Public card view. */
 export function cardView(c) {
   const v = { idx: c.idx, kind: c.kind, id: c.id, name: c.name, desc: c.desc, tier: c.tier ?? null };
-  if (c.kind === 'bounty') Object.assign(v, { coin: c.coin, payout: c.payout, rounds: c.rounds, enemyKey: c.enemyKey, count: c.count });
+  if (c.kind === 'bounty') Object.assign(v, { descRaw: c.descRaw ?? null, coin: c.coin, payout: c.payout, rounds: c.rounds, enemyKey: c.enemyKey, count: c.count });
   if (c.kind === 'item') v.price = 0;
   if (c.kind === 'tactic') Object.assign(v, { team: c.team, tacticKind: c.tacticKind });
   return v;

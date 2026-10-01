@@ -3,7 +3,7 @@
 // (精锐 `_b`) id: `bb` is the Lv4 / Lv7 skill blackboard, talent/trait blackboards come from `def` (module talent and
 // trait upgrades of elites are already merged into the data), `def.raw.module.active` tells whether the module runs.
 // Every number comes from a blackboard (skill `bb`, `def.talents[i].bb`, `def.traitBb`, token data); literals below
-// are only fall-backs for missing keys or documented [ASSUMED] shapes (tornado radius, device placement …).
+// are only fall-backs for missing keys or documented [ASSUMED] shapes (tornado radius …).
 //
 // Notes shared by several kits:
 // - `base_attack_time` in skill blackboards is a FLAT change of the base attack time in seconds (白面鸮 −1.8 on 2.85 s
@@ -30,7 +30,7 @@ import { bodyDist, bodyInKeys } from '../../body.js';
 import { absoluteRangeKeys, canTargetEnemy, sortEnemyTargets } from '../../targeting.js';
 import { normalizeChess } from '../../simdata.js';
 import { aggregateMods } from '../../buffs.js';
-import { dirFromDelta, frontOf, offsetTile } from '../../dir.js';
+import { CAT_SHIELD_KEY } from '../tokens.js';
 
 const TICK_EPS = 0.01;     // minimal status duration (s)
 const AURA = 0.2;          // aura refresh period (s)
@@ -53,24 +53,6 @@ const nationOf = (u) => u?.def?.raw?.nationId ?? null;
 const isAbyssal = (u) => u?.def?.raw?.groupId === 'abyssal' || ABYSSAL.has(u?.def?.charId ?? u?.def?.raw?.charId);
 const enemyHasTag = (e, tag) => !!e && e.side === 'enemy' && Array.isArray(e.def?.tags) && e.def.tags.includes(tag);
 const keySet = (unit) => unit.rangeKeySet || new Set(unit.rangeKeys || []);
-/**
- * The tokens.json variant a summon of `owner` gets — its chess (else the normal `_a` sibling, else the first variant)
- * with the owner's selected skill / module merged, as simdata getToken does — for fields normalizeToken drops
- * (stats.deployLimit). Exact when two players of one field give the same chess different loadouts (DESIGN §16).
- */
-function ownTokenVariant(battle, tokenId, owner) {
-  const vs = battle.tokenDef(tokenId, owner)?.raw?.variants;
-  if (!vs || typeof vs !== 'object') return null;
-  const oid = String(owner?.defId ?? '');
-  let v = vs[oid] ?? vs[oid.replace(/_b$/, '_a')] ?? Object.values(vs)[0] ?? null;
-  const lo = owner?.def?.loadout;
-  if (v && lo && !lo.isDefault) {
-    if (!lo.skillIsDefault && v.bySkill?.[lo.skillIndex]) v = { ...v, ...v.bySkill[lo.skillIndex] };
-    if (!lo.moduleIsDefault && v.byModule?.[lo.moduleId]) v = { ...v, ...v.byModule[lo.moduleId] };
-  }
-  return v;
-}
-
 /** Every living, visible enemy standing on the unit's range (ignores stealth/untargetable: auras, reveals). */
 function enemiesOnRange(battle, unit, keys = null) {
   const set = keys || keySet(unit);
@@ -102,7 +84,7 @@ function toggleBuff(battle, unit, key, on, mods) {
 /** "技力光环（同类效果取最高）": shared key, highest value wins. */
 function spAura(battle, source, value, filter) {
   whileDeployed(battle, source, AURA, () => {
-    for (const a of battle.allies(source.ownerId)) {
+    for (const a of battle.alliesFor(source, source.ownerId)) {
       if (!filter(a)) continue;
       const cur = a.findBuff('aura:spRecovery');
       if (cur && cur.source !== source && cur.source?.alive && (cur.data?.v ?? 0) > value) continue;
@@ -128,16 +110,12 @@ function inspire(battle, target, val, src, stat = 'atk') {
 }
 /** Reveal stealthed enemies on the given tiles. */
 const reveal = (battle, enemies) => { for (const e of enemies) if (e.s.flags.stealth) pulse(battle, e, 'aura:reveal', null, { flags: { reveal: true } }); };
-/** Knock-back / pull (0.5 + 0.5·force tiles, like generic.js). `toward` = {x,y} point for pulls. */
-function shove(battle, e, from, force, { toward = null, maxDist = Infinity } = {}) {
-  if (!e.alive) return 0;
-  const f = Math.max(0, num(force, 0));
-  const dx = toward ? toward.x - e.x : e.x - from.x, dy = toward ? toward.y - e.y : e.y - from.y;
-  const len = Math.hypot(dx, dy);
-  if (!(len > 1e-6)) return 0;
-  const dist = Math.min(0.5 + 0.5 * f, maxDist);
-  if (!(dist > 0)) return 0;
-  return battle.displace(e, { x: dx, y: dy }, dist, { force: f + 1 });
+/**
+ * Knock-back of 力度 `force` away from `from` (a radial push, Battle.push: the official 力度 − 重量 distance — PRTS 推与拉;
+ * user playtest #6 item 14). Returns the tiles moved.
+ */
+function shove(battle, e, from, force) {
+  return e && e.alive ? battle.push(e, num(force, 0), { from }) : 0;
 }
 /** Free tile for a summon/device: in the rect, standable, empty and not the home tile of any ally (dead ones redeploy there). */
 function freeTile(battle, r, c, { ranged = false, ground = false } = {}) {
@@ -203,12 +181,12 @@ function moduleRangeGrid(def) {
   return null;
 }
 const applyModuleRange = (battle, unit, def) => { const g = moduleRangeGrid(def); if (g) { unit.rangeGrid = g; battle.refreshRange(unit); } };
-/** Pull `e` towards the unit, to the tile in front of it ("拖拽至面前"); returns the distance moved. */
+/**
+ * Pull `e` "至面前" of the unit with 力度 `force` (Battle.pullToFront: the official 拉力起点 half a tile ahead, 急停 0.6708
+ * around it, 力度 − 重量 — weight ≤ force all the way, one heavier a third of the way, …); returns the distance moved.
+ */
 function pullToFront(battle, unit, e, force) {
-  if (!e || !e.alive) return 0;
-  const d = Math.hypot(unit.x - e.x, unit.y - e.y);
-  if (!(d > 1 + 1e-6)) return 0;
-  return shove(battle, e, unit, force, { toward: { x: unit.x, y: unit.y }, maxDist: d - 1 });
+  return e && e.alive ? battle.pullToFront(e, unit, num(force, 0)) : 0;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -216,7 +194,7 @@ function pullToFront(battle, unit, e, force) {
 
 const kits = {
   // ===== 信仰搅拌机 (shotprotector) S3 退休前布道 — ammo 30 counters; talents 扫射迎宾仪礼 / 架盾送客仪礼; module: reveal
-  //       S1 铳骑主考官 (TAKE_DAMAGE: next attack ×3 hits + reload an adjacent 拉特兰 ammo skill), S2 八臂电锯侠 (ammo;
+  //       S1 铳骑主考官 (自动触发 ⇒ DEFAULT: next attack ×3 hits + reload an adjacent 拉特兰 ammo skill), S2 八臂电锯侠 (ammo;
   //       a fatal hit is blocked for `ammo_cost` bullets); module SPT-Y 老朋友: range +1
   chess_char_4_01_a: (bb, chess, def) => {
     const t0 = tbb(def, 0), t1 = tbb(def, 1);
@@ -655,8 +633,7 @@ const kits = {
   },
 
   // ===== 寒芒克洛丝 (fastshot) S2 封喉 — double shot → 4 shots after 40 hits; talent 中的 (20 % ×1.5 + 0.2 s stun)
-  //       S1 无痕 (ATK up, double shot, 迷彩 = the engine's ally `stealth`: ranged enemies cannot target her unless she
-  //       blocks them)
+  //       S1 无痕 (ATK up, double shot, 迷彩 = the engine's `camou` flag: only an enemy she blocks targets her)
   chess_char_4_06_a: (bb, chess, def) => {
     const t0 = tbb(def, 0);
     const need = num(bb['attack@max_stack_count'], 40);
@@ -666,7 +643,7 @@ const kits = {
         skchr_kroos2_1: () => ({
           kind: 'duration',
           mods: { atkPct: num(bb.atk) },
-          flags: { stealth: true },
+          flags: { camou: true },
           attack: { hits: 2 },
           onStart({ battle, unit }) { battle.fx('camouflage', { x: unit.x, y: unit.y, id: unit.id }); },
         }),
@@ -902,108 +879,35 @@ const kits = {
   },
 
   // ===== 凯瑟琳 (craftsman) S2 战火淬炼 — stops attacking, HP/DEF up, devices give 6 %/s shields; talent 定向支援信号
-  // [ASSUMED] the devices are not board pieces in this mode (data `placeable: false`): at battle start (and when she
-  // redeploys, while stock lasts) she auto-places up to deployLimit of them on a free tile orthogonally next to her best
-  // blockers, each pointing at that operator's tile.
+  //       "携带3个支援装置（最多部署2个）": the 爬行号·防护单元 are hand pieces (2 = the deploy limit) the player places and
+  //       turns towards an operator (user playtest #6, PRTS 卫戍协议/帮助 §战斗部署); they deploy with the board and the
+  //       token kit (tokens.js catShield) gives the shields — S2 overwrite_ratio per second while this skill runs — so
+  //       this kit places nothing (none placed ⇒ no device).
   //       S1 岁月锻打 (passive: she and every other operator holding a device shield ATK/DEF +8 %/+11 %); module CRA-X
-  //       carries one more device (talent cnt, data)
-  chess_char_4_11_a: (bb, chess, def) => {
-    const t0 = tbb(def, 0);
-    const tokenId = (def.talents || []).find((t) => t.tokenKey)?.tokenKey ?? (def.tokens || [])[0] ?? 'token_10041_cathy_catsld';
-    const carried = Math.max(0, Math.floor(num(t0.cnt, 3)));
-    const overwrite = num(bb.overwrite_ratio, 0.06);
-    const S2 = isSel(def, 'skchr_cathy_2');
-    return {
-      skills: alt(def, {
-        skchr_cathy_1: () => ({
-          kind: 'passive',
-          mods: { atkPct: num(bb.s1_atk), defPct: num(bb.s1_def) },
-          onStart({ battle, unit }) {
-            unit.mem.forgeAura?.cancel();
-            unit.mem.forgeAura = whileDeployed(battle, unit, AURA, () => {
-              for (const a of battle.allies(unit.ownerId)) {
-                if (a === unit || a.kind !== 'op' || !a.findBuff('cathy:shield')) continue;
-                pulse(battle, a, `cathy:forge:${unit.id}`, { atkPct: num(bb.s1_atk), defPct: num(bb.s1_def) });
-              }
-            });
-          },
-        }),
+  //       carries one more device (talent cnt, data — a spare the hand never shows)
+  chess_char_4_11_a: (bb, chess, def) => ({
+    skills: alt(def, {
+      skchr_cathy_1: () => ({
+        kind: 'passive',
+        mods: { atkPct: num(bb.s1_atk), defPct: num(bb.s1_def) },
+        onStart({ battle, unit }) {
+          unit.mem.forgeAura?.cancel();
+          unit.mem.forgeAura = whileDeployed(battle, unit, AURA, () => {
+            for (const a of battle.allies(unit.ownerId)) {
+              if (a === unit || a.kind !== 'op' || !a.findBuff(CAT_SHIELD_KEY)) continue;
+              pulse(battle, a, `cathy:forge:${unit.id}`, { atkPct: num(bb.s1_atk), defPct: num(bb.s1_def) });
+            }
+          });
+        },
       }),
-      skill: {
-        kind: 'duration',
-        mods: { hpPct: num(bb.max_hp), defPct: num(bb.def) },
-        attack: { noAttack: true },
-        onStart({ battle, unit }) { battle.fx('overclock', { x: unit.x, y: unit.y, id: unit.id }); },
-      },
-      install(battle, unit) {
-        const tok = battle.tokenDef(tokenId, unit); // the owner's skill / module variant (DESIGN §16)
-        const tb = tok?.talents?.[0]?.bb || {};
-        const cap = num(tb.max_shield_ratio, 0.2), each = num(tb.shield_ratio_each_trigger, 0.06);
-        const idle = num(tb.interval, 5), period = Math.max(0.1, num(tb['catsld_t_1[timer][interval].interval'], num(bb.interval, 1)));
-        const limit = Math.max(1, Math.floor(num(ownTokenVariant(battle, tokenId, unit)?.stats?.deployLimit, num(tok?.raw?.deployLimit, 2))));
-        unit.mem.devicesLeft = carried;
-        unit.mem.devices = [];
-        // a device points at ONE tile (AK: range [0,0],[0,1] turned towards the chosen operator) and shields whichever
-        // of her operators stands there — the same operator again after it redeploys on its tile ("装置效果不叠加":
-        // one device per operator)
-        const covered = (a) => unit.mem.devices.some((d) => d.alive && d.mem.tr === a.tileR && d.mem.tc === a.tileC);
-        const giveShield = (target, amount, capAmt) => {
-          const cur = target.findBuff('cathy:shield');
-          const v = Math.min(capAmt, (cur ? cur.shield : 0) + amount);
-          if (!cur || v > cur.shield + 1e-9) battle.addBuff(target, { key: 'cathy:shield', shield: v, visible: true, source: unit });
-        };
-        const deviceKit = (tr, tc) => ({
-          skill: null, talents: [], trait: { noAttack: true },
-          install(b, dev) {
-            dev.mem.tr = tr; dev.mem.tc = tc;
-            dev.mem.target = null;
-            // token trait "不会受到攻击": untargetable (spawn option) AND immune — enemy AoE abilities that sweep every ally
-            // in a radius would otherwise destroy the 100-HP device and silently end its shields
-            b.addBuff(dev, { key: 'cathy:device', flags: { invulnerable: true }, persist: true, allowDead: true });
-            b.every(period, () => {
-              if (!dev.alive) return;
-              const o = b.unitAt(tr, tc);
-              const t = o && o.kind === 'op' && o.ownerId === dev.ownerId && o.deployed ? o : null;
-              if (t !== dev.mem.target) { // newly connected operator: full talent shield at once
-                dev.mem.target = t;
-                if (t) { giveShield(t, unit.s.maxHp * cap, unit.s.maxHp * cap); b.fx('shield', { x: t.x, y: t.y, id: t.id }); }
-                return;
-              }
-              if (!t) return;
-              const capAmt = unit.s.maxHp * cap;
-              if (S2 && unit.alive && skillActive(unit)) giveShield(t, unit.s.maxHp * overwrite, capAmt);
-              else if (b.time - t.lastHitAt >= idle - 1e-9) giveShield(t, unit.s.maxHp * each, capAmt);
-            }, { owner: dev, immediate: true });
-          },
-        });
-        const place = () => {
-          if (!unit.alive || !unit.deployed) return;
-          unit.mem.devices = unit.mem.devices.filter((d) => d.alive);
-          // front-most on the player's own board first (a board position; the mirrored Final Assault side counts from
-          // the field's right)
-          const boardCol = (x) => (x.player && x.player.mirror ? -x.tileC : x.tileC);
-          const cands = battle.allies(unit.ownerId).filter((a) => a.kind === 'op' && !covered(a))
-            .sort((a, b) => (b.s.blockCnt > 0) - (a.s.blockCnt > 0) || b.s.taunt - a.s.taunt || boardCol(b) - boardCol(a) || a.id - b.id);
-          for (const a of cands) {
-            if (unit.mem.devices.length >= limit || unit.mem.devicesLeft <= 0) break;
-            const r = a.tileR, c = a.tileC;
-            // orthogonal neighbours only (a diagonal device could never have the operator in its range): behind the
-            // operator first (along its direction), then its two sides, then in front; each device faces the operator
-            const tiles = [frontOf(r, c, a.dir, -1), offsetTile(r, c, -1, 0, a.dir), offsetTile(r, c, 1, 0, a.dir), frontOf(r, c, a.dir, 1)];
-            const t = tiles.find(([rr, cc]) => freeTile(battle, rr, cc, { ranged: true }));
-            if (!t) continue;
-            const dev = battle.spawnToken(unit, tokenId, t[0], t[1], { kit: deviceKit(r, c), untargetable: true, dir: dirFromDelta(r - t[0], c - t[1]) });
-            if (!dev) continue;
-            unit.mem.devicesLeft--;
-            unit.mem.devices.push(dev);
-            battle.fx('device', { x: dev.x, y: dev.y, id: dev.id, target: a.id });
-          }
-        };
-        battle.on('battleStart', place, { owner: unit });
-        battle.on('deploy', (c) => { if (c.unit === unit && !c.initial) place(); }, { owner: unit });
-      },
-    };
-  },
+    }),
+    skill: {
+      kind: 'duration',
+      mods: { hpPct: num(bb.max_hp), defPct: num(bb.def) },
+      attack: { noAttack: true },
+      onStart({ battle, unit }) { battle.fx('overclock', { x: unit.x, y: unit.y, id: unit.id }); },
+    },
+  }),
 
   // ===== 歌蕾蒂娅 (hookmaster) S3 缺水的碎漩狂舞 — bind a far target, tornado: slow, 85 % arts pulses + pull, final pull
   //       S1 缺水的大洋裂断 (charges: next attack pulls the target to her front, 150 %/180 %); S2 缺水的掌握怒海 (BAT +0.5 s,
@@ -1060,8 +964,8 @@ const kits = {
           for (const e of inside) {
             if (!e.alive || e.s.flags.untargetable) continue;
             battle.dealDamage(unit, e, { amount: unit.s.atk * num(bb.atk_scale, 0.85), type: 'arts', isSkill: true, tags: ['skill', 'tornado'] });
-            const d = Math.hypot(T.x - e.x, T.y - e.y);
-            if (e.alive && d > 0.05) dragDmg(battle, unit, e, shove(battle, e, unit, force, { toward: T, maxDist: d }));
+            // "小力地拖拽至中心": a pull to the marked point (PRTS 推与拉: its 6 tornado pulls stop 0.05 from it)
+            if (e.alive) dragDmg(battle, unit, e, battle.pull(e, force, { to: T, stop: 0.05 }));
           }
           battle.fx('tornadoPulse', { x: T.x, y: T.y, id: unit.id, r: R });
         },
@@ -1141,6 +1045,7 @@ const kits = {
           battle.on('beforeAttack', (c) => {
             if (c.attacker !== unit || !skillActive(unit)) return;
             const cands = battle.enemiesInKeys(unit.rangeKeys, unit, c.profile);
+            for (const e of battle.blockedTargets(unit, c.profile)) if (!cands.includes(e)) cands.push(e); // DESIGN §20.3
             if (cands.length <= 1) return;
             sortEnemyTargets(battle, unit, cands, c.profile?.priority ?? null);
             const n = Math.max(1, Math.floor((c.profile?.maxTargets || 1) + unit.s.maxTargets));
@@ -1506,8 +1411,10 @@ const kits = {
     const g = grid(def.skill?.rangeGrid);
     return {
       skills: alt(def, {
+        // (自动触发: an AUTO skill takes no 技能策略 — an AUTO DP skill fires as soon as it is ready, like 伺夜 S1)
         skchr_flamtl_1: () => ({
           kind: 'instant',
+          trigger: 'SP_FULL',
           onStart({ battle, unit }) {
             battle.addDp(unit.ownerId, num(bb.cost, 6));
             battle.addBuff(unit, { key: 'flamtl:evade', visible: true });
@@ -1526,7 +1433,7 @@ const kits = {
               if (e.alive) battle.applyStatus(e, 'stun', { duration: num(bb.stun, 0.5), source: unit });
             }
             for (const a of battle.unitsInGrid(unit, area, { side: 'ally' })) {
-              if (a.kind === 'device') continue;
+              if (a.kind === 'device' || !battle.allySelectable(a, unit)) continue;
               battle.addBuff(a, { key: 'flamtl:redPine', duration: num(bb['flamtl_s_2.duration'], 10), mods: { dodgePhys: num(bb['flamtl_s_2.prob'], 0.4) }, visible: true, source: unit });
             }
             battle.fx('aoe', { x: unit.x, y: unit.y, id: unit.id });
@@ -1651,7 +1558,9 @@ const kits = {
             const own = new Set(absoluteRangeKeys(unit.rangeGrid, unit.tileR, unit.tileC, unit.dir, unit.s.rangeExtend));
             const ok = (e) => bodyInKeys(e, own) || !!(e.blockedBy && e.blockedBy.side === 'ally' && e.blockedBy.alive);
             if (c.targets.every(ok)) return;
-            const cands = battle.enemiesInKeys(unit.rangeKeys, unit, c.profile).filter(ok);
+            const cands = battle.enemiesInKeys(unit.rangeKeys, unit, c.profile);
+            for (const e of battle.blockedTargets(unit, c.profile)) if (!cands.includes(e)) cands.push(e); // DESIGN §20.3
+            for (let i = cands.length - 1; i >= 0; i--) if (!ok(cands[i])) cands.splice(i, 1);
             sortEnemyTargets(battle, unit, cands, c.profile?.priority ?? null);
             c.targets = cands.slice(0, Math.max(1, c.targets.length));
           }, { owner: unit, priority: 5 });
@@ -1935,6 +1844,7 @@ const kits = {
       skills: alt(def, {
         skchr_cetsyr_1: () => ({
           kind: 'toggle',
+          trigger: 'SP_FULL', // 自动触发 (no 技能策略: the 吟游者 row is for MANUAL skills): on as soon as it is ready
           onStart({ battle, unit }) { setTrait(unit, bb['attack@atk_to_hp_recovery_ratio']); battle.fx('mote', { x: unit.x, y: unit.y, id: unit.id }); },
           onEnd({ unit }) { resetTrait(unit); },
         }),

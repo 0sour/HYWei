@@ -6,9 +6,10 @@
 //
 // Construction creates every ally unit (undeployed) and installs content (kits + domain modules). The first
 // step() (or an explicit start()) deploys everything (operators top→bottom, left→right — mirrored for the right boss
-// side —, then the summon pieces the same way; the players of a shared field side by side), fires `deploy` (initial)
-// for each unit, forces out the operators that enter already knocked out (`carryState.down`, 联防: constants.js
-// FORCED_EXIT — down on their tile, redeploy timer running) and then fires `battleStart`.
+// side —, then the summon pieces the same way — except a piece content flags `deferDeploy`, which waits on its tile;
+// the players of a shared field side by side), fires `deploy` (initial) for each unit, forces out the operators that
+// enter already knocked out (`carryState.down`, 联防: constants.js FORCED_EXIT — down on their tile, redeploy timer
+// running) and then fires `battleStart`.
 // Tick order: scheduled callbacks → spawns → DP → buffs → enemies (attack, move, block) → enemy index →
 //   allies (skill tick, attack) → projectiles → redeploys → boss sync → `tick` hook → release hooks of removed units →
 //   time += TICK → end checks. A forceEnd() requested mid-step ends the step after the current phase (docs/SIM.md §1.4).
@@ -20,17 +21,18 @@
 // Robustness: every content callback and every step phase is wrapped; errors are logged once per key and the
 // battle continues. After MAX_INTERNAL_ERRORS the battle force-ends as a timeout.
 
-import { TICK, ROWS, COLS, BLOCK_RADIUS_SQ, DP_DEFAULTS, DOWN_STATE, FORCED_EXIT, MAX_BATTLE_TIME, MAX_INTERNAL_ERRORS, COLD_FREEZE_DURATION, OBSTACLE_DEVICES, EVENT_BUFFER_CAP, BOSS_ROW_OFFSET, MAX_HOOK_DEPTH, MAX_ALIVE_ENEMIES, LEVITATE_HALF_WEIGHT, RESIST_DEFAULT, RESIST_PALSY_DECAY } from './constants.js';
+import { TICK, ROWS, COLS, BLOCK_RADIUS_SQ, DP_DEFAULTS, DOWN_STATE, FORCED_EXIT, MAX_BATTLE_TIME, MAX_INTERNAL_ERRORS, COLD_FREEZE_DURATION, OBSTACLE_DEVICES, EVENT_BUFFER_CAP, BOSS_ROW_OFFSET, MAX_HOOK_DEPTH, MAX_ALIVE_ENEMIES, LEVITATE_HALF_WEIGHT, RESIST_DEFAULT, RESIST_PALSY_DECAY, PUSH_TILES, PUSH_TILES_EFFECT, PULL_WEAK_SHARE, PULL_CRAWL, PULL_ORIGIN, PULL_STOP_RADIUS, PUSH_DIRECTIONAL_MIN_DIST, AUTO_OP_COOLDOWN } from './constants.js';
 import { GEO } from '../../shared/constants.js';
 import { createRng } from './rng.js';
 import { Grid } from './grid.js';
 import { Unit } from './units.js';
 import { makeBuff, STATUS, RESIST_STATUSES } from './buffs.js';
 import { dealDamage as pipeDamage, heal as pipeHeal, applyHpLoss, makeDamageInfo, reduceElement, palsyBuff, elementView } from './damage.js';
-import { absoluteRangeKeys, canTargetEnemy, meleeUnit } from './targeting.js';
+import { absoluteRangeKeys, canTargetEnemy } from './targeting.js';
 import { bodyKeys, bodyInKeys, bodyInRadius } from './body.js';
 import { normDir, mirrorDir, localOrder, localBefore } from './dir.js';
 import { ProjectileSystem } from './projectiles.js';
+import { stampFear } from './fear.js';
 import { SkillRuntime } from './skills.js';
 import { updateAlly, updateEnemy, compileRoute, remainingDistance, effectiveProfile, performAttack, acquireTargets } from './ai.js';
 import { resolveProfile } from './professions.js';
@@ -44,6 +46,15 @@ let schedSeq = 0;
 
 /** Finite number or the default (content may pass undefined/NaN/Infinity/strings to helpers). */
 const fin = (v, d) => { const n = typeof v === 'number' ? v : (v == null || v === '' ? NaN : Number(v)); return Number.isFinite(n) ? n : d; };
+/**
+ * Official push distance (tiles) of a 受力等级 (constants.js PUSH_TILES: ≤ −3 → 0, ≥ 3 → the 3 value); `effect` = a 特效
+ * push (PRTS 推与拉's 特效 column, PUSH_TILES_EFFECT: 见行者), else the 弹道 column.
+ */
+export function pushTiles(level, effect = false) {
+  const l = Math.round(fin(level, -99));
+  if (l <= -3) return 0;
+  return (effect ? PUSH_TILES_EFFECT : PUSH_TILES)[Math.min(3, l)];
+}
 
 function clone(v) {
   if (v == null || typeof v !== 'object') return v;
@@ -90,7 +101,10 @@ export class Battle {
     // non-boss kinds fall back to 60 s; only boss/hidden (or an explicit Infinity) run without a limit.
     const tl = Number(opts.timeLimit);
     this.timeLimit = opts.timeLimit == null || !(tl > 0) ? (bossLike ? Infinity : 60) : tl;
-    this.flags = { layerGainsEnabled: this.kind === 'normal', ...DP_DEFAULTS, ...(opts.flags || {}) };
+    // startOpCooldown: the operation cooldown of the battle-start deployment (skills.js AUTO_OP_COOLDOWN)
+    this.flags = { layerGainsEnabled: this.kind === 'normal', ...DP_DEFAULTS, startOpCooldown: AUTO_OP_COOLDOWN, ...(opts.flags || {}) };
+    const soc = Number(this.flags.startOpCooldown);
+    this.flags.startOpCooldown = this.flags.startOpCooldown != null && Number.isFinite(soc) && soc >= 0 ? soc : AUTO_OP_COOLDOWN;
     // DP knobs may arrive as undefined/null/strings (e.g. a template without `dp`): never let them poison DP with NaN.
     for (const k of ['dpInit', 'dpPerSec', 'dpMax']) {
       const v = Number(this.flags[k]);
@@ -302,6 +316,15 @@ export class Battle {
     u.kit = kit || {};
     u.profile = resolveProfile(u.def, u.kit.trait || null);
     if (u.def.untargetable) this.addBuff(u, { key: 'trait:untargetable', flags: { untargetable: true }, persist: true, allowDead: true });
+    // abnormal effects a summon holds (tokens.json `abnormal`, PRTS; user playtest #6 item 18): 禁疗 — no heal reaches it;
+    // 孤立 ("无法被同阵营选中") — no ally heal or ally selection (auras over a range) reaches it
+    const ab = u.def.abnormal;
+    if (Array.isArray(ab) && ab.length) {
+      const flags = {};
+      if (ab.includes('healFree')) flags.noHeal = true;
+      if (ab.includes('isolated')) { flags.isolated = true; flags.noHeal = true; }
+      if (Object.keys(flags).length) this.addBuff(u, { key: 'trait:abnormal', flags, persist: true, allowDead: true });
+    }
     const spec = u.kit.skill || null;
     u.skill = new SkillRuntime(this, u, u.def.skill, spec, u.def.skill?.bb ?? {});
     if (u.profile.install && !u._profInstalled) {
@@ -330,8 +353,11 @@ export class Battle {
     const seq0 = this._deploySeq;
     const lists = this.players.map((ps) => ps.units.filter((u) => u.kind === 'op' || u.kind === 'token').slice().sort((a, b) =>
       b.homeR - a.homeR || (ps.mirror ? b.homeC - a.homeC : a.homeC - b.homeC) || a.id - b.id));
+    // a summon piece flagged `deferDeploy` by content (one its owner's loadout does not make — 赫默 on S1 with a drone
+    // piece —, or a skill's summon when shared/constants.js SKILL_SUMMON_START_DEPLOY is off: content/tokens.js
+    // dockSkillSummons) stays off the field, its tile reserved (isReservedTile), until content deploys it
     for (const kind of ['op', 'token']) {
-      const per = lists.map((l) => l.filter((u) => u.kind === kind));
+      const per = lists.map((l) => l.filter((u) => u.kind === kind && !u.deferDeploy));
       const n = Math.max(0, ...per.map((l) => l.length));
       for (let i = 0; i < n; i++) for (const l of per) if (l[i]) this._safe(() => this._deploy(l[i], { initial: true }), 'initialDeploy', l[i]);
     }
@@ -851,6 +877,8 @@ export class Battle {
     if (!u.skill) this._setupUnit(u);
     u.skill.reset(cs);
     const sk = u.skill;
+    // "自动操作具有3s冷却，在完成一次操作或作战开始时部署的单位将进入冷却" (PRTS 卫戍协议/帮助; skills.js)
+    if (initial) sk.opReadyAt = this.time + this.flags.startOpCooldown;
     if (keepSp && !sk.noSkill && sk.kind !== 'passive' && !sk.active) {
       sk.charges = Math.max(0, Math.min(sk.maxCharges, Math.floor(fin(keepSp.charges, 0))));
       sk.sp = Math.max(0, Math.min(sk.spCost, fin(keepSp.sp, 0)));
@@ -1072,14 +1100,15 @@ export class Battle {
   }
 
   /**
-   * The enemies ally `u` blocks that it may target with `profile` — always selectable by a melee blocker, inside its
-   * range or not ("可以选择且优先选择阻挡单位", PRTS 选择器; ai.js acquireTargets, the skills' DEFAULT trigger). A ranged
-   * operator on a melee tile gets none: it attacks what its range holds (targeting.js meleeUnit, PRTS 索敌的概念
-   * "阻挡（近战限定）").
+   * The enemies ally `u` blocks that it may target with `profile` — always selectable by their blocker, inside its range
+   * or not, whatever its facing ("可以选择且优先选择阻挡单位", PRTS 选择器; ai.js acquireTargets, the skills' DEFAULT
+   * trigger). That holds for a ranged operator on a melee tile too: the user's rule after playtest #6, "阻挡了就一定要能
+   * 打到" — officially the collision pushes a blocked enemy to its blocker's front, so whatever blocks an enemy can hit
+   * it (DESIGN §20; it replaces the playtest #5 QA's melee-only restriction).
    */
   blockedTargets(u, profile) {
     const out = [];
-    if (!u || !u.blocking || !u.blocking.length || !meleeUnit(u)) return out;
+    if (!u || !u.blocking || !u.blocking.length) return out;
     for (const e of u.blocking) if (e.blockedBy === u && canTargetEnemy(u, e, profile)) out.push(e);
     return out;
   }
@@ -1241,7 +1270,8 @@ export class Battle {
    * than LEVITATE_HALF_WEIGHT (current massLevel); 冻结's RES cut hits enemies only; 麻痹 adds stacks; "同名效果取最高"
    * statuses (`valued`) keep the strongest value — a weaker application only extends past the stronger one's end (it
    * then resumes); other statuses refresh to the longer duration. 诱导 (`attract`) walks the enemy to `point`
-   * ([r, c] or {x, y}; default the source's tile — a new application moves the point). A stunned/sleeping operator
+   * ([r, c] or {x, y}; default the source's tile — a new application moves the point); 恐惧 (`fear`) stamps where it
+   * was applied and from where (fear.js stampFear: the fan of 恐惧可达地块 its movement uses). A stunned/sleeping operator
    * releases the enemies it blocks; a feared/levitated/unblockable/attracted enemy is released by its blocker.
    * `statusApplied` reports the final duration and `entered` (the target did not carry the status before).
    */
@@ -1286,6 +1316,8 @@ export class Battle {
       const mods = tpl.enemyOnlyMods && target.side !== 'enemy' ? null : typeof tpl.mods === 'function' ? tpl.mods(value) : (tpl.mods || null);
       const b = this.addBuff(target, { key, duration, refresh: opts.refresh ?? 'extend', mods, flags: tpl.flags || null, status: key, visible: true, source });
       if (tpl.attract && b) this._setAttractPoint(target, b, opts.point ?? value, source);
+      // 恐惧: the hit position and the source's position of every application (fear.js — the fan of reachable tiles)
+      if (key === 'fear' && b && target.side === 'enemy') stampFear(this, target, b, source);
     }
     const f = tpl.flags;
     if (f && target.side === 'enemy' && (f.levitate || f.unblockable || f.fear)) this._unblock(target);
@@ -1417,6 +1449,19 @@ export class Battle {
     return out;
   }
 
+  /**
+   * A living enemy whose body is on any of `keys` — targetable or not (stealthed, untargetable, asleep, flying): the
+   * 技能范围 trigger "技能范围内存在敌人（无视其不可选中）" (skills.js SKILL_RANGE).
+   */
+  anyEnemyInKeys(keys) {
+    if (!keys) return false;
+    for (let i = 0; i < keys.length; i++) {
+      const b = this._eb[keys[i]];
+      if (b && b.length) for (const e of b) if (e.alive && e.deployed) return true;
+    }
+    return false;
+  }
+
   /** Allies (not devices) within tiles `keys`, sorted by HP ratio (lowest first) that need healing. */
   injuredAlliesInKeys(keys, healer, includeElement = false) {
     const out = [];
@@ -1453,10 +1498,25 @@ export class Battle {
     return out;
   }
 
-  /** Allies inside `unit`'s current range (for auras). */
+  /** Allies inside `unit`'s current range (for auras) — not the 孤立 ones ("无法被同阵营选中": 炎佑), `unit` aside. */
   alliesInGrid(unit) {
     const set = unit.rangeKeySet || new Set(unit.rangeKeys || []);
-    return this.allyUnits.filter((a) => a.alive && a.deployed && !a.hidden && a.kind !== 'device' && set.has(a.tileR * COLS + a.tileC));
+    return this.allyUnits.filter((a) => a.alive && a.deployed && !a.hidden && a.kind !== 'device' && set.has(a.tileR * COLS + a.tileC) && this.allySelectable(a, unit));
+  }
+
+  /**
+   * May an ability of ally `by` select ally `a`? Never a 孤立 unit (炎佑, 从不混淆的方向; flag `isolated`) other than `by`
+   * itself — PRTS 选择器: selectors decide "天赋是否能给予某个干员Buff" and every heal / buff / aura target, and their 可选判定
+   * rejects a 孤立 target of a friendly selector ("若掩码中孤立为1，且选择器的阵营与目标为友好关系，则不可选中"; user playtest #6
+   * item 18). Enemies still target it (a hostile selector). 禁疗 only keeps heals off (heal pipeline, injuredAlliesInKeys).
+   */
+  allySelectable(a, by = null) {
+    return !!a && (a === by || !a.s.flags.isolated);
+  }
+
+  /** Deployed allies (no devices) an ability of ally `by` may select: allies(ownerId) without the 孤立 ones. */
+  alliesFor(by, ownerId = null) {
+    return this.allies(ownerId).filter((a) => this.allySelectable(a, by));
   }
 
   /**
@@ -1707,26 +1767,115 @@ export class Battle {
   }
 
   /**
-   * Displace an enemy (hook/push). dir = {x,y} (normalised internally), distance in tiles. Heavier enemies move
-   * less: effective = distance × clamp(1 − 0.25·(massLevel − force), 0, 1) (current massLevel: 失重 counts).
-   * 失衡免疫 (flag `noDisplace`: 近地悬浮, 浮空 — PRTS 异常效果 "不会被位移影响") ⇒ no movement. The tiles it may cross
-   * follow its movement (`motion`): a hovering enemy walks the ground, so it stays on ground-passable tiles.
+   * 受力等级 of enemy `e` under a push / pull of 力度 `force` (微小力 −1, 小力 0, 中力 1, 较大力 2, 大力 3, 大力+1 4, 特大力 5):
+   * force − its current 重量等级 (massLevel incl. 失重) — PRTS 游戏数据基础 §重量公式, 推与拉 (user playtest #6 item 14).
    */
-  displace(e, dir, distance, { force = 1 } = {}) {
-    if (!e || !e.alive || e.side !== 'enemy' || e.isBoss || e.s.flags.noDisplace) return 0;
-    const len = Math.hypot(dir.x, dir.y);
+  forceLevel(e, force) {
+    return Math.round(fin(force, 0)) - (e && e.s ? e.s.massLevel : 0);
+  }
+
+  /**
+   * Push enemy `e` with 力度 `force` (PRTS 推与拉 §推力): the official distance of its 受力等级 (constants.js PUSH_TILES:
+   * a 中力 push moves a weight-1 enemy 1.7 tiles, a weight-2 one 0.44, weight 3 0.12, weight ≥ 4 not at all). Radial
+   * (the default: away from `from`, the pusher's centre — "沿着干员向自身中心点的射线方向") or directional (`dir` = the
+   * pusher's direction {x, y}: 推击手, "朝部署方向" / "向前推开"); a directional push on a target more than 45° off `dir`
+   * or nearer than 0.25 tile becomes radial with 受力等级 −2 ("特殊修正"). `fixed` waives both corrections (PRTS 圣聆初雪 S1
+   * 备注 "不会因角度过大或距离过近而变化方向与力度"); `fixedAngle` only the angle one (PRTS 见行者 S2 备注 "不会因为角度过大
+   * 而改变推动的方向或削减力度" — the < 0.25 tile rule still applies). `inward` = a radial push towards `from` (薄绿 S2's "拖拽", PRTS 备注 "实际为
+   * 反方向（指向薄绿方向）的推开"), never nearer than PULL_STOP_RADIUS to its centre [ASSUMED: "至面前"]. `effect` = a 特效
+   * push (PRTS 推与拉: one frame less of travel than a 弹道 push — constants.js PUSH_TILES_EFFECT / PUSH_EFFECT_SKILLS).
+   * Returns the tiles moved.
+   */
+  push(e, force, { from = null, dir = null, fixed = false, fixedAngle = false, inward = false, effect = false } = {}) {
+    if (!this._displaceable(e)) return 0;
+    let level = this.forceLevel(e, force);
+    const fx0 = fin(from?.x, e.x), fy0 = fin(from?.y, e.y);
+    const vx = e.x - fx0, vy = e.y - fy0, d = Math.hypot(vx, vy);
+    let ux = 0, uy = 0;
+    const dirX = dir ? fin(dir.x, 0) : 0, dirY = dir ? fin(dir.y, 0) : 0;
+    const dl = Math.hypot(dirX, dirY);
+    if (dl > 0) {
+      ux = dirX / dl; uy = dirY / dl;
+      if (from && !fixed && (d < PUSH_DIRECTIONAL_MIN_DIST || (!fixedAngle && vx * ux + vy * uy < d * Math.SQRT1_2))) {
+        level -= 2;
+        if (d > 1e-6) { ux = vx / d; uy = vy / d; }
+      }
+    } else if (d > 1e-6) { ux = vx / d; uy = vy / d; }
+    else if (!inward && from && Array.isArray(from.fwd)) { ux = from.fwd[1]; uy = from.fwd[0]; }
+    else return 0;
+    let dist = pushTiles(level, effect);
+    if (inward && !(dl > 0)) { ux = -ux; uy = -uy; dist = Math.min(dist, Math.max(0, d - PULL_STOP_RADIUS)); }
+    return this.displace(e, { x: ux, y: uy }, dist);
+  }
+
+  /**
+   * Pull enemy `e` with 力度 `force` towards the point `to` (PRTS 推与拉 §拉力 / §捕网): 受力等级 ≥ 0 — all the way, until it
+   * is within `stop` tiles of `center` (急停; `center` defaults to `to`, `stop` to PULL_STOP_RADIUS) or reaches `to`;
+   * −1 — PULL_WEAK_SHARE of its starting distance to `to`; −2 — PULL_CRAWL tiles; ≤ −3 — nothing. `pullToFront` aims at
+   * the official 拉力起点 in front of an operator. Returns the tiles moved.
+   */
+  pull(e, force, { to, center = null, stop = PULL_STOP_RADIUS } = {}) {
+    if (!this._displaceable(e) || !to) return 0;
+    // an enemy the puller itself blocks already stands in front of it (at contact) [ASSUMED: no pull, no unblocking]
+    if (center && center.side === 'ally' && e.blockedBy === center) return 0;
+    const tx = fin(to.x, e.x), ty = fin(to.y, e.y);
+    const dx = tx - e.x, dy = ty - e.y, d0 = Math.hypot(dx, dy);
+    if (!(d0 > 1e-6)) return 0;
+    const ux = dx / d0, uy = dy / d0;
+    // travel until inside the stop circle around `center` (smaller root of |e + t·u − c| = stop), else up to `to`
+    let full = d0;
+    const cx = fin(center?.x, tx), cy = fin(center?.y, ty), r = Math.max(0, fin(stop, 0));
+    const wx = e.x - cx, wy = e.y - cy, wu = wx * ux + wy * uy, w2 = wx * wx + wy * wy;
+    if (w2 <= r * r) full = 0;
+    else {
+      const disc = wu * wu - w2 + r * r;
+      if (disc >= 0) { const t = -wu - Math.sqrt(disc); if (t >= 0) full = Math.min(full, t); }
+    }
+    const level = this.forceLevel(e, force);
+    const dist = level >= 0 ? full : level === -1 ? Math.min(full, PULL_WEAK_SHARE * d0) : level === -2 ? Math.min(full, PULL_CRAWL) : 0;
+    return dist > 1e-6 ? this.displace(e, { x: ux, y: uy }, dist) : 0;
+  }
+
+  /** Official distance (tiles) a push of 力度 `force` would move `e` on open ground (0 when it cannot be displaced). */
+  pushDistance(e, force, { effect = false } = {}) {
+    return this._displaceable(e) ? pushTiles(this.forceLevel(e, force), effect) : 0;
+  }
+
+  /** Pull `e` "至面前" of ally `unit` (拉力起点 PULL_ORIGIN tiles ahead along its direction, 急停 around its centre). */
+  pullToFront(e, unit, force) {
+    if (!unit) return 0;
+    const f = Array.isArray(unit.fwd) ? unit.fwd : [0, 1];
+    return this.pull(e, force, { to: { x: unit.x + f[1] * PULL_ORIGIN, y: unit.y + f[0] * PULL_ORIGIN }, center: unit, stop: PULL_STOP_RADIUS });
+  }
+
+  /** Can `e` be displaced at all: a living enemy, not a leader part of the boss pool, not 失衡免疫 (近地悬浮, 浮空). */
+  _displaceable(e) {
+    return !!(e && e.alive && e.side === 'enemy' && !e.isBoss && !e.s.flags.noDisplace);
+  }
+
+  /**
+   * Move an enemy `distance` tiles along `dir` = {x, y} (normalised internally) over passable tiles — the raw mover of
+   * push() / pull(), which apply the official 力度 − 重量 rules (content uses those; the old `force` option is gone).
+   * 失衡免疫 (flag `noDisplace`: 近地悬浮, 浮空 — PRTS 异常效果 "不会被位移影响") and leaders ⇒ no movement. The tiles it may
+   * cross follow its movement (`motion`): a hovering enemy walks the ground, so it stays on ground-passable tiles.
+   */
+  displace(e, dir, distance) {
+    if (!this._displaceable(e) || !dir) return 0;
+    const dxv = fin(dir.x, 0), dyv = fin(dir.y, 0);
+    const len = Math.hypot(dxv, dyv);
     if (!(len > 0)) return 0;
-    const eff = distance * Math.max(0, Math.min(1, 1 - 0.25 * Math.max(0, e.s.massLevel - force)));
-    if (eff <= 0) return 0;
-    const ux = dir.x / len, uy = dir.y / len;
+    const eff = Math.min(fin(distance, 0), 2 * COLS);
+    if (!(eff > 0)) return 0;
+    const ux = dxv / len, uy = dyv / len;
     let moved = 0;
     const stepLen = 0.1;
     while (moved + 1e-9 < eff) {
-      const nx = e.x + ux * stepLen, ny = e.y + uy * stepLen;
+      const s = Math.min(stepLen, eff - moved); // (the last step is a partial one: 0.12 tiles moves 0.12, not 0.2)
+      const nx = e.x + ux * s, ny = e.y + uy * s;
       const r = Math.round(ny), c = Math.round(nx);
       const ok = e.motion === 'FLY' ? this.grid.inRect(r, c) : this.grid.groundPassable(r, c);
       if (!ok) break;
-      e.x = nx; e.y = ny; moved += stepLen;
+      e.x = nx; e.y = ny; moved += s;
     }
     if (moved > 0) {
       this._unblock(e);

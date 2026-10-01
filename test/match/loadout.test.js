@@ -269,15 +269,17 @@ test('co-op keeps its guards: INFO_CHECK 25 s, prep timer, transition deadlines'
 
 // ---- review fixes -----------------------------------------------------------------------------------------------------------
 
-test('a skill summon is never a hand card (user playtest #4): 赫默 on any skill gets no 医疗无人机 token in the prep phase', async () => {
+test('a skill summon is a hand card only with that skill (user playtest #6): 赫默 on S2 gets her 医疗探机, on S1 none', async () => {
   const { give } = await import('./harness.js');
   const SILENCE = 'chess_char_2_02_a';
   const DRONE = 'token_10000_silent_healrb';
   assert.equal(chess(SILENCE).skills.find((s) => s.overrideTokenKey === DRONE)?.isDefault, true, 'fixture: the drone is the default S2 summon');
-  // "获得一个医疗无人机": the drone appears in battle when S2 fires (test/content/tokens_devices.test.js), never before
+  // the drone is placed by hand (PRTS 卫戍协议/帮助 "可手动部署的附属召唤物…加入手牌区"); in battle it takes its tile when S2
+  // fires (test/content/playtest6_summons.test.js) — only S2 (index 1, the default) makes it
   const tokensIn = (ps, id = DRONE) => [...ps.hand, ...ps.temp, ...ps.board.values()].filter((p) => p && p.kind === 'token' && p.id === id);
-  assert.equal(DATA.tokens[DRONE].placeable, false, 'tokens.json: a skill summon is not placeable');
+  assert.equal(DATA.tokens[DRONE].placeable, true, 'tokens.json: a manually deployable summon');
   for (const skill of [null, 0, 1]) {
+    const want = skill === 0 ? 0 : 1;
     const lo = skill == null ? null : checkLoadout({ [SILENCE]: { skill } }, chess).loadout;
     const h = makeMatch({ mode: 'solo', seats: seatsWith(lo), seed: 5 }).start();
     h.toPrep(1);
@@ -286,11 +288,11 @@ test('a skill summon is never a hand card (user playtest #4): 赫默 on any skil
     ps.board.clear();
     ps.hand.fill(null);
     give(h.m, ps, SILENCE, 'board', [9, 3]);
-    assert.equal(tokensIn(ps).length, 0, `normal 赫默, skill ${skill ?? 'default'}`);
+    assert.equal(tokensIn(ps).length, want, `normal 赫默, skill ${skill ?? 'default'}`);
     ps.board.clear();
     ps.hand.fill(null);
     give(h.m, ps, chess(SILENCE).goldenId, 'board', [9, 4]);
-    assert.equal(tokensIn(ps).length, 0, `elite 赫默, skill ${skill ?? 'default'}`);
+    assert.equal(tokensIn(ps).length, want, `elite 赫默, skill ${skill ?? 'default'}`);
     // a talent summon still is a hand card: 伺夜 → 狼群
     ps.board.clear();
     ps.hand.fill(null);

@@ -137,6 +137,8 @@ export class SimClient {
       if (pool && pool.byPlayer) msg.by = { ...pool.byPlayer };
     } else {
       msg.leaks = p.leaks;
+      // 联防: the leakers' enemies still standing (like public/js/battle/runner.js)
+      if (p.left) msg.left = Object.fromEntries(Object.entries(p.left).slice(0, 4));
     }
     this.send(msg);
   }

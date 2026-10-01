@@ -43,7 +43,7 @@
 //                can be copied. "被击败后25秒后自动刷新": one pending respawn at a time, only while she is on the field
 //                and no 流形 of hers stands (her knock-out cancels it; her redeploy re-summons it as her 援军).
 //  6_12 迷迭香   "溅射范围扩大" ×1.3 (not in data); 感知稳定 picks among the owner's deployed casters (none ⇒ no buff).
-//  6_13 新约能天使 steal target = ally op in range with the highest ASPD; bombardment radius 1 tile (not in data).
+//  6_13 新约能天使 bombardment radius 1 tile (not in data).
 //  6_14 流明     S3 heals an abnormal ally even at full HP (forced heal); 抵抗 = the engine `resist` status.
 //  6_15 仇白     入隙 reads the target's sluggish/bind statuses; module adds 10 % ATK arts per hit.
 //  6_16 溯光星源 link transfers the pre-mitigation arts amount × share to the other locked target(s); 能源解析 = the
@@ -52,7 +52,8 @@
 //  6_18 荒芜拉普兰德 S3 drones are virtual (fx events), move at projectile_move_speed tiles/s, she stops attacking
 //                while they roam; 头狼 stage 2 "特殊能力失效" = silence; stage 3 = +1 drone (normal attacks hit once
 //                more, S3 releases one more drone). Base drone count 1.
-//  6_19 锏       10 slashes every d_hit_interval, pulls every p_hit_interval, final blow (skill range) at the end.
+//  6_19 锏       10 slashes every d_hit_interval, pulls every p_hit_interval, final blow (skill range) at the end;
+//                S3 slashes and pulls air units too (PRTS 备注 "可对空").
 //  6_20 纯烬艾雅法拉 5 shots are padded by cycling targets when fewer injured allies exist.
 //
 // Operator loadouts (DESIGN §16): every visible chess also authors its selectable NON-default skills in `skills`
@@ -98,9 +99,9 @@
 // `skill.addTriggerRange`; element-type damage skips the `hit` hook, so element (损伤) amplification uses the
 // `elementHit` hook (`onElementHit`: × dmg.mul before the gauge fill).
 
-import { absoluteRangeKeys, sortEnemyTargets, canTargetEnemy } from '../../targeting.js';
+import { absoluteRangeKeys, sortEnemyTargets, canTargetEnemy, aggroCmp } from '../../targeting.js';
 import { aggregateMods } from '../../buffs.js';
-import { COLS, ROWS } from '../../constants.js';
+import { COLS, ROWS, PULL_STOP_RADIUS } from '../../constants.js';
 import { rotateOffset } from '../../dir.js';
 import { bodyDist, bodyInKeys, bodyInRadius, bodyKeys } from '../../body.js';
 import { hasHp } from '../../damage.js';
@@ -311,13 +312,15 @@ function ensureDeployTracker(battle) {
   return S.lastOp;
 }
 
-/** Pull `e` toward `unit` (0.5 + 0.5·force tiles, never past `minDist`). */
-function pullToward(battle, unit, e, force, minDist = 0.3) {
-  if (!e || !e.alive) return;
-  const dx = unit.x - e.x, dy = unit.y - e.y, len = Math.hypot(dx, dy);
-  if (len <= minDist) return;
-  const dist = Math.min(len - minDist, 0.5 + 0.5 * Math.max(0, force));
-  if (dist > 0) battle.displace(e, { x: dx, y: dy }, dist, { force: force + 1 });
+/**
+ * Pull `e` with 力度 `force` towards the point / unit `unit` ("向自己中心…拖拽", "拉向目标所在位置"), stopping `stop` tiles
+ * from it — Battle.pull: the official 力度 − 重量 pull (PRTS 推与拉; user playtest #6 item 14). The default stop is the
+ * 急停 radius 0.6708 around a pulling unit. A pulling ally is also the pull's `center`, so an enemy it blocks itself
+ * stays where it is held (as in Battle.pullToFront) — e.g. the 流形 S3 pulse then still stuns it.
+ */
+function pullToward(battle, unit, e, force, stop = PULL_STOP_RADIUS) {
+  if (!e || !e.alive || !unit) return 0;
+  return battle.pull(e, num(force), { to: { x: unit.x, y: unit.y }, center: unit.side === 'ally' ? unit : null, stop });
 }
 
 /** Stat-aura pulse: short buffs refreshed every `period` s on `targets()`. */
@@ -712,14 +715,14 @@ function sbell2(bb, chess, def) {
   }
   const skills = {
     // S1 铃音吹雪 (SEARCH trigger, 2 charges): atk_scale × ATK arts + `cold` s of 寒冷 on every enemy in range, pushed
-    // (force 1 = 中等) along her direction; then one snow layer spreads forward over the ground (≤ trig_cnt tiles)
+    // (force 1 = 中力) along her direction — PRTS 备注 "固定方向推动（不会因角度过大或距离过近而变化方向与力度），且仅对地面
+    // 单位产生推力" (Battle.push fixed, official 力度 − 重量 distance); then one snow layer spreads forward over the ground
+    // (≤ trig_cnt tiles)
     skchr_sbell2_1: {
       kind: instantKind(def),
-      // data trigger SEARCH (the 阵法术师 profession row for S1): the engine reads it as "an enemy anywhere on the field",
-      // which dumped both charges on an enemy spawning at the gate, far outside her range (the burst hits "范围内所有
-      // 敌人"). SEARCH exists for units that never attack (DEFAULT fires on an attack; CUSTOM_RANGE_SEARCH_ENEMY is its
-      // custom-range twin) [ASSUMED]: an enemy inside her range, checked every tick — the engine's DEFAULT for a
-      // phalanx (noAttackUnlessSkill)
+      // data trigger SEARCH (the 阵法术师 row, every MANUAL skill of the class: "在初始攻击范围内存在敌人时释放技能") =
+      // an enemy inside her initial range, checked every tick — what the engine's DEFAULT does for a phalanx
+      // (noAttackUnlessSkill); an enemy anywhere on the field would dump both charges on an enemy spawning at the gate
       trigger: 'DEFAULT',
       onStart({ battle, unit }) {
         const [fr, fc] = unit.fwd;
@@ -728,7 +731,7 @@ function sbell2(bb, chess, def) {
           battle.dealDamage(unit, e, { amount: unit.s.atk * num(bb.atk_scale, 1), type: 'arts', isSkill: true, tags: ['skill'] });
           if (!e.alive) continue;
           if (num(bb.cold) > 0) battle.applyStatus(e, 'cold', { duration: num(bb.cold), source: unit });
-          battle.displace(e, { x: fc, y: fr }, 0.5 + 0.5 * force, { force: force + 1 });
+          if (!e.isFlying) battle.push(e, force, { from: unit, dir: { x: fc, y: fr }, fixed: true });
         }
         const n = Math.max(0, Math.floor(num(bb.trig_cnt, 5)));
         let laid = 0;
@@ -1210,9 +1213,10 @@ function pepe(bb, chess, def) {
         }, { owner: unit });
       }
       if (sid === 'skchr_pepe_2') {
-        battle.on('beforeAttack', (ctx) => { // 随机攻击范围内的目标
+        battle.on('beforeAttack', (ctx) => { // 随机攻击范围内的目标 (and the enemies she blocks — Battle.blockedTargets)
           if (ctx.attacker !== unit || !unit.skill?.active) return;
           const c = battle.enemiesInKeys(unit.rangeKeys, unit, ctx.profile);
+          for (const e of battle.blockedTargets(unit, ctx.profile)) if (!c.includes(e)) c.push(e);
           if (c.length) ctx.targets = [battle.rng.pick(c)];
         }, { owner: unit });
       }
@@ -1311,7 +1315,7 @@ function siege2(bb, chess, def) {
       if (sid === 'skchr_siege2_2') {
         const need = Math.max(1, Math.floor(num(bb.buff_stack_cnt, 2))), spr = num(bb.sp_recovery_per_sec);
         if (spr > 0) aura(battle, unit, 0.25, () => {
-          const n = battle.unitsInGrid(unit, tGrid, { side: 'ally' }).filter((a) => a !== unit && a.kind !== 'device').length;
+          const n = battle.unitsInGrid(unit, tGrid, { side: 'ally' }).filter((a) => a !== unit && a.kind !== 'device' && battle.allySelectable(a, unit)).length;
           if (n >= need) battle.addBuff(unit, { key: 'siege2:homeland', mods: { spRecoveryFlat: spr }, duration: 0.4, refresh: 'replace' });
         });
       }
@@ -1367,7 +1371,7 @@ function siege2(bb, chess, def) {
       { install(battle, unit) { // 诸王的叹息
         const dr = num(t0.damage_resistance), atk = num(t0.atk);
         aura(battle, unit, 0.25, () => {
-          const allies = battle.unitsInGrid(unit, tGrid, { side: 'ally' }).filter((a) => a.kind !== 'device');
+          const allies = battle.unitsInGrid(unit, tGrid, { side: 'ally' }).filter((a) => a.kind !== 'device' && battle.allySelectable(a, unit));
           if (!allies.includes(unit)) allies.push(unit);
           if (dr > 0) for (const a of allies) battle.addBuff(a, { key: 'siege2:sigh', mods: { physTakenMul: 1 - dr }, duration: 0.4, refresh: 'replace' });
           const n = allies.filter((a) => a !== unit).length;
@@ -1875,7 +1879,7 @@ function mlyss(bb, chess, def) {
           if (!unit.skill?.active) return;
           for (const t of battle.allyUnits) {
             if (!isTok(t, tokId, unit) || !live(t) || !t.mem.mlyss || t.mem.mlyss.ranged) continue;
-            for (const e of battle.unitsInGrid(t, AROUND8, { side: 'enemy' })) pullToward(battle, t, e, num(t.def?.skill?.bb?.force), 0.2);
+            for (const e of battle.unitsInGrid(t, AROUND8, { side: 'enemy' })) pullToward(battle, t, e, num(t.def?.skill?.bb?.force));
             for (const e of t.blocking) if (e.alive) battle.applyStatus(e, 'stun', { duration: pulseIv + 0.1, source: unit });
             battle.fx('pulse', { x: t.x, y: t.y, id: t.id });
           }
@@ -1915,7 +1919,7 @@ function mlyss(bb, chess, def) {
         if (unit.skill) unit.skill.addTriggerRange(() => battle.allyUnits.filter((t) => mine(t) && live(t) && t.mem.mlyss));
         battle.on('tick', () => { // without a dedicated token kit the copy fires once ready and someone can be copied
           for (const t of battle.allyUnits) {
-            if (!mine(t) || !live(t) || t.mem.mlyssClone || !t.kit?.generic || !t.skill || t.skill.active || !t.skill.ready) continue;
+            if (!mine(t) || !live(t) || t.mem.mlyssClone || !t.kit?.generic || !t.skill || t.skill.active || !t.skill.ready || t.skill.opCooling) continue;
             if (pickCopyTarget(battle, unit, t)) t.skill.activate('MLYSS_WTRMAN');
           }
         }, { owner: unit });
@@ -2051,7 +2055,10 @@ function rosmon(bb, chess, def) {
       if (sid !== 'skchr_rosmon_3') return;
       battle.on('beforeAttack', (ctx) => { // "仅选择被阻挡的敌人作为目标"
         if (ctx.attacker !== unit || !unit.skill?.active) return;
-        const c = battle.enemiesInKeys(unit.rangeKeys, unit, ctx.profile).filter((e) => !!e.blockedBy);
+        // her range, plus the enemies she blocks herself — always her targets (Battle.blockedTargets, DESIGN §20.3)
+        const c = battle.enemiesInKeys(unit.rangeKeys, unit, ctx.profile);
+        for (const e of battle.blockedTargets(unit, ctx.profile)) if (!c.includes(e)) c.push(e);
+        for (let i = c.length - 1; i >= 0; i--) if (!c[i].blockedBy) c.splice(i, 1);
         sortEnemyTargets(battle, unit, c, ctx.profile?.priority ?? null);
         ctx.targets = c.slice(0, Math.max(1, Math.floor(num(ctx.profile?.maxTargets, 2))));
       }, { owner: unit });
@@ -2104,6 +2111,12 @@ function rosmon(bb, chess, def) {
 
 // ------------------------------------------------------------------------------------------------------------------
 // 新约能天使 chess_char_6_13 (怪杰) — S2 开火成瘾症; 火力电台; 铳弹协约; module 新朋友圣城生活套组
+// S2 (PRTS 备注): the ally is the friendly operator of her attack range with the highest 仇恨值 ("选择的友方干员为攻击范围内
+// 仇恨值最高的我方干员": highest taunt level, then the latest deployed — targeting.js aggroCmp, the order enemies attack
+// in; it used to be the highest ASPD, so the shield often went to a back-row shooter instead of the operator in front);
+// both barriers are shield_max_hp_ratio × the holder's OWN max HP ("获得的屏障均以自身生命上限为标准计算"), losing
+// initial/shield_max_duration per second ("屏障每秒衰减量为：初始屏障量/30"); a new one replaces the old one ("重复获得此
+// 屏障时，重置屏障量与衰减速度").
 
 const AIRSTRIKE_RADIUS = 1; // [ASSUMED] bombardment splash radius (not in data)
 
@@ -2201,7 +2214,7 @@ function angel2(bb, chess, def) {
       attack: { atkScale: num(bb['attack@atk_scale'], 1) },
       onStart({ battle, unit, skill }) {
         const cands = battle.alliesInGrid(unit).filter((a) => a !== unit && a.kind === 'op' && live(a));
-        cands.sort((a, b) => b.s.aspd - a.s.aspd || a.deploySeq - b.deploySeq);
+        cands.sort(aggroCmp);
         const victim = steal > 0 ? cands[0] ?? null : null;
         unit.mem.angelVictim = victim;
         decayingShield(battle, unit, 'angel2:barrier', unit.s.maxHp * shieldRatio, shieldDur);
@@ -2278,7 +2291,7 @@ function lumen(bb, chess, def) {
         if (!(sc > 0) || !(life > 0)) return;
         battle.fx('healField', { x: target.x, y: target.y, id: unit.id });
         for (const a of battle.alliesInRadius(target.x, target.y, 1.5, target.ownerId)) {
-          if (a.kind === 'device') continue;
+          if (a.kind === 'device' || a.s.flags.noHeal || a.profile?.noHeal) continue; // a heal: never on 禁疗 / 孤立
           battle.addBuff(a, {
             key: `lumen:rain:${unit.id}`, duration: life, interval: iv, refresh: 'replace', visible: true, source: unit,
             onTick: ({ unit: x }) => { if (x.hp < x.s.maxHp) battle.heal(unit, x, unit.s.atk * sc, { hot: true }); },
@@ -2798,7 +2811,9 @@ function whitw2(bb, chess, def) {
         battle.on('beforeAttack', (ctx) => {
           const m = unit.mem.hunt;
           if (ctx.attacker !== unit || !unit.skill?.active || !m) return;
+          // the skill range, plus the enemies she blocks (always her targets, Battle.blockedTargets — DESIGN §20.3)
           const c = battle.enemiesInKeys(unit.rangeKeys, unit, ctx.profile);
+          for (const e of battle.blockedTargets(unit, ctx.profile)) if (!c.includes(e)) c.push(e);
           if (!c.length) { ctx.targets = []; return; }
           const n = 1 + Math.floor(num(bb['attack@cnt'])) + ((unit.mem.wolfStage || 0) >= 3 ? 1 : 0);
           m.locks = m.locks.filter((e) => e.alive && c.includes(e)).slice(0, n);
@@ -2923,8 +2938,10 @@ function blkkgt(bb, chess, def) {
   // the skill range (x-1): her range while S3 runs — also for the finisher, since onEnd runs before the engine
   // removes the skill's range
   const skillKeys = (unit) => unit.rangeKeys || [];
+  // S3 hits and pulls air units too — PRTS 锏 S3 备注 "※可对空。不会拖拽自身中心半径0.6708范围内的敌人" (her attacks and S1 /
+  // S2 stay ground-only: "地面敌人")
   const victims = (battle, unit) => {
-    const c = battle.enemiesInKeys(skillKeys(unit), unit, unit.profile);
+    const c = battle.enemiesInKeys(skillKeys(unit), unit, { ...unit.profile, canHitFly: true, groundOnly: false });
     sortEnemyTargets(battle, unit, c, null);
     return c.slice(0, maxT);
   };
@@ -2933,7 +2950,13 @@ function blkkgt(bb, chess, def) {
     if (v.length) battle.fx('slash', { x: unit.x, y: unit.y, id: unit.id, n: v.length });
     for (const e of v) battle.dealDamage(unit, e, { amount: unit.s.atk * scale, type: 'phys', isSkill: true, tags: ['skill', 'slash'] });
   };
-  const pull = (battle, unit, force) => { for (const e of enemiesIn(battle, unit, skillKeys(unit))) if (!e.isFlying) pullToward(battle, unit, e, force); };
+  // "持续将敌人中等力度地拖拽至自身中心，之后…较大力地拖拽至自身": the official 力度 − 重量 pulls (PRTS 推与拉: the last one
+  // aims at her own tile centre, the others at the usual 拉力起点 half a tile ahead; 急停 0.6708 around her)
+  const pull = (battle, unit, force, last = false) => {
+    for (const e of enemiesIn(battle, unit, skillKeys(unit))) {
+      if (last) pullToward(battle, unit, e, force); else battle.pullToFront(e, unit, force);
+    }
+  };
   const skills = {
     // S1 纯粹的武力 (attack SP): the next attack hits up to max_target ground enemies of the 3×3 around her, each twice
     // (her trait) at atk_scale_s1 × ATK
@@ -2966,6 +2989,10 @@ function blkkgt(bb, chess, def) {
     skills,
     install(battle, unit) {
       if (penFlat > 0 || legendAtk) battle.addBuff(unit, { key: 'blkkgt:contract', mods: { defIgnoreFlat: penFlat, atkPct: legendAtk }, persist: true, allowDead: true });
+      // S3 slashes: 晕眩免疫, 冻结免疫 (PRTS 备注)
+      battle.on('beforeStatus', (c) => {
+        if (c.target === unit && unit.mem.dgb && (c.status === 'stun' || c.status === 'freeze')) c.cancel = true;
+      }, { owner: unit });
       if (legendTremble > 0) {
         const seen = new WeakSet();
         battle.on('tick', () => {
@@ -2983,8 +3010,11 @@ function blkkgt(bb, chess, def) {
       duration: slashes * iv,
       ...(skillGrid ? { targeting: { rangeGrid: skillGrid } } : {}),
       attack: { noAttack: true },
+      // PRTS 备注 "※多段斩击期间，自身获得无敌，晕眩免疫，冻结免疫": invulnerable while the slashes run (removed in onEnd,
+      // before the finisher); stun / freeze refused by her `beforeStatus` hook (install) while `mem.dgb` is set
       onStart({ battle, unit }) {
         unit.mem.dgb = { n: 1, acc: 0, pacc: 0 };
+        battle.addBuff(unit, { key: 'blkkgt:slashes', duration: slashes * iv + 1, flags: { invulnerable: true }, visible: true, source: unit });
         slash(battle, unit, num(bb.d_atk_scale, 1));
       },
       onTick({ battle, unit, dt }) {
@@ -2997,11 +3027,12 @@ function blkkgt(bb, chess, def) {
       },
       onEnd({ battle, unit, reason }) {
         unit.mem.dgb = null;
+        battle.removeBuff(unit, 'blkkgt:slashes');
         if (reason === 'death' || !unit.alive) return;
         battle.fx('finale', { x: unit.x, y: unit.y, id: unit.id });
         unit.mem.dgbFinale = true; // the finisher is part of the skill (talent at 100 %, module +10 %)
         try { slash(battle, unit, num(bb.e_atk_scale_end, 1)); } finally { unit.mem.dgbFinale = false; }
-        pull(battle, unit, num(bb.e_force));
+        pull(battle, unit, num(bb.e_force), true);
       },
     },
     talents: [

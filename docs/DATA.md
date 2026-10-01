@@ -103,7 +103,7 @@ Top level: `{ season, seasonName, modes, economy, lpCapPerRound, bossOvertimeAft
 | `equipPerChess`, `maxArtsPerRound` | `2`, `2` | |
 | `poolCopies[tier]` + `poolCopiesOverrides` | `{"1":12,"2":14,"3":18,"4":16,"5":8,"6":5}`, `{"chess_char_6_11_a":4}` (缪尔赛思) | shared pool copies per base chess |
 | `goldenCopies`, `mergeCount`, `mergeCountOverrides`, `itemMergeCount` | `3`, `3`, `{"chess_char_2_11_a":2}` (风丸), `2` | |
-| `rewardOffer` | `{"count":3,"tierOffset":1,"maxTier":6,"price":0,…}` | merge reward: 3 free chess of tier `min(shopLevel+1,6)` |
+| `rewardOffer` | `{"count":3,"tierOffset":1,"maxTier":6,"price":0,…}` | merge reward: 3 **different** free chess of tier `min(shopLevel+1,6)` (a short tier tops up from the tier below; `PlayerState.pushRewardOffer`, user playtest #6 item 19) |
 | `handFillOrder` | `"rightToLeft"` | |
 | `shopOdds` | `{"model":"copyWeighted",…}` | [ASSUMED] roll model |
 | `borrowCount`, `fallbackBondId`, `defaultBandId`, `defaultStartLp` | `20`, `"emptyShip"`, `"band_bldsk"`, `28` | |
@@ -186,7 +186,7 @@ Top level: `{ season, seasonName, modes, economy, lpCapPerRound, bossOvertimeAft
 | `bb`, `bbStr` | `{"atk":1,"base_attack_time":-0.3,"attack@trigger_time":14}` | kit input (DESIGN §5.6) |
 | `rangeId`, `rangeGrid` | `null` | skill range override |
 | `prefabId`, `overrideTokenKey` | | |
-| `trigger` | `{"rule":"DEFAULT","rawRule":"DEFAULT","customRangeGrid":null}` | auto-cast rule. `rule` ∈ `DEFAULT`, `TAKE_DAMAGE` (古米/灰毫 S1 only), `SP_FULL` (official `ALWAYS`), `CUSTOM_RANGE` (official `CUSTOM_RANGE_SEARCH_ENEMY`, uses `customRangeGrid`), `SEARCH` (安洁莉娜), `MLYSS_WTRMAN` (缪尔赛思), `GDGLOW_SKILL_2` (荒芜拉普兰德, 纯烬艾雅法拉). Resolution per research 03 Addendum C1. |
+| `trigger` | `{"rule":"DEFAULT","rawRule":"DEFAULT","customRangeGrid":null}` | auto-cast rule (the official 技能策略, PRTS 卫戍协议/帮助 §作战阶段 技能操作; §2.2). `rule` ∈ `DEFAULT` (basic strategy), `SKILL_RANGE` (a MANUAL skill with a 技能范围 of its own: `customRangeGrid` = its `rangeGrid`, `rawRule` `DEFAULT` — no official row), `TAKE_DAMAGE` (every MANUAL 重装 skill), `SP_FULL` (official `ALWAYS`: 执旗手 / 战术家 / 吟游者 MANUAL skills), `CUSTOM_RANGE` (official `CUSTOM_RANGE_SEARCH_ENEMY`, uses `customRangeGrid`), `SEARCH` (解放者 / 阵法术师 MANUAL skills, 安洁莉娜 S2/S3), `MLYSS_WTRMAN` (缪尔赛思), `GDGLOW_SKILL_2` (荒芜拉普兰德, 纯烬艾雅法拉 S3: "全场存在可选目标时释放技能"). |
 
 ### 2.1 Combat classification heuristic (`dmgType` / `attackKind` / `projectile` / `canHitFly`)
 - `dmgType`: MEDIC (except `incantationmedic`) and `bard` → `heal`; trait text containing 法术伤害 or profession CASTER → `arts`; else `phys`.
@@ -201,9 +201,15 @@ elite record — `shared/protocol.js loadoutOptions`) and, for the elite, the **
 everything needed to resolve a unit for `(chessId, skillIndex, moduleId)` (`simdata resolveLoadout / loadoutRecord`,
 `DataSource.getChess(id, loadout)`):
 
-- `skills[]` — see the table above. Triggers per skill: charId rows (exact `skillIndex`, or −1 = every skill) →
-  subProfession rows → profession rows with that exact index (official `skillIndex 0` = skill 1 only: every defender's
-  S1 is `TAKE_DAMAGE`, their S2/S3 `DEFAULT`); `customRangeGrid` from `skillRangeDict[skillId]`.
+- `skills[]` — see the table above. Triggers per skill (`tools/build-data.mjs resolveTrigger`): charId rows (exact
+  `skillIndex`, or −1 = every skill) → subProfession rows → profession rows. The class rows apply to **every skill
+  index** — PRTS names whole classes ("重装干员", "先锋-战术家、先锋-执旗手、辅助-吟游者分支干员", "近卫-解放者、术师-阵法术师
+  分支干员"; a phalanx never attacks with its skill off, so the row must cover 薄绿's default S2) — but only to **MANUAL**
+  skills: an AUTO skill keeps its own rule (DEFAULT; kits add a base-game rule where needed, e.g. 古米 S1). Then a
+  MANUAL operator skill whose `rangeId` is a 技能范围 — its description is not an attack-range change ("攻击范围扩大 /
+  改变 / 缩小 / 缩短", "攻击距离+N / 加长 / 缩短") — is `SKILL_RANGE` with `customRangeGrid` = its `rangeGrid`; summons keep
+  DEFAULT. `customRangeGrid` of `CUSTOM_RANGE` from `skillRangeDict[skillId]`. (Research 03 Addendum C1 read the rows'
+  `skillIndex 0` as "skill 1 only" after BWIKI's transcription; superseded by user playtest #6.)
 - `modules[]` (golden, `equipLevel > 0`): every **ADVANCED** `uniequip` of the character (the INITIAL `uniequip_001_*`
   is "no module" = choice `'none'`), in official order, at the chess `equipLevel` (1, T6: 3):
 
@@ -313,7 +319,7 @@ Types: `BAND_INITIAL` 41, `BOND` 23, `EQUIP` 115, `ENEMY_GAIN` 129 (悬赏), `BU
 | `events[id]` | `{"id":"enemy_initial_1","choiceType":"BOUNTY_HUNT","effectType":"ENEMY_GAIN","name":"悬赏决策","desc":"…","color":"#35d8b4","family":"bounty","solo":false,"training":false}` | 109 official choice events; `_s` = solo copies; `usedBy` on events opened by items (`hunter_band_1` ← 教鞭 / “神秘顾客”) |
 | `families` | `{"bounty":{"name":"悬赏决策",…},"supply":{…},"shop":{…},"tactic":{…}}` | 悬赏决策 / 道具补给 / 机密商店 / 战术决策 |
 | `format` | `{"multi":{"cards":6,"pickOrder":"random","firstPickSec":30,"otherPickSec":16,"onTimeout":"autoPickRandom","eachPlayerPicks":1},"solo":{"cards":3,"timer":null},"opensAfterIncome":true}` | |
-| `cards.bounty[]` | `{"effectId":"enemyeffect_10_4","name":"悬赏·飞行I","tier":1,"coin":1,"payout":"kill","rounds":2,"multiRound":false,"enemyKey":"enemy_1005_yokai","count":1,"adds":[…]}` | `payout` `kill` (killer gets coins, 联防 helpers too) / `perfect` (chooser's own phase perfect); `rounds` = battles affected (99 = all remaining); `tier` from the I/II/III suffix (else coin value) |
+| `cards.bounty[]` | `{"effectId":"enemyeffect_10_4","name":"悬赏·飞行I","tier":1,"coin":1,"payout":"kill","rounds":2,"multiRound":false,"enemyKey":"enemy_1005_yokai","count":1,"adds":[…],"draft":true,"draftExcluded":null}` | `payout` `kill` (killer gets coins, 联防 helpers too) / `perfect` (chooser's own phase perfect); `rounds` = battles affected (99 = all remaining); `tier` from the I/II/III suffix (else coin value); `draft` = offered by the 悬赏决策 draft — the PRTS 下半 记录 §机变阶段 "敌人轮选" table (105 cards: 1- and 2-battle kill bounties, 源石虫·特训, the 7 multi-round cards); else `draftExcluded` `perfect` (战术特训: "仅由法术教鞭生成" — the 教鞭 Art's cards; 20) / `hidden` (鸭爵 / 高普尼克 / 流泪小子 / 圆仔, commented out of the table; 4) — build-data `bountyDraftExclusion`, `server/match/choices.js draftBounty`, user playtest #6 item 4 |
 | `cards.tactic[]` | `{"effectId":"map_m01_1","name":"模拟战场演变·模式一","kind":"terrain","stageId":"act1autochess_m01","team":false}` | `kind` `ally` / `enemyDebuff` / `terrain` (only for the match stage); `team` = also given to teammates |
 | `schedule[modeId]` | `{"spRounds":[3,6,9],"rounds":{"3":{"families":[{"family":"bounty","weight":50},…],"cards":6,"supplyTiers":[1,4],"bountyTiers":[1,2],"events":{"bounty":[…],"supply":[…],"shop":[…],"tactic":[…]},"assumed":true}}}` | research 01 A4 defaults: pick a family by weight; `supplyTiers` = item tier window for 道具补给; 机密商店 draws any tier; `events` = official event ids usable as the phase header |
 | `pools[poolId]` | `{"kind":"equip","items":[…]}` / `{"kind":"chess","tier":2,"rule":"shopEligible"}` | server-side reward pools referenced by effects (`pool_equip_*`, `pool_chess_shop_N_reward`, `pool_char_later`, …), all [ASSUMED]; `rule:"shopEligible"` = visible/non-hidden entries, `maxTier:"shopLevel"` = ≤ current shop level, `weighted` = `[[id, weight]]`. `pool_equip_vict` (维多利亚, every 25 layers: "获得一件带有随机特殊效果的维式重锤") and `pool_equip_rockr` (洛洛's 定制品; user playtest #4 — the research 04 §8 guess 有限加速器 / 激光发射器 / 护盾无人机 / 双模机械臂 / 蜂鸣器 is superseded) = the 4 special 维式重锤, uniform |
@@ -342,6 +348,7 @@ blackboards (transitively). Level = `randomEnemyAttributeDict[key].level` (0 for
 | `summons[]`, `inactiveIn[]`, `seasonOverride` | | spawned enemies; modes banning it; overridden fields |
 | `iconId`, `spine` | `"enemy_1422_lrsldr"` | asset ids |
 | `hitArea` | `{"w":4.95,"h":2.95,"dx":0,"dy":1}` (`enemy_9013_acstmk`) | **huge units only** (巨型单位, 7 keys: 假想敌：胄 ×2, 假想敌：管 ×2 — the 隐秘核心 one `dx` 1 —, 盐风主教昆图斯, 阿利斯泰尔，帝国余晖, “萨米的意志”): the hit rectangle, `w` tiles along the columns × `h` along the rows, centred on the unit's position moved `dx` columns right / `dy` rows up (sim/body.js; user playtest #5). Not in the game tables (the collider lives in the prefab): `tools/build-data.mjs HIT_AREAS` by `prefabKey`, from PRTS "巨型单位：受击判定区域为长4.95、宽2.95的长方形，向上偏移1.0" and PRTS盟约记录 (the season's 阿利斯泰尔 / “萨米的意志” versions); absent = a point. All 7 are also 自缚 + 无法被阻挡 (PRTS 天赋 — not a data field either: content/bosses.js `SELF_BOUND`) |
+| `modelScale` | `0.5926` (`enemy_1005_yokai_3` 威龙) | official drawn size of the enemy's Spine model relative to the standard (user playtest #6): the battle prefab's transform scale down to its Spine renderer (Graphic × FaceSwitcher × Spine; SkeletonDataAsset.scale is 0.01 for every enemy skeleton) ÷ 0.27, the standard of 1454 of the client's 2147 enemy prefabs (2080 have exactly one Spine renderer) and of the operators' battle skins. The renderer multiplies `UNIT.modelScale` by it (render/units.js `enemyModelScale`). 125 keys (122 prefabs) carry one, from 0.5926 (威龙 0.16; 妖怪 0.7407, 寒霜 0.6667) to 2.2222 (青铜镜 / 青瓷茶器 0.6); absent = 1. Not in the game tables: `tools/build-data.mjs MODEL_SCALES` by `prefabKey`, read from the local client by `tools/local-extract/enemy_scales.py` |
 
 ## 10. `factions.json` — special enemies (特训敌人)
 
@@ -445,11 +452,12 @@ Glyph legend (`rows`):
 |---|---|---|
 | `tokenId`, `kind`, `name`, `appellation`, `desc`, `descRaw` | …, `"summon"`, `"狼群"` | |
 | `profession`, `subProfessionId`, `position` | `"TOKEN"`, `"notchar1"`, `"MELEE"` | |
-| `displayType`, `placeable` | `"DEFAULT"`, `true` | `shopStateTokenDict` DEFAULT / HIDDEN (battle-only). `placeable` (a prep hand piece) = DEFAULT **and** a talent summon (海嗣, 狼群, 流形); skill summons (赫默's 医疗探机, 巫恋's 诅咒娃娃) are never hand pieces — their kits place them when the skill fires (user playtest #4 item 11) |
+| `displayType`, `placeable` | `"DEFAULT"`, `true` | `shopStateTokenDict` DEFAULT / HIDDEN (battle-only) / `null` (not listed). `placeable` (a prep hand piece) = a manually deployable summon (PRTS 卫戍协议/帮助 "可手动部署的附属召唤物…加入手牌区"; user playtest #6): not HIDDEN and made by an owner's talent or skill — 医疗探机 (赫默 S2), 诅咒娃娃 (巫恋 S2), 海嗣, 狼群, 流形 and 爬行号·防护单元 (凯瑟琳's talent device — the only pool summon missing from `shopStateTokenDict`, read as shown: placed by hand in the base game, by the friend's report, and confirmed by the user after playtest #6, DESIGN §20); 投递坐标 (HIDDEN) is not. In battle a skill's summon deploys once at the battle start, then on its tile each time the skill gives one (SIM.md, token pieces) |
 | `owners[]` | `["chess_char_3_19_a","chess_char_3_19_b"]` | |
 | `stats`, `rangeGrid`, `dmgType`, `attackKind`, `projectile`, `canHitFly` | first owner's values | defaults |
 | `skill` | `{"skillId":"sktok_vigil_wolf_3","bb":{…}}` | default token skill (same slot as the owner's skill) |
 | `deployLimit`, `count` | `1`, `1` | `count` = copies sent to the hand / spawned (talent/skill `cnt`); `null` ⇒ use `deployLimit` |
+| `abnormal[]` | `["healFree"]` | abnormal effects the summon holds from the start, no official table carries them — `tools/build-data.mjs TOKEN_ABNORMAL` from the PRTS summon pages (user playtest #6 item 18): `healFree` = 禁疗 (“小自在”, “耀阳”, 斯卡蒂的海嗣, 沙之碑, 流形, 狼群, 迷迭香的战术装备, 黄金盟誓, 保护目标（冻结状态）), `isolated` = 孤立 "无法被同阵营选中" (“炎佑”, 从不混淆的方向); `[]` otherwise. The sim sets `noHeal` / `isolated` (docs/SIM.md §3) |
 | `variants[ownerChessId]` | `{"phase":2,"level":1,"stats":{…},"immunities":{…},"rangeGrid":…,"trait":{…},"dmgType":…,"skill":{full skill record},"talents":[…],"count":1,"sources":["talent","display"]}` | stats at the owner's phase/level (clamped to the token's max level) + golden module `tokenAttributeBlackboard`; the owner's module parts flagged `isToken` upgrade the variant's `trait` (+`moduleDesc`) and `talents` (伺夜's wolves, 缪尔赛思's 流形 `scale` 1, 浊心斯卡蒂's 海嗣 30 s, “耀阳” `atk_scale` 1.15). `sources` ⊆ `talent`/`skill`/`display`: how the owner produces it (`display` only = listed on the character but unused by its default skill/talents, e.g. 迷迭香 S2, 凛御银灰 eagle1/3). `count` = copies from a talent `cnt` or the default skill's `cnt` when that skill overrides this token; `null` ⇒ use `deployLimit` |
 | `variants[o].bySkill[i]` | `{"skill":{…},"count":1,"sources":["talent","display"]}` | owner loadout with the non-default skill index `i` (one entry per other selectable owner skill): the token skill of that slot (伺夜's wolves, 缪尔赛思's 流形, 凛御银灰's eagles…), the count and how the chess then produces it (`sources` may be `[]`: 风丸 S1 makes no 纸偶; 赫默 / 巫恋 S1 only `display` ⇒ no hand piece). The sim resolves them for an owner loadout: `simdata getToken(id, ownerChessId, loadout)` → `def.sources` / `def.count` |
 | `variants[o].byModule[m]` | `{"stats":{…},"immunities":{…},"trait":{…},"talents":[…]}` | golden owner with another module `m` or `'none'`: the token as that module makes it (module `tokenAttributeBlackboard`, `isToken` trait/talent parts) |
@@ -473,8 +481,10 @@ Glyph legend (`rows`):
    (锡人, 耶拉, 录武官, 白面鸮, 百炼嘉维尔, 魔王, 华法琳, 妮芙).
 5. **Every non-DIY chess (258 records: 129 normal + 129 golden) has a resolvable default skill, stats and range** — no
    skill anomalies.
-6. **Skill triggers**: official rows with `skillIndex 0` apply to skill 1 only (research 03 C1): only 古米 and 灰毫 get
-   `TAKE_DAMAGE`; bearer/tactician/bard/librator/phalanx rows match no pool chess.
+6. **Skill triggers** (§2.2): the class rows cover every MANUAL skill of the class (all 重装 MANUAL skills are
+   `TAKE_DAMAGE`; 薄绿 / 卡涅利安 / 蜜蜡 / 玛恩纳 S2 `SEARCH`; 伺夜 / 魔王 / 浊心斯卡蒂 S3 `SP_FULL`) and no AUTO skill (古米 /
+   雷蛇 / 瑕光 / 塞雷娅 / 号角 / 信仰搅拌机 S1, 伺夜 S1/S2, 魔王 S1); 13 MANUAL skills (26 normal + elite records) with
+   their own 技能范围 are `SKILL_RANGE` (德克萨斯 S2, 凛御银灰 S2, 锏 S2/S3, 异客 S3, 忍冬 S2, 焰尾 S2 …).
 7. **Trait candidate `rangeId`** (送葬人, 松果 1-3; 风丸, 归溟幽灵鲨 x-4) is the trait-effect area, exposed as
    `trait.rangeGrid`, not the attack range.
 8. **Passive skills** use numeric `spType 8` in skill_table → normalized to `ON_DEPLOY`.

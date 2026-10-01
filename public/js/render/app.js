@@ -869,7 +869,7 @@ export async function createFieldView(host, options = {}) {
         const moved = !prevHome || prevHome.x !== w.x || prevHome.y !== w.y || prevHome.z !== w.z;
         if (dragState && dragState.key === key) {
           dragState.home = w;                       // being dragged: only its home slot changes
-        } else if (pending.has(key) && !moved) {
+        } else if (pending.has(key) && !moved && !splitLanded(e, pending.get(key).board, list)) {
           // dropped, but this state predates the server applying the move: stay at the drop target
         } else {
           pending.delete(key);
@@ -890,6 +890,15 @@ export async function createFieldView(host, options = {}) {
     prepPieces = list.filter((e) => e.key && views.has(e.key));
     if (dragState && !views.has(dragState.key)) { drag.reset(); endDragVisual(false); }
     return true;
+  }
+
+  /**
+   * A summon stack of several copies (凯瑟琳's 2 devices, user playtest #6) dropped on a board tile stays in the hand
+   * and one copy — a new piece of the same token — lands there: the state already shows the move, the stack goes home.
+   */
+  function splitLanded(e, tile, list) {
+    if (!tile || !e || e.piece?.kind !== 'token' || e.area === 'board') return false;
+    return list.some((x) => x.area === 'board' && x.uid !== e.uid && x.piece?.kind === 'token' && x.piece.id === e.piece.id && x.row === tile.row && x.col === tile.col);
   }
 
   function adaptCanPlace(fn) {
@@ -1111,7 +1120,7 @@ export async function createFieldView(host, options = {}) {
       const row = t.area === 'board' ? t.row : GEO.HAND_ROW, col = t.area === 'board' ? t.col : t.idx;
       const w = boardWorld(row, col, t.area === 'hand');
       v._tween = { fx: v.x, fy: v.y, fz: v.z, tx: w.x, ty: w.y, tz: w.z, t: 0 };
-      pending.set(dragState.key, { t: performance.now(), view: v });
+      pending.set(dragState.key, { t: performance.now(), view: v, board: t.area === 'board' ? { row, col } : null });
     } else {
       const h = dragState.home;
       v._tween = { fx: v.x, fy: v.y, fz: v.z, tx: h.x, ty: h.y, tz: h.z, t: 0 };

@@ -512,15 +512,21 @@ test('band map characters: spawnMapChar puts 预备干员-医疗 at its stage sl
   checkInvariants(h.b);
 });
 
-test('fallbacks for generic summoners: 赫默 drone on skill, 夕 小自在 on the first attack, 凯瑟琳 devices at battle start', REAL, () => {
-  // 赫默 (generic kit): S2 fires on an injured ally → drone
-  const h = makeBattle({ defs: { chess: { test_guard: guard({ stats: { maxHp: 1e5, atk: 0 } }) } }, kits: { chess_char_2_02_a: genericKit }, units: [{ chessId: 'chess_char_2_02_a', row: 10, col: 3 }, { chessId: 'test_guard', row: 10, col: 4 }], autoFinish: false, timeLimit: 60 });
+test('fallbacks for generic summoners: 赫默 placed drone on skill, 夕 小自在 on the first attack; 凯瑟琳 places nothing herself', REAL, () => {
+  // 赫默 (generic kit): S2 fires on an injured ally → the placed drone piece takes the field on its tile
+  const h = makeBattle({
+    defs: { chess: { test_guard: guard({ stats: { maxHp: 1e5, atk: 0 } }) } }, kits: { chess_char_2_02_a: genericKit },
+    units: [{ chessId: 'chess_char_2_02_a', row: 10, col: 3, uid: 1 }, { chessId: 'test_guard', row: 10, col: 4, uid: 2 }, { kind: 'token', tokenId: TOKEN_IDS.healDrone, ownerUid: 1, row: 11, col: 3, uid: 3 }],
+    autoFinish: false, timeLimit: 60,
+  });
   h.step();
-  h.unit('test_guard').hp = 500;
   const hm = h.unit('chess_char_2_02_a');
+  assert.equal(h.unit(3).alive, true, 'the free start deploy (PRTS; shared/constants.js SKILL_SUMMON_START_DEPLOY)');
+  assert.ok(h.runUntil(() => !h.unit(3).alive, 12), 'its 10 s');
+  h.unit('test_guard').hp = 500;
   assert.ok(h.runUntil(() => hm.skill.activations >= 1, 40));
   h.step();
-  assert.ok(h.b.allyUnits.some((u) => u.defId === TOKEN_IDS.healDrone && u.alive && u.ownerUnit === hm), 'drone deployed');
+  assert.ok(h.b.allyUnits.some((u) => u.defId === TOKEN_IDS.healDrone && u.alive && u.ownerUnit === hm && u.tileR === 11 && u.tileC === 3), 'drone deployed on its tile');
   // 夕 (generic): 小自在 near the first target
   const h2 = makeBattle({ defs: { enemies: { enemy_dummy: dummy() } }, kits: { chess_char_5_12_a: genericKit }, units: [{ chessId: 'chess_char_5_12_a', row: 10, col: 3 }], enemies: [{ key: 'enemy_dummy', pos: [10, 5] }], autoFinish: false, timeLimit: 30 });
   assert.ok(h2.runUntil(() => h2.b.allyUnits.some((u) => u.defId === TOKEN_IDS.duskDragon), 10));
@@ -528,13 +534,20 @@ test('fallbacks for generic summoners: 赫默 drone on skill, 夕 小自在 on t
   assert.ok(Math.abs(dd.tileC - 5) + Math.abs(dd.tileR - 10) <= 1, 'at the target');
   h2.runUntil(() => !dd.alive, 30);
   approx(dd.deathAt - dd.deployedAt, 25, 0.05);
-  // 凯瑟琳 (generic): devices in front of her allies at battle start (≤ deployLimit)
+  // 凯瑟琳 (generic): her devices are hand pieces (user playtest #6) — none placed, none in battle; a placed one serves
   const h3 = makeBattle({ defs: { chess: { test_guard: guard() } }, kits: { chess_char_4_11_a: genericKit }, units: [{ chessId: 'chess_char_4_11_a', row: 10, col: 3 }, { chessId: 'test_guard', row: 10, col: 5 }, { chessId: 'test_guard', row: 11, col: 5, uid: 9 }], autoFinish: false, timeLimit: 10 });
-  h3.step();
-  const devs = h3.b.allyUnits.filter((u) => u.defId === TOKEN_IDS.catShield && u.alive);
-  assert.ok(devs.length >= 1 && devs.length <= 2, `devices ${devs.length}`);
-  assert.ok(h3.b.allyUnits.filter((u) => u.defId === 'test_guard').some((g) => g.s.shield > 0));
+  h3.run(1);
+  assert.equal(h3.b.allyUnits.filter((u) => u.defId === TOKEN_IDS.catShield).length, 0, 'no device of her own');
+  const h4 = makeBattle({
+    defs: { chess: { test_guard: guard() } }, kits: { chess_char_4_11_a: genericKit },
+    units: [{ chessId: 'chess_char_4_11_a', row: 10, col: 3, uid: 1 }, { chessId: 'test_guard', row: 10, col: 5, uid: 2 }, { kind: 'token', tokenId: TOKEN_IDS.catShield, ownerUid: 1, row: 10, col: 4, uid: 3, dir: 'RIGHT' }],
+    autoFinish: false, timeLimit: 10,
+  });
+  h4.step();
+  assert.ok(h4.unit(3).alive, 'the placed device deploys with the board');
+  assert.ok(h4.unit(2).s.shield > 0, 'and shields the operator it faces');
   checkInvariants(h3.b);
+  checkInvariants(h4.b);
 });
 
 // =================================================================================================================

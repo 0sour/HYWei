@@ -1,8 +1,9 @@
 // test/render/downring.test.js — user playtest #4 items 8 and 9, client side: render/interp.js carries b.snap `elem`
 // (the element gauge a unit shows) and `down` (knocked-out operators waiting to redeploy); render/units.js keeps a
 // knocked-out operator on its tile in its held Die pose under a redeploy ring (countdown → "DP" / "!" → redeploy)
-// and draws the official element icon beside the bars (headless fake PIXI, test/render/fakepixi.js). User playtest #5
-// item 2: an operator entering 联防 knocked out ('die' reason FORCED_EXIT) goes straight to the held pose, no burst.
+// and draws the official element gauge — since user playtest #6 a row under the bars: the element icon and a white bar
+// of the remaining 元素值, refilling in the element's colour over a 爆发冷却 (headless fake PIXI, test/render/fakepixi.js). User playtest #5 item 2: an operator entering
+// 联防 knocked out ('die' reason FORCED_EXIT) goes straight to the held pose, no burst.
 
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -141,55 +142,91 @@ describe('knocked-down operator (UnitView.setDown)', () => {
   });
 });
 
-describe('element gauge ring', () => {
+describe('element gauge row (official: element icon + white bar of the remaining 元素值; user playtest #6)', () => {
   const sample = (o = {}) => ({ x: 5, y: 10, hp: 1000, maxHp: 1000, sp: 0, spMax: 0, flags: 0, anim: 0, vx: 0, vy: 0, el: null, elFill: 0, elUntil: 0, elDur: 0, ...o });
+  /** The white bar's drawn share of its track (the track is 2 px wider: its dark outline). */
+  const share = (r) => (r.fill.visible ? r.fill.width / (r.bg.width - 2) : 0);
 
-  test('operators: the element disc with its glyph in a white ring of the remaining 元素值', () => {
+  test('operators: the element disc with its glyph and a white bar of the remaining 元素值 (1 − fill)', () => {
     const v = view();
     v.sync(sample(), 5);
     frames(v, 2);
-    assert.equal(v._elRing, null, 'nothing built without a gauge');
+    assert.equal(v._elBar, null, 'nothing built without a gauge');
     v.sync(sample({ el: 'burn', elFill: 0.25 }), 5);
     frames(v, 1);
-    const r = v._elRing;
+    const r = v._elBar;
     assert.ok(r.root.visible);
     assert.equal(r.disc.texture, T.hudRings().disc.burn);
-    assert.equal(r.arc.texture, T.ringArc(0.75), 'remaining EP = 1 − fill');
+    assert.ok(Math.abs(share(r) - 0.75) < 1e-9, `remaining EP = 1 − fill (${share(r)})`);
+    assert.equal(r.fill.tint, 0xffffff, 'a white bar');
     v.sync(sample({ el: 'neural', elFill: 0.6 }), 5);
     frames(v, 1);
     assert.equal(r.disc.texture, T.hudRings().disc.neural);
-    assert.equal(r.arc.texture, T.ringArc(0.4));
+    assert.ok(Math.abs(share(r) - 0.4) < 1e-9);
+    assert.equal(v.elementLeft(), 0.4);
+    const kids = r.root.children.length;
+    frames(v, 30);
+    assert.equal(r.root.children.length, kids, 'no per-frame allocation');
     v.sync(sample(), 6);
     frames(v, 1);
     assert.equal(r.root.visible, false, 'hidden once the gauges are empty');
   });
 
-  test('enemies: a smaller plain disc; during a 爆发冷却 the ring refills over the cooldown', () => {
+  test('enemies: a smaller plain disc; during a 爆发冷却 the bar refills over the cooldown', () => {
     const e = view({ id: 3, side: 'enemy', kind: 'enemy', defId: 'enemy_x', dir: undefined });
     e.sync(sample({ el: 'apoptosis', elFill: 1, elUntil: 25, elDur: 15 }), 10);
     frames(e, 1);
-    const r = e._elRing;
+    const r = e._elBar;
     assert.equal(r.disc.texture, T.hudRings().discEnemy.apoptosis);
-    assert.equal(r.arc.texture, T.ringArc(0), 'empty at the burst');
+    assert.equal(share(r), 0, 'empty at the burst');
     e.sync(sample({ el: 'apoptosis', elFill: 1, elUntil: 25, elDur: 15 }), 17.5);
     frames(e, 1);
-    assert.equal(r.arc.texture, T.ringArc(0.5), 'half refilled halfway through');
+    assert.ok(Math.abs(share(r) - 0.5) < 1e-9, 'half refilled halfway through');
     const op = view({ id: 4 });
     op.sync(sample({ el: 'apoptosis', elFill: 0.5 }), 1);
     frames(op, 1);
-    assert.ok(r.root.scale.x < op._elRing.root.scale.x, 'the enemy icon is smaller');
+    assert.ok(r.disc.width < op._elBar.disc.width, 'the enemy icon is smaller');
   });
 
-  test('a burst lock status (爆发冷却) is not repeated in the status row while the element icon shows it', () => {
+  test('the 爆发冷却 refill is not the white 元素值 bar: element colour, pulsing disc; white again after the cooldown', () => {
+    const op = view({ id: 6 });
+    op.sync(sample({ el: 'neural', elFill: 0.97 }), 30);
+    frames(op, 1);
+    const r = op._elBar;
+    assert.equal(r.fill.tint, 0xffffff, 'the 元素值 left: white');
+    assert.equal(r.disc.alpha, 1);
+    // the burst: 神经 stun + 1000 true damage while the bar refills over the 10 s cooldown
+    op.sync(sample({ el: 'neural', elFill: 1, elUntil: 40.5, elDur: 10 }), 34);
+    const alphas = new Set();
+    for (let i = 0; i < 40; i++) { op.update(1 / 60, cam(), 100 + i / 60); alphas.add(Math.round(r.disc.alpha * 100)); }
+    assert.ok(op.elementCooling());
+    assert.ok(Math.abs(share(r) - 0.35) < 1e-9, `refilled by the cooldown run (${share(r)})`);
+    assert.equal(r.fill.tint, T.ELEMENT_RING.neural.tint, 'the refill is drawn in the element\'s colour');
+    assert.notEqual(r.fill.tint, 0xffffff);
+    assert.ok(alphas.size > 5 && Math.min(...alphas) >= 44 && Math.max(...alphas) <= 100, `the disc pulses (${[...alphas]})`);
+    for (const el of ['erosion', 'burn', 'apoptosis']) {
+      op.sync(sample({ el, elFill: 1, elUntil: 44, elDur: 10 }), 35);
+      frames(op, 1);
+      assert.equal(r.fill.tint, T.ELEMENT_RING[el].tint, el);
+    }
+    // the cooldown ends: every gauge resets; a new hit shows white again
+    op.sync(sample({ el: 'burn', elFill: 0.1 }), 45);
+    frames(op, 1);
+    assert.equal(op.elementCooling(), false);
+    assert.equal(r.fill.tint, 0xffffff);
+    assert.equal(r.disc.alpha, 1);
+  });
+
+  test('a burst lock status (爆发冷却) is not repeated in the status row while the element gauge shows it', () => {
     const e = view({ id: 5, side: 'enemy', kind: 'enemy', defId: 'enemy_x', dir: undefined });
     e.onStatus('burnBurst', true);
     e.onStatus('fragile', true);
     assert.deepEqual([...e._iconKeys()], ['burn', 'fragile'], 'no gauge in the feed: the status shows the burst');
     e.sync(sample({ el: 'burn', elFill: 1, elUntil: 20, elDur: 10 }), 12);
-    assert.deepEqual([...e._iconKeys()], ['fragile'], 'the element icon carries the 爆发冷却');
+    assert.deepEqual([...e._iconKeys()], ['fragile'], 'the element gauge carries the 爆发冷却');
   });
 
-  test('the atlas: one frame per step, every element in both styles', () => {
+  test('the atlas: one ring frame per step (the redeploy ring), every element disc in both styles', () => {
     const R = T.hudRings();
     assert.equal(R.arcs.length, T.RING_STEPS + 1);
     for (const el of ['neural', 'erosion', 'burn', 'apoptosis', 'necrosis']) { assert.ok(R.disc[el]); assert.ok(R.discEnemy[el]); }

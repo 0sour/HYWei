@@ -23,14 +23,17 @@
 // Live leaks (user playtest #3 item 2): every normal field simulated here keeps its counted leaks so far — the settle
 // rule's count (leaked entries with counted !== false, /sim/spec.js battleProgress) — and publishes them as
 // state().leaks { [fieldId]: n } whenever one changes, authoritative or display replica alike; the top bar shows the
-// own field's min(lpCapPerRound, n) as the LP about to be lost (ui/hud.js liveLp).
+// own field's min(lpCapPerRound, n) as the LP about to be lost (ui/hud.js liveLp). A 联防 field keeps each leaker's
+// enemies still standing (/sim/spec.js uniteLeft; user playtest #6 item 7) as state().uniteLeft { [playerId]: n },
+// published whenever it changes (it falls as the helpers kill them), and its authority reports it as b.progress `left`.
 //
 // The sim (≈ 0.2–1 ms per tick) runs on the main thread: one battle at a time is stepped for display (plus an
 // authoritative one if it is not the one on screen). stats() exposes the measured cost.
 //
 //   import { battleRunner } from './battle/runner.js'     (browser singleton wired to net.js + store.js; null in Node)
 //   battleRunner.on('snap' | 'ev' | 'field' | 'state', fn) → off
-//   battleRunner.state()  → { battleId, fieldId, kind, authoritative, watch, done, own, members, loading, paused, leaks } | null
+//   battleRunner.state()  → { battleId, fieldId, kind, authoritative, watch, done, own, members, loading, paused, leaks,
+//                              uniteLeft } | null
 //   battleRunner.stats()  → { ticks, stepMs, avgTickMs, maxFrameMs, catchups, errors, battles }
 //   battleRunner.unitStats(unitId, fieldId?) → the live stats of a unit of the battle on screen (shared/protocol.js
 //                           unitStatsEntry: current HP, effective max HP / ATK / DEF / RES / interval / block / move
@@ -167,13 +170,22 @@ export function createBattleRunner(deps) {
     return out;
   }
 
+  /**
+   * The 联防 field on screen (never an older round's kept entry, nor while a new battle is being prepared): each
+   * leaker's enemies still standing { [playerId]: n } (absent = none left), else null.
+   */
+  function uniteLeftMap() {
+    const e = cur;
+    return !loading && e && e.kind === 'unite' && e.left ? { ...e.left } : null;
+  }
+
   function state() {
     const e = cur;
-    if (!e) return loading ? { loading: true, battleId: loading.battleId, fieldId: loading.fieldId, kind: loading.kind, leaks: leakMap() } : null;
+    if (!e) return loading ? { loading: true, battleId: loading.battleId, fieldId: loading.fieldId, kind: loading.kind, leaks: leakMap(), uniteLeft: uniteLeftMap() } : null;
     return {
       battleId: e.battleId, fieldId: e.fieldId, kind: e.kind, authoritative: e.authoritative, watch: e.watch,
       done: e.done, own: e.own, members: e.members.slice(), loading: !!loading, speed: e.speed, paused: pausedAt != null,
-      leaks: leakMap(),
+      leaks: leakMap(), uniteLeft: uniteLeftMap(),
     };
   }
 
@@ -187,8 +199,11 @@ export function createBattleRunner(deps) {
   /**
    * Re-count an entry's leaks when its battle recorded a new one (Battle.leakedCount) or ended (timeout leaks, and the
    * final result): the settle rule's count, leaked entries with counted !== false (/sim/spec.js battleProgress).
+   * 联防: each leaker's enemies still standing (/sim/spec.js uniteLeft) whenever a kill, a leak, a spawn or the end
+   * changed them.
    */
   function noteLeaks(e) {
+    if (e.kind === 'unite') { noteUniteLeft(e); return; }
     if (e.kind !== 'normal') return;
     const b = e.battle;
     const mark = `${Number(b.leakedCount) || 0}:${b.finished ? 1 : 0}`;
@@ -197,6 +212,16 @@ export function createBattleRunner(deps) {
     let n = e.leaks;
     try { n = Math.max(0, Math.trunc(Number(e.sim.spec.battleProgress(b).leaks) || 0)); } catch { /* keep the last count */ }
     if (n !== e.leaks) { e.leaks = n; leaksDirty = true; }
+  }
+
+  function noteUniteLeft(e) {
+    const b = e.battle;
+    const mark = `${Number(b.killed) || 0}:${Number(b.leakedCount) || 0}:${Number(b.total) || 0}:${b.finished ? 1 : 0}`;
+    if (mark === e.leakMark) return;
+    e.leakMark = mark;
+    let left = e.left;
+    try { left = e.sim.spec.uniteLeft(b) || left; } catch { /* keep the last count */ }
+    if (JSON.stringify(left) !== JSON.stringify(e.left)) { e.left = left; leaksDirty = true; }
   }
 
   /** Publish the state when a leak count changed since the last publish. */
@@ -258,6 +283,8 @@ export function createBattleRunner(deps) {
       }
     } else {
       msg.leaks = Math.min(1e6, p.leaks);
+      // 联防: the leakers' enemies still standing (shared/protocol.js b.progress `left`, ≤ 4 players)
+      if (p.left) msg.left = Object.fromEntries(Object.entries(p.left).slice(0, 4));
     }
     try { net.send('b.progress', msg); } catch { /* offline */ }
   }
@@ -456,8 +483,9 @@ export function createBattleRunner(deps) {
       t0: clock() - ((Number(msg.elapsed) || 0) / speed) * 1000, lastProgressAt: -Infinity, done: false, resultSent: false,
       result: null, delivery: null,
       meter: sim.spec.attachLpMeter(battle),
-      // counted leaks so far (normal fields; noteLeaks) and the Battle state they were counted at
-      leaks: 0, leakMark: '',
+      // counted leaks so far (normal fields; noteLeaks) and the Battle state they were counted at; 联防 fields: each
+      // leaker's enemies still standing (noteUniteLeft)
+      leaks: 0, leakMark: '', left: null,
     };
     if (lastPool && battle.sharedBoss && typeof battle.sharedBoss.sync === 'function') {
       battle.sharedBoss.sync(lastPool.hp, lastPool.acked ? lastPool.acked[e.fieldId] : undefined);

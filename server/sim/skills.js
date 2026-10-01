@@ -4,14 +4,30 @@
 // No SP gain while a duration/ammo/toggle skill is active, while stunned, or while the unit has the noSp flag (阻回: no SP
 // gain of any kind — time, attack, hurt or granted).
 // Charges (maxCharges > 1): SP fills to spCost → +1 charge (SP restarts) until charges == max (SP stays full).
-// Trigger rules: DEFAULT (ready + about to attack/heal + enemy / injured ally in the INITIAL range — or, checked every
-//   tick, an enemy inside one of the content trigger ranges added with addTriggerRange: 海嗣, 流形),
-//   TAKE_DAMAGE (ready + just took a hit), SP_FULL/ALWAYS (as soon as ready), CUSTOM_RANGE (enemy inside the
-//   custom trigger grid), SEARCH (an enemy inside the INITIAL range, checked every tick without waiting for an attack:
-//   BWIKI "解放者/阵法术师子职业干员 技能1，初始攻击范围内出现敌人后自动释放", research 03 Addendum C1 — not any enemy on
-//   the field, which burnt the skill on enemies that had just spawned), GDGLOW_SKILL_2 = DEFAULT, NEVER/MANUAL (never
+// Trigger rules (the official 技能策略, PRTS 卫戍协议/帮助 §作战阶段 技能操作; data: tools/build-data.mjs resolveTrigger):
+//   DEFAULT — the basic strategy: ready + about to attack/heal + enemy / injured ally in the INITIAL range (or blocked by
+//   a melee unit) — or, checked every tick, an enemy inside one of the content trigger ranges added with
+//   addTriggerRange: 海嗣, 流形;
+//   SKILL_RANGE — a MANUAL skill with a 技能范围 of its own: "不通过普通攻击/治疗触发技能，仅在技能范围内存在敌人（无视其
+//   不可选中）时释放技能": any living enemy on the trigger grid (the skill range; stealthed / untargetable / flying ones
+//   too), checked every tick, no attack needed. Kit option `trigger.allies` (+ `hpAtMost`, default 1): a healable,
+//   injured ally of the grid whose HP ratio is at most that instead (an AUTO heal skill's own rule — 古米 S1 waits in
+//   its heal mode until it has healed);
+//   TAKE_DAMAGE (ready + just took a hit: 重装 "不受技能范围影响，受到伤害时释放技能"), SP_FULL/ALWAYS (as soon as ready),
+//   CUSTOM_RANGE (enemy inside the custom trigger grid), SEARCH (an enemy inside the INITIAL range, checked every tick
+//   without waiting for an attack: "不受基础策略影响，在初始攻击范围内存在敌人时释放技能" — not any enemy on the field,
+//   which burnt the skill on enemies that had just spawned), GDGLOW_SKILL_2 ("全场存在可选目标时释放技能": a targetable
+//   enemy anywhere on the field — for a heal skill an ally that needs healing — every tick), NEVER/MANUAL (never
 //   auto-cast: the kit calls skill.activate() itself); any unknown rule falls back to DEFAULT. Units that never attack
-//   (noAttack profiles) evaluate DEFAULT every tick instead.
+//   (noAttack profiles) evaluate DEFAULT every tick instead. DEFAULT with `trigger.allies` (+ `hpAtMost`): the basic
+//   rule AND such an ally on the trigger grid — the cast replaces the attack about to be made (塞雷娅 S1 "触发时会替换当
+//   次攻击"); should that ally condition fail before the attack, the cast is withdrawn and its charge returned.
+// Automatic operations cool down (constants.js AUTO_OP_COOLDOWN, "自动操作具有3s冷却，在完成一次操作或作战开始时部署的单位
+//   将进入冷却"): the engine auto-casts a MANUAL skill (def.skillType) no sooner than 3 s after its previous cast (so a
+//   charged skill spends its charges 3 s apart) or after the unit's deployment at the battle start (Battle._deploy
+//   `initial`). AUTO skills are exempt; a kit with its own automatic cast checks `opCooling`; a cast made by activate()
+//   directly is not held back (it still starts the cooldown). While a cast "next attack" waits for its attack, no
+//   further charge is cast.
 // Kinds: duration (mods for `duration` s), ammo (mods until `ammo` attacks were made; optional duration cap),
 //   instant (onStart + optional one-shot attack override for the next attack), charges (= instant with charges),
 //   passive (always on from deployment, no SP), toggle (stays on until death once activated).
@@ -23,11 +39,14 @@
 //   also carries `noAmmo` (set it to true: this attack spends no ammo). onEnd runs while the skill's mods / range are
 //   still applied (`active` is already false); they are removed right after it (unless onEnd re-activated the skill).
 
-import { absoluteRangeKeys } from './targeting.js';
+import { absoluteRangeKeys, canTargetEnemy } from './targeting.js';
+import { AUTO_OP_COOLDOWN, COLS, ROWS } from './constants.js';
 
-const TICK_RULES = new Set(['SP_FULL', 'SEARCH', 'CUSTOM_RANGE']);
+const TICK_RULES = new Set(['SP_FULL', 'SEARCH', 'CUSTOM_RANGE', 'SKILL_RANGE', 'GDGLOW_SKILL_2']);
 /** Enemies that satisfy a content trigger range (any targetable enemy, flyers included). */
 const TRIGGER_PROFILE = Object.freeze({ canHitFly: true });
+/** Every tile of the stage (GDGLOW_SKILL_2: the whole field). */
+const ALL_TILES = new Set(Array.from({ length: ROWS * COLS }, (_, i) => i));
 
 export class SkillRuntime {
   /**
@@ -60,7 +79,14 @@ export class SkillRuntime {
     if (this.rule === 'MANUAL') this.rule = 'NEVER';
     if (this.rule.startsWith('CUSTOM_RANGE')) this.rule = 'CUSTOM_RANGE';
     this.triggerGrid = trig.grid ?? trig.rangeGrid ?? d.trigger?.grid ?? null;
+    // kit options: an injured, healable ally of the trigger grid with an HP ratio of at most `hpAtMost` (SKILL_RANGE:
+    // instead of an enemy; DEFAULT: in addition to the basic rule)
+    this.triggerAllies = !!trig.allies;
+    this.triggerHpAtMost = Number.isFinite(+trig.hpAtMost) && +trig.hpAtMost > 0 ? +trig.hpAtMost : 1;
     this.healSkill = s.heal ?? (unit.profile && unit.profile.dmgType === 'heal' && !!unit.profile.heal);
+    // the official skill strategies automate the manual 开启: only MANUAL skills wait for the operation cooldown
+    this.manual = String(d.skillType ?? 'MANUAL').toUpperCase() === 'MANUAL';
+    this.opReadyAt = -Infinity;   // no automatic cast before this battle time (AUTO_OP_COOLDOWN)
     if (this.kind === 'passive') this.baseSpCost = 0;
     this._spCostMul = 1;          // content may set spCostMul (e.g. 绝技 ×0.7) — see the accessor below
     this.sp = 0;
@@ -73,6 +99,7 @@ export class SkillRuntime {
     this.lastStart = -Infinity;
     this._buffKey = `skill:${unit.id}`;
     this._trigKeys = null;
+    this._trigSet = null;
     this.triggerRanges = [];      // content trigger ranges (addTriggerRange)
     this.noSkill = !spec;         // unit without any skill spec
   }
@@ -140,6 +167,8 @@ export class SkillRuntime {
     this.charges = 0;
     this.sp = 0;
     this._trigKeys = null;
+    this._trigSet = null;
+    this.opReadyAt = -Infinity;   // (Battle._deploy starts the operation cooldown of the battle-start deployment)
     if (this.noSkill) return;
     if (this.kind === 'passive') {
       this._startPassive();
@@ -235,8 +264,16 @@ export class SkillRuntime {
       const rate = u.s.spRecovery;
       if (rate > 0) this.gainSp(rate * dt, 'time');
     }
+    // a DEFAULT cast bound to an ally condition (塞雷娅 S1) replaces the attack about to be made: should the condition
+    // have failed before that attack (the ally healed meanwhile), the cast is withdrawn — no heal mode stays behind
+    if (this.pending && this.triggerAllies && this.rule !== 'SKILL_RANGE' && !this._allyTriggerSatisfied()) {
+      this.end('withdrawn');
+      this.addCharge(1);
+    }
     if (!this.ready || u.s.flags.silence) return;
     if (this.active && this.isTimed) return;
+    // a cast "next attack" still waits for its attack: another charge now would be spent on the same attack
+    if (this.pending || this._opCooling()) return;
     if (TICK_RULES.has(this.rule)) {
       if (this._tickRuleSatisfied()) this.activate(this.rule);
     } else if (this.rule !== 'TAKE_DAMAGE' && this.rule !== 'NEVER') {
@@ -249,17 +286,55 @@ export class SkillRuntime {
     }
   }
 
+  /** The automatic operations of a MANUAL skill are cooling down (AUTO_OP_COOLDOWN). */
+  _opCooling() { return this.manual && this.battle.time < this.opReadyAt - 1e-9; }
+
+  /** Public form of the operation cooldown, for kits with their own automatic cast of a MANUAL skill. */
+  get opCooling() { return this._opCooling(); }
+
+  /** Absolute tile keys of the trigger grid at the unit's current tile and direction (cached, with their Set). */
+  _triggerKeys() {
+    const u = this.unit;
+    const tile = u.tileR * COLS + u.tileC;
+    if (!this._trigKeys || this._trigTile !== tile || this._trigDir !== u.dir) {
+      this._trigKeys = absoluteRangeKeys(this.triggerGrid, u.tileR, u.tileC, u.dir, 0);
+      this._trigSet = new Set(this._trigKeys);
+      this._trigTile = tile;
+      this._trigDir = u.dir;
+    }
+    return this._trigKeys;
+  }
+
+  /** `trigger.allies`: an injured, healable ally on the trigger grid (the unit's own range without one) ≤ hpAtMost. */
+  _allyTriggerSatisfied() {
+    const b = this.battle;
+    const u = this.unit;
+    let keys;
+    if (this.triggerGrid) { this._triggerKeys(); keys = this._trigSet; } else keys = u.baseRangeKeys || u.rangeKeys;
+    const lim = this.triggerHpAtMost + 1e-9;
+    return b.injuredAlliesInKeys(keys, u).some((a) => a.hpRatio <= lim);
+  }
+
   _tickRuleSatisfied() {
     const b = this.battle;
     const u = this.unit;
     if (this.rule === 'SP_FULL') return true;
-    // SEARCH: an enemy inside the initial attack range (research 03 Addendum C1), every tick (librators / phalanxes
-    // and 安洁莉娜 do not attack while the skill is off, so DEFAULT's "about to attack" never comes)
+    // SEARCH: an enemy inside the initial attack range, every tick (librators / phalanxes and 安洁莉娜 do not attack
+    // while the skill is off, so DEFAULT's "about to attack" never comes)
     if (this.rule === 'SEARCH') return this._defaultCondition();
     if (this.rule === 'CUSTOM_RANGE') {
       if (!this.triggerGrid) return this._defaultCondition();
-      if (!this._trigKeys) this._trigKeys = absoluteRangeKeys(this.triggerGrid, u.tileR, u.tileC, u.dir, 0);
-      return b.enemiesInKeys(this._trigKeys, u, { canHitFly: true }).length > 0;
+      return b.enemiesInKeys(this._triggerKeys(), u, { canHitFly: true }).length > 0;
+    }
+    if (this.rule === 'SKILL_RANGE') {
+      if (this.triggerAllies) return this._allyTriggerSatisfied();
+      if (!this.triggerGrid) return this._defaultCondition();
+      return b.anyEnemyInKeys(this._triggerKeys());
+    }
+    // GDGLOW_SKILL_2 "全场存在可选目标时释放技能": a targetable enemy anywhere (heal skill: an ally that needs healing)
+    if (this.rule === 'GDGLOW_SKILL_2') {
+      if (this.healSkill) return b.injuredAlliesInKeys(ALL_TILES, u, !!u.profile?.heal?.elementHealRatio).length > 0;
+      return b.enemies.some((e) => canTargetEnemy(u, e, TRIGGER_PROFILE));
     }
     return false;
   }
@@ -277,8 +352,8 @@ export class SkillRuntime {
       if (this.healSkill) return b.injuredAlliesInKeys(keys, u).length > 0;
       if (b.enemiesInKeys(keys, u, u.profile).length > 0) return true;
     }
-    // the enemies a melee unit blocks are always its targets (Battle.blockedTargets), in range or not — PRTS 卫戍协议/帮助
-    // "敌人被近战干员自身阻挡" satisfies the target condition of the basic strategy
+    // the enemies a unit blocks are always its targets (Battle.blockedTargets), in range or not — PRTS 卫戍协议/帮助
+    // "敌人被近战干员自身阻挡" satisfies the target condition of the basic strategy (a ranged blocker too: user playtest #6)
     if (!this.healSkill && u.blocking.length && b.blockedTargets(u, u.profile).length > 0) return true;
     return !this.healSkill && this.triggerRanges.length > 0 && this._extraTriggerSatisfied();
   }
@@ -288,7 +363,9 @@ export class SkillRuntime {
     if (!this.ready || this.unit.s.flags.silence) return false;
     if (this.active && this.isTimed) return false;
     if (this.rule === 'TAKE_DAMAGE' || this.rule === 'NEVER' || TICK_RULES.has(this.rule)) return false;
+    if (this.pending || this._opCooling()) return false;
     if (!this._defaultCondition()) return false;
+    if (this.triggerAllies && !this._allyTriggerSatisfied()) return false;
     return this.activate('DEFAULT');
   }
 
@@ -296,7 +373,7 @@ export class SkillRuntime {
   onDamaged() {
     if (this.noSkill) return;
     if (this.spType === 'hurt' && !(this.active && this.isTimed)) this.gainSp(1, 'hurt');
-    if (this.rule === 'TAKE_DAMAGE' && this.ready && !(this.active && this.isTimed) && this.unit.canAct && !this.unit.s.flags.silence) {
+    if (this.rule === 'TAKE_DAMAGE' && this.ready && !this.pending && !(this.active && this.isTimed) && this.unit.canAct && !this.unit.s.flags.silence && !this._opCooling()) {
       this.activate('TAKE_DAMAGE');
     }
   }
@@ -316,6 +393,7 @@ export class SkillRuntime {
     this.activations++;
     this.lastStart = this.battle.time;
     const b = this.battle;
+    if (this.manual && reason !== 'carry') this.opReadyAt = b.time + AUTO_OP_COOLDOWN;
     if (this.isTimed) {
       this.active = true;
       this.timeLeft = this.kind === 'duration' ? Math.max(0.01, this.duration) : (this.kind === 'ammo' && this.duration > 0 ? this.duration : Infinity);

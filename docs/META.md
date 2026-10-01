@@ -106,7 +106,19 @@ untimed. The UI picks a card with two taps (select → 确认选择, DESIGN §18
 the mode's static `inactiveBondIds` — 标准 has no 拉特兰 / 阿戈尔 / 卡西米尔 / 奥术 … — and with chess in the pool), so
 玛恩纳的盟誓 / 莫斯提马的盟誓 / 卡西米尔驰援 never show up in 标准. Card generation and the
 family defaults are documented in `choices.js` (bounty / supply / shop / tactic). 机密商店 cards are **free** (official
-text "无需消耗资金"). A `choice:<effectId>` registry handler overrides the default application (§2.4).
+text "无需消耗资金"). 悬赏决策 offers only choices.json cards with `draft: true` (`choices.js draftBounty`, user playtest #6
+item 4): the PRTS table 卫戍协议：盟约 下半/PRTS盟约记录 §机变阶段 "敌人轮选" — kill bounties for the next battle ("下场作战")
+or the next two ("接下来两场作战"), 源石虫·特训, and the 7 multi-round cards ("之后 / 后续的每场作战"), but never 战术特训
+(listed under "※以下悬赏任务仅由法术教鞭生成") nor the 鸭爵 / 高普尼克 / 流泪小子 / 圆仔 cards (commented out of the table) —
+105 cards, drawn uniformly. Every bounty card carries the effect's official rich text `descRaw` (the battles in blue
+"下场作战" / "两场作战"; the overlay and the effects column render it; the effects column also says "还剩 N 场作战").
+**Multi-round cards last two battles** (`choices.js MULTI_ROUND_BOUNTY_BATTLES = 2`, `bountyBattles` / `bountyText`): the
+user does not remember any multi-round bounty (playtest #6 answer, "我不记得有过多轮悬赏"), so until that is confirmed
+otherwise every "之后 / 后续的每场作战" card — drafted, from 教鞭 or “神秘顾客” — lasts two battles exactly like the
+"接下来两场作战" cards, and its card and effects text read "接下来两场作战" in the same blue (还剩 N 场作战).
+`MULTI_ROUND_BOUNTY_BATTLES = null` restores the official red "每场" (every later battle; effects column
+"之后的每场作战"). The 战术特训 cards are what the 教鞭 Art offers (§2.5).
+A `choice:<effectId>` registry handler overrides the default application (§2.4).
 
 ### 1.3 Disconnects, AI takeover
 * Disconnected human: the seat keeps playing its last lineup; drafts auto-resolve at their deadlines, prep auto-readies at
@@ -317,10 +329,14 @@ items), 教鞭 / “神秘顾客” (a random bounty is added).
 
 **教鞭 / “神秘顾客” stay a random bounty (deliberate).** The official Arts open a personal 悬赏 choice
 ("选择一项（特殊）悬赏任务进行挑战", `choice_event hunter_band_1`). The server applies a random bounty instead: content
-(server/sim/content/items/meta.js) draws 3 of the band-bounty family `enemyeffect_b_*` and takes one at random (the
-built-in fallback: a random tier ≤ II bounty of `cards.bounty`) and adds it with `ctx.addBounty`. A personal choice
-overlay would need its own phase / protocol message outside SP_DRAFT (a second, simultaneous draft in co-op, with
-timers and AI takeover) for a rarely used Art, while the random pick keeps the risk / reward the item is about. The
+(server/sim/content/items/meta.js) draws 3 cards and takes one at random — 教鞭 from the 20 战术特训 cards (payout
+`perfect`: extra enemies, the card's coins when the own phase is perfect; PRTS 下半 记录 §法术 教鞭 "于3个战术特训的悬赏
+任务中选择一项", §机变阶段 "※以下悬赏任务仅由法术教鞭生成", 杜宾 加练！ "若自身战斗完美作战可获得资金"; user playtest #6
+item 4 review), “神秘顾客” (granted by nothing in act2) from the band-bounty family `enemyeffect_b_*` [ASSUMED] — each
+limited to enemies the mode can field (the built-in fallback: a random tier ≤ II bounty of `cards.bounty`), and adds it
+with `ctx.addBounty`. A personal choice overlay would need its own phase / protocol message outside SP_DRAFT (a
+second, simultaneous draft in co-op, with timers and AI takeover) for a rarely used Art, while the random pick keeps the
+risk / reward the item is about. The
 bounty then behaves like any other (next battles, 联防 payouts, Final Assault spawns). 神秘顾客's destroy clause (+1
 fund, the Art passes to the next alive player) is content too (`onDestroy`).
 EffectRefs: `effect:builtin_round_coin`, `effect:builtin_gift`, `effect:builtin_next_buy_golden_item` (整备),
@@ -364,15 +380,17 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
 * **Hand**: 10 slots filled right→left, 5 temp slots for passive overflow (merge results, grants, returned equipment);
   a full hand refuses buys unless the purchase completes a merge, and withdrawals unless the withdrawn summoner's own
   summon stack frees a slot (a deployed summon withdrawn with no stack of its own left to join is a new card: `HAND_FULL`,
-  never temp); temp blocks Ready. A temp piece is resolved (chess sold back to the pool, items / summon stacks
-  destroyed) at the deadline of the first prep in which its player could act on it (`PlayerState.tempDue` vs
+  never temp); temp blocks Ready. A temp piece is resolved (chess sold back to the pool, items destroyed, a summon stack
+  removed — it comes back at the next round start, see Summons) at the deadline of the first prep in which its player could act on it (`PlayerState.tempDue` vs
   `prepsEnded`, recorded by `_putTemp`, user playtest #3): arrived during a prep before Ready → that prep's end; after
   Ready, during onPrepEnd, or outside PREP (COMBAT, 联防, SETTLE, ROUND_START, 机变) → the end of the NEXT prep, so it
   is shown and usable first; `setReady(false)` makes what arrived while ready due at the current prep. The round
   start never wipes temp (DESIGN §6.2).
 * **Merge**: 3 normal copies (风丸 2) anywhere (board/hand/temp) → elite to the hand (the incoming copy, then temp, hand,
   board copies are consumed); equipment returns to the hand; summons of consumed copies are removed; a reward offer of 3
-  free chess of tier min(level+1, 6) (pick 1, expires at prep end; queued when several merges happen). A merge
+  **different** free chess of tier min(level+1, 6) (copy-weighted from the shared pool, already-drawn ones excluded; a
+  short tier tops up from the tier below — user playtest #6 item 19; pick 1, expires at prep end; queued when several
+  merges happen). A merge
   completed after the prep (SETTLE / Final Assault effects such as 突变细胞) keeps its offer for the next prep; its elite
   goes to the hand like any merge's, overflowing into temp (kept through the next prep, see Hand) — it takes a freed
   board tile of a consumed copy only when the hand and temp are both full (research 01 A1).
@@ -382,12 +400,23 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   latest when the battle input is built): a piece left on a tile it may no longer occupy — a melee operator on a new
   射击台 — is withdrawn to the hand (overflow temp: re-placed during the prep; its summons leave with it), a summon back
   onto its stack, with a toast (`PlayerState._evictIllegal`).
+* **Summons** (PRTS 卫戍协议/帮助 §战斗部署, user playtest #6): an operator placed on the board sends its manually deployable
+  summons (tokens.json `placeable`: 赫默 S2 医疗探机, 巫恋 S2 诅咒娃娃, 凯瑟琳 爬行号·防护单元, 浊心斯卡蒂 海嗣, 伺夜 狼群,
+  缪尔赛思 流形 — only those its equipped skill / module makes, `gamedata.placeableTokens(chessId, loadout)`) to the hand as
+  one stack of deploy-limit copies (凯瑟琳 2 of her 3 devices); each copy is placed and turned like any piece (no deploy
+  slot — the PRTS token pages give 部署占用数 0), only while its owner is on the board. Withdrawing / selling / merging the
+  owner removes its summons; moving it to another tile (a move, a swap, or a summon dragged onto it — that summon stays
+  where it was dropped) sends its placed summons back onto their stack ("移动干员时，其所属召唤物全部退场并重置至手牌区";
+  `PlayerState._liftTokensOf`). A stack that overflowed into temp and was removed at a prep deadline comes back at the
+  next round start (§手牌区 "干员所属召唤物会于下一回合返还": `PlayerState.startRound` tops every board owner's summons up
+  to the deploy limit, `grantTokensFor`). Battle side: SIM.md §1.1 token pieces.
 * **Bonds**: bondsMeta.js (BOARD distinct, BOARD_AND_DECK, 绝技 elites, 调和 +1, 独行 downward, 助力 upper tiers,
   变形同构体 grants). Σ activated layers for the hidden core = Σ layers of active bonds at the boss round's prep end.
 * **Waves**: waves.js header (stage/factions/boss per match, faction replacement per round with `k` copies, scaling by
-  `enemyScale[r]` × the tuning layer §3.1, bounties, boss templates, 联防 routing). Multi-round bounties ("之后的每场作战")
-  also spawn in the Final Assault / Hidden Core, on the owner's half of the boss field (a route ending at its goal); the
-  boss battle then uses up one of the bounty's battles and its kill coins go to pending funds.
+  `enemyScale[r]` × the tuning layer §3.1, bounties, boss templates, 联防 routing). Bounties with battles left (every one
+  that lasts more than one battle; an official multi-round card lasts two, §1.2) also spawn in the Final Assault /
+  Hidden Core, on the owner's half of the boss field (a route ending at its goal); the boss battle then uses up one of
+  the bounty's battles and its kill coins go to pending funds.
 * **Combat time limit**: data `combatTimeLimit` (the level's `maxPlayTime`) counts REAL seconds of the forced 2×
   battle; the Battle / 联防 limit is `gd.combatTimeLimit(r)` = 2 × that in game seconds (`config.combatTimeScale`,
   default 2). Read as game seconds the rounds' own spawn schedules would not fit (R2's last flyer spawns at 43 s of
@@ -414,6 +443,13 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   never its authority again (`f.demoted`). Every boss field run by the server (takeover, or nobody connected at the
   start) publishes its own damage as `b.pool.acked[fieldId]` (its CreditPool total), so the display replica of a
   reconnecting / watching human stays in sync.
+  End and verdict (user playtest #6 item 5): the pool never holds less than 1 HP (`sim/constants.js BOSS_POOL_MIN_HP`:
+  the hit — or the per-player credit of a report — that would leave less takes the rest; the browser's `LocalBossPool`
+  reads anything below 1 as 0), so a pool shown at 0 is a dead leader on every field and the round ends at once. Before,
+  crediting a report per player could leave float dust (3.6e-12) that no browser hit could remove and the leader fought
+  on until the overtime drain. The first end condition the server registers decides (`Match._finalEnding`): pool 0 →
+  victory, team LP 0 → defeat (PRTS 卫戍协议：盟约 下半 "…使目标生命值扣除至0，则无视倒计时直接失败"); after a forced end
+  no report (an in-flight `b.progress`, the final `b.result` with its rounded per-player damage) credits the pool.
 
 ### 3.1 Balance layer (data/tuning.json)
 `data/config.json` is generated and stays research-faithful. There is **no custom balance** any more (DESIGN §14
@@ -448,6 +484,18 @@ fielded as the board has them; `flags.layerGainsEnabled = false`; time limit = t
 Every enemy still alive at the end (leaked again, or never spawned before the limit) costs its **source** player 1 LP.
 A client-run 联防 result may bill a survivor only to a leaker who sent that enemy in — a split / summon only to a leaker
 who sent in its parent, ≤ the parents' data offspring count (磨砻 2, 烹泉 4 …; fields.js offspringPerParent).
+**Live counter** (user playtest #6 item 7; PRTS 卫戍协议/帮助 "防卫失败的玩家可通过上方信息栏确认自身所属敌人的剩余数量"):
+while the 联防 runs, each leaker's `m.public players[].uniteLeft` = its enemies still standing on the field (not spawned
+yet, alive, or through again) + its leaks that could not re-enter — what settlement would charge before the cap —
+and `pendingLp` = min(`lpCapPerRound`, uniteLeft) (`Match._uniteLeft`). Sources: the authority's `b.progress.left`
+(`{ [leakerId]: n }`, server/sim/spec.js `uniteLeft` / `battleProgress`), the server-run field's timeline samples
+(`fields.js timelineSample`: `[gt, killed, total, left]`) read on the field clock, or the streamed battle itself
+(legacy mode; `_uniteTick` republishes about once a game second); exact from the field's result once it is done
+(`uniteSurvivors`). Live values are clamped to what settlement can bill that leaker (`fields.js uniteBillBounds`: sent
+in + the offspring bound). It falls as the helpers strike them down and rises when one splits or summons (the children
+carry the leaker); every client that has the 联防 field on screen shows its local replica's counts while it runs — the
+leaker's own capsule / row (`ui/hud.js uniteRemaining`) and the leakers' team rows (`ui/teamPanel.js rowLp`
+`uniteLocal`, the battle runner's `state().uniteLeft`) — else this value. The settled loss stays min(10, survivors).
 
 ---
 
@@ -457,9 +505,9 @@ who sent in its parent, ≤ the parents' data offspring count (磨砻 2, 烹泉 
 drawn set; `disabledBonds` = drawn ∪ the mode's static list), `hiddenBossId`, `bossRound`, `hiddenRound`, `spRound`,
 `combatMode` (`'client'` | `'server'`), `fields[].progress { killed, total, done }` (teammates' progress UI), `paused`
 (solo pause, §1.3a),
-`players[].autoplay`, and per phase: `draft { order, turn, picks, skipsLeft, turnDeadline, turnSeconds, untimed }` (BAND_DRAFT),
-`sp { family, name, desc, eventId, cards:[{ idx, kind:'bounty'|'item'|'tactic', id, name, desc, tier, coin?, payout?,
-rounds?, enemyKey?, count?, price?, team?, tacticKind? }], order, turn, picks:{pid: idx}, taken:{idx: pid}, untimed }`
+`players[].autoplay`, `players[].uniteLeft` (UNITE, leakers only: their enemies still standing, uncapped — §4), and per phase: `draft { order, turn, picks, skipsLeft, turnDeadline, turnSeconds, untimed }` (BAND_DRAFT),
+`sp { family, name, desc, eventId, cards:[{ idx, kind:'bounty'|'item'|'tactic', id, name, desc, tier, descRaw?, coin?,
+payout?, rounds?, enemyKey?, count?, price?, team?, tacticKind? }], order, turn, picks:{pid: idx}, taken:{idx: pid}, untimed }`
 (SP_DRAFT), `teamLp` / `bossHp {hp,max}` (Final Assault on), `overtimeAt` (最终攻势 / 隐秘核心: ms epoch when the
 overtime drain starts; `deadline` = the level's 120 s countdown), `unite { helpers, leakers }` (UNITE).
 `players[].status`: INFO_CHECK ready/deciding · drafts ready (picked) / deciding (their turn) / acting (waiting) ·

@@ -15,13 +15,19 @@
 //   * Overtime: bossTurnHpReduceTime counts REAL seconds like the level's 120 s maxPlayTime (which runs out first; the
 //     battle goes on): from 150 real s (300 game s on the 2× field clock) the team loses bossOvertimeDrainPerSec (1) LP
 //     per real second (gamedata.js bossOvertimeDue); m.public.deadline = the 120 s countdown, m.public.overtimeAt = the
-//     drain start. Minion / boss leaks cost their `lpr`; team LP 0 ⇒ defeat (all fields force-ended); pool 0 ⇒ victory.
+//     drain start. Minion / boss leaks cost their `lpr`; team LP 0 ⇒ defeat (all fields force-ended; PRTS 卫戍协议：盟约 下半
+//     "…使目标生命值扣除至0，则无视倒计时直接失败"); pool 0 ⇒ victory. The first of the two the server registers decides
+//     (Match._finalEnding): a report that arrives after the team LP ran out credits nothing (user playtest #6 item 5).
+//   * Pool HP is a float that never keeps float dust: the hit that would leave less than BOSS_POOL_MIN_HP (1) takes the
+//     rest, so the pool is 0 or ≥ 1 and a leader shown at 0 HP is down (sim/constants.js; the browser's LocalBossPool
+//     follows the same rule, server/sim/spec.js). Before, the per-player crediting of a report could leave 3.6e-12 that
+//     the browser could never deal (user playtest #6 item 5).
 //   * No IN_BATTLE layer gains (flags.layerGainsEnabled = false).
 //   * Hidden Core eligibility (after an R14 win): difficulty in hiddenCore.difficulties, the mode has a hidden round,
 //     Σ activated layers of the alive players measured at the end of the boss round's prep > threshold (solo 350 /
 //     co-op 1200) and team LP > minTeamLpExclusive (1).
 
-import { BOSS_ROW_OFFSET, COLS } from '../sim/constants.js';
+import { BOSS_ROW_OFFSET, COLS, BOSS_POOL_MIN_HP } from '../sim/constants.js';
 import { mirrorDir, normDir } from '../sim/dir.js';
 
 export const BOSS_HIT_STEPS = [0.2, 0.5, 0.8];
@@ -63,7 +69,10 @@ export function bossPoolHp(gd, bossId, aliveCount) {
   return Math.max(1, Math.round(base * tune));
 }
 
-/** The one HP pool every boss field damages. `damage(playerId, amount)` is called by the sim. */
+/**
+ * The one HP pool every boss field damages. `damage(playerId, amount)` is called by the sim (server-run fields) and by
+ * Match._creditBoss (client reports, per player); the hit that would leave less than BOSS_POOL_MIN_HP takes the rest.
+ */
 export class SharedBossPool {
   constructor(hp, { onHit = null } = {}) {
     this.maxHp = Math.max(1, hp);
@@ -76,8 +85,8 @@ export class SharedBossPool {
   damage(playerId, amount) {
     const a = Number(amount);
     if (!Number.isFinite(a) || a <= 0 || this.hp <= 0) return 0;
-    const dealt = Math.min(this.hp, a);
-    this.hp -= dealt;
+    const dealt = this.hp - a < BOSS_POOL_MIN_HP ? this.hp : a;
+    this.hp -= dealt; // exactly 0 when the rest is taken (x − x): no float dust
     if (playerId != null) this.byPlayer.set(playerId, (this.byPlayer.get(playerId) || 0) + dealt);
     if (this.onHit) {
       try { this.onHit(playerId, dealt); } catch { /* reported by the caller */ }

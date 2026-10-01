@@ -168,11 +168,12 @@ test('#4: a blocker attacks the enemy it blocks even when it stands outside its 
   assert.ok(h.hooksOf('damaged').some((c) => c.source === u && c.target === x()), 'it hits its blocked enemy');
 });
 
-test('#4: a ranged operator on a melee tile blocks, but never attacks or casts for the enemy held behind it (阻挡（近战限定）)', () => {
-  // PRTS 索敌的概念: "我方索敌优先级：阻挡（近战限定）"; "远程位干员通常而言不会优先攻击自己阻挡的目标；甚至如果这个目标被阻挡在
-  // 该干员的身后，该干员可能因为敌人未处于自身攻击范围而无法攻击到这个敌人". Facing LEFT, its range (9,6),(9,5) never holds
-  // the enemy blocked at x ≈ 6.71; a melee operator in the same spot hits it and casts its DEFAULT skill (帮助: "敌人被近战
-  // 干员自身阻挡" satisfies the target condition).
+test('#4 (revised by the user after playtest #6): a ranged operator on a melee tile also hits and casts for the enemy it holds behind it', () => {
+  // The playtest #5 QA had made blocked-first melee-only (PRTS 索敌的概念 "阻挡（近战限定）"); the user's rule after
+  // playtest #6 — "阻挡了就一定要能打到": officially the collision pushes a blocked enemy to its blocker's front, so
+  // whatever blocks an enemy can hit it. Facing LEFT, the range (9,6),(9,5) never holds the enemy blocked at x ≈ 6.71;
+  // the ranged blocker hits it and casts its DEFAULT skill like a melee one (帮助: the blocked enemy satisfies the
+  // target condition).
   const run = (id, profession) => {
     const h = makeBattle({
       defs: { chess: { [id]: chessRec({ id, profession, stats: { atk: 100, blockCnt: 1, maxHp: 1e6 }, skill: { spCost: 1, initSp: 1, duration: 5 } }) }, enemies: { enemy_x: foe('enemy_x') } },
@@ -187,13 +188,12 @@ test('#4: a ranged operator on a melee tile blocks, but never attacks or casts f
     checkInvariants(h.b);
     return { hits: h.hooksOf('damaged').filter((c) => c.source === u && c.target === x()).length, casts: u.skill.activations, still: x().blockedBy === u };
   };
-  const ranged = run('t_rg', 'SNIPER');
-  assert.equal(ranged.hits, 0, 'the ranged blocker never hits the enemy behind it');
-  assert.equal(ranged.casts, 0, 'nor casts its skill for it');
-  assert.ok(ranged.still, 'it still holds the enemy');
-  const melee = run('t_ml', 'WARRIOR');
-  assert.ok(melee.hits > 0, 'a melee blocker hits it');
-  assert.equal(melee.casts, 1, 'and casts its skill');
+  for (const [id, profession] of [['t_rg', 'SNIPER'], ['t_ml', 'WARRIOR']]) {
+    const r = run(id, profession);
+    assert.ok(r.hits > 0, `${profession}: hits the enemy it blocks behind it`);
+    assert.equal(r.casts, 1, `${profession}: and casts its skill`);
+    assert.ok(r.still, `${profession}: it still holds the enemy`);
+  }
 });
 
 test('#4: "melee" is the deploy position — a 领主 with a ranged attack (银灰) still hits the enemy it holds behind it', () => {
@@ -213,10 +213,10 @@ test('#4: "melee" is the deploy position — a 领主 with a ranged attack (银�
   assert.ok(h.hooksOf('damaged').some((c) => c.source === u && c.target === x()), 'it hits the enemy it blocks');
 });
 
-test('#4: blocked-first is a melee priority — a ranged blocker shoots the enemy nearest the goal', () => {
+test('#4 (revised after playtest #6): blocked-first holds for every blocker — a ranged blocker keeps shooting the enemy it blocks', () => {
   // range (9,5)–(9,7) facing RIGHT: the walker it blocks stands on (9,7); a flyer passes over the operator towards the
-  // goal. The ranged operator picks by its own order (least remaining distance first), a melee one (able to hit air)
-  // keeps hitting the enemy it blocks.
+  // goal. Melee or ranged, the blocker keeps hitting the enemy it blocks (user's rule: the blocked enemy stands in front
+  // of its blocker officially) — the ranged one no longer switches to the flyer nearer the goal.
   const run = (id, o) => {
     const h = makeBattle({
       defs: {
@@ -232,10 +232,13 @@ test('#4: blocked-first is a melee priority — a ranged blocker shoots the enem
     assert.ok(h.runUntil(() => walker()?.blockedBy === u, 30), 'the walker is blocked');
     assert.ok(h.runUntil(() => flyer() && flyer().x < 4.4, 30), 'the flyer passed');
     assert.equal(walker().blockedBy, u);
-    return h.hooksOf('damaged').filter((c) => c.source === u && c.target === flyer()).length;
+    return { fl: h.hooksOf('damaged').filter((c) => c.source === u && c.target === flyer()).length, wk: h.hooksOf('damaged').filter((c) => c.source === u && c.target === walker()).length };
   };
-  assert.ok(run('t_rg2', { profession: 'SNIPER' }) > 0, 'the ranged blocker shot the flyer while it was nearer the goal');
-  assert.equal(run('t_ml2', { profession: 'WARRIOR', attackKind: 'melee', canHitFly: true }), 0, 'the melee blocker kept to its blocked enemy');
+  for (const [id, o] of [['t_rg2', { profession: 'SNIPER' }], ['t_ml2', { profession: 'WARRIOR', attackKind: 'melee', canHitFly: true }]]) {
+    const r = run(id, o);
+    assert.equal(r.fl, 0, `${o.profession}: kept to its blocked enemy`);
+    assert.ok(r.wk > 0, `${o.profession}: hit the walker it blocks`);
+  }
 });
 
 test('#4: a skywalker (起飞: blockFly) blocks flyers at the air block radius 0.8944', () => {
@@ -257,7 +260,8 @@ test('#4: 瑕光 S2 puts the enemy she blocks to sleep although it stands outsid
   const id = 'chess_char_3_12_a';
   const skillIndex = ds.rawChess(id).skills.find((s) => s.skillId === 'skchr_blemsh_2').index;
   const h = makeBattle({
-    defs: { enemies: { enemy_x: foe('enemy_x') } }, timeLimit: 60,
+    // (a MANUAL 重装 skill: cast by the blocked enemy's hit — TAKE_DAMAGE)
+    defs: { enemies: { enemy_x: foe('enemy_x', { atk: 100, bat: 1 }) } }, timeLimit: 60,
     units: [{ chessId: id, row: 9, col: 6, skillIndex }], enemies: [{ key: 'enemy_x', time: 0 }],
   });
   const u = h.unit(id);

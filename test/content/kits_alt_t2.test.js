@@ -455,28 +455,35 @@ test('2_17 折桠 S1 绝境抵抗: TAKE_DAMAGE; DEF +def and 抵抗 (control sta
   }
 });
 
-test('2_18 灰毫 S2 专注轰击: blocks nothing, ranged splash bombs only, shorter interval, ATK +atk', () => {
+test('2_18 灰毫 S2 专注轰击: cast when hit (重装 TAKE_DAMAGE), then blocks nothing, ranged splash bombs only, shorter interval, ATK +atk', () => {
   for (const id of both('chess_char_2_18')) {
     const bb = bbAlt(id);
-    const enemies = { w: enemyRec({ key: 'w', hp: 1e7, speed: 2 }) };
+    const enemies = { w: enemyRec({ key: 'w', hp: 1e7, speed: 2, atk: 50, bat: 1 }) };
     // control: the default skill blocks the walker
     const c = run({ defs: { enemies }, units: [{ chessId: id, row: 9, col: 5 }], enemies: [{ key: 'w', route: 0 }] });
     assert.ok(c.runUntil(() => c.enemies()[0]?.blockedBy === c.unit(id), 10), 'default: blocked');
     done(c);
 
-    const h = run({ defs: { enemies }, units: [U(id, 9, 5, { carryState: READY })], enemies: [{ key: 'w', route: 0 }] });
+    // (a second walker comes by while the skill runs: she bombs it from range, unblocked)
+    const h = run({ defs: { enemies }, units: [U(id, 9, 5, { carryState: READY })], enemies: [{ key: 'w', route: 0 }, { key: 'w', route: 0, time: 5 }] });
     const u = h.unit(id);
     usesAlt(u, id);
-    h.runUntil(() => u.skill.active, 6);
+    assert.equal(u.skill.rule, 'TAKE_DAMAGE', 'a MANUAL 重装 skill: "不受技能范围影响，受到伤害时释放技能"');
+    assert.ok(h.runUntil(() => u.skill.active, 8));
+    const st = h.b.time;
+    const atk0 = h.eventsOf('atk').length;
+    assert.ok(h.hooksOf('damaged').some((x) => x.target === u), 'cast by the hit of the enemy she blocked');
     assert.ok(u.s.flags.noBlock);
     approx(u.s.atk, u.base.atk * (1 + u.findBuff('talent:ashlok').mods.atkPct + bb.atk), 'ATK (+ 炮术研习)');
     approx(u.s.interval, (u.base.bat + bb.base_attack_time) * 100 / u.s.aspd, 'base attack time shortened');
     const w = h.enemies()[0];
     assert.ok(h.runUntil(() => w.x < 4.5, 8), 'walks past her');
+    const w2 = h.enemies()[1];
+    assert.ok(h.runUntil(() => w2 && w2.x < 4.5, 12), 'the second one walks past her too');
     assert.ok(u.skill.active);
-    assert.ok(!h.hooksOf('damaged').some((x) => x.target === u), 'never blocked ⇒ never hit');
-    const shots = h.eventsOf('atk').filter((e) => e[1] === u.id);
-    assert.ok(shots.length > 0 && shots.every((e) => e[3] !== 'none'), 'ranged shots only');
+    assert.ok(!h.hooksOf('damaged').some((x) => x.target === u && x.t > st + 0.1), 'released, never blocked again ⇒ not hit again');
+    const shots = h.eventsOf('atk').slice(atk0).filter((e) => e[1] === u.id);
+    assert.ok(shots.length > 0 && shots.every((e) => e[3] !== 'none'), `ranged shots only ${JSON.stringify(shots)}`);
     done(h);
   }
 });

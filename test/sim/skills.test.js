@@ -131,7 +131,7 @@ test('ammo skills end when ammo runs out; ammoUsed fires per shot; no SP gain wh
   assert.equal(h.hooksOf('skillEnd')[0].reason, 'ammo');
 });
 
-test('charges accumulate up to maxCharges and are spent one per cast', () => {
+test('charges accumulate up to maxCharges and are spent one per cast, 3 s apart (the automatic operation cooldown)', () => {
   const h = makeBattle({
     defs: { chess: { t_sn: sniperWith({ duration: 0, spCost: 2, initSp: 0, maxChargeTime: 3, bb: { atk_scale: 3 } }) }, enemies: { enemy_dummy: dummy() } },
     units: [{ chessId: 't_sn', row: 10, col: 4 }], content: 'generic', autoFinish: false,
@@ -143,10 +143,14 @@ test('charges accumulate up to maxCharges and are spent one per cast', () => {
   assert.equal(u.skill.sp, 2);
   h.spawn('enemy_dummy', { pos: [10, 6] });
   h.step(1);
+  const t1 = h.b.time;
   assert.equal(u.skill.charges, 2);
   assert.equal(u.skill.sp, 0, 'SP bar restarts after using a full stack');
-  h.run(1.05);
-  assert.ok(u.skill.activations >= 2);
+  // PRTS 卫戍协议/帮助 技能操作 "自动操作具有3s冷却": a MANUAL skill's next automatic cast comes ≥ 3 s later
+  h.run(2.8);
+  assert.equal(u.skill.activations, 1, 'not within 3 s although she attacks every second');
+  assert.ok(h.runUntil(() => u.skill.activations >= 2, 2));
+  assert.ok(h.b.time - t1 >= 3 - 1e-6);
 });
 
 test('instant skills with an attack override apply to exactly one attack', () => {

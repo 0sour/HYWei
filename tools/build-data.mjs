@@ -418,23 +418,46 @@ function immunitiesOf(attrs) {
 const TRIGGER_RENAME = { ALWAYS: 'SP_FULL', CUSTOM_RANGE_SEARCH_ENEMY: 'CUSTOM_RANGE' };
 
 /**
- * Resolve the auto-cast rule of a skill (research 03 Addendum C1): charId rows first (exact
- * skillIndex, or -1 = all skills), then subProfession rows, then profession rows (skillIndex 0 =
- * skill 1 only), else DEFAULT.
+ * A skill whose rangeId is its new ATTACK range — "攻击范围扩大 / 改变 / 缩小 / 缩短", "攻击距离+1 / 加长 / 缩短", "攻击范围与
+ * 溅射范围扩大" — and not a 技能范围 of its own (PRTS 卫戍协议/帮助 技能操作: "拥有技能范围的技能（非攻击距离增加）").
+ * "攻击范围内…" (an effect on the attack range) does not match.
  */
-function resolveTrigger(ctx, char, charId, skillIdx, skillId) {
+const ATTACK_RANGE_CHANGE = /攻击(?:范围|距离)(?:与溅射范围)?(?:扩大|改变|缩小|缩短|加长|增加|\+)/;
+
+/**
+ * Resolve the auto-cast rule of a skill record (PRTS 卫戍协议/帮助 §作战阶段 技能操作 — the official skill strategies;
+ * DESIGN §5.6):
+ * - charId rows first (exact skillIndex, or −1 = every skill of the operator);
+ * - then the class rows, subProfession before profession. They name whole classes — PRTS "重装干员", "先锋-战术家、
+ *   先锋-执旗手、辅助-吟游者分支干员", "近卫-解放者、术师-阵法术师分支干员" — so they apply to EVERY skill index: the rows'
+ *   skillIndex 0 is not "skill 1 only" (the 阵法术师 row has to cover 薄绿's default S2 — a phalanx never attacks while
+ *   its skill is off, so the basic strategy could never cast it; "不受技能范围影响" of the 重装 row speaks of their skills
+ *   with a 技能范围, which only S2/S3 have). They apply to MANUAL skills only: the strategies automate the manual 开启,
+ *   an AUTO skill fires by its own rule (PRTS 古米 S1 备注: "此技能在存在生命值不满的可治疗角色时可触发");
+ * - else, for an operator's MANUAL skill with a 技能范围 (a rangeId that is not an attack-range change): SKILL_RANGE,
+ *   "不通过普通攻击/治疗触发技能，仅在技能范围内存在敌人（无视其不可选中）时释放技能", customRangeGrid = the skill range;
+ * - else DEFAULT (the basic strategy: ready + about to attack / heal).
+ * @param {object} skill record from buildSkill (skillId, skillType, desc, rangeGrid)
+ * @param {{operator?: boolean}} opts operator = a chess (the 技能范围 strategy is written for 干员; summons keep DEFAULT)
+ */
+function resolveTrigger(ctx, char, charId, skillIdx, skill, { operator = false } = {}) {
   const rows = Object.values(ctx.ac.skillTriggerDataList || {});
+  const manual = skill.skillType === 'MANUAL';
   const pick =
     rows.find((r) => r.charId === charId && (r.skillIndex === skillIdx || r.skillIndex === -1)) ||
-    rows.find((r) => !r.charId && r.subProfessionId && r.subProfessionId === char.subProfessionId && r.skillIndex === skillIdx) ||
-    rows.find((r) => !r.charId && !r.subProfessionId && r.profession === char.profession && r.skillIndex === skillIdx);
+    (manual && rows.find((r) => !r.charId && r.subProfessionId && r.subProfessionId === char.subProfessionId)) ||
+    (manual && rows.find((r) => !r.charId && !r.subProfessionId && r.profession === char.profession)) ||
+    null;
+  if (!pick && operator && manual && skill.rangeGrid && !ATTACK_RANGE_CHANGE.test(skill.desc || '')) {
+    return { rule: 'SKILL_RANGE', rawRule: 'DEFAULT', customRangeGrid: skill.rangeGrid.map((p) => p.slice()) };
+  }
   const rawRule = pick ? pick.skillTriggerType : 'DEFAULT';
   const rule = TRIGGER_RENAME[rawRule] || rawRule;
   let customRangeGrid = null;
   if (rawRule === 'CUSTOM_RANGE_SEARCH_ENEMY') {
-    const rid = ctx.ac.skillRangeDict?.[skillId];
+    const rid = ctx.ac.skillRangeDict?.[skill.skillId];
     customRangeGrid = rangeGrid(ctx, rid);
-    if (!customRangeGrid) warn(`skill ${skillId}: CUSTOM_RANGE trigger without skillRangeDict entry`);
+    if (!customRangeGrid) warn(`skill ${skill.skillId}: CUSTOM_RANGE trigger without skillRangeDict entry`);
   }
   return { rule, rawRule, customRangeGrid };
 }
@@ -784,16 +807,16 @@ function buildChess(ctx) {
     Object.assign(rec, traitDefault.classify);
 
     // Every skill unlocked at the chess status (DESIGN §16), at the chess skill level; the trigger is
-    // resolved per skill index (official rows with skillIndex 0 apply to skill 1 only, -1 = all).
+    // resolved per skill (resolveTrigger: charId rows by index, class rows for every MANUAL skill, 技能范围).
     const sIdx = shop.defaultSkillIndex ?? 0;
     const sEntry = char.skills?.[sIdx];
     const skillLevel = status.skillLevel || 1;
     const skillRecs = [];
     (char.skills || []).forEach((se, i) => {
       if (!se?.skillId || (i !== sIdx && !unlocked(se.unlockCond, phase, level))) return;
-      const trig = resolveTrigger(ctx, char, shop.charId, i, se.skillId);
-      const s = buildSkill(ctx, se.skillId, skillLevel, trig, `chess ${chessId}`);
+      const s = buildSkill(ctx, se.skillId, skillLevel, null, `chess ${chessId}`);
       if (!s) return;
+      s.trigger = resolveTrigger(ctx, char, shop.charId, i, s, { operator: true });
       s.index = i;
       s.overrideTokenKey = se.overrideTokenKey || null;
       skillRecs.push(s);
@@ -965,9 +988,11 @@ function tokenVariant(ctx, tokenId, char, { phase, level, skillIndex, skillLevel
   const skills = char.skills || [];
   let sIdx = skills[skillIndex]?.skillId ? skillIndex : skills.findIndex((x) => x && x.skillId);
   const sId = sIdx >= 0 ? skills[sIdx].skillId : null;
-  const trig = sId ? resolveTrigger(ctx, char, tokenId, sIdx, sId) : null;
-  const skill = sId ? buildSkill(ctx, sId, skillLevel, trig, label) : null;
-  if (skill) skill.index = sIdx;
+  const skill = sId ? buildSkill(ctx, sId, skillLevel, null, label) : null;
+  if (skill) {
+    skill.trigger = resolveTrigger(ctx, char, tokenId, sIdx, skill);
+    skill.index = sIdx;
+  }
   return {
     phase: ph, level: lv,
     stats: statsFrom(attrs, bonus),
@@ -995,8 +1020,31 @@ function enemyAsTokenStats(e) {
 }
 
 /**
+ * Abnormal effects (异常效果) summons hold from the start that no official table carries — the PRTS summon pages
+ * (召唤物 备注 "持有…"; user playtest #6 item 18). tokens.json `abnormal`; the sim gives the unit the matching flags
+ * (Battle._setupUnit):
+ *   healFree — 禁疗 (HEAL_FREE, PRTS 异常效果 "无法成为治疗类能力的目标，且受到的治疗量变为0"): “小自在”, “耀阳”, 斯卡蒂的海嗣,
+ *              沙之碑, 流形, 狼群, 迷迭香的战术装备, 黄金盟誓, 保护目标（冻结状态） (圣聆初雪 S2's frozen target);
+ *   isolated — 孤立 (ALLY_TARGET_FREE, "无法被同阵营选中": no heal and no ally selection reaches it): “炎佑” (PRTS “炎佑”
+ *              天赋 "特殊机制|我方单位，孤立，可同时攻击3个目标"), 从不混淆的方向 (备注 "持有无敌、孤立…").
+ */
+const TOKEN_ABNORMAL = Object.freeze({
+  token_10015_dusk_drgn: ['healFree'],        // “小自在”
+  token_10019_nearl2_sword: ['healFree'],     // “耀阳”
+  token_10017_skadi2_dedant: ['healFree'],    // 斯卡蒂的海嗣 (also 无敌)
+  token_10011_beewax_oblisk: ['healFree'],    // 沙之碑
+  token_10030_mlyss_wtrman: ['healFree'],     // 流形
+  token_10028_vigil_wolf: ['healFree'],       // 狼群
+  token_10012_rosmon_shield: ['healFree'],    // 迷迭香的战术装备
+  token_10040_siege2_vlion: ['healFree'],     // 黄金盟誓
+  token_10058_sbell2_icetgt: ['healFree'],    // 保护目标（冻结状态） (圣聆初雪 S2; also 无法撤退)
+  token_10039_ulpia_block: ['isolated'],      // 从不混淆的方向 (also 无敌)
+  enemy_9012_acloon: ['isolated'],            // “炎佑”
+});
+
+/**
  * Build data/tokens.json: summons of chess (per-owner variants), bond summons (炎佑) and band map
- * characters (band_amedic 预备干员-医疗 / Touch).
+ * characters (band_amedic 预备干员-医疗 / Touch). `abnormal` = TOKEN_ABNORMAL (PRTS).
  */
 function buildTokens(ctx, chess, tokenOwners, enemies) {
   const { charTable, ac } = ctx;
@@ -1032,16 +1080,26 @@ function buildTokens(ctx, chess, tokenOwners, enemies) {
       }
     }
     const first = variants[owners[0].chessId];
-    // Hand cards placed during the prep phase (`placeable`) are the summons of a TALENT shown by the shop state
-    // (tokenDisplayType DEFAULT: 浊心斯卡蒂 海嗣, 伺夜 狼群, 缪尔赛思 流形). A summon only a SKILL makes ("获得一个医疗无人机"
-    // 赫默 S2, "获得一个诅咒娃娃" 巫恋 S2) appears when that skill fires — its kit places it — never at battle start
-    // (user playtest #4: "赫默的无人机…是赫默开技能释放一次，不是开局直接就部署了").
-    const talentMade = owners.some((o) => o.sources.includes('talent') || (o.skillAlts || []).some((a) => a.sources.includes('talent')));
+    // Hand cards placed during the prep phase (`placeable`) are the MANUALLY DEPLOYABLE summons (PRTS 卫戍协议/帮助
+    // §战斗部署: "如果部署的干员拥有可手动部署的附属召唤物，则该召唤物会立刻加入手牌区"; user playtest #6): the shop
+    // state's tokenDisplayType DEFAULT — 赫默's 医疗探机 and 巫恋's 诅咒娃娃 (skill summons) as well as 浊心斯卡蒂's 海嗣,
+    // 伺夜's 狼群 and 缪尔赛思's 流形 (talent summons) — and a summon the shop state does not list at all: 凯瑟琳's
+    // 爬行号·防护单元 (talent "携带3个支援装置（最多部署2个）", deployed by hand in the base game; a friend of the user:
+    // placed by hand officially; confirmed by the user after playtest #6 — DESIGN §20). It is the only pool summon
+    // missing from shopStateTokenDict (every other one is listed, as are newer tokens such as 10040, 10042, 10043,
+    // 10055–10058, 10065), so no entry is read as the default display. HIDDEN tokens exist in battle only (e.g.
+    // 投递坐标 — PRTS: "携带技能【使命必达！】的新约能天使，不会提供所属召唤物"). Only a token its owner actually makes
+    // (a talent or a skill of some loadout, `sources`) is a card; which loadouts make it is per variant (`sources`,
+    // `bySkill[i].sources`: 赫默 / 巫恋 on S1 get none). In battle a skill's summon deploys once at the start, then
+    // takes its tile again each time the skill gives one (sim/content/tokens.js dockSkillSummons, shared/constants.js
+    // SKILL_SUMMON_START_DEPLOY).
+    const makes = (list) => (list || []).some((s) => s === 'talent' || s === 'skill');
+    const produced = owners.some((o) => makes(o.sources) || (o.skillAlts || []).some((a) => makes(a.sources)));
     out[tokenId] = {
       tokenId, kind: 'summon', name: char.name, appellation: char.appellation || null,
       desc: stripRich(first.trait.desc), descRaw: first.trait.descRaw,
       profession: char.profession, subProfessionId: char.subProfessionId, position: char.position,
-      displayType: displayType(tokenId), placeable: displayType(tokenId) === 'DEFAULT' && talentMade,
+      displayType: displayType(tokenId), placeable: displayType(tokenId) !== 'HIDDEN' && produced,
       owners: owners.map((o) => o.chessId),
       // Defaults = first owner's variant; per-owner data in variants[chessId].
       stats: first.stats, rangeGrid: first.rangeGrid, dmgType: first.dmgType, attackKind: first.attackKind,
@@ -1049,6 +1107,7 @@ function buildTokens(ctx, chess, tokenOwners, enemies) {
       skill: first.skill ? { skillId: first.skill.skillId, bb: first.skill.bb } : null,
       deployLimit: first.stats?.deployLimit ?? 1,
       count: first.count,
+      abnormal: TOKEN_ABNORMAL[tokenId] ? [...TOKEN_ABNORMAL[tokenId]] : [],
       variants,
       assets: { avatar: tokenId, spine: tokenId },
     };
@@ -1064,7 +1123,8 @@ function buildTokens(ctx, chess, tokenOwners, enemies) {
       displayType: null, placeable: false, owners: [],
       stats: enemyAsTokenStats(loon), rangeGrid: null, dmgType: loon.stats.dmgType, attackKind: 'ranged',
       projectile: 'bolt', canHitFly: true, skill: loon.skills?.[0] ? { skillId: loon.skills[0].prefabKey, bb: loon.skills[0].bb } : null,
-      skills: loon.skills, talents: loon.talents, deployLimit: 2, count: 1, variants: {},
+      skills: loon.skills, talents: loon.talents, deployLimit: 2, count: 1,
+      abnormal: [...TOKEN_ABNORMAL.enemy_9012_acloon], variants: {},
       assets: { avatar: loon.iconId, spine: loon.spine, isEnemyModel: true },
     };
   } else warn('炎佑 enemy_9012_acloon missing from enemies');
@@ -1095,7 +1155,7 @@ function buildTokens(ctx, chess, tokenOwners, enemies) {
       position: char.position, displayType: null, placeable: false, owners: [],
       stats: v.stats, rangeGrid: v.rangeGrid, dmgType: v.dmgType, attackKind: v.attackKind, projectile: v.projectile,
       canHitFly: v.canHitFly, skill: v.skill, talents: v.talents, trait: v.trait, phase: v.phase, level: v.level,
-      deployLimit: 1, count: 1, positions: positions.sort((a, b) => naturalCmp(a.alias, b.alias)), variants: {},
+      deployLimit: 1, count: 1, abnormal: [], positions: positions.sort((a, b) => naturalCmp(a.alias, b.alias)), variants: {},
       assets: { avatar: charId, spine: charId },
       source: 'band_amedic (aceffect_band_61 auto_chess_change_map)',
     };
@@ -1569,6 +1629,51 @@ const HIT_AREAS = Object.freeze({
 });
 
 /**
+ * Official drawn size of enemy models (user playtest #6 item 9: 威龙 far too large) → enemies.json `modelScale`.
+ * The official client scales every Spine model in its battle prefab (`dyn/battle/prefabs/enemies/<prefab>.prefab`,
+ * bundles battle/enm_pfb_*.ab): world size = skeleton units × SkeletonDataAsset.scale (0.01 for all 1731 enemy
+ * skeletons, refs/arts/enm_art_*.ab) × the transform scale of Graphic / FaceSwitcher / Spine above the renderer. That
+ * transform product is MODEL_SCALE_STANDARD = 0.27 for 1454 of the 2147 enemy prefabs (2080 have exactly one Spine
+ * renderer; also the FaceSwitcher of the operators' battle skins), and differs for the rest: the drones are shrunk (威龙 0.16 — its skeleton is 35 % wider than
+ * 妖怪's, drawn at 0.20), the small 岁 relics enlarged (铜灯盘 0.5, 青铜镜 0.6). The renderer draws every skeleton at one
+ * UNIT.modelScale, so an enemy's `modelScale` = its prefab's product / 0.27 (4 decimals; absent when 1).
+ * Values: tools/local-extract/enemy_scales.py over the local client (2026-10-01), keyed by prefab (enemy_database
+ * `prefabKey`, "enemy_" dropped) and grouped by the product; every other prefab of data/enemies.json is 0.27.
+ */
+const MODEL_SCALE_STANDARD = 0.27;
+const MODEL_SCALES = new Map([
+  [0.16, ['1005_yokai_3']],
+  [0.18, ['1042_frostd']],
+  [0.19, ['1112_emppnt', '1112_emppnt_2']],
+  [0.2, ['1005_yokai', '1040_bombd', '1041_lazerd', '1041_lazerd_2']],
+  [0.216, ['1067_snslime']],
+  [0.22, ['1005_yokai_2', '1017_defdrn']],
+  [0.23, ['1158_divman', '1161_tidmag', '1161_tidmag_2']],
+  [0.24, ['1009_lurker', '1019_jshoot', '1019_jshoot_2', '1043_zomsbr', '1071_dftman', '1072_dlancer', '1116_liprr', '1116_liprr_2',
+    '1118_lidbox_2', '1160_hvyslr', '1160_hvyslr_2', '1162_magmot', '1165_duhond', '1165_duhond_2', '1168_dumage', '1168_dumage_2',
+    '1183_mlasrt', '1195_sfyin', '1195_sfyin_2', '1197_sfshu', '1197_sfshu_2', '1199_sfjin', '1203_sfhu', '1203_sfhu_2', '1207_sfji',
+    '1207_sfji_2', '1209_sfden', '1209_sfden_2', '1267_nhpbr', '1267_nhpbr_2', '1269_nhfly', '1270_nhstlk', '1270_nhstlk_2',
+    '1272_nhtank', '1272_nhtank_2', '1273_stmgun_2', '1275_dwlock_2', '1500_skulsr', '2002_bearmi', '2003_rockman', '2004_balloon',
+    '2005_axetro', '2008_flking', '2034_sythef']],
+  [0.25, ['1166_dusbr', '1166_dusbr_2', '1169_duphlx', '1169_duphlx_2', '1229_darmy', '1229_darmy_2']],
+  [0.26, ['1000_gopro_2', '1023_jmage', '1025_reveng', '1026_aghost', '1046_agent', '1249_lysdb_2', '1251_lysyta', '1251_lysyta_2',
+    '1252_lysytb_2', '1254_lypa_2', '1283_sgkill', '1283_sgkill_2', '1516_jakill', '1517_xi', '2001_duckmi']],
+  [0.28, ['1006_shield', '1010_demon', '1010_demon_2', '1061_zomshd', '1062_rager_2', '1069_icebrk_2', '1119_vofsd', '1170_dushld',
+    '1170_dushld_2', '1172_dugago', '1172_dugago_2', '1174_duholy', '1174_duholy_2', '1175_dushdo_2', '2025_syufo']],
+  [0.29, ['1081_sotisd', '1513_dekght', '1513_dekght_2']],
+  [0.297, ['2009_csaudc']],
+  [0.3, ['1001_bigbo', '1045_hammer', '1045_hammer_2', '1121_lifbos', '1121_lifbos_2', '1501_demonk', '1535_wlfmster']],
+  [0.31, ['1006_shield_2']],
+  [0.34, ['1006_shield_3']],
+  [0.35, ['1092_mdgint']],
+  [0.4, ['1196_msfyin', '1196_msfyin_2', '1198_msfshu', '1198_msfshu_2', '1202_msfzhi', '1202_msfzhi_2']],
+  [0.5, ['1208_msfji', '1208_msfji_2', '1210_msfden', '1210_msfden_2']],
+  [0.6, ['1200_msfjin', '1200_msfjin_2', '1204_msfhu', '1204_msfhu_2']],
+]);
+const MODEL_SCALE_BY_PREFAB = new Map();
+for (const [v, list] of MODEL_SCALES) for (const k of list) MODEL_SCALE_BY_PREFAB.set(`enemy_${k}`, Math.round((v / MODEL_SCALE_STANDARD) * 1e4) / 1e4);
+
+/**
  * Build data/enemies.json: base stats at the season level (randomEnemyAttributeDict.level, 0 for
  * all), with the season-wide override level (level_autochess_enemy_data) applied.
  */
@@ -1638,6 +1743,7 @@ function buildEnemies(ctx) {
     const name = mv(data.name) || hb?.name || key;
     const descRaw = mv(data.description);
     const hitArea = HIT_AREAS[mv(data.prefabKey) || key] || null;
+    const modelScale = MODEL_SCALE_BY_PREFAB.get(mv(data.prefabKey) || key) ?? null;
     out[key] = {
       key, name, level: wantLevel, rank: mv(data.levelType, 'NORMAL'), handbookIndex: hb?.enemyIndex || null,
       desc: stripRich(descRaw), descRaw: richRaw(descRaw),
@@ -1658,6 +1764,7 @@ function buildEnemies(ctx) {
       seasonOverride: override ? Object.keys(definedFields(override)) : null,
       iconId: key, spine: mv(data.prefabKey) || key,
       ...(hitArea ? { hitArea: { ...hitArea } } : {}),
+      ...(modelScale != null && modelScale !== 1 ? { modelScale } : {}),
     };
   }
   return out;
@@ -2204,6 +2311,29 @@ function buildBosses(ctx, enemies, waves) {
 
 const ROMAN = { I: 1, II: 2, III: 3 };
 
+/**
+ * Why a bounty card is NOT offered by the 机变 悬赏决策 draft (null = it is), user playtest #6 item 4. The draft's card
+ * pools are server-side (effectChoiceInfoDict has no event → effect list), so the pool follows the curated PRTS table
+ * 卫戍协议：盟约 下半/PRTS盟约记录 §机变阶段 "机变阶段·敌人轮选" (it reorders and hides entries of the data on purpose):
+ *   'perfect'  战术特训 (perfect payout, incl. 无人机护障·P / 法术大师A2·多轮战术特训): listed under
+ *              "※以下悬赏任务仅由法术教鞭生成"
+ *   'hidden'   鸭爵 / 高普尼克 / 流泪小子 / 圆仔·悬赏 (enemyeffect_5..8): commented out of the table (the 鸭爵 strategy
+ *              “神秘顾客” swaps those enemies into the waves instead)
+ * Everything else is drafted, as the table lists it: the "下场作战" and "接下来两场作战" kill bounties, 源石虫·特训
+ * ("但不获得资金") and the 7 multi-round cards ("之后 / 后续的每场作战": 山海众头目·多轮悬赏, 多轮悬赏·假想敌 ×6), whose
+ * official text carries the red "每场" (`multiRound`, `rounds` 99 kept as the data has them; the server makes such a
+ * card last MULTI_ROUND_BOUNTY_BATTLES = 2 battles and rewrites its text — server/match/choices.js bountyBattles /
+ * bountyText, the user's call after playtest #6). The 战术特训 cards are what the
+ * 教鞭 Art offers (PRTS 法术 教鞭 "于3个战术特训的悬赏任务中选择一项"; server/sim/content/items/meta.js); nothing in
+ * act2 offers the 鸭爵 set.
+ */
+const HIDDEN_BOUNTY_IDS = new Set(['enemyeffect_5', 'enemyeffect_6', 'enemyeffect_7', 'enemyeffect_8']);
+function bountyDraftExclusion(e, main) {
+  if (main.payout !== 'kill') return 'perfect';
+  if (HIDDEN_BOUNTY_IDS.has(e.effectId)) return 'hidden';
+  return null;
+}
+
 /** Classify a 机变 choice event id into a family. */
 function choiceFamily(ev) {
   if (ev.choiceType === 'BOUNTY_HUNT' || ev.choiceType === 'PERSONAL_CHOOSE') return 'bounty';
@@ -2251,9 +2381,13 @@ function buildChoices(ctx, effects, items, chess) {
     const multiRound = main.rounds >= 99;
     if (multiRound) tier = 2;
     for (const a of adds) if (a.enemyKey && !ctx.enemyDb.has(a.enemyKey)) warn(`bounty ${e.effectId}: unknown enemy ${a.enemyKey}`);
+    const coin = e.enemyPrice || main.coin;
+    const draftExcluded = bountyDraftExclusion(e, main);
+    if (draftExcluded === 'hidden' && !/鸭爵|高普尼克|流泪小子|圆仔/.test(e.name || '')) warn(`bounty ${e.effectId} "${e.name}": expected one of the 鸭爵 set`);
     bounty.push({
-      effectId: e.effectId, name: e.name, desc: e.desc, tier, coin: e.enemyPrice || main.coin,
+      effectId: e.effectId, name: e.name, desc: e.desc, tier, coin,
       payout: main.payout, rounds: main.rounds, multiRound, enemyKey: main.enemyKey, count: main.count, adds,
+      draft: !draftExcluded, draftExcluded,
     });
   }
   bounty.sort((a, b) => naturalCmp(a.effectId, b.effectId));
@@ -2314,7 +2448,7 @@ function buildChoices(ctx, effects, items, chess) {
   return {
     events,
     families: {
-      bounty: { name: '悬赏决策', desc: '选定悬赏目标，获取额外奖励。', cards: 'cards.bounty' },
+      bounty: { name: '悬赏决策', desc: '选定悬赏目标，获取额外奖励。', cards: 'cards.bounty entries with draft: true (PRTS 敌人轮选: no 战术特训 — the 教鞭 Art offers those — and no 鸭爵 set)' },
       supply: { name: '道具补给', desc: '无需消耗资金，获得装备补给。', cards: 'random normal EQUIP items in schedule[*].supplyTiers (duplicates allowed)' },
       shop: { name: '机密商店', desc: '无需消耗资金，获得装备补给。', cards: 'random normal EQUIP items of any tier I–VI (duplicates allowed)' },
       tactic: { name: '战术决策', desc: '选择战术增益。', cards: 'cards.tactic (terrain cards only for the match stage)' },
@@ -2657,6 +2791,10 @@ function validateAll(f) {
     for (const id of [...(p.items || []), ...(p.weighted || []).map((x) => x[0])]) if (!id || !(items[id] || chess[id])) err(`pool ${pid}: unresolved entry ${id}`);
   }
   for (const id of Object.keys(SHOP_EXCLUDED_ITEMS)) if (!items[id] || items[id].itemType !== 'EQUIP' || items[id].isGolden) err(`SHOP_EXCLUDED_ITEMS: ${id} is not a normal EQUIP item`);
+  for (const [id, fl] of Object.entries(TOKEN_ABNORMAL)) {
+    if (!tokens[id]) err(`TOKEN_ABNORMAL: ${id} is not a token`);
+    for (const f of fl) if (f !== 'healFree' && f !== 'isolated') err(`TOKEN_ABNORMAL: ${id}: unknown effect ${f}`);
+  }
   for (const t of Object.values(tokens)) {
     if (!t.stats) err(`token ${t.tokenId}: no stats`);
     for (const [o, v] of Object.entries(t.variants || {})) if (!Array.isArray(v.sources) || !v.sources.length) err(`token ${t.tokenId}@${o}: no sources`);

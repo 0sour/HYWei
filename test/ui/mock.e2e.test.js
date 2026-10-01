@@ -133,8 +133,8 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
     await page.keyboard.press('Space');
     await sleep(300);
     assert.equal((await mockState(page)).ready, false);
-    // detail + Esc
-    await page.click('.scard .scard__detail');
+    // detail + Esc: the first tap on a card opens its detail (there is no ⓘ corner — user playtest #6 item 10)
+    await page.click('.shopbar__cards .scard:not(.scard--sold)');
     await page.waitForSelector('.dpanel');
     await page.keyboard.press('Escape');
     await sleep(200);

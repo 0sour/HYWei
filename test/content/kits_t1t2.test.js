@@ -82,14 +82,14 @@ test('1_01 隐现 elite: +self_ammo after `duration` s on field; a random other 
   done(h);
 });
 
-test('1_02 角峰: 抗寒体质 HP/DEF/RES ×(1+x); 雪原卫士 RES +flat (normal and elite)', () => {
+test('1_02 角峰: 抗寒体质 (重装 TAKE_DAMAGE) HP/DEF/RES ×(1+x); 雪原卫士 RES +flat (normal and elite)', () => {
   for (const id of ['chess_char_1_02_a', 'chess_char_1_02_b']) {
     const bb = bbOf(id), t = tal(id);
-    const h = run({ defs: { enemies: { e: dummy('e') } }, units: [{ chessId: id, row: 9, col: 5, carryState: READY }], enemies: [{ key: 'e', pos: [9, 5] }] });
+    const h = run({ defs: { enemies: { e: dummy('e', { atk: 100, bat: 1 }) } }, units: [{ chessId: id, row: 9, col: 5, carryState: READY }], enemies: [{ key: 'e', pos: [9, 5] }] });
     const u = h.unit(id);
     approx(u.s.res, u.base.res + t.magic_resistance, `${id} talent RES`);
-    h.step();
-    assert.ok(u.skill.active);
+    assert.ok(h.runUntil(() => u.skill.active, 3), 'cast by the first hit');
+    assert.equal(h.hooksOf('skillStart').find((c) => c.unit === u).reason, 'TAKE_DAMAGE');
     approx(u.s.maxHp, u.base.maxHp * (1 + bb.max_hp), 'HP');
     approx(u.s.def, u.base.def * (1 + bb.def), 'DEF');
     approx(u.s.res, (u.base.res + t.magic_resistance) * (1 + bb.magic_resistance), 'RES');
@@ -131,10 +131,12 @@ test('1_04 深巡: fin darts pierce attack@max_target enemies on the line + 1 s 
     enemies: [{ key: 'e_sea', pos: [9, 5] }, { key: 'e', pos: [9, 6] }, { key: 'e', pos: [9, 7] }],
   });
   const u = h.unit(id);
+  h.step();
+  h.b.dealDamage(h.enemies()[0], u, { amount: 10, type: 'phys' }); // 重装: TAKE_DAMAGE
   h.run(3.5);
   assert.ok(u.skill.active);
   approx(u.s.atk, u.base.atk * (1 + bb.atk));
-  const firstAtk = h.hooksOf('attack').find((c) => c.attacker === u);
+  const firstAtk = h.hooksOf('attack').find((c) => c.attacker === u && c.isSkill);
   assert.equal(firstAtk.targets.length, bb['attack@max_target'], 'hits every enemy of the line');
   const sl = statuses(h, 'sluggish', (c) => c.source === u);
   assert.ok(sl.length >= 3 && sl.every((c) => c.duration === bb['attack@sluggish']));
@@ -328,7 +330,7 @@ test('1_09 跃跃 回环射手: each attack is a boomerang (out 15, back 3.75 ti
   done(h2);
 });
 
-test('1_10 古米: TAKE_DAMAGE 备用军粮 heals the most injured nearby ally for heal_scale × ATK; elite low-HP bonus; pan stun', () => {
+test('1_10 古米: 备用军粮 (自动触发: an injured ally of the skill range) heals the most injured nearby ally for heal_scale × ATK; elite low-HP bonus; pan stun', () => {
   for (const id of ['chess_char_1_10_a', 'chess_char_1_10_b']) {
     const bb = bbOf(id), tb = tbOf(id), t = tal(id);
     const h = run({
@@ -343,7 +345,7 @@ test('1_10 古米: TAKE_DAMAGE 备用军粮 heals the most injured nearby ally f
     const hh = heals(h, u, (c) => c.target === yak)[0];
     const k = tb.hp_ratio != null ? tb.heal_scale : 1;
     approx(hh.amount, u.s.atk * bb.heal_scale * k, `${id} heal`);
-    assert.equal(h.hooksOf('skillStart').find((c) => c.unit === u).reason, 'TAKE_DAMAGE');
+    assert.equal(h.hooksOf('skillStart').find((c) => c.unit === u).reason, 'SKILL_RANGE');
     // talent: pan procs stun the enemy t.stun s
     h.runUntil(() => statuses(h, 'stun', (c) => c.source === u).length > 0, 200);
     const st = statuses(h, 'stun', (c) => c.source === u)[0];
@@ -588,11 +590,12 @@ test('1_20 雷蛇: 反击电弧 arts on up to 3 enemies, self-stun `stun` s afte
   const u = h.unit(id);
   h.run(3);
   assert.ok(u.skill.active);
+  assert.equal(h.hooksOf('skillStart').find((c) => c.unit === u).reason, 'TAKE_DAMAGE', '重装: cast by the hit');
   approx(u.s.atk, u.base.atk * (1 + bb.atk));
   approx(u.s.interval, u.base.bat * (1 + bb.base_attack_time) * 100 / u.s.aspd, 'attack interval +70 % (PRTS 增大(+70%): a ratio, not +0.7 s)');
-  const a0 = h.hooksOf('attack').find((c) => c.attacker === u);
+  const a0 = h.hooksOf('attack').find((c) => c.attacker === u && c.isSkill);
   assert.equal(a0.targets.length, 3);
-  assert.ok(dealt(h, u, (c) => c.dmg.isAttack).every((c) => c.type === 'arts'));
+  assert.ok(dealt(h, u, (c) => c.dmg.isAttack && c.dmg.isSkill).every((c) => c.type === 'arts'));
   h.runUntil(() => !u.skill.active, 30);
   h.step();
   const st = statuses(h, 'stun', (c) => c.target === u);
@@ -631,9 +634,11 @@ test('2_01 送葬人: 最终旅程 double hits and shorter interval; 终结改�
   done(h);
 });
 
-test('2_02 赫默: 医疗无人机 lands next to the injured ally and expires; 强化注射 MEDIC ASPD; elite ×1.15 on ground units', () => {
+test('2_02 赫默: 医疗无人机 lands on the tile its piece was placed on and expires; 强化注射 MEDIC ASPD; elite ×1.15 on ground units', () => {
   const id = 'chess_char_2_02_a', t = tal(id);
-  const h = run({ units: [{ chessId: id, row: 10, col: 4, carryState: READY }, { chessId: 'chess_char_1_02_a', row: 9, col: 6 }, { chessId: 'chess_char_2_14_a', row: 12, col: 4 }] });
+  // the drone is a hand piece the player placed next to the ally (user playtest #6); S2 brings it there
+  const h = run({ units: [{ chessId: id, row: 10, col: 4, carryState: READY, uid: 1 }, { chessId: 'chess_char_1_02_a', row: 9, col: 6 }, { chessId: 'chess_char_2_14_a', row: 12, col: 4 },
+    { kind: 'token', tokenId: 'token_10000_silent_healrb', ownerUid: 1, row: 9, col: 5 }] });
   const u = h.unit(id), yak = h.unit('chess_char_1_02_a'), fl = h.unit('chess_char_2_14_a');
   h.step();
   yak.hp = yak.s.maxHp * 0.3;
@@ -643,7 +648,7 @@ test('2_02 赫默: 医疗无人机 lands next to the injured ally and expires; �
   approx(yak.s.aspd, yak.base.aspd, 'non-medic unaffected');
   const drone = h.b.allyUnits.find((x) => x.kind === 'token');
   assert.ok(drone && drone.alive, 'drone deployed');
-  assert.ok(Math.max(Math.abs(drone.tileR - yak.tileR), Math.abs(drone.tileC - yak.tileC)) <= 1, 'next to the injured ally');
+  assert.deepEqual([drone.tileR, drone.tileC], [9, 5], 'on its placed tile, next to the injured ally');
   assert.ok(drone.s.flags.untargetable);
   h.run(10);
   assert.equal(drone.alive, false, 'self-destructs after its lifetime');
@@ -669,7 +674,8 @@ test('2_03 崖心 (hidden): 束缚链 drags max_target enemies to the front tile
   const pulled = h.enemies().filter((e) => e.x < 6);
   assert.equal(pulled.length, bb.max_target);
   for (const e of pulled) {
-    assert.ok(Math.hypot(e.x - 5, e.y - 10) < 0.3, `at the front tile (${e.x},${e.y})`);
+    // 中力 vs weight 1 (受力等级 0): "必定拉至身前" — to the 急停 radius 0.6708 around her centre (PRTS 推与拉)
+    approx(Math.hypot(e.x - 4, e.y - 10), 0.6708, `at her front (${e.x},${e.y})`, 1e-6);
     const tr = dealt(h, u, (c) => c.target === e && c.type === 'true');
     assert.equal(tr.length, 1);
     approx(tr[0].amount, u.s.atk * bb.atk_scale);
@@ -686,7 +692,7 @@ test('2_03 崖心 (hidden): 束缚链 drags max_target enemies to the front tile
   h3.step();
   const drag = dealt(h3, h3.unit(idb), tagged('drag'));
   assert.equal(drag.length, 1);
-  approx(drag[0].amount, tb.value * 2 / tb.dist, 'value per dist tiles', 0.06);
+  approx(drag[0].amount, tb.value * (3 - 0.6708) / tb.dist, 'value per dist tiles', 0.06);
   done(h3);
 });
 
@@ -1065,8 +1071,7 @@ test('2_17 折桠: 生存决心 trembles ground enemies around, ATK/DEF up, hits
     units: [{ chessId: id, row: 9, col: 5, carryState: READY }], enemies: [{ key: 'e', pos: [9, 5] }, { key: 'r', pos: [10, 6] }, { key: 'e', pos: [9, 8] }],
   });
   const u = h.unit(id);
-  h.step();
-  assert.ok(u.skill.active);
+  assert.ok(h.runUntil(() => u.skill.active, 2), '重装 TAKE_DAMAGE: cast by the first hit');
   approx(u.s.atk, u.base.atk * (1 + bb.atk));
   approx(u.s.def, u.base.def * (1 + bb.def));
   const [blk, adj, far] = h.enemies();
@@ -1227,8 +1232,9 @@ test('1_19 野鬃 normal: 一致向前 only on the first deployment', () => {
   done(h);
 });
 
-test('2_02 赫默: the drone never lands on the home tile of a knocked-out operator', () => {
-  const h = run({ units: [{ chessId: 'chess_char_2_02_a', row: 10, col: 4, carryState: READY }, { chessId: 'chess_char_1_02_a', row: 10, col: 5 }, { chessId: 'chess_char_1_10_a', row: 9, col: 5 }] });
+test('2_02 赫默: the drone takes its own placed tile, never the home tile of a knocked-out operator', () => {
+  const h = run({ units: [{ chessId: 'chess_char_2_02_a', row: 10, col: 4, carryState: READY, uid: 1 }, { chessId: 'chess_char_1_02_a', row: 10, col: 5 }, { chessId: 'chess_char_1_10_a', row: 9, col: 5 },
+    { kind: 'token', tokenId: 'token_10000_silent_healrb', ownerUid: 1, row: 11, col: 5 }] });
   h.step();
   const yak = h.unit('chess_char_1_02_a'), gum = h.unit('chess_char_1_10_a');
   gum.hp = gum.s.maxHp * 0.3;
@@ -1236,6 +1242,7 @@ test('2_02 赫默: the drone never lands on the home tile of a knocked-out opera
   h.run(0.5);
   const d = h.b.allyUnits.find((x) => x.kind === 'token');
   assert.ok(d && d.alive, 'drone deployed');
+  assert.deepEqual([d.tileR, d.tileC], [11, 5], 'its placed tile');
   assert.ok(!(d.tileR === yak.homeR && d.tileC === yak.homeC), 'not on the dead operator tile');
   done(h);
 });

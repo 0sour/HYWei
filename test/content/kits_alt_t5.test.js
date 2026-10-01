@@ -90,7 +90,8 @@ test('tier 5: every chess × every legal skill × every module fights with its a
         const tag = `${id} S${skillIndex + 1} ${moduleId ?? 'default module'}`;
         assert.equal(u.def.loadout.skillIndex, skillIndex, tag);
         assert.ok(['skills', undefined].includes(u.kit.skillSource), `${tag}: ${u.kit.skillSource}`);
-        for (let t = 0; t < 60 && !h.b.finished; t += 5) { u.skill.gainSp(1000); h.run(5); }
+        const mate = h.b.allyUnits[1]; // (塞雷娅 S1 急救 casts only for an ally of its area below half HP)
+        for (let t = 0; t < 60 && !h.b.finished; t += 5) { if (mate.alive) mate.hp = Math.min(mate.hp, mate.s.maxHp * 0.3); u.skill.gainSp(1000); h.run(5); }
         assert.ok(u.skill.activations > 0, `${tag}: cast`);
         assert.deepEqual(h.b.errors.map((e) => `${e.label}: ${e.message}`), [], tag);
         checkInvariants(h.b);
@@ -500,7 +501,7 @@ test('史尔特尔 module AFT-Y (旅游必需品): blocked enemies are 法术脆
 // =================================================================================================================
 // 号角
 
-test('号角 S1 照明榴弹 (TAKE_DAMAGE): the next ranged shot deals atk_scale × ATK, splashes projectile_range and lights the impact', () => {
+test('号角 S1 照明榴弹 (自动触发 ⇒ DEFAULT): the next ranged shot deals atk_scale × ATK, splashes projectile_range and lights the impact', () => {
   for (const id of pair('08')) {
     const h = run({
       defs: { enemies: { enemy_dummy: dummy('enemy_dummy') } },
@@ -512,11 +513,10 @@ test('号角 S1 照明榴弹 (TAKE_DAMAGE): the next ranged shot deals atk_scale
     const [e1, e2] = h.b.enemies;
     h.step();
     u.skill.gainSp(1000);
-    h.run(1);
-    assert.equal(u.skill.activations, 0, 'TAKE_DAMAGE: not before a hit');
-    h.b.dealDamage(e1, u, { amount: 10, type: 'phys' });
-    assert.ok(u.skill.pending, 'armed by the hit');
-    assert.ok(h.runUntil(() => dealt(h, u, (c) => c.dmg.isSkill && c.target === e1).length > 0, 5));
+    assert.equal(u.skill.rule, 'DEFAULT', 'an AUTO skill takes no 技能策略 (the 重装 row is for MANUAL skills)');
+    assert.ok(h.runUntil(() => dealt(h, u, (c) => c.dmg.isSkill && c.target === e1).length > 0, 5), 'her next shot, no hit needed');
+    u.skill.charges = 0; // (no further flare in the window below: it would light the targets again)
+    u.skill.spCostMul = 1000;
     approx(dealt(h, u, (c) => c.dmg.isSkill && c.target === e1)[0].amount, u.s.atk * bb.atk_scale, 'atk_scale');
     assert.ok(dealt(h, u, (c) => c.dmg.isSkill && c.target === e2).length > 0, `the splash reaches 1.6 tiles (${bb.projectile_range})`);
     h.run(0.5);
@@ -534,7 +534,11 @@ test('号角 S2 暴风号令: 10 rounds of attack@s2.atk_scale × ATK splash; th
     const bb = bbOf(u);
     const e = h.b.enemies[0];
     h.step();
-    cast(h, u);
+    u.skill.gainSp(1000);
+    h.run(1);
+    assert.equal(u.skill.activations, 0, '重装 TAKE_DAMAGE: not before a hit');
+    h.b.dealDamage(e, u, { amount: 10, type: 'phys' });
+    assert.equal(u.skill.activations, 1, 'cast by the hit');
     assert.equal(u.skill.kind, 'ammo');
     assert.equal(u.skill.ammoLeft + h.hooksOf('ammoUsed').filter((c) => c.unit === u).length, bb['attack@s2.trigger_time']);
     assert.ok(h.runUntil(() => !u.skill.active, 60));
@@ -610,24 +614,30 @@ test('铃兰 module DEC-Y (孩子们): longer 停顿 (1.2 s) and no SP rider', (
 // =================================================================================================================
 // 塞雷娅
 
-test('塞雷娅 S1 急救 (TAKE_DAMAGE): her next attack heals the ally below half HP around her for heal_scale × ATK', () => {
+test('塞雷娅 S1 急救 (自动触发, at her attack: an ally of the area at ≤ half HP): that attack heals the lowest such ally for heal_scale × ATK instead', () => {
   for (const id of pair('11')) {
+    // PRTS 备注 "此技能仅在周围有符合血量条件的友方单位时可触发，触发时会替换当次攻击"; "血量小于等于一半" (PRTS 修正)
     const h = run({
-      defs: { enemies: { enemy_hitter: dummy('enemy_hitter', { atk: 50, bat: 1 }) }, chess: { t_low: ally('t_low'), t_mid: ally('t_mid') } },
+      defs: { enemies: { enemy_dummy: dummy('enemy_dummy') }, chess: { t_low: ally('t_low'), t_mid: ally('t_mid') } },
       units: [entry(id, 'skchr_demkni_1', { row: 10, col: 4 }), { chessId: 't_low', row: 11, col: 3 }, { chessId: 't_mid', row: 9, col: 4 }],
-      enemies: [{ key: 'enemy_hitter', pos: [10, 4] }],
+      enemies: [{ key: 'enemy_dummy', pos: [10, 4] }],
     });
     const u = sel(h, id, 'skchr_demkni_1');
     const bb = bbOf(u), tb = u.def.traitBb;
     const low = h.unit('t_low'), mid = h.unit('t_mid');
+    const e = h.b.enemies[0];
     h.step();
     low.hp = low.s.maxHp * 0.3;
     mid.hp = mid.s.maxHp * 0.45;
     u.skill.gainSp(1000);
     assert.ok(h.runUntil(() => heals(h, u, (c) => c.target === low).length > 0, 10));
-    assert.equal(heals(h, u, (c) => c.target === mid).length, 0, 'one ally: the lowest ratio');
-    approx(heals(h, u, (c) => c.target === low)[0].amount, u.s.atk * bb.heal_scale * (tb.heal_scale && low.hpRatio < tb.hp_ratio + 0.1 ? tb.heal_scale : 1), 'heal_scale (× GUA-X below 50 % on the elite)', 1e-3);
-    assert.equal(h.hooksOf('skillStart').filter((c) => c.unit === u)[0].reason, 'TAKE_DAMAGE');
+    const first = heals(h, u, (c) => c.target === low)[0];
+    assert.ok(first.amount > 0 && heals(h, u)[0] === first, 'the first heal goes to the lowest ratio');
+    approx(first.amount, u.s.atk * bb.heal_scale * (tb.heal_scale && tb.hp_ratio != null ? tb.heal_scale : 1), 'heal_scale (× GUA-X below 50 % on the elite)', 1e-3);
+    const start = h.hooksOf('skillStart').find((x) => x.unit === u);
+    assert.equal(start.reason, 'DEFAULT');
+    assert.equal(dealt(h, u, (c) => c.target === e && c.t === start.t).length, 0, 'the heal replaced the attack of that moment');
+    assert.ok(heals(h, u).every((c) => c.t >= start.t), 'only skill heals: she has no heal of her own');
     done(h);
   }
 });
@@ -635,7 +645,7 @@ test('塞雷娅 S1 急救 (TAKE_DAMAGE): her next attack heals the ally below ha
 test('塞雷娅 S3 钙质化: allies in the area heal attack@heal_scale × ATK/s; enemies there take arts ×damage_scale and move −60 %', () => {
   for (const id of pair('11')) {
     const h = run({
-      defs: { enemies: { enemy_dummy: dummy('enemy_dummy') }, chess: { t_a: ally('t_a') } },
+      defs: { enemies: { enemy_dummy: dummy('enemy_dummy', { atk: 100, bat: 1 }) }, chess: { t_a: ally('t_a') } }, // 重装: TAKE_DAMAGE
       units: [entry(id, 'skchr_demkni_3', { row: 10, col: 4 }), { chessId: 't_a', row: 10, col: 6 }],
       enemies: [{ key: 'enemy_dummy', pos: [10, 4] }, { key: 'enemy_dummy', pos: [9, 6] }, { key: 'enemy_dummy', pos: [12, 9] }],
     });
@@ -874,6 +884,19 @@ test('凛御银灰 S1 周旋的谋略: +10 DP; the waiting op nearest to the eye
     assert.ok(bar, 'barrier');
     approx(g.s.shield ?? bar.shield, u.s.maxHp * bb['svash2_s_1[deck].shield']);
     assert.equal(g.base.cost, 20, 'the cut applied to that redeploy');
+    done(h);
+  }
+});
+
+test('凛御银灰 S1 周旋的谋略 (AUTO): fires as soon as SP is full — no enemy, no attack needed (like 伺夜 S1; playtest #6 review)', () => {
+  for (const id of pair('14')) {
+    const h = run({ units: [entry(id, 'skchr_svash2_1', { row: 10, col: 4 })], flags: { dpPerSec: 0 } });
+    const u = sel(h, id, 'skchr_svash2_1');
+    assert.equal(u.skill.rule, 'SP_FULL');
+    const due = h.b.time + (u.skill.spCost - u.skill.sp) / u.s.spRecovery;   // 精锐 talents start her with more SP
+    assert.ok(h.runUntil(() => u.skill.activations === 1, 60), `${id}: cast with no enemy on the field`);
+    const st = h.hooksOf('skillStart').find((c) => c.unit === u);
+    assert.ok(Math.abs(st.t - due) <= 0.05, `${id}: at full SP (${st.t} vs ${due})`);
     done(h);
   }
 });
@@ -1295,36 +1318,54 @@ test('default-skill machinery stays with the default skill: 圣约送葬人 S1 n
 // =================================================================================================================
 // adversarial review regressions
 
-test('号角 S1 / 塞雷娅 S1 (TAKE_DAMAGE, elite: 2 charges): hits taken while a charge is armed never spend the other one; after the shot the next hit arms it', () => {
-  // (号角 shoots 4 tiles ahead; 塞雷娅's range is her own tile)
-  for (const [id, skillId, col, ecol] of [['chess_char_5_08_b', 'skchr_horn_1', 2, 6], ['chess_char_5_11_b', 'skchr_demkni_1', 4, 4]]) {
-    const h = run({
-      defs: { enemies: { enemy_dummy: dummy('enemy_dummy') } },
-      units: [entry(id, skillId, { row: 10, col })],
-      enemies: [{ key: 'enemy_dummy', pos: [10, ecol] }],
-    });
-    const u = sel(h, id, skillId);
+test('号角 S1 / 塞雷娅 S1 (自动触发, elite: 2 charges): hits never arm them; a cast "next attack" still waiting never spends the other charge', () => {
+  // 号角 S1: the data rule DEFAULT — each charge is cast with one of her attacks (hits taken do nothing)
+  {
+    const id = 'chess_char_5_08_b';
+    const h = run({ defs: { enemies: { enemy_dummy: dummy('enemy_dummy') } }, units: [entry(id, 'skchr_horn_1', { row: 10, col: 2 })], enemies: [{ key: 'enemy_dummy', pos: [10, 6] }] });
+    const u = sel(h, id, 'skchr_horn_1');
     const e = h.b.enemies[0];
-    const starts = () => h.hooksOf('skillStart').filter((c) => c.unit === u).length;
+    const starts = () => h.hooksOf('skillStart').filter((c) => c.unit === u);
     h.step();
+    u.atkCd = 3;
     u.skill.gainSp(1000);
     assert.equal(u.skill.charges, 2, `${id}: 2 charges`);
     for (let i = 0; i < 3; i++) h.b.dealDamage(e, u, { amount: 10, type: 'phys' });
-    assert.equal(starts(), 1, `${id}: one charge armed by the first hit`);
-    assert.equal(u.skill.charges, 1, `${id}: the second charge stays stored`);
-    assert.ok(u.skill.pending, `${id}: armed`);
-    assert.ok(h.runUntil(() => !u.skill.pending, 10), `${id}: the armed attack is made`);
-    assert.equal(starts(), 1);
-    h.b.dealDamage(e, u, { amount: 10, type: 'phys' });
-    assert.equal(starts(), 2, `${id}: the next hit arms the stored charge`);
-    assert.ok(u.skill.pending);
-    // silenced / element-gauge hits never arm it (the engine TAKE_DAMAGE conditions)
-    assert.ok(h.runUntil(() => !u.skill.pending, 10));
+    assert.equal(starts().length, 0, 'hits do not arm it');
+    assert.ok(h.runUntil(() => starts().length >= 2, 15), 'both charges are cast');
+    const shots = h.hooksOf('attack').filter((c) => c.attacker === u && c.isSkill);
+    assert.equal(new Set(shots.slice(0, 2).map((c) => c.t)).size, 2, 'one charge per attack');
+    done(h);
+  }
+  // 塞雷娅 S1: DEFAULT + an ally of the area at ≤ half HP — each charge replaces one of her attacks (no heal mode waits)
+  {
+    const id = 'chess_char_5_11_b';
+    const h = run({ defs: { enemies: { enemy_dummy: dummy('enemy_dummy') }, chess: { t_low: ally('t_low'), t_low2: ally('t_low2') } },
+      units: [entry(id, 'skchr_demkni_1', { row: 10, col: 4 }), { chessId: 't_low', row: 11, col: 4 }, { chessId: 't_low2', row: 9, col: 4 }],
+      enemies: [{ key: 'enemy_dummy', pos: [10, 4] }] });
+    const u = sel(h, id, 'skchr_demkni_1');
+    const e = h.b.enemies[0];
+    const starts = () => h.hooksOf('skillStart').filter((c) => c.unit === u).length;
+    h.step();
+    u.atkCd = 2;
     u.skill.gainSp(1000);
-    h.b.dealDamage(e, u, { type: 'element', element: 'burn', amount: 10 });
-    assert.equal(starts(), 2, `${id}: an element-gauge hit does not arm it`);
+    assert.equal(u.skill.charges, 2, `${id}: 2 charges`);
+    h.unit('t_low').hp = h.unit('t_low').s.maxHp * 0.3;
+    h.unit('t_low2').hp = h.unit('t_low2').s.maxHp * 0.3;
+    for (let i = 0; i < 3; i++) h.b.dealDamage(e, u, { amount: 10, type: 'phys' });
+    h.run(1);
+    assert.equal(starts(), 0, 'hits do not arm it, nor does the injured ally alone: it waits for her attack');
+    assert.ok(h.runUntil(() => starts() === 1, 2), 'her attack casts one charge');
+    assert.ok(!u.skill.pending, 'and is the heal');
+    assert.equal(u.skill.charges, 1, 'the second charge stays stored');
+    assert.ok(h.runUntil(() => starts() === 2, 5), 'her next attack heals the other one');
+    assert.equal(heals(h, u).length, 2);
+    assert.notEqual(heals(h, u)[0].target, heals(h, u)[1].target);
+    assert.ok(!u.skill.pending);
     mute(h, u);
-    h.b.dealDamage(e, u, { amount: 10, type: 'phys' });
+    u.skill.gainSp(1000);
+    h.unit('t_low').hp = h.unit('t_low').s.maxHp * 0.3;
+    h.run(3);
     assert.equal(starts(), 2, `${id}: silenced`);
     done(h);
   }

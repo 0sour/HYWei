@@ -1126,6 +1126,20 @@ export function bossFrac(bossHp) {
   return clamp(hp / max, 0, 1);
 }
 
+/**
+ * The boss bar's percentage text for a fraction (bossFrac): whole percents from 10 %, one decimal below, and never
+ * "0.0%" while the leader still has HP — a sliver reads "<0.1%" (user playtest #6 item 5: a bar at 0.0 % with the
+ * leader still fighting read as a leader that could not die). null for an unknown fraction.
+ * @param {number|null} frac
+ */
+export function bossPctText(frac) {
+  if (frac == null || !Number.isFinite(frac)) return null;
+  const pct = clamp(frac, 0, 1) * 100;
+  if (pct >= 10) return `${pct.toFixed(0)}%`;
+  if (pct > 0 && pct < 0.05) return '<0.1%';
+  return `${pct.toFixed(1)}%`;
+}
+
 /** Whether a snapshot unit tuple has a flag. */
 export const hasFlag = (flags, bit) => (Number(flags) & bit) !== 0;
 export { UF };

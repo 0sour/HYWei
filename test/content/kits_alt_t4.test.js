@@ -86,7 +86,7 @@ test('tier4 loadouts: every chess × selectable skill × module fights a mixed w
 // ---------------------------------------------------------------------------------------------------------------
 // 信仰搅拌机
 
-test('信仰搅拌机 S1 铳骑主考官: taking a hit arms it; next attack = 3 hits × atk_scale; reloads one adjacent 拉特兰 ammo skill', () => {
+test('信仰搅拌机 S1 铳骑主考官 (自动触发 ⇒ DEFAULT: hurt SP, fires with the next attack); next attack = 3 hits × atk_scale; reloads one adjacent 拉特兰 ammo skill', () => {
   for (const id of pair('chess_char_4_01_a')) {
     const bb = D(id, 0).skill.bb;
     const h = battle([U(id, 9, 5, 0, gold(id) === id ? 'none' : null), U('chess_char_1_01_a', 10, 4)], {
@@ -95,13 +95,13 @@ test('信仰搅拌机 S1 铳骑主考官: taking a hit arms it; next attack = 3 
     h.step();
     const u = h.unit(id), ins = h.unit('chess_char_1_01_a');
     assert.equal(u.skill.id, 'skchr_rmixer_1');
-    assert.equal(u.skill.rule, 'TAKE_DAMAGE');
+    assert.equal(u.skill.rule, 'DEFAULT', 'an AUTO skill takes no 技能策略 (the 重装 row is for MANUAL skills)');
     assert.ok(ins.skill.activate('test', { free: true }));
     u.skill.gainSp(1000);
     const ammo0 = ins.skill.ammoLeft;
     h.hooksOf('attack').length = 0;
     h.spawn('enemy_hitter', { pos: [9, 5] });
-    assert.ok(h.runUntil(() => h.hooksOf('skillStart').some((c) => c.unit === u), 10), `${id} S1 armed by a hit`);
+    assert.ok(h.runUntil(() => h.hooksOf('skillStart').some((c) => c.unit === u), 10), `${id} S1 cast with the next attack`);
     assert.ok(h.runUntil(() => h.hooksOf('skillEnd').some((c) => c.unit === u), 10), 'the armed attack happened');
     const skillHits = dmgBy(h, u, (c) => c.dmg.isAttack && c.dmg.isSkill);
     assert.equal(skillHits.length, 3, `${id}: triple hit`);
@@ -311,7 +311,7 @@ test('寒芒克洛丝 S1 无痕: ATK up, every attack is a double shot, 迷彩 (
     assert.ok(u.skill.activate('test', { free: true }));
     assert.equal(u.skill.kind, 'duration');
     approx(u.s.atk, u.base.atk * (1 + bb.atk), 1e-6, `${id} ATK`);
-    assert.ok(u.s.flags.stealth, '迷彩');
+    assert.ok(u.s.flags.camou && !u.s.flags.stealth, '迷彩 (not 隐匿)');
     assert.equal(canTargetAlly(e, u, true), false, 'not a ranged target');
     h.run(3);
     const shots = dmgBy(h, u, (c) => c.dmg.isAttack);
@@ -320,7 +320,7 @@ test('寒芒克洛丝 S1 无痕: ATK up, every attack is a double shot, 迷彩 (
     assert.ok(per.size >= 2 && [...per.values()].every((n) => n === 2), `${id}: 2 shots per attack`);
     assert.equal(u.mem.kroosHits ?? 0, 0, 'S2 hit counter untouched');
     h.runUntil(() => !u.skill.active, 30);
-    assert.ok(!u.s.flags.stealth);
+    assert.ok(!u.s.flags.camou);
   }
 });
 
@@ -442,10 +442,12 @@ test('阿罗玛 S1 强效清洁: charges; next blast atk_scale arts, flying vict
   }
 });
 
-test('凯瑟琳 S1 岁月锻打: passive ATK/DEF up for her and every operator holding a device shield; module none: 3 devices (CRA-X 4)', () => {
+test('凯瑟琳 S1 岁月锻打: passive ATK/DEF up for her and every operator holding a device shield; the hand card is her deploy limit', () => {
   for (const id of pair('chess_char_4_11_a')) {
     const bb = D(id, 0).skill.bb;
-    const h = battle([U(id, 10, 4, 0), U('chess_char_4_17_a', 10, 6), U('chess_char_1_01_a', 12, 3)]);
+    // her device is a placed piece (user playtest #6): facing 4_17 on its right
+    const dev = { kind: 'token', tokenId: 'token_10041_cathy_catsld', ownerUid: 1, row: 10, col: 5, dir: 'RIGHT' };
+    const h = battle([U(id, 10, 4, 0, null, { uid: 1 }), U('chess_char_4_17_a', 10, 6), U('chess_char_1_01_a', 12, 3), dev]);
     h.run(1);
     const u = h.unit(id), hs = h.unit('chess_char_4_17_a'), ins = h.unit('chess_char_1_01_a');
     assert.equal(u.skill.kind, 'passive');
@@ -458,9 +460,10 @@ test('凯瑟琳 S1 岁月锻打: passive ATK/DEF up for her and every operator h
     }
     assert.ok(hs.findBuff(`cathy:forge:${u.id}`), 'the shielded blocker gets it');
   }
-  const carried = (m) => { const h = battle([U('chess_char_4_11_b', 10, 4, 0, m)]); h.step(); const u = h.unit('chess_char_4_11_b'); return u.mem.devicesLeft + u.mem.devices.length; };
-  assert.equal(carried('none'), C.chess_char_4_11_b.talentsBase[0].bb.cnt);
-  assert.equal(carried(null), C.chess_char_4_11_b.talents[0].bb.cnt);
+  // the module changes how many devices she carries (none 3, CRA-X 4); the hand gets the deploy limit (2) either way
+  // (PRTS 卫戍协议/帮助 "根据召唤物部署数量上限（非初始持有量），发送等量召唤物至手牌区")
+  assert.deepEqual([C.chess_char_4_11_b.talentsBase[0].bb.cnt, C.chess_char_4_11_b.talents[0].bb.cnt], [3, 4]);
+  for (const id of pair('chess_char_4_11_a')) assert.equal(ds.raw.tokens.token_10041_cathy_catsld.variants[id].stats.deployLimit, 2, `${id}: deploy limit`);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -481,7 +484,8 @@ test('歌蕾蒂娅 S1 缺水的大洋裂断: charges; next attack atk_scale (×1
     assert.equal(sk.length, 1);
     approx(sk[0].amount, u.s.atk * bb.atk_scale * t1.atk_scale, 1e-6, `${id} hit`);
     assert.ok(e.x < x0 - 0.5, `${id}: pulled towards her (${x0} → ${e.x})`);
-    assert.ok(e.x >= u.x + 1 - 1e-6, 'never past her front tile');
+    // 中力 vs weight 1 (受力等级 0): "必定拉至身前" — to the 急停 radius 0.6708 around her centre (PRTS 推与拉), never past it
+    approx(e.x, u.x + 0.6708, 1e-6, `${id}: stops at her front`);
   }
 });
 
@@ -506,11 +510,12 @@ test('歌蕾蒂娅 S2 缺水的掌握怒海: BAT +0.5 s, wider range, 2 targets 
 });
 
 test('歌蕾蒂娅 module HOK-Y 淡金坠饰: pulling a far enemy (> 2.5 tiles) to herself is one force level stronger', () => {
+  // a weight-2 enemy: 中力 (1) − 2 = 受力等级 −1 ⇒ 35 % of the way; +1 level (HOK-Y) ⇒ 0 ⇒ all the way (PRTS 推与拉)
   const moved = (m) => {
-    const h = battle([U('chess_char_4_12_b', 10, 3, 0, m)]);
+    const h = battle([U('chess_char_4_12_b', 10, 3, 0, m)], { enemies: { enemy_heavy: dummy({ key: 'enemy_heavy', mass: 2 }) } });
     h.step();
     const u = h.unit('chess_char_4_12_b');
-    const e = h.spawn('enemy_dummy', { pos: [10, 6] });
+    const e = h.spawn('enemy_heavy', { pos: [10, 6] });
     assert.ok(u.skill.activate('test', { free: true }));
     h.runUntil(() => !u.skill.active, 10);
     h.run(0.5);
@@ -760,6 +765,19 @@ test('焰尾 S1 迅敏直觉: +6 DP and the next physical attack on her is dodge
     assert.ok(!u.findBuff('flamtl:evade'), 'only the next attack');
     assert.equal(h.hooksOf('damaged').filter((c) => c.target === u && c.source?.side === 'enemy').length, 0, 'no damage from the dodged hit');
     assert.ok(u.mem.riposte || u.mem.riposteNow || dmgBy(h, u, tagged('riposte')).length > 0, '前锋剑术 armed');
+  }
+});
+
+test('焰尾 S1 迅敏直觉 (AUTO): fires as soon as SP is full — no enemy, no attack needed (like 伺夜 S1; playtest #6 review)', () => {
+  for (const id of pair('chess_char_4_19_a')) {
+    const h = battle([U(id, 10, 4, 0)], { flags: { dpPerSec: 0 } });
+    h.step();
+    const u = h.unit(id);
+    assert.equal(u.skill.rule, 'SP_FULL');
+    const due = h.b.time + (u.skill.spCost - u.skill.sp) / u.s.spRecovery;
+    assert.ok(h.runUntil(() => u.skill.activations === 1, 40), `${id}: cast with no enemy on the field`);
+    const st = h.hooksOf('skillStart').find((c) => c.unit === u);
+    assert.ok(Math.abs(st.t - due) <= 0.05, `${id}: at full SP (${st.t} vs ${due})`);
   }
 });
 

@@ -2,8 +2,8 @@
 // (public/dev/render-demo.html, real Spine models): frames fed to the field view like the client runner does (local
 // feed) with b.snap `down` / `elem` — a knocked-out operator stays on its tile in its held Die pose under a redeploy
 // ring counting down, then "DP", then comes back with its deploy clip (a press on its tile selects it meanwhile);
-// operators and enemies show the official element icon beside their bars, refilling over a 爆发冷却; a summon and an
-// enemy that die still vanish.
+// operators and enemies show the official element gauge under their bars (icon + white bar, user playtest #6), refilling
+// over a 爆发冷却; a summon and an enemy that die still vanish.
 //
 // Opt-in (starts Chrome): RENDER_E2E=1 node --test test/render/downelem.browser.test.js
 // Chrome path: $CHROME_PATH or the macOS default. Screenshots → test/e2e/out/downelem-*.png.
@@ -44,7 +44,7 @@ function installFeed() {
       const out = {};
       for (const [id, x] of v.debug.views) {
         out[id] = { alive: x.alive, down: x.down ? x.down.state : null, ring: !!x._downRing?.root?.visible, label: x._downRing?.text?.text ?? null,
-          el: x._elRing?.root?.visible ? x.el : null, spine: !!x.spineReady, dieClip: x.actor?.current ?? null, alpha: +(x.alpha ?? 0).toFixed(2) };
+          el: x._elBar?.root?.visible ? x.el : null, spine: !!x.spineReady, dieClip: x.actor?.current ?? null, alpha: +(x.alpha ?? 0).toFixed(2) };
       }
       return out;
     },
@@ -88,8 +88,8 @@ describe('knocked-out operators and element gauges in headless Chrome', { skip }
       await new Promise((r) => setTimeout(r, 1500)); // Spine models load
       await run(`const U = f.units; f.step(gt, [U[0], U[1], U[2], U[3], U[4]], { elem: [[2, 'burn', 0.4, 0, 0], [4, 'neural', 1, 12, 10]] });`, 3, 4);
       let st = await page.evaluate(() => window.__feed.state());
-      assert.equal(st[2].el, 'burn', 'operator element icon');
-      assert.equal(st[4].el, 'neural', 'enemy element icon (cooldown)');
+      assert.equal(st[2].el, 'burn', 'operator element gauge');
+      assert.equal(st[4].el, 'neural', 'enemy element gauge (cooldown)');
       assert.equal(st[1].el, null);
       // phase 2: texas (1) is knocked out, the wolf summon (3) and an enemy (5) die
       await page.evaluate(() => {
@@ -128,7 +128,7 @@ describe('knocked-out operators and element gauges in headless Chrome', { skip }
       assert.equal(st[1].alive, true, 'back on its tile');
       assert.equal(st[1].down, null);
       assert.equal(st[1].ring, false);
-      assert.equal(st[2].el, null, 'the gauge left the snapshot: icon hidden');
+      assert.equal(st[2].el, null, 'the gauge left the snapshot: row hidden');
       assert.deepEqual(problems, []);
     } finally {
       await page.close();

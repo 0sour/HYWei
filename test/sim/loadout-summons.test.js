@@ -48,15 +48,19 @@ function runUntil(b, pred, sec = 10) {
 
 test('two players in one field, same chess, different skills / modules: summons spawned mid-battle get each owner\'s variant', { skip }, () => {
   const spec = uniteSpec(
-    [{ uid: 1, chessId: MLYSS, row: 10, col: 4, dir: 'RIGHT', skillIndex: 0, moduleId: 'uniequip_003_mlyss' }, { uid: 2, chessId: CATHY, row: 11, col: 4, dir: 'RIGHT', skillIndex: 0 }],
+    [{ uid: 1, chessId: MLYSS, row: 10, col: 4, dir: 'RIGHT', skillIndex: 0, moduleId: 'uniequip_003_mlyss' }, { uid: 2, chessId: CATHY, row: 11, col: 4, dir: 'RIGHT', skillIndex: 0 },
+      { uid: 3, kind: 'token', tokenId: CATSLD, ownerUid: 2, row: 11, col: 5, dir: 'LEFT' }],
     // p2: MLYSS with another explicit choice, CATHY without loadout fields (= the default, never p1's choice)
-    [{ uid: 1, chessId: MLYSS, row: 10, col: 4, dir: 'RIGHT', skillIndex: 1, moduleId: 'none' }, { uid: 2, chessId: CATHY, row: 11, col: 4, dir: 'RIGHT' }],
+    [{ uid: 1, chessId: MLYSS, row: 10, col: 4, dir: 'RIGHT', skillIndex: 1, moduleId: 'none' }, { uid: 2, chessId: CATHY, row: 11, col: 4, dir: 'RIGHT' },
+      { uid: 3, kind: 'token', tokenId: CATSLD, ownerUid: 2, row: 11, col: 5, dir: 'LEFT' }],
   );
   const b = createBattleFromSpec(spec, freshDs(), { recordEvents: false, quiet: true });
   assert.deepEqual([...b.data.loadoutConflicts].sort(), [CATHY, MLYSS].sort(), 'id-only lookups would give p2 p1\'s choices');
   const m1 = opOf(b, 'p1', 1), m2 = opOf(b, 'p2', 1), c1 = opOf(b, 'p1', 2), c2 = opOf(b, 'p2', 2);
-  // no board pieces: the 流形 (援军) and 凯瑟琳's devices are summoned during the battle
-  assert.ok(runUntil(b, () => [m1, m2, c1, c2].every((o) => summonsOf(b, o, o === m1 || o === m2 ? WTRMAN : CATSLD).length > 0), 5), 'every owner summoned');
+  // no 流形 piece: the 援军 is summoned during the battle; 凯瑟琳's devices are board pieces (user playtest #6) whose
+  // def follows the owner's loadout too
+  const piecesOf = (owner) => b.allyUnits.filter((u) => u.kind === 'token' && u.uid != null && u.ownerUnit === owner && u.defId === CATSLD);
+  assert.ok(runUntil(b, () => [m1, m2].every((o) => summonsOf(b, o, WTRMAN).length > 0) && [c1, c2].every((o) => piecesOf(o).some((t) => t.alive)), 5), 'every owner summoned');
   const d = freshDs();
   const w1 = summonsOf(b, m1, WTRMAN)[0], w2 = summonsOf(b, m2, WTRMAN)[0];
   assert.equal(w1.def.skill.id, 'sktok_mlyss_wtrman_1', 'p1 流形: its owner\'s S1');
@@ -65,8 +69,9 @@ test('two players in one field, same chess, different skills / modules: summons 
   assert.ok(!w2.def.talents.some((t) => t.bb.taunt_level === 1), 'p2 流形 (no module): no module talent');
   assert.deepEqual(w2.def.talents, d.getToken(WTRMAN, MLYSS, { skillIndex: 1, moduleId: 'none' }).talents);
   assert.equal(w2.base.maxHp, d.getToken(WTRMAN, MLYSS, { skillIndex: 1, moduleId: 'none' }).stats.maxHp);
-  for (const t of summonsOf(b, c1, CATSLD)) assert.equal(t.def.skill.id, 'sktok_cathy_catsld_1', 'p1 devices: S1 token skill');
-  for (const t of summonsOf(b, c2, CATSLD)) assert.equal(t.def.skill.id, 'sktok_cathy_catsld_2', 'p2 devices (default loadout): S2 token skill');
+  assert.ok(piecesOf(c1).length === 1 && piecesOf(c2).length === 1);
+  for (const t of piecesOf(c1)) assert.equal(t.def.skill.id, 'sktok_cathy_catsld_1', 'p1 devices: S1 token skill');
+  for (const t of piecesOf(c2)) assert.equal(t.def.skill.id, 'sktok_cathy_catsld_2', 'p2 devices (default loadout): S2 token skill');
   // Battle.tokenDef / spawnToken (content summons) resolve the owner's loadout as well
   assert.equal(b.tokenDef(WTRMAN, m1).skill.id, 'sktok_mlyss_wtrman_1');
   assert.equal(b.tokenDef(WTRMAN, m2).skill.id, 'sktok_mlyss_wtrman_2');
@@ -231,17 +236,21 @@ test('tokens.js variantOf: the deploy limit of a summon follows the owner\'s mod
 });
 
 test('tokens.js tokenSources: the generic-kit skill-summon fallback reads the owner loadout (赫默 S1 makes no drone)', { skip }, () => {
-  const run = (lo) => {
-    const h = makeBattle({ players: [mk('p1', 0, 0, [{ uid: 1, chessId: HEMO, row: 10, col: 5, ...lo }])], data: freshDs(), kits: { [HEMO]: () => null } });
+  // the drone is a placed piece (user playtest #6): S2 deploys it once with the board (SKILL_SUMMON_START_DEPLOY) and
+  // brings it back onto its tile with each cast; S1 never makes one (its piece never deploys)
+  const run = (lo, atStart) => {
+    const units = [{ uid: 1, chessId: HEMO, row: 10, col: 5, ...lo }, { uid: 2, kind: 'token', tokenId: DRONE, ownerUid: 1, row: 10, col: 6 }];
+    const h = makeBattle({ players: [mk('p1', 0, 0, units)], data: freshDs(), kits: { [HEMO]: () => null } });
     h.step();
     const u = h.b.allyUnits.find((x) => x.uid === 1);
     assert.equal(u.kit.generic, true);
+    assert.equal(h.b.allyUnits.find((x) => x.uid === 2).alive, atStart, 'with the board: S2 yes, S1 no');
     h.b.producesToken = () => true; // only the fallback's own check decides here
     assert.ok(u.skill.activate('test', { free: true }));
-    return summonsOf(h.b, u, DRONE).length;
+    return h.b.allyUnits.filter((t) => t.kind === 'token' && t.defId === DRONE && t.ownerUnit === u && t.alive).length;
   };
-  assert.equal(run({}), 1, 'S2 (default): the drone');
-  assert.equal(run({ skillIndex: 0 }), 0, 'S1: none');
+  assert.equal(run({}, true), 1, 'S2 (default): the drone');
+  assert.equal(run({ skillIndex: 0 }, false), 0, 'S1: none');
 });
 
 test('dollkeeper: the substitute token is looked up with the unit\'s own loadout', { skip }, () => {

@@ -1961,6 +1961,8 @@ o..##
 Written 2026-09-27 by the completeness critic. Sources: BWIKI `盟约` §作战期 (auto-cast list), PRTS `卫戍协议/帮助` §战斗部署/手牌区, and the official gameplay-intro image.
 
 ### C1. Skill auto-cast: correction to §1.4
+> Superseded by user playtest #6 (DESIGN §20): the class rows apply to **every MANUAL skill** of the class and never to an AUTO skill (PRTS 卫戍协议/帮助 names whole classes; the 阵法术师 row must cover 薄绿's default S2, a phalanx that never attacks with its skill off); a MANUAL skill with its own 技能范围 (not an attack-range change) uses SKILL_RANGE; automatic operations have a 3 s cooldown. The "skill 1 only" reading below (BWIKI) is kept for the record.
+
 The rows in `skillTriggerDataList` with `skillIndex: 0` apply to **skill 1 only**. They are not wildcards. Evidence:
 - BWIKI transcribes every row as "技能1": "重装职业干员 技能1，受到伤害后自动释放"; "吟游者/执旗手/战术家子职业干员 技能1，技力满后自动释放"; "解放者/阵法术师子职业干员 技能1，初始攻击范围内出现敌人后自动释放".
 - The data has a separate sentinel `-1` for "all skills" (缪尔赛思: "全部技能，受流形影响").

@@ -38,7 +38,8 @@
 //                create those units (death spawns, embers, blades, 再生).
 //   ELEMENT    — element damage on hit = ATK × ep_damage_ratio into the ally's gauge. 侵蚀 (erosion) is an engine
 //                gauge whose burst is the official one (termDescription ba.dt.erosion: "永久降低100点防御力并受到800点物理伤害").
-//   DOT        — HP-loss / arts damage zones (污染秽蚀, 毒雾, 燃烧区域), bleeding (removed by healing), pulsing auras.
+//   DOT        — damage zones (污染秽蚀: true damage, one tick per second however many cover a unit; 毒雾, 燃烧区域),
+//                bleeding (removed by healing), pulsing auras.
 //   INVISIBLE  — permanent `stealth` flag (engine: untargetable unless blocked or revealed; AoE still hits).
 //   REFLECTION — 折射 (ba.refraction "生效时，法术抗性+70"): RES +refracting.magic_resistance while NOT silenced
 //                (the ability line is SILENCE-flagged: silencing turns it off); 镜膜 also gets max HP +100 % while on.
@@ -70,8 +71,11 @@ export const EROSION_BURST = Object.freeze({ defDown: ELEMENT.erosion.ally.defDo
 const PARASITE_SPREAD = 1000;
 /** Death-explosion radius when the enemy has no official radius [ASSUMED]. */
 const BOOM_RADIUS = 1.25;
-/** Pollution zone radius of 萨卡兹枯朽战车's ranged 污染秽蚀 [ASSUMED]. */
-const TANK_ZONE_RADIUS = 1;
+/** 萨卡兹枯朽战车 秽蚀轰击: radius of the 【污染秽蚀】 it leaves at its target (PRTS 萨卡兹枯朽战车 技能 "在目标位置生成半径1.7，
+ *  持续10s的【污染秽蚀】" — the skill blackboard's range_radius 2.2 is its trigger range; the zone's radius is in no table). */
+const TANK_ZONE_RADIUS = 1.7;
+/** 【污染秽蚀】 ticks once per second; "同名效果不叠加": a unit inside several zones takes one tick per second. */
+const POLLUTION_INTERVAL = 1;
 /** "数个目标" of 假想敌：骨刺 while stealthed [ASSUMED]. */
 const ACBUNN_TARGETS = 3;
 /** 假想敌：再生 shield aura radius ("周围一定距离") [ASSUMED]. */
@@ -625,7 +629,12 @@ const float = () => ({ spawn(b, e) { setFloat(b, e, true); } });
 /** The enemies whose kit spawns them hovering (float()): the match's bot counts them as air units (bot.js fieldModel). */
 export const HOVER_KEYS = Object.freeze(['enemy_2025_syufo', 'enemy_10045_parrot']);
 
-/** "生命值首次降至一半以下时，在数秒内陷入恐惧" (SelfFear). */
+/**
+ * "生命值首次降至一半以下时，在数秒内陷入恐惧" (SelfFear; PRTS “萨科塔之翼/之眼/昂首” "生命值首次低于50%时，对自身施加持续5s的恐惧，
+ * 在5s内移动速度最终提升至150%"). The fear's source is the enemy itself, so it has no 恐惧可达地块: for SelfFear.fear s it
+ * flies to random points of its own tile (±0.25) at ×move_speed — the engine's 恐惧 movement (fear.js; user playtest #6
+ * item 13, "小范围乱飞") — then flies on along its route.
+ */
 const selfFear = (ab) => ({
   taken(c, b, e, a) {
     if (a.done || !(e.hpRatio < 0.5)) return;
@@ -875,10 +884,20 @@ function bleed(ab) {
   };
 }
 
-/** 污染秽蚀 zone: HP loss per second, `low` on ground tiles, `high` on elevated tiles. */
+/**
+ * 【污染秽蚀】 zone (PRTS 萨卡兹枯朽战士 / 萨卡兹枯朽战车: "范围内位于低地/高地的我方干员和召唤物每秒受到50/25点真实普通伤害
+ * （可对空，无视无法选择、迷彩；同名效果不叠加）"): `low` true damage per second on low ground, `high` on high ground, to every
+ * ally inside (flyers, stealthed and untargetable ones included); a unit inside several zones takes one tick per second
+ * (`mem.pollutedAt`: the last tick it took).
+ */
 function pollution(b, src, x, y, r, life, low, high) {
-  zone(b, { x, y, r, life, iv: 1, kind: 'pollution', tick(units) {
-    for (const u of units) { const v = u.ground ? low : high; if (v > 0) b.loseHp(u, v, { source: src }); }
+  zone(b, { x, y, r, life, iv: POLLUTION_INTERVAL, kind: 'pollution', tick(units) {
+    for (const u of units) {
+      const v = u.ground ? low : high;
+      if (!(v > 0) || b.time - (u.mem.pollutedAt ?? -Infinity) < POLLUTION_INTERVAL - 1e-6) continue;
+      u.mem.pollutedAt = b.time;
+      hurt(b, src, u, v, 'true', { tags: ['pollution'] });
+    }
   } });
 }
 
@@ -1104,19 +1123,37 @@ function kitParrot(ab) {
   }];
 }
 
-function kitTank(ab) {
-  const every = (T(ab, 'Empty.sp') ?? 2) + 1, melee = T(ab, 'Empty.attack@chuang_atk_scale') ?? 1;
-  const s = ab.sk.PollutedRangedAtk ? ab.sk.PollutedRangedAtk.bb : {};
+/**
+ * 萨卡兹枯朽战车 / 尖端 (PRTS; enemy_database spData "初始技力 2 / 技力上限 2 / 攻击回复"): an attack made with full SP is the
+ * skill 秽蚀轰击 — "对目标造成100%物理普通伤害，同时在目标位置生成半径1.7，持续10s的【污染秽蚀】" — and empties the SP; every
+ * other attack gains 1. Initial SP = max, so the FIRST attack is the skill, then every 3rd (attacks 1, 4, 7 …). Talent:
+ * "普通攻击只攻击位于低地的我方单位，且不会攻击飞行单位" (a candidate filter, ai.js enemyAttack: a FLY ally such as the 炎佑 dragon on a
+ * low tile is no target either); "被阻挡时进行近战攻击，造成攻击力200%的伤害" — normal attacks on its blocker ×chuang_atk_scale.
+ * [ASSUMED] the skill also fires on its blocker and deals the skill's own 100 % there (PRTS names no blocked exception:
+ * enemy SP skills fire as soon as they are ready and its condition — a low-ground non-flying ally within 2.2 — holds for
+ * the blocker), so a blocked tank hits 100 / 200 / 200 % … (v2.4.1: 200 % on every attack, the skill included).
+ * Reach: the 2.2 range circle takes an ally whose 0.25 collider touches it (ai.js enemyAttack, constants.js
+ * ALLY_COLLIDER_RADIUS; PRTS 作战机制 §碰撞体积) — 2.45 from the ally's centre, 21 tiles around it instead of 13 (user
+ * playtest #6 follow-up: the user remembers a long-reaching, hard-hitting ranged attack; the data scale stays 100 %).
+ */
+function kitTank(ab, e) {
+  const melee = T(ab, 'Empty.attack@chuang_atk_scale') ?? 1;
+  const sk = ab.sk.PollutedRangedAtk || null;
+  const s = sk ? sk.bb : {};
+  const spd = (e.def.raw && e.def.raw.sp) || null;
+  const max = Math.max(1, num(spd && spd.maxSp, 0) || (sk && sk.sp) || (T(ab, 'Empty.sp') ?? 2));
+  const init = Math.min(max, Math.max(0, num(spd && spd.initSp, 0)));
   return [{
-    // 只攻击地面单位 — PRTS 萨卡兹枯朽战车 天赋 "普通攻击只攻击位于低地的我方单位，且不会攻击飞行单位" (a candidate filter,
-    // ai.js enemyAttack: a FLY ally such as the 炎佑 dragon on a low tile is no target either)
-    spawn(b, e, a) { a.n = 0; e.profile.canTarget = (u) => !!u.ground && !u.isFlying; },
-    hitOut(c, b, e) { if (c.dmg.isAttack && c.target === e.blockedBy) c.dmg.amount *= melee; }, // 近战攻击造成更高伤害
-    attack(c, b, e, a) {
-      a.n++;
-      if (a.n % every) return;
+    spawn(b, e2, a) { a.sp = init; a.skill = false; e2.profile.canTarget = (u) => !!u.ground && !u.isFlying; },
+    // SP full: this attack is 秽蚀轰击 (a blocked hit lands at once, inside this attack, while `a.skill` is set)
+    before(c, b, e2, a) { a.skill = a.sp >= max; },
+    hitOut(c, b, e2, a) { if (c.dmg.isAttack && !a.skill && c.target === e2.blockedBy) c.dmg.amount *= melee; },
+    attack(c, b, e2, a) {
+      if (!a.skill) { a.sp = Math.min(max, a.sp + 1); return; }
+      a.skill = false;
+      a.sp = 0;
       const t = c.targets[0];
-      if (t) pollution(b, e, t.x, t.y, TANK_ZONE_RADIUS, s.projectile_life_time ?? 0, s.polluted_damage_low ?? 0, s.polluted_damage_high ?? 0);
+      if (t) pollution(b, e2, t.x, t.y, TANK_ZONE_RADIUS, s.projectile_life_time ?? 0, s.polluted_damage_low ?? 0, s.polluted_damage_high ?? 0);
     },
   }];
 }
@@ -2147,11 +2184,11 @@ export const KITS = Object.freeze({
   // --- DOT 持续
   enemy_1234_dsubrl: kitDsubrl,                                      // 深溟巢涌者 · pulse hits every ally in range + neural; 抵抗, immune 停顿
   enemy_1234_dsubrl_2: kitDsubrl,                                    // 富营养的巢涌者 · same
-  enemy_1267_nhpbr: kitPolluted,                                     // 萨卡兹枯朽战士 · death: 污染秽蚀 HP-loss zone
+  enemy_1267_nhpbr: kitPolluted,                                     // 萨卡兹枯朽战士 · death: 污染秽蚀 zone (50 / 25 true per second)
   enemy_1267_nhpbr_2: kitPolluted,                                   // 萨卡兹枯朽战士组长 · same
   enemy_1270_nhstlk: (ab) => [bleed(ab)],                            // 逐腐兽 · bleeding (arts/s, cleared by healing)
   enemy_1270_nhstlk_2: (ab) => [bleed(ab)],                          // 疯狂的逐腐兽 · same
-  enemy_1272_nhtank: kitTank,                                        // 萨卡兹枯朽战车 · ground targets only, melee ×2, every 3rd attack a pollution zone
+  enemy_1272_nhtank: kitTank,                                        // 萨卡兹枯朽战车 · ground targets only, melee ×2, 秽蚀轰击 on attacks 1, 4, 7 …
   enemy_1272_nhtank_2: kitTank,                                      // 尖端萨卡兹枯朽战车 · same
   enemy_9006_actoxi: (ab) => [{                                      // 假想敌：蚀裂 · death: poison cloud on its killer
     sil: true,
@@ -2201,7 +2238,7 @@ export const KITS = Object.freeze({
   enemy_1355_mrfly_2: (ab, e) => [enemyAura(e.base.rangeRadius || 2.5, 'ab:mrfly', { resFlat: T(ab, 'magdef_add.magic_resistance') ?? 0 })], // 护障·P · RES aura
   enemy_1042_frostd: (ab) => [allyAura(T(ab, 'defup.range_radius') ?? 2.5, 'ab:frost', { aspd: (T(ab, 'atkSpeedDown.attack_speed') ?? 0) * 100 })], // 寒霜 · ASPD −50 aura on operators
   enemy_1040_bombd: kitBombd,                                        // 暴鸰 · no normal attack: ONE bomb (target + 8 tiles), then ×2 speed
-  enemy_10083_hlbird: kitSelfFear,                                   // “萨科塔之翼” · fear + flee below half HP
+  enemy_10083_hlbird: kitSelfFear,                                   // “萨科塔之翼” · below half HP: 5 s self-fear, flutters in its tile ×1.5
   enemy_10084_hlegle: kitSteal,                                      // “萨科塔之眼” · fear below half; steals 1 ammo instead of hitting
   enemy_10085_hllevi_2: kitRoar,                                     // “萨科塔昂首” · fear below half; 祈祷邀约 global ASPD −30
   enemy_1407_hummbd: kitExposeOnDeath,                               // 远眺 · death: exposes operators around (damage taken ×1.2)

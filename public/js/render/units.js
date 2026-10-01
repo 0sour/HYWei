@@ -7,7 +7,9 @@
 // game never blocks on Spine). Every bar is a tinted Texture.WHITE sprite, so HUDs batch into few draw calls.
 //
 // Placement: feet anchored at world (x, y, z); scale = camera px-per-tile at the feet × UNIT.modelScale, so
-// chibis shrink with distance like the original. Operators and summons face their deploy direction `dir`
+// chibis shrink with distance like the original. An enemy's model is also scaled by its official prefab factor
+// (enemies.json `modelScale`, user playtest #6 item 9: the official battle prefab shrinks e.g. 威龙 to 0.16 / 0.27 of
+// the standard size — tools/build-data.mjs MODEL_SCALES; `enemyModelScale`). Operators and summons face their deploy direction `dir`
 // (research 09 §1.2, DESIGN §3: UP|RIGHT|DOWN|LEFT, chosen with the direction wheel; UnitInfo / piece `dir`, else
 // the legacy `facing` ±1): the Back model for UP (when one exists, research 07 §5.5), the Front model for RIGHT and
 // DOWN, mirrored for LEFT; the orange ground wedge "›" of prep board pieces points along `dir` (rotated on the ground
@@ -24,10 +26,16 @@
 // goes down with `die(true)`: straight to the held end of the clip, no fall.
 // Enemy modes (sim fx 'phase' { id, kind } → `setForm(kind)`): 掠海漂移体 dropping to 爬行模式 (user playtest #5 item 1)
 // plays its skeleton's 'Change' clip once, then the crawl set (*_02) — FORMS; a view built later keeps the mode.
-// Element gauges (item 8, b.snap `elem` → sample `el` / `elFill` / `elUntil` / `elDur`): the official element icon
-// beside the bars (PRTS 元素: operators the element's disc with its glyph, enemies a smaller plain disc of the
-// element's colour) inside a white ring of the remaining 元素值 (1 − fill); during a 爆发冷却 the ring refills over
-// the cooldown. Both rings are sprites of one atlas (textures.js hudRings), created on first use and hidden when idle.
+// Element gauges (b.snap `elem` → sample `el` / `elFill` / `elUntil` / `elDur`), the official form (PRTS 元素: "模型
+// 下部会显示对应的元素图标，并以白条显示剩余的元素值"; enemies "小尺寸图标（不显示元素图标，仅根据元素种类改变背景色）"): a row
+// right under the unit's own HP / SP bars and inside their span — the element's disc at the left (operators with its
+// glyph, enemies smaller and plain) and a white bar of the remaining 元素值 (1 − fill) that runs out right to left
+// like the HP bar above it; during a 爆发冷却 the bar refills over the cooldown (PRTS: "元素条显示缓慢恢复至上限"), drawn in
+// the element's colour with the disc pulsing [ASSUMED look], so a refill never reads as 元素值 still left while the
+// burst's stun / damage / 凋亡 ticks hit the unit. User playtest #6 (report 11): the v2.3 ring right of the bars sat on
+// the next operator's tier chip and bars (drawn under them) and read as that operator's gauge, a shrinking ring reads
+// like a filling progress ring, and its refill was the same white as the 元素值 left. The disc comes from the hudRings
+// atlas, the bars are tinted Texture.WHITE sprites; built on first use and hidden when idle.
 //
 // ItemView renders hand items as a floating icon plate; DeviceView renders battle devices (crates) as 3D boxes
 // with an HP bar once damaged.
@@ -44,7 +52,7 @@
 
 import { UF, ANIM } from '../../../shared/constants.js';
 import { SpineActor } from './spine.js';
-import { diamondTexture, shadowTexture, fxAtlas, tierChip, statusTexture, itemTexture, hudRings, ringArc } from './textures.js';
+import { diamondTexture, shadowTexture, fxAtlas, tierChip, statusTexture, itemTexture, hudRings, ringArc, HUD_DISC, ELEMENT_RING } from './textures.js';
 import { COLORS, TIER_COLORS, ENEMY_FRAME, UNIT, statusIconKey } from './style.js';
 import { drawCrate, rowDepthKey, ROW_KEY, deviceBoxOf, DEVICE_BOX } from './tiles.js';
 
@@ -55,6 +63,14 @@ export function unitDir(info) {
   const d = typeof info?.dir === 'string' ? info.dir.toUpperCase() : null;
   if (d && DIRS.includes(d)) return d;
   return info?.facing === -1 ? 'LEFT' : 'RIGHT';
+}
+/**
+ * Official size factor of an enemy's model (enemies.json `modelScale`: its battle prefab's scale / the standard 0.27;
+ * 1 when absent or unusable) — applied on top of UNIT.modelScale to the skeleton and to the head (bar) height.
+ */
+export function enemyModelScale(rec) {
+  const k = Number(rec && rec.modelScale);
+  return Number.isFinite(k) && k > 0.05 && k < 20 ? k : 1;
 }
 /** World step (x = col, y = row) of a direction. */
 export const DIR_STEP = Object.freeze({ UP: [0, 1], RIGHT: [1, 0], DOWN: [0, -1], LEFT: [-1, 0] });
@@ -75,8 +91,13 @@ export const DOWN_LOOK = Object.freeze({
   ring: Object.freeze({ [DOWN_STATE.COUNTING]: 0x4ed8af, [DOWN_STATE.WAIT_DP]: 0xffc600, [DOWN_STATE.WAIT_TILE]: 0xff4b3e }),
   size: 0.42, height: 1.02,
 });
-/** Element ring diameter in tiles (operators; enemies ×0.8) and its pixel clamp. */
-const EL_RING = 0.3;
+/**
+ * Element gauge row under the bars (see header): the disc's diameter in tiles and its pixel clamp (enemies × `enemy`),
+ * the gap under the bars (px). The white bar is as tall as the SP bar and fills the rest of the bars' width. During a
+ * 爆发冷却 the refilling bar takes the element's colour (textures.js ELEMENT_RING `tint`) and the disc's alpha pulses
+ * between `pulse` and 1 at `pulseHz` (real time).
+ */
+export const EL_BAR = Object.freeze({ icon: 0.15, min: 8, max: 15, enemy: 0.8, gap: 1, pulse: 0.45, pulseHz: 1.5 });
 
 /**
  * Enemy modes drawn with another clip set of the same skeleton (sim fx 'phase' kind → UnitView.setForm), per Spine
@@ -156,6 +177,8 @@ export class UnitView {
     this._far = false;            // small on screen (adaptive LOD, with hysteresis)
     this.isEnemy = info.side === 'enemy';
     this.isBoss = !!info.boss;
+    // enemies: the official prefab's size factor (1 for operators, summons and enemies at the standard size)
+    this.modelK = this.isEnemy ? enemyModelScale(ctx.lookupDef ? ctx.lookupDef(info) : null) : 1;
     this.isToken = info.kind === 'token';
     this.golden = !!info.golden;
     this.tier = clamp(Number(info.tier) || 1, 1, 6);
@@ -178,9 +201,9 @@ export class UnitView {
     this.dieT = 0;                // seconds since die() (the Die clip's clock; a late Spine model catches up)
     this.remove = false;          // set when the death fade ended (owner removes the view)
     this.down = null;             // knocked out, waiting to redeploy: { until, total, state } (setDown) — no fade meanwhile
-    this.gameT = 0;               // battle game time of the frame (render clock), for the rings' countdowns
+    this.gameT = 0;               // battle game time of the frame (render clock), for the redeploy ring's countdown and the element bar's refill
     this.el = null; this.elFill = 0; this.elUntil = 0; this.elDur = 0;   // shown element gauge (sync)
-    this._elRing = null;          // { track, disc, arc } sprites, built on first use
+    this._elBar = null;           // { root, disc, bg, fill } sprites of the element gauge row, built on first use
     this._downRing = null;        // { disc, track, arc, text } sprites, built on first use
     this.alpha = 1; this.fadeIn = this.prep ? 1 : 0;
     this.lunge = 0; this.lungeDir = { x: 1, y: 0 };
@@ -648,7 +671,7 @@ export class UnitView {
       if (this.swapT < 1) this.swapT = Math.min(1, this.swapT + dt * 5);
       this.fallback.alpha = 1 - this.swapT;
       this.fallback.visible = this.swapT < 1;
-      const sc = s * UNIT.modelScale;
+      const sc = s * UNIT.modelScale * this.modelK;
       const flashK = this.flash > 0 ? this.flash : 0;
       let tint = 0xffffff;
       if (this.down) tint = DOWN_LOOK.tint;
@@ -725,10 +748,12 @@ export class UnitView {
       this.aura.scale.set((s * 1.3) / 128, (s * 1.9) / 128);
     }
 
-    // head height: operators/tokens are uniform chibis; enemies vary (setup-pose bounds, when known)
+    // head height: operators/tokens are uniform chibis; enemies vary (setup-pose bounds, when known; else the chibi
+    // headroom × their official model factor)
     let headTiles = UNIT.headroom;
-    if (this.isEnemy && spineShown && this.actor.entry.bounds) headTiles = clamp(this.actor.height * UNIT.modelScale * 0.92, 0.55, this.isBoss ? 3.2 : 2.2);
+    if (this.isEnemy && spineShown && this.actor.entry.bounds) headTiles = clamp(this.actor.height * UNIT.modelScale * this.modelK * 0.92, 0.55, this.isBoss ? 3.2 : 2.2);
     else if (this.isEnemy && this.isBoss) headTiles = 2.2;
+    else if (this.isEnemy && spineShown) headTiles = clamp(UNIT.headroom * this.modelK, 0.55, 2.2);
     this._headTiles = headTiles;
     this.screen.top = by - headTiles * s;
     this._updateHud(dt, s, bx, by - headTiles * s, alpha, t);
@@ -829,8 +854,8 @@ export class UnitView {
       ic.width = ic.height = isz;
       ic.position.set(x - ((icons.length - 1) * (isz + 2)) / 2 + i * (isz + 2), iy);
     }
-    // element gauge right of the bars (b.snap `elem`); redeploy ring above a knocked-down operator (b.snap `down`)
-    this._updateElementRing(showBars && !!this.el, x0 + bw, cy + (showSp ? spH / 2 : 0), s);
+    // element gauge row under the bars (b.snap `elem`); redeploy ring above a knocked-down operator (b.snap `down`)
+    this._updateElementBar(showBars && !!this.el, x0, bw, cy + bh / 2 + (showSp ? spH + 1.5 : 0) + 1, spH, s, t);
     this._updateDownRing(!prep && !!this.down && !this.alive, x, this.screen.y - DOWN_LOOK.height * s, s, t);
     // blocked marker at the feet (enemies held by a blocker)
     const blocked = !prep && this.alive && this.isEnemy && (this.flags & UF.BLOCKED);
@@ -855,29 +880,59 @@ export class UnitView {
     }
   }
 
+  /** True while the shown gauge is in its 爆发冷却 (b.snap `elem` carries the cooldown's end and length). */
+  elementCooling() {
+    return !!this.el && this.elDur > 0 && this.elUntil > 0;
+  }
+
   /**
-   * Element gauge icon (see header): the element's disc — operators with its glyph, enemies plain and smaller — in a
-   * white ring of the remaining 元素值 (1 − fill), which refills over a 爆发冷却; left edge at `xl`, centred on `cy`.
-   * Sprites of the hudRings atlas, built on the first gauge and hidden while there is none.
+   * The share of the element bar drawn (0..1): the remaining 元素值 (1 − fill), or during a 爆发冷却 the part of the
+   * cooldown already run (the bar refills to full, PRTS 元素 "元素条显示缓慢恢复至上限"). 0 without a gauge.
    */
-  _updateElementRing(show, xl, cy, s) {
-    let r = this._elRing;
+  elementLeft() {
+    if (!this.el) return 0;
+    if (this.elementCooling()) return clamp(1 - (this.elUntil - this.gameT) / this.elDur, 0, 1);
+    return clamp(1 - this.elFill, 0, 1);
+  }
+
+  /**
+   * Element gauge row (see header) under the bars spanning x0 … x0 + bw, its top at `top`: the element's disc at the
+   * left (operators with its glyph; enemies plain, × EL_BAR.enemy) and, beside it to the bars' right end, a bar of
+   * `elementLeft()` on a dark track `h` px tall — white for the 元素值 left; in the element's colour, the disc pulsing
+   * (clock `t`), while it refills over a 爆发冷却. Built on the first gauge, hidden while there is none.
+   */
+  _updateElementBar(show, x0, bw, top, h, s, t = 0) {
+    let r = this._elBar;
     if (!show) { if (r) r.root.visible = false; return; }
     const tex = hudRings();
     if (!r) {
       const P = this.P;
       const root = new P.Container();
-      const mk = (tx) => { const sp = new P.Sprite(tx); sp.anchor.set(0.5); root.addChild(sp); return sp; };
-      r = this._elRing = { root, track: mk(tex.track), disc: mk(tex.disc.burn), arc: mk(tex.arcs[0]) };
+      const bg = bar(P, root, COLORS.hpBack, 0.85);
+      const fill = bar(P, root, 0xffffff);
+      const disc = new P.Sprite(tex.disc.burn);
+      disc.anchor.set(0.5);
+      root.addChild(disc);
+      r = this._elBar = { root, disc, bg, fill };
       this.hud.addChild(root);
     }
-    const cooling = this.elDur > 0 && this.elUntil > 0;
-    const frac = cooling ? clamp(1 - (this.elUntil - this.gameT) / this.elDur, 0, 1) : clamp(1 - this.elFill, 0, 1);
+    const d = clamp(s * EL_BAR.icon, EL_BAR.min, EL_BAR.max) * (this.isEnemy ? EL_BAR.enemy : 1);
+    const cy = top + EL_BAR.gap + d / 2;
     r.disc.texture = (this.isEnemy ? tex.discEnemy : tex.disc)[this.el] || tex.disc.burn;
-    r.arc.texture = ringArc(frac);
-    const d = clamp(s * EL_RING * (this.isEnemy ? 0.8 : 1), 13, 32);
-    r.root.scale.set(d / tex.size);
-    r.root.position.set(xl + d / 2 + 2, cy);
+    r.disc.width = r.disc.height = d / HUD_DISC;   // the disc fills HUD_DISC of its atlas cell
+    r.disc.position.set(x0 + d / 2, cy);
+    const bx = x0 + d + 2, w = Math.max(4, x0 + bw - bx);
+    r.bg.position.set(bx - 1, cy); r.bg.width = w + 2; r.bg.height = h + 2;
+    const k = this.elementLeft();
+    r.fill.visible = k > 0;
+    r.fill.position.set(bx, cy); r.fill.width = w * k; r.fill.height = h;
+    if (this.elementCooling()) {
+      r.fill.tint = (ELEMENT_RING[this.el] || ELEMENT_RING.burn).tint;
+      r.disc.alpha = EL_BAR.pulse + (1 - EL_BAR.pulse) * (0.5 + 0.5 * Math.cos(t * Math.PI * 2 * EL_BAR.pulseHz));
+    } else {
+      r.fill.tint = 0xffffff;
+      r.disc.alpha = 1;
+    }
     r.root.visible = true;
   }
 
@@ -1039,7 +1094,7 @@ export class UnitView {
     for (const k of this.statuses) {
       if (out.length >= 4) break;
       if (k === 'skill') continue;
-      // a burst's lock ('burnBurst', 'neuralBurst' … — the 爆发冷却) is shown by the element icon beside the bars
+      // a burst's lock ('burnBurst', 'neuralBurst' … — the 爆发冷却) is shown by the element gauge row under the bars
       // (b.snap `elem`); only a feed without gauges (an older recording) shows it as a status
       if (this.el && k.endsWith('Burst')) continue;
       const icon = statusIconKey(k);

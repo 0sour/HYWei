@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PHASE } from '../../shared/constants.js';
 import { GameData, COMBAT_TIME_SCALE } from '../../server/match/gamedata.js';
-import { generateDraft, reinforcementBond, cardTargetBonds } from '../../server/match/choices.js';
+import { generateDraft, reinforcementBond, cardTargetBonds, bountyBattles } from '../../server/match/choices.js';
 import { assignTitles } from '../../server/match/results.js';
 import { routeByMotion } from '../../server/match/waves.js';
 import { fieldModel } from '../../server/match/bot.js';
@@ -49,7 +49,8 @@ test('multi-round bounties spawn in the Final Assault on the owner\'s half, show
   const pending = p0.pendingFunds;
   const end = h.runToEnd();
   assert.equal(end.victory, true);
-  assert.equal(p0.bounties[0].roundsLeft, card.rounds - 1, 'the Final Assault used one of the bounty\'s battles');
+  // (a multi-round card lasts two battles since the user's playtest #6 answer — choices.js MULTI_ROUND_BOUNTY_BATTLES)
+  assert.equal(p0.bounties[0].roundsLeft, bountyBattles(card) - 1, 'the Final Assault used one of the bounty\'s battles');
   assert.equal(p0.pendingFunds, pending + 3, 'kill-bounty coins of the boss field are credited (spent in the Hidden Core prep)');
   checkInvariants(m);
   m.dispose();

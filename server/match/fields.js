@@ -18,14 +18,19 @@
 //   HeadlessJob / runHeadless(battle)      step a battle to its end — in wall-clock-bounded slices (bots, takeovers
 //                                          under a real scheduler) or at once (verification, virtual time) — and keep a
 //                                          progress timeline [[gt, killed, total]] for the teammates' waiting UI
+//                                          (联防: [gt, killed, total, left] — left = spec.js uniteLeft, the leakers'
+//                                          enemies still standing, for their live counter; user playtest #6 item 7)
 //   HeadlessPacer                          real-time pacing of a dynamic set of server-run battles without snapshots
 //                                          (boss fields that share the pool while other fields run on clients); a
 //                                          takeover's fast-forward is spread over the pacing intervals
 //   specBounds(spec, gd) / validateClientResult(spec, result, { gd })
 //                                          a client's b.result is accepted only when it is plausible for its spec;
 //                                          the returned result is rebuilt from whitelisted fields (never the raw object)
+//   uniteBillBounds(spawns, gd)            联防: per leaker, the most survivors settlement can bill (sent in + the
+//                                          offspring bound) — the live counter's clamp
 //   syntheticResult(players, progress)     stand-in when a boss field's client never reported
 import { TICK, SNAPSHOT_EVERY } from '../sim/constants.js';
+import { uniteLeft } from '../sim/spec.js';
 
 export const MAX_TICKS_PER_INTERVAL = 8;
 export const INTERVAL_MS = 1000 / 30;
@@ -252,19 +257,33 @@ export const CATCHUP_TICKS_PER_INTERVAL = 240;
 const perfNow = () => (globalThis.performance ? globalThis.performance.now() : Date.now());
 
 /**
+ * A timeline sample of a battle: [gt, killed, total], plus — 联防 — the leakers' enemies still standing
+ * (spec.js uniteLeft; omitted when unknown).
+ */
+export function timelineSample(b) {
+  const s = [Number(b && b.time) || 0, Number(b && b.killed) || 0, Number(b && b.total) || 0];
+  if (b && b.kind === 'unite') {
+    let left = null;
+    try { left = uniteLeft(b); } catch { left = null; }
+    if (left) s.push(left);
+  }
+  return s;
+}
+
+/**
  * A server-run battle stepped to its end, in one go or in wall-clock-bounded slices (a low-power host must not stall
  * its event loop for the ~0.1–1 s a whole battle takes, several times at once when bots fight): `run(budgetMs)` steps
  * until the battle ends (→ true) or the budget is used (→ false; checked every 16 ticks). `timeline` grows while it
- * runs ([[gt, killed, total]] every TIMELINE_EVERY game seconds, then the final state); `output()` once done gives
- * `{ battle, result, timeline, crashed }`. A throwing battle is force-ended, then replaced by a DeadBattle; the run is
- * bounded by HARD_CAP_SECONDS.
+ * runs (timelineSample: [gt, killed, total(, left)] every TIMELINE_EVERY game seconds, then the final state);
+ * `output()` once done gives `{ battle, result, timeline, crashed }`. A throwing battle is force-ended, then replaced by
+ * a DeadBattle; the run is bounded by HARD_CAP_SECONDS.
  */
 export class HeadlessJob {
   constructor(battle, { onError = null, players = [] } = {}) {
     this.battle = battle;
     this.onError = onError;
     this.players = players;
-    this.timeline = [[0, 0, Number(battle && battle.total) || 0]];
+    this.timeline = [timelineSample(battle)];
     this.every = Math.max(1, Math.round(TIMELINE_EVERY / TICK));
     this.cap = Math.ceil(HARD_CAP_SECONDS / TICK);
     this.n = 0;
@@ -284,7 +303,7 @@ export class HeadlessJob {
         b.step();
         this.n++;
         k++;
-        if (this.n % this.every === 0) this.timeline.push([Number(b.time) || 0, Number(b.killed) || 0, Number(b.total) || 0]);
+        if (this.n % this.every === 0) this.timeline.push(timelineSample(b));
         if (timed && (k & 15) === 0 && !b.finished && now() - t0 >= budgetMs) return false;
       }
       if (!b.finished) b.forceEnd('timeout');
@@ -307,7 +326,7 @@ export class HeadlessJob {
       for (const pid of this.players) perPlayer[pid] = emptyPerPlayer();
       result = { time: Number(b.time) || 0, reason: 'forced', perPlayer, killed: 0, total: 0, errors: 1, synthetic: true };
     }
-    this.timeline.push([Number(b.time) || 0, Number(b.killed) || 0, Number(b.total) || 0]);
+    this.timeline.push(timelineSample(b));
     this.done = true;
     this._out = { battle: b, result, timeline: this.timeline, crashed: this.crashed };
   }
@@ -324,7 +343,7 @@ export function runHeadless(battle, opts = {}) {
   return job.output();
 }
 
-/** Timeline sample at game time `gt`: [gt, killed, total] of the last sample ≤ gt. */
+/** Timeline sample at game time `gt`: [gt, killed, total(, left)] of the last sample ≤ gt. */
 export function timelineAt(timeline, gt) {
   if (!Array.isArray(timeline) || !timeline.length) return [0, 0, 0];
   let lo = 0, hi = timeline.length - 1;
@@ -624,6 +643,23 @@ export function specBounds(spec, gd = null) {
     layerCap: 60 + 4 * round,
     maxTime: spec && spec.timeLimit > 0 ? spec.timeLimit + 5 : HARD_CAP_SECONDS,
   };
+}
+
+/**
+ * 联防: the most enemies settlement can bill each leaker — what it sent in plus what those enemies can leave behind
+ * (splits / summons within offspringPerParent, maxTotal without a data bound): validateClientResult's (key, leaker)
+ * budgets summed per leaker. Bounds the live counter (Match._uniteLeft; user playtest #6 item 7).
+ * @param {object[]} spawns the 联防 spawns (unite.js plan.leaked: { enemyKey, sourcePlayerId, … })
+ * @returns {Map<string, number>} leaker id → bound
+ */
+export function uniteBillBounds(spawns, gd = null) {
+  const B = specBounds({ spawns: Array.isArray(spawns) ? spawns : [] }, gd);
+  const out = new Map();
+  for (const [ks, n] of [...B.keySourceCounts, ...B.derivedSourceCounts]) {
+    const pid = ks.slice(ks.lastIndexOf('|') + 1);
+    if (pid) out.set(pid, (out.get(pid) || 0) + n);
+  }
+  return out;
 }
 
 const finiteIn = (v, lo, hi) => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;

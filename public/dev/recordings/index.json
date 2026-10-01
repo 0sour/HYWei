@@ -8,7 +8,7 @@
   "frames": 550,
   "maxUnits": 29,
   "file": "normal-m01.json",
-  "bytes": 424452,
+  "bytes": 419568,
   "result": {
    "reason": "timeout",
    "killed": 13,
@@ -24,7 +24,7 @@
   "frames": 850,
   "maxUnits": 27,
   "file": "normal-m02.json",
-  "bytes": 634795,
+  "bytes": 628577,
   "result": {
    "reason": "timeout",
    "killed": 15,
@@ -38,12 +38,12 @@
   "stageId": "act2autochess_m03",
   "duration": 90,
   "frames": 900,
-  "maxUnits": 35,
+  "maxUnits": 38,
   "file": "normal-m03.json",
-  "bytes": 809504,
+  "bytes": 831200,
   "result": {
    "reason": "timeout",
-   "killed": 12,
+   "killed": 13,
    "total": 46
   }
  },
@@ -54,12 +54,12 @@
   "stageId": "act2autochess_m04",
   "duration": 70,
   "frames": 700,
-  "maxUnits": 37,
+  "maxUnits": 36,
   "file": "normal-m04.json",
-  "bytes": 626583,
+  "bytes": 623925,
   "result": {
    "reason": "timeout",
-   "killed": 21,
+   "killed": 22,
    "total": 39
   }
  },
@@ -70,12 +70,12 @@
   "stageId": "act2autochess_m03",
   "duration": 84.23,
   "frames": 843,
-  "maxUnits": 30,
+  "maxUnits": 31,
   "file": "late-m03-r12.json",
-  "bytes": 632912,
+  "bytes": 641750,
   "result": {
    "reason": "cleared",
-   "killed": 12,
+   "killed": 11,
    "total": 57
   }
  },
@@ -86,9 +86,9 @@
   "stageId": "act2autochess_m01",
   "duration": 110,
   "frames": 1100,
-  "maxUnits": 34,
+  "maxUnits": 32,
   "file": "late-m01-r13.json",
-  "bytes": 902188,
+  "bytes": 878821,
   "result": {
    "reason": "timeout",
    "killed": 6,
@@ -102,12 +102,12 @@
   "stageId": "act2autochess_m01",
   "duration": 60,
   "frames": 600,
-  "maxUnits": 36,
+  "maxUnits": 37,
   "file": "unite-m01.json",
-  "bytes": 636396,
+  "bytes": 635055,
   "result": {
    "reason": "timeout",
-   "killed": 19,
+   "killed": 18,
    "total": 40
   }
  },
@@ -120,7 +120,7 @@
   "frames": 750,
   "maxUnits": 25,
   "file": "boss-m02.json",
-  "bytes": 703728,
+  "bytes": 699249,
   "result": {
    "reason": "forced",
    "killed": 13,

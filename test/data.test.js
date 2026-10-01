@@ -416,16 +416,17 @@ test('chess/tokens: talent tokens resolve and every token variant says where it 
   assert.deepEqual(tokens.token_10057_svash2_eagle1.variants.chess_char_5_14_a.sources, ['display']);
   // 夕's skill "cnt" is a charge count, not a token count.
   assert.equal(tokens.token_10015_dusk_drgn.variants.chess_char_5_12_a.count, null);
-  // Placeable (hand) tokens = the TALENT summons the shop state shows (tokenDisplayType DEFAULT); a skill's summon
-  // ("获得一个医疗无人机" 赫默, "获得一个诅咒娃娃" 巫恋) appears when the skill fires, never at battle start (user
-  // playtest #4 item 11).
+  // Placeable (hand) tokens = the manually deployable summons (PRTS 卫戍协议/帮助 §战斗部署; user playtest #6): shop
+  // state DEFAULT or no shop-state entry (凯瑟琳's device), never HIDDEN, made by some owner loadout (talent or skill) —
+  // 赫默's 医疗探机 and 巫恋's 诅咒娃娃 included (in battle they wait on their tile for the skill).
+  const makes = (list) => list.includes('talent') || list.includes('skill');
   for (const t of Object.values(tokens)) {
     if (t.kind !== 'summon') continue;
-    const talent = Object.values(t.variants).some((v) => v.sources.includes('talent') || Object.values(v.bySkill || {}).some((b) => b.sources.includes('talent')));
-    assert.equal(t.placeable, t.displayType === 'DEFAULT' && talent, `${t.tokenId} (${t.name}): placeable`);
+    const made = Object.values(t.variants).some((v) => makes(v.sources) || Object.values(v.bySkill || {}).some((b) => makes(b.sources)));
+    assert.equal(t.placeable, t.displayType !== 'HIDDEN' && made, `${t.tokenId} (${t.name}): placeable`);
   }
-  assert.deepEqual(Object.values(tokens).filter((t) => t.placeable).map((t) => t.name).sort(), ['斯卡蒂的海嗣', '流形', '狼群'].sort());
-  for (const id of ['token_10000_silent_healrb', 'token_10006_vodfox_doll']) assert.equal(tokens[id].placeable, false, `${id}: skill summon`);
+  assert.deepEqual(Object.values(tokens).filter((t) => t.placeable).map((t) => t.name).sort(),
+    ['医疗探机', '诅咒娃娃', '斯卡蒂的海嗣', '流形', '狼群', '爬行号·防护单元'].sort());
   assert.equal(tokens.enemy_9012_acloon.stats.deployLimit, tokens.enemy_9012_acloon.deployLimit);
 });
 
@@ -456,11 +457,24 @@ test('chess: skills[] = every skill unlocked at the status, at the chess skill l
     }
     if (c.tier <= 2 && !c.isGolden) assert.ok(idx.length <= 2, `${c.chessId}: E1 chess has no S3`);
   }
-  // Triggers are resolved per skill index: the TANK row (skillIndex 0) applies to S1 only.
+  // Triggers per skill (PRTS 卫戍协议/帮助 技能策略; tools/build-data.mjs resolveTrigger): the class rows cover every MANUAL
+  // skill of the class and no AUTO one; a MANUAL skill with a 技能范围 of its own (not an attack-range change) is SKILL_RANGE.
   const rules = (id) => chess[id].skills.map((s) => s.trigger.rule);
-  assert.deepEqual(rules('chess_char_1_02_a'), ['TAKE_DAMAGE', 'DEFAULT']);             // 角峰
-  assert.deepEqual(rules('chess_char_1_10_b'), ['TAKE_DAMAGE', 'DEFAULT']);             // 古米
+  assert.deepEqual(rules('chess_char_1_02_a'), ['TAKE_DAMAGE', 'TAKE_DAMAGE']);         // 角峰 (重装, both MANUAL)
+  assert.deepEqual(rules('chess_char_1_10_b'), ['DEFAULT', 'TAKE_DAMAGE']);             // 古米 (S1 自动触发)
+  assert.deepEqual(rules('chess_char_3_08_a'), ['SEARCH', 'SEARCH']);                   // 薄绿 (阵法术师: the default S2 too)
+  assert.deepEqual(rules('chess_char_3_19_a'), ['DEFAULT', 'DEFAULT', 'SP_FULL']);      // 伺夜 (战术家: S1/S2 are AUTO)
   assert.deepEqual(rules('chess_char_6_11_b'), ['MLYSS_WTRMAN', 'MLYSS_WTRMAN', 'MLYSS_WTRMAN']); // 缪尔赛思 (charId row −1)
+  assert.deepEqual(rules('chess_char_1_08_a'), ['DEFAULT', 'SKILL_RANGE']);             // 德克萨斯 S2 剑雨: 对周围所有敌人
+  assert.deepEqual(chess.chess_char_1_08_a.skills[1].trigger.customRangeGrid, chess.chess_char_1_08_a.skills[1].rangeGrid);
+  assert.deepEqual(rules('chess_char_4_22_a'), ['DEFAULT', 'DEFAULT', 'DEFAULT']);      // 银灰: "攻击范围缩小 / 扩大" = attack range
+  assert.deepEqual(rules('chess_char_3_18_a'), ['DEFAULT', 'SKILL_RANGE', 'DEFAULT']);  // 忍冬: S2 对周围…, S3 攻击距离+1
+  for (const c of Object.values(chess)) {
+    for (const s of c.skills || []) {
+      if (s.skillType !== 'MANUAL') assert.ok(!['TAKE_DAMAGE', 'SEARCH', 'SKILL_RANGE'].includes(s.trigger.rule), `${c.chessId} ${s.skillId}: an AUTO / PASSIVE skill takes no strategy row`);
+      if (s.trigger.rule === 'SKILL_RANGE') assert.ok(s.rangeGrid && s.skillType === 'MANUAL' && !/攻击(范围|距离)(与溅射范围)?(扩大|改变|缩小|缩短|加长|增加|\+)/.test(s.desc), `${c.chessId} ${s.skillId}: SKILL_RANGE only for a 技能范围`);
+    }
+  }
   assert.deepEqual(chess.chess_char_1_01_a.skills.map((s) => [s.skillId, s.level, s.spCost, s.isDefault]),
     [['skchr_inside_1', 4, 14, false], ['skchr_inside_2', 4, 24, true]]);             // 隐现 Lv4 (default S2)
   const sw = chess.chess_char_3_04_b;                                                    // 琳琅诗怀雅: S2 makes the 香槟

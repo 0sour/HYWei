@@ -116,6 +116,22 @@
 .capsule__kills { font-size: .26rem; color: var(--text-lo); letter-spacing: .04em; }
 .capsule__kills b { color: #fff; font-size: .3rem; }
 .capsule__tag { font-size: .14rem; padding: .01rem .08rem; background: var(--orange); color: #1a0800; font-weight: 700; letter-spacing: .1em; }
+/* 联防: a leaker's enemies still standing (MissTag, user playtest #6 item 7) — the official bg_miss_enemy pill (runner ×
+   on its left 3/5, the number on the rest) or an orange look-alike */
+.misstag {
+  display: inline-flex; align-items: center; justify-content: flex-end; gap: .03rem; height: .26rem; min-width: .84rem;
+  padding: 0 .1rem 0 .08rem; border-radius: .13rem; background: #3b1a08; border: 1px solid var(--orange-hi);
+  color: #fff; font-weight: 700; line-height: 1; flex: none;
+}
+.misstag.has-art { border: 0; border-radius: 0; background: transparent no-repeat left center / 100% 100%; width: .84rem; padding-right: .12rem; }
+.misstag__icon { display: inline-flex; align-items: center; gap: .01rem; margin-right: auto; color: var(--orange-hi); font-size: .16rem; }
+.misstag__icon .icon { width: .16rem; height: .16rem; }
+.misstag__n { font-size: .2rem; }
+.misstag.is-clear .misstag__n { color: var(--mint-400); }
+.team__line .misstag { height: .21rem; min-width: .68rem; padding-right: .08rem; }
+.team__line .misstag.has-art { width: .68rem; }
+.team__line .misstag__n { font-size: .16rem; }
+.team__line .misstag__icon { font-size: .13rem; }
 .capsule--combat { --cap: var(--orange-hi); }
 .capsule--boss { --cap: var(--orange-hi); min-width: 4.2rem; }
 .bossbar { position: relative; flex: 1; min-width: 2.2rem; height: .2rem; background: rgba(0, 0, 0, .6); border: 1px solid rgba(255, 122, 51, .5); overflow: hidden; }

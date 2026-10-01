@@ -31,6 +31,8 @@
 //      botPrepBeginSteps / botPrepEndSteps (and planLayoutSteps, arrangeSteps, createRehearsalSteps) are step
 //      generators that yield between whole actions (never with a transient board) — the same actions in the same
 //      order as the one-shot functions (runSteps), hence the same rng draws and decisions.
+//      The summon cards of the placed operators (赫默's 医疗探机, 伺夜's 狼群 …; user playtest #6) are placed after
+//      them on the best remaining tiles, 凯瑟琳's 支援装置 next to the best operator no device faces yet, facing it.
 //   5. equip items on the strongest deployed damage dealers (consume-on-equip items / Arts only with a handler)
 //   6. resolve the temp slots, keep one hand slot free, then Ready.
 // Placement quality (tools/matchrun sweeps, research-faithful waves): the planner beats random layouts by ≈ 8 points
@@ -38,7 +40,8 @@
 
 import { GEO } from '../../shared/constants.js';
 import { deriveSeed } from '../sim/rng.js';
-import { freeSlot, legalTiles, positionClass, parseKey, tileKey, FIELD, pieceDir, boardTileOf, BOSS_MIRROR_COL } from './board.js';
+import { ASPD_MIN } from '../sim/constants.js';
+import { freeSlot, legalTiles, canPlace, positionClass, parseKey, tileKey, FIELD, pieceDir, boardTileOf, BOSS_MIRROR_COL } from './board.js';
 import { rotateOffset, normDir, mirrorDir, oppositeDir } from '../sim/dir.js';
 import { itemKey } from './gamedata.js';
 import { computeBonds } from './bondsMeta.js';
@@ -497,7 +500,7 @@ export function rangeTiles(rec, r, c, dir = 'RIGHT') {
 function dpsOf(rec) {
   const st = rec && rec.stats;
   if (!st || isHealer(rec)) return 0;
-  const interval = Math.max(0.2, (st.bat || 1) * 100 / Math.max(10, st.aspd || 100));
+  const interval = Math.max(0.2, (st.bat || 1) * 100 / Math.max(ASPD_MIN, st.aspd || 100));
   const d = (st.atk || 0) / interval;
   return rec.attackKind === 'none' ? d * 0.4 : d;
 }
@@ -920,11 +923,7 @@ export function botPrepEnd(m, ps, job = null) {
 /** botPrepEnd as a step generator (see botPrepBeginSteps). */
 export function* botPrepEndSteps(m, ps, job = null) {
   if (!ps.alive || ps.ready) return;
-  if (job && job.done && job.best !== job.plans[0]) {
-    // summons placed around the default plan would sit on the new plan's tiles: back to their stacks, re-placed after
-    liftTokens(ps);
-    yield* applyPlanSteps(m, ps, job.chosen, job.best);
-  }
+  if (job && job.done && job.best !== job.plans[0]) yield* applyPlanSteps(m, ps, job.chosen, job.best);
   // 5. temp → hand / sell / destroy; keep one hand slot free for next round's merges
   resolveTemp(m, ps);
   if (freeSlot(ps.hand) < 0) sellWeakestHand(m, ps);
@@ -1055,8 +1054,13 @@ export function* arrangeSteps(m, ps, { final = false, defer = false } = {}) {
   return null;
 }
 
-/** Put the chosen pieces on their planned tiles, fill what is still off the board, then place summons. */
+/**
+ * Put the chosen pieces on their planned tiles, fill what is still off the board, then place summons. Placed summons go
+ * back to their stacks first: they would sit on the plan's tiles (an operator moved onto one swaps it elsewhere), and a
+ * 凯瑟琳 device left beside a tile its operator moved away from would face nothing (QA, playtest #6).
+ */
 function* applyPlanSteps(m, ps, chosen, target) {
+  liftTokens(ps);
   // move pieces onto their targets (board → board moves swap; hand → board may swap an occupant back to the hand)
   for (let pass = 0; pass < 3; pass++) {
     let moved = false;
@@ -1097,12 +1101,53 @@ function liftTokens(ps) {
   }
 }
 
+/**
+ * Summons that help the operator on the tile they face (range 1-1: their own tile + the one in front) instead of
+ * covering the enemy path: 凯瑟琳's 爬行号·防护单元 (a hand piece since user playtest #6).
+ */
+const FRONT_SUPPORT_TOKENS = new Set(['token_10041_cathy_catsld']);
+/** Device tile offsets around an operator (behind it — enemies come from the gates on the right —, above, below, in front) and the facing that points back at it. */
+const SUPPORT_SPOTS = Object.freeze([[0, -1, 'RIGHT'], [1, 0, 'DOWN'], [-1, 0, 'UP'], [0, 1, 'LEFT']]);
+
+/**
+ * A tile + direction for a front-support device: next to the most valuable operator no device faces yet (blockers
+ * first — they take the hits —, then DPS), pointing at it; null when none is free.
+ */
+function supportSpot(m, ps, p) {
+  const rec = m.gd.token(p.id);
+  if (!rec) return null;
+  const map = ps.deployMap();
+  const pos = positionClass(rec);
+  const faced = new Set();
+  for (const [k, q] of ps.board) {
+    if (q.kind !== 'token' || !FRONT_SUPPORT_TOKENS.has(q.id)) continue;
+    const [r, c] = parseKey(k);
+    const [dr, dc] = rotateOffset(0, 1, pieceDir(q));
+    faced.add(tileKey(r + dr, c + dc));
+  }
+  const ops = [...ps.board.entries()].filter(([k, q]) => q.kind === 'chess' && !faced.has(k)).map(([k, q]) => [k, m.gd.chess(q.id)]).filter(([, c]) => c)
+    .sort((a, b) => Number(isBlocker(b[1])) - Number(isBlocker(a[1])) || dpsOf(b[1]) - dpsOf(a[1]) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  for (const [k] of ops) {
+    const [r, c] = parseKey(k);
+    for (const [dr, dc, dir] of SUPPORT_SPOTS) {
+      const t = tileKey(r + dr, c + dc);
+      if (!ps.board.has(t) && canPlace(map, pos, r + dr, c + dc)) return [r + dr, c + dc, dir];
+    }
+  }
+  return null;
+}
+
 /** Placeable summons from the hand / temp onto the best free tiles (one per stack count). */
 function* placeTokensSteps(m, ps) {
   for (const p of [...ps.hand, ...ps.temp]) {
     if (!p || p.kind !== 'token') continue;
     for (let n = p.count || 1; n > 0; n--) {
       yield;
+      if (FRONT_SUPPORT_TOKENS.has(p.id)) {
+        const spot = supportSpot(m, ps, p);
+        if (!spot || !tryDo(() => ps.move(p.uid, { area: 'board', row: spot[0], col: spot[1] }, spot[2]))) break;
+        continue;
+      }
       const plan = yield* planLayoutSteps(m, ps, [p], LAYOUT_PARAMS, { occupied: new Set(ps.board.keys()) });
       const k = plan.get(p.uid);
       if (!k) break;
@@ -1156,7 +1201,8 @@ function resolveTemp(m, ps) {
       tryDo(() => ps.destroy(p.uid));
     }
   }
-  // anything left (e.g. sells failed): final sweep — tokens cannot be sold, they are dropped with the temp slot
+  // anything left (e.g. sells failed): final sweep — tokens cannot be sold, they are dropped with the temp slot (and
+  // come back at the next round start, PlayerState.startRound)
   for (let i = 0; i < ps.temp.length; i++) {
     const p = ps.temp[i];
     if (!p) continue;

@@ -26,7 +26,9 @@ function dataWith(modeId, round, family, { tactic = null, bounty = null, cards =
   if (cards) r.cards = cards;
   const out = { ...DATA, choices: { ...ch, schedule: { ...ch.schedule, [modeId]: { ...sch, rounds: { ...sch.rounds, [String(round)]: r } } }, cards: { ...ch.cards } } };
   if (tactic) out.choices.cards.tactic = ch.cards.tactic.filter((c) => tactic.includes(c.effectId));
-  if (bounty) out.choices.cards.bounty = ch.cards.bounty.filter((c) => bounty.includes(c.effectId));
+  // the listed bounty cards are offered by this draft even when the real one would not (战术特训 comes from 法术教鞭
+  // only — choices.json `draft`, user playtest #6 item 4): these tests drive the payouts through the draft
+  if (bounty) out.choices.cards.bounty = ch.cards.bounty.filter((c) => bounty.includes(c.effectId)).map((c) => ({ ...c, draft: true }));
   return out;
 }
 
@@ -628,12 +630,17 @@ test('自愈 (real sim): every damage instance an own unit takes heals 50; not H
   assert.equal(u1.hp, afterPhys - 300, '禁疗');
   hit(u2, 300);
   assert.equal(u2.hp, 1700, 'the partner has no 自愈');
-  // summons are 我方单位 too
-  const tok = h.b.spawnToken(u1, 'token_10011_beewax_oblisk', 11, 4, { stats: { maxHp: 1000 } });
+  // summons are 我方单位 too (纸偶) — but not one that holds 禁疗 (沙之碑, PRTS 备注 "持有禁疗"; tokens.json abnormal)
+  const tok = h.b.spawnToken(u1, 'token_10022_kazema_shadow', 11, 4, { stats: { maxHp: 1000 } });
   assert.ok(tok, 'summon placed');
   const before = tok.hp;
   hit(tok, 200);
   assert.equal(tok.hp, before - 200 + val, 'summon healed');
+  const ob = h.b.spawnToken(u1, 'token_10011_beewax_oblisk', 12, 4, { stats: { maxHp: 1000 } });
+  assert.ok(ob, '沙之碑 placed');
+  const ob0 = ob.hp;
+  hit(ob, 200);
+  assert.equal(ob.hp, ob0 - 200, '沙之碑 (禁疗) not healed');
   checkInvariants(h.b);
 });
 

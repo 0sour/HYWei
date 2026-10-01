@@ -5,7 +5,8 @@
 //   * Hand (整备区) 10 slots filled right→left, temp (临时整备区) 5 slots. A full hand refuses buys / withdrawals,
 //     except a purchase that completes a merge and a withdrawal whose own summon stack frees a slot. Passive gains (merge
 //     results, grants, returned equipment) overflow into temp; temp blocks Ready ("直到溢出情况排除才可开始进行作战").
-//     A temp piece is resolved (chess sold back to the pool, items / summon stacks destroyed) at the deadline of the
+//     A temp piece is resolved (chess sold back to the pool, items destroyed, summon stacks removed — they come back at
+//     the next round start, grantTokensFor) at the deadline of the
 //     first prep in which the player could act on it (tempDue): a piece that overflowed during a prep before Ready
 //     expires at that prep's end; one that arrived after Ready, at the prep end (<休整期结束时> grants), in COMBAT /
 //     SETTLE (battle-result grants, merges, returned equipment) or at the next round start / 机变 stays visible and
@@ -21,7 +22,8 @@
 //     refreshes first), one toggle freezes all unsold slots until the next round start (a manual refresh while frozen
 //     rerolls everything and the new slots stay frozen), level-up price = base − rounds elapsed (floor 0).
 //   * Merge: 3 normal copies (风丸 2) on board/hand/temp → 1 elite to the hand; equipment returns to the hand; a
-//     reward offer of 3 free chess of tier min(level+1, 6) is queued (pick 1, expires at prep end; an offer earned
+//     reward offer of 3 different free chess of tier min(level+1, 6) is queued (never one operator twice — user
+//     playtest #6 item 19; a short tier tops up from the tier below; pick 1, expires at prep end; an offer earned
 //     after the prep — SETTLE / Final Assault effects — is kept for the next prep). The elite goes to the hand
 //     (research 01 A1 "1 elite goes to the hand, not to a board tile"), overflow temp — also outside PREP (a
 //     SETTLE merge's elite waits in temp for the next prep); only with the hand and temp both full does it take a
@@ -30,9 +32,14 @@
 //     absent; equipped items are otherwise locked: g.destroy refuses them),
 //     2 identical normal items (hand/temp/equipped) merge into the golden item in the hand, items are never sold
 //     (destroy for 0). consume-on-equip items resolve through the effect registry and never take a slot.
-//   * Tokens: placing an owner with placeable summons (tokens.json `placeable`: the talent summons 海嗣 / 狼群 / 流形)
-//     sends one stack (deployLimit copies) to the hand; withdrawing/selling/merging the owner removes its tokens. A
-//     skill's summon (赫默 医疗无人机, 巫恋 诅咒娃娃) is never a hand card: it appears in battle when the skill fires.
+//   * Tokens (PRTS 卫戍协议/帮助 §战斗部署, user playtest #6): placing an owner with manually deployable summons
+//     (tokens.json `placeable`: 赫默's 医疗探机 and 巫恋's 诅咒娃娃 with their S2, 凯瑟琳's 爬行号·防护单元, 海嗣 / 狼群 /
+//     流形) sends one stack (deployLimit copies — 凯瑟琳 2) to the hand, placed by hand like any piece (no deploy slot);
+//     withdrawing/selling/merging the owner removes its tokens, moving it on the board (also when a summon dragged onto
+//     it swaps it away) sends its placed summons back onto their stack ("移动干员时，其所属召唤物全部退场并重置至手牌区");
+//     a summon stack removed from temp at a prep deadline comes back at the next round start (startRound tops every
+//     board owner's summons up to the deploy limit, "干员所属召唤物会于下一回合返还"). In battle a skill's summon takes its
+//     tile when the skill fires (sim/content/tokens.js dockSkillSummons).
 //   * Facing (DESIGN §3, research 09 §1.2): every board piece has `dir` ∈ UP|RIGHT|DOWN|LEFT (server/sim/dir.js), set
 //     by g.move {…, dir} (absent ⇒ RIGHT) and kept across rounds. g.move onto the piece's OWN tile re-orients it in
 //     place; a swap keeps the occupant's dir; pieces put on the board by effects (a merge elite taking a consumed
@@ -50,6 +57,7 @@ import { FIELD, tileKey, parseKey, inField, canPlace, positionClass, boardOrder,
 import { offsetTile } from '../sim/dir.js';
 import { computeBonds, bondList, bondSnapshot, activatedLayers } from './bondsMeta.js';
 import { itemKey } from './gamedata.js';
+import { bountyText } from './choices.js';
 
 const HAND_SIZE = GEO.HAND_SIZE;
 const TEMP_SIZE = GEO.TEMP_SIZE;
@@ -352,22 +360,46 @@ export class PlayerState {
     for (let i = 0; i < this.temp.length; i++) if (this.temp[i] && this.temp[i].kind === 'token' && this.temp[i].ownerUid === ownerUid) this.temp[i] = null;
   }
 
-  _hasTokensOf(ownerUid, tokenId) {
-    for (const p of this.board.values()) if (p.kind === 'token' && p.ownerUid === ownerUid && p.id === tokenId) return true;
-    for (const p of this.hand) if (p && p.kind === 'token' && p.ownerUid === ownerUid && p.id === tokenId) return true;
-    for (const p of this.temp) if (p && p.kind === 'token' && p.ownerUid === ownerUid && p.id === tokenId) return true;
-    return false;
+  /**
+   * An owner that changes its board tile (moved, swapped): its summons on the board go back onto its stack (PRTS
+   * 卫戍协议/帮助 "移动干员时，其所属召唤物全部退场并重置至手牌区"); overflow temp when no stack or slot is left (a
+   * stack lost there comes back at the next round start). `keep`: a summon the player just placed (the one dragged
+   * onto its owner, which swapped the owner away) stays where it was put.
+   */
+  _liftTokensOf(ownerUid, keep = null) {
+    for (const [k, p] of [...this.board]) {
+      if (p.kind !== 'token' || p.ownerUid !== ownerUid || p === keep) continue;
+      this.board.delete(k);
+      if (!this._returnToken(p, null, { allowTemp: true })) this.board.set(k, p); // nowhere to go: it stays put
+    }
+  }
+
+  /** Copies of one summon type an owner has (placed pieces + stacks in the hand / temp). */
+  _tokenCountOf(ownerUid, tokenId) {
+    const mine = (p) => !!p && p.kind === 'token' && p.ownerUid === ownerUid && p.id === tokenId;
+    let n = 0;
+    for (const p of this.board.values()) if (mine(p)) n += p.count || 1;
+    for (const p of this.hand) if (mine(p)) n += p.count || 1;
+    for (const p of this.temp) if (mine(p)) n += p.count || 1;
+    return n;
   }
 
   /**
-   * Owner placed on the board: send its placeable summons to the hand (one stack per token type). Only talent summons
-   * are placeable (gamedata.placeableTokens / tokens.json `placeable`); a summon a skill makes ("获得一个医疗无人机",
-   * 赫默 S2) appears in battle when that skill fires (user playtest #4: not on the field from the start).
+   * Owner on the board: send its placeable summons to the hand (one stack per token type, topped up to the deploy limit;
+   * gamedata.placeableTokens / tokens.json `placeable`, user playtest #6) — those its equipped skill / module makes
+   * (DESIGN §16: 赫默 S2 医疗无人机 a drone, 赫默 S1 none). Called when the owner is placed and at every round start, which
+   * returns a stack removed from temp at the last prep deadline (PRTS 卫戍协议/帮助 §手牌区 "干员所属召唤物会于下一回合
+   * 返还"); copies the owner still has (placed or stacked) are not granted again.
    */
   grantTokensFor(owner) {
-    for (const { tokenId, count } of this.gd.placeableTokens(owner.id)) {
-      if (this._hasTokensOf(owner.uid, tokenId)) continue;
-      const t = this.newPiece('token', tokenId, { count, ownerUid: owner.uid });
+    const rec = owner && owner.kind === 'chess' ? this.gd.chess(owner.id) : null;
+    if (!rec) return;
+    for (const { tokenId, count } of this.gd.placeableTokens(owner.id, this.loadoutFor(rec))) {
+      const missing = count - this._tokenCountOf(owner.uid, tokenId);
+      if (missing <= 0) continue;
+      const stack = [...this.hand, ...this.temp].find((p) => p && p.kind === 'token' && p.ownerUid === owner.uid && p.id === tokenId);
+      if (stack) { stack.count = (stack.count || 1) + missing; continue; }
+      const t = this.newPiece('token', tokenId, { count: missing, ownerUid: owner.uid });
       this.stow(t, { allowTemp: true });
     }
   }
@@ -539,16 +571,23 @@ export class PlayerState {
     return true;
   }
 
-  /** Queue a reward offer: `count` chess of tier min(level + offset, maxTier) at price 0 (pick 1). */
+  /**
+   * Queue a reward offer: `count` DIFFERENT chess of tier min(level + offset, maxTier) at price 0 (pick 1). Each is a
+   * copy-weighted roll from the shared pool excluding the ones already drawn; a tier left without another chess tops
+   * up from the tier below (user playtest #6 item 19: the official promotion reward never offers one operator twice —
+   * the user's first-hand report; the normal shop's slots may repeat). The offer reserves no copies (the pick takes one).
+   */
   pushRewardOffer(source = 'merge', { tier = null, ids = null } = {}) {
     const ro = this.gd.rewardOffer();
     const t = Number.isInteger(tier) ? tier : Math.min(this.shop.level + ro.tierOffset, ro.maxTier);
-    let list = Array.isArray(ids) ? ids.filter((id) => this.gd.chess(id)) : null;
+    // an offer never shows one operator twice, whoever built the list (user playtest #6 item 19)
+    let list = Array.isArray(ids) ? [...new Set(ids)].filter((id) => this.gd.chess(id)) : null;
     if (!list) {
       list = [];
+      const fresh = (id) => !list.includes(id);
       for (let i = 0; i < ro.count; i++) {
         let id = null;
-        for (let tt = t; tt >= 1 && !id; tt--) id = this.m.pool.roll(this.m.rngShop, { tier: tt });
+        for (let tt = t; tt >= 1 && !id; tt--) id = this.m.pool.roll(this.m.rngShop, { tier: tt, filter: fresh });
         if (id) list.push(id);
       }
     }
@@ -899,16 +938,19 @@ export class PlayerState {
     const occ = this.board.get(key) || null;
     if (occ === piece) return this._reorient(piece, dir);
     if (loc.area === 'board') {
-      // board → board: move or swap (the occupant must be legal on the source tile and keeps its own facing)
+      // board → board: move or swap (the occupant must be legal on the source tile and keeps its own facing); an
+      // operator that changes its tile takes its summons off the board (back onto their stacks, _liftTokensOf)
       if (occ) {
         const [sr, sc] = parseKey(loc.key);
         if (!this._legal(occ, sr, sc)) return fail(ERR.BAD_TILE);
         this.board.set(loc.key, occ);
+        if (occ.kind === 'chess') this._liftTokensOf(occ.uid);
       } else {
         this.board.delete(loc.key);
       }
       piece.dir = dir;
       this.board.set(key, piece);
+      this._liftTokensOf(piece.uid);
       this.recompute();
       return OK;
     }
@@ -966,6 +1008,8 @@ export class PlayerState {
     const occ = this.board.get(key) || null;
     if (occ === piece) return this._reorient(piece, dir);
     if (loc.area === 'board') {
+      // board → board: move or swap; an operator swapped onto the summon's old tile changed its tile, so its other
+      // summons go back onto their stacks like any moved operator (_liftTokensOf; the summon just placed stays)
       if (occ) {
         const [sr, sc] = parseKey(loc.key);
         if (!this._legal(occ, sr, sc)) return fail(ERR.BAD_TILE);
@@ -975,6 +1019,7 @@ export class PlayerState {
       }
       piece.dir = dir;
       this.board.set(key, piece);
+      if (occ && occ.kind === 'chess') this._liftTokensOf(occ.uid, piece);
       this.recompute();
       return OK;
     }
@@ -1216,8 +1261,10 @@ export class PlayerState {
 
   /**
    * Prep deadline: every temp piece due at this prep (tempDue ≤ prepsEnded) is resolved — a chess is sold back (its
-   * pool copies return, its summons are removed), items and summon stacks are destroyed. Pieces that overflowed after
-   * the player could no longer act on them (after Ready, at the prep end) are kept for the next prep.
+   * pool copies return, its summons are removed), items are destroyed, the summon stack of an owner still on the board
+   * is removed and comes back at the next round start (startRound → grantTokensFor; PRTS "干员所属召唤物会于下一回合
+   * 返还"). Pieces that overflowed after the player could no longer act on them (after Ready, at the prep end) are kept
+   * for the next prep.
    */
   resolveTemp() {
     let changed = false;
@@ -1252,6 +1299,8 @@ export class PlayerState {
     // Likewise reward offers of the last prep already expired at its end; what is still queued was earned after it —
     // a merge completed during SETTLE / the Final Assault (突变细胞, battle-result grants) — and is shown in this prep
     this.ready = false;
+    // summon stacks removed from temp at the last prep deadline come back (PRTS 卫戍协议/帮助 §手牌区); full hand ⇒ temp
+    for (const p of [...this.board.values()]) if (p.kind === 'chess') this.grantTokensFor(p);
     this.rollShop({ keepFrozen: true });
     this.shop.frozen = false;
     for (const s of this.shop.slots) if (s) s.frozen = false;
@@ -1369,7 +1418,15 @@ export class PlayerState {
       out.push(v);
     }
     for (const b of this.bounties) {
-      out.push({ id: b.id, name: b.card.name || '悬赏', desc: b.card.desc || '', iconKind: 'choice', iconId: b.card.effectId || 'bounty', counter: b.roundsLeft >= 90 ? null : b.roundsLeft });
+      // the battles the bounty's enemies still come for (an official multi-round card: every battle, no counter) and
+      // the card's official rich text (blue "下场作战" / "两场作战", red "每场"; a multi-round card reads as long as it
+      // lasts — choices.js bountyText, MULTI_ROUND_BOUNTY_BATTLES) — user playtest #6 item 4
+      const left = b.roundsLeft >= 90 ? null : b.roundsLeft;
+      const eff = b.card.effectId ? this.gd.effect(b.card.effectId) : null;
+      out.push({
+        id: b.id, name: b.card.name || '悬赏', desc: bountyText((eff && eff.descRaw) || b.card.desc || '', b.card), iconKind: 'choice', iconId: b.card.effectId || 'bounty',
+        counter: left, counterText: left == null ? '之后的每场作战' : `还剩 ${left} 场作战`,
+      });
     }
     return out;
   }

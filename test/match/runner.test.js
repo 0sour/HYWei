@@ -206,9 +206,12 @@ test('boss field: the local pool follows b.pool (server hp − unacknowledged lo
   const send = r.net.send;
   r.net.send = (t, fields) => { if (t === 'b.progress') cumAtSend.push(pool.cum); return send(t, fields); };
   r.advance(3000);
+  const first = r.net.sent.filter((x) => x.t === 'b.progress');
+  assert.ok(first.length >= 10 && first.length <= 14, `4 Hz (${first.length} in 3 s)`);
+  // how soon the operators reach the leader depends on the board the autoplayed match built
+  for (let i = 0; i < 30 && !(pool.cum > 0); i++) r.advance(1000);
   assert.ok(pool.cum > 0, 'local damage to the pool');
   const prog = r.net.sent.filter((x) => x.t === 'b.progress');
-  assert.ok(prog.length >= 10 && prog.length <= 14, `4 Hz (${prog.length} in 3 s)`);
   const last = prog[prog.length - 1];
   assert.equal(last.bossDmg, cumAtSend[cumAtSend.length - 1]);
   assert.ok(last.bossDmg <= pool.cum);

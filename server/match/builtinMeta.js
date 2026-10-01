@@ -35,9 +35,9 @@ const paramsOf = (ctx, item) => {
 };
 
 /** random chess sharing at least one bond with `bonds`, tier ≤ maxTier */
-function rollSameBond(ctx, bonds, maxTier) {
+function rollSameBond(ctx, bonds, maxTier, exclude = null) {
   const set = new Set(bonds);
-  return ctx.rollChess({ maxTier, filter: (id) => { const c = ctx.gd.chess(id); return !!(c && Array.isArray(c.bonds) && c.bonds.some((b) => set.has(b))); } });
+  return ctx.rollChess({ maxTier, filter: (id) => { const c = ctx.gd.chess(id); return !!(c && Array.isArray(c.bonds) && c.bonds.some((b) => set.has(b))) && !(exclude && exclude.includes(id)); } });
 }
 
 const ITEM_HANDLERS = {
@@ -127,7 +127,8 @@ const ITEM_HANDLERS = {
       const n = Math.max(1, int(paramsOf(ctx, ev.item).refresh_cnt, 3));
       const bonds = ctx.pieceBonds(ev.target.uid);
       const ids = [];
-      for (let k = 0; k < n; k++) { const id = rollSameBond(ctx, bonds, ctx.shopLevel()); if (id) ids.push(id); }
+      // a pick-one offer never shows one operator twice (user playtest #6 item 19); fewer cards when the pool runs out
+      for (let k = 0; k < n; k++) { const id = rollSameBond(ctx, bonds, ctx.shopLevel(), ids); if (id) ids.push(id); }
       if (ids.length) ctx.offerChess(ids, { source: 'item' });
     },
   },
@@ -141,7 +142,12 @@ const ITEM_HANDLERS = {
       const original = ctx.gd.baseIdOf(target.id);
       ctx.destroyPiece(target.uid);
       const ids = [];
-      for (let k = 0; k < n; k++) { const id = ctx.rollChess({ tier }); if (id) ids.push(id); }
+      // different operators of the target's tier, topped up from the tier below like the promotion reward (item 19)
+      for (let k = 0; k < n; k++) {
+        let id = null;
+        for (let t = tier; t >= 1 && !id; t--) id = ctx.rollChess({ tier: t, filter: (x) => !ids.includes(x) });
+        if (id) ids.push(id);
+      }
       if (ids.length) ctx.offerChess(ids, { source: 'item', tier });
       // co-op: next prep, send the original chess to the teammate with the most members of its bonds
       const mates = ctx.teammates();

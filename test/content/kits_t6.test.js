@@ -760,6 +760,29 @@ test('锏: S3 = 10 slashes (180 % ×1.6 talent) on ≤5 enemies + a 300 % finish
   checkInvariants(h.b);
 });
 
+test('锏 S3: invulnerable, stun- and freeze-immune during the slashes (PRTS 备注); normal again after them', () => {
+  const h = battle({
+    units: [{ chessId: 'chess_char_6_19_a', row: 10, col: 5, carryState: { sp: 34 } }],
+    enemies: [{ key: 'enemy_dummy', pos: [10, 6] }],
+  });
+  const u = h.unit('chess_char_6_19_a');
+  assert.ok(h.runUntil(() => u.skill.active, 10));
+  h.step();
+  const hp = u.hp;
+  h.b.dealDamage(null, u, { amount: 500, type: 'true' });
+  assert.equal(u.hp, hp, '无敌');
+  assert.equal(h.b.applyStatus(u, 'stun', { duration: 3 }), false, '晕眩免疫');
+  assert.equal(h.b.applyStatus(u, 'freeze', { duration: 3 }), false, '冻结免疫');
+  h.b.applyStatus(u, 'cold', { duration: 5 });
+  h.b.applyStatus(u, 'cold', { duration: 5 });
+  assert.ok(!u.s.flags.freeze, 'cold on cold does not freeze her either');
+  assert.ok(h.runUntil(() => !u.skill.active, 10));
+  h.b.dealDamage(null, u, { amount: 500, type: 'true' });
+  assert.ok(u.hp < hp, 'takes damage again after the slashes');
+  assert.ok(h.b.applyStatus(u, 'stun', { duration: 1 }), 'can be stunned again');
+  checkInvariants(h.b);
+});
+
 test('纯烬艾雅法拉: S3 heals across the whole field in 5 shots (35 %); 火山灰疗愈 max HP +6 %; 氤氲 HoT', () => {
   const h = battle({
     units: [
@@ -969,6 +992,10 @@ test('缪尔赛思: 流形 copies stats/range/damage type but not the attack sha
     enemies: [{ key: 'enemy_dummy', pos: [10, 6] }],
   });
   const d = h.unit('chess_char_6_19_a');
+  // 锏 only lends her stats here: her S3 fires on its own 技能范围 (playtest #6 item 15) and pulls the dummy all the way
+  // to her (official pull, item 14), where she blocks it outside the copy's range — keep her SP empty (阻回)
+  h.step();
+  assert.ok(h.b.addBuff(d, { key: 'test:noSp', flags: { noSp: true }, persist: true }));
   const tok = () => h.b.allyUnits.find((x) => x.defId === 'token_10030_mlyss_wtrman' && x.alive);
   h.run(6);
   const t = tok();

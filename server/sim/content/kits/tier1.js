@@ -12,7 +12,8 @@
 // Operator loadouts (DESIGN §16): every selectable non-default skill of the 16 visible chess is authored in the kit's
 // `skills: { [skillId]: SkillSpec }` map from its own SkillRecord (skillRec / skillBbOf — Lv4 normal, Lv7 elite);
 // talents / traits read the resolved record, so a module choice ('none' ⇒ traitBase / talentsBase, module.active
-// false) is honoured. Per-skill triggers come from data (TANK S1 ⇒ TAKE_DAMAGE); the few spec overrides are documented
+// false) is honoured. Per-skill triggers come from data (the official 技能策略: every MANUAL 重装 skill ⇒ TAKE_DAMAGE, a
+// MANUAL skill with its own 技能范围 ⇒ SKILL_RANGE, AUTO skills keep their own rule); the few spec overrides are documented
 // at the skill (冲锋号令 AUTO ⇒ SP_FULL, 花香疗法 heal-type DEFAULT). Tests: test/content/kits_alt_t1.test.js.
 //
 // fx kinds emitted (battle.fx(kind, {x, y, …})): aoe {radius, id, skill} · zone {radius, dur, id, skill} ·
@@ -88,10 +89,13 @@ export function enemiesInGrid(battle, unit, grid, { n = 0, priority = null, canH
   sortEnemyTargets(battle, unit, list, priority ?? unit.profile?.priority ?? null);
   return n > 0 && list.length > n ? list.slice(0, n) : list;
 }
-/** Deployed allies (no devices) whose tile is inside `grid` relative to `unit` (null ⇒ current range). */
+/**
+ * Deployed allies (no devices) whose tile is inside `grid` relative to `unit` (null ⇒ current range) — never a 孤立 unit
+ * (炎佑: Battle.allySelectable), as Battle.alliesInGrid.
+ */
 export function alliesInGridOf(battle, unit, grid = null) {
   const set = grid ? new Set(absoluteRangeKeys(grid, unit.tileR, unit.tileC, unit.dir, 0)) : (unit.rangeKeySet || new Set(unit.rangeKeys || []));
-  return battle.allyUnits.filter((a) => a.alive && a.deployed && !a.hidden && a.kind !== 'device' && set.has(a.tileR * COLS + a.tileC));
+  return battle.allyUnits.filter((a) => a.alive && a.deployed && !a.hidden && a.kind !== 'device' && set.has(a.tileR * COLS + a.tileC) && battle.allySelectable(a, unit));
 }
 /** Any targetable enemy in the unit's current range. */
 export const enemyInRange = (battle, unit) => battle.enemiesInKeys(unit.rangeKeys, unit, { canHitFly: true }).length > 0;
@@ -133,7 +137,7 @@ export function toggleBuff(battle, unit, key, cond, mods, extra = {}) {
 export function installAura(battle, unit, { key, select, mods, value = 0, interval = 0.5 }) {
   battle.every(interval, () => {
     if (!up(unit)) return;
-    for (const a of battle.allies()) {
+    for (const a of battle.alliesFor(unit)) {
       if (!select(a)) continue;
       const cur = a.findBuff(key);
       if (cur && cur.source !== unit && (cur.data?.v ?? 0) > value && cur.timeLeft > 0.05) continue;
@@ -356,7 +360,7 @@ export default {
 
   // ---------------------------------------------------------------------------------------------------------------
   // 1_02 角峰 抗寒体质: HP +max_hp, DEF +def, RES ×(1+magic_resistance). 雪原卫士: RES +magic_resistance (flat).
-  // Alternate S1 体能强化 (TANK S1 ⇒ TAKE_DAMAGE trigger from data): HP +max_hp, +hp_recovery_per_sec HP per second
+  // Alternate S1 体能强化 (重装 ⇒ TAKE_DAMAGE trigger from data): HP +max_hp, +hp_recovery_per_sec HP per second
   // (the 生命回复速度 attribute). Elite module PRO-Y (block 4) is a stat of the module (attr blockCnt).
   chess_char_1_02_a: (bb, chess) => {
     const s1 = skillBbOf(chess, 'skchr_yak_1');
@@ -392,7 +396,7 @@ export default {
   // attack@max_target enemies on the line and cause attack@sluggish s of 停顿.
   // 细胞活性抑制剂: attacks inflict `damage` arts per `interval` s for `duration` s (damage_seamonster vs 【海怪】).
   // Elite module (SPT-X): stealth of enemies inside the range is cancelled.
-  // Alternate S1 侵袭破坏应对 (TANK S1 ⇒ TAKE_DAMAGE trigger from data): ATK +atk, DEF +def.
+  // Alternate S1 侵袭破坏应对 (重装 ⇒ TAKE_DAMAGE trigger from data): ATK +atk, DEF +def.
   chess_char_1_04_a: (bb, chess, def) => {
     const t = talentBb(chess, 0);
     const s1 = skillBbOf(chess, 'skchr_udflow_1');
@@ -622,14 +626,18 @@ export default {
   },
 
   // ---------------------------------------------------------------------------------------------------------------
-  // 1_10 古米 备用军粮 (TAKE_DAMAGE, ct charges): the next attack heals the most injured ally nearby (skill grid)
-  // for heal_scale × ATK. Elite module (GUA-X): targets below hp_ratio HP get ×heal_scale more.
+  // 1_10 古米 备用军粮 (自动触发, ct charges — an AUTO skill: no 技能策略 applies, it keeps its own rule; PRTS 备注 "此技能
+  // 在存在生命值不满的可治疗角色时可触发；技能触发后古米将切换至治疗模式（普通攻击改为治疗技能范围内的一名友方单位），直至古米
+  // 完成一次普通攻击的治疗"): cast as soon as a healable ally of the skill range (x-4, herself included) is injured —
+  // no enemy needed (user playtest #6: it waited until she engaged) — then her next normal attack heals the most
+  // injured ally of the skill range for heal_scale × ATK instead of hitting an enemy; she makes no normal attack until
+  // that heal is done. Elite module (GUA-X): targets below hp_ratio HP get ×heal_scale more.
   // 平底锅专精: each attack prob for ATK ×atk_scale and a `stun` s stun (only when that hit lands).
   // Alternate S2 食粮烹制 (PRTS notes: 10 s 缴械 at the start, the real duration is disarm + 30 s, attacks become heals
   // with the attack interval +130 %): cooking for `disarm` s — no attacks, DEF +def; then for the skill's `duration` s
   // she heals the most injured ally inside the skill grid (x-4) for ATK per attack, ATK +atk, base attack time
   // ×(1 + base_attack_time). The GUA-X heal bonus (below hp_ratio: ×heal_scale) applies to these heals too.
-  // Trigger: DEFAULT (data) with her own profile — an enemy in her initial range (the tile she blocks on).
+  // Trigger: TAKE_DAMAGE (data: the 重装 strategy "不受技能范围影响，受到伤害时释放技能").
   chess_char_1_10_a: (bb, chess, def) => {
     const t = talentBb(chess, 0);
     const tb = traitBb(chess);
@@ -638,6 +646,7 @@ export default {
     const b2 = r2?.bb ?? {};
     const cook = Math.max(0, num(b2.disarm, 10));
     const cookKey = 'sunbr:cook', serveKey = 'sunbr:serve';
+    const healGrid = def?.skill?.rangeGrid ?? null;
     return {
       skills: {
         [S2]: {
@@ -661,9 +670,9 @@ export default {
         },
       },
       install(battle, unit) {
-        if (unit.skill?.id !== S2 || tb.hp_ratio == null || num(tb.heal_scale, 1) === 1) return;
-        // (S1 applies the module bonus inside its own heal): her S2 heals — attack heals while it runs (herself included,
-        // she stands in the grid), never her natural / self regeneration
+        if (tb.hp_ratio == null || num(tb.heal_scale, 1) === 1) return;
+        // GUA-X on her skill heals (S1's heal-mode attack, S2's attack heals while it runs — herself included, she stands
+        // in the grid), never her natural / self regeneration
         battle.on('heal', (ctx) => {
           if (ctx.source !== unit || !unit.skill?.active || ctx.opts?.regen || ctx.opts?.self) return;
           if (ctx.target.hpRatio < num(tb.hp_ratio)) ctx.amount *= num(tb.heal_scale, 1);
@@ -671,18 +680,11 @@ export default {
       },
       skill: {
         kind: instantKind(def),
-        attack: {
-          onHit({ battle, unit }) {
-            const grid = def?.skill?.rangeGrid;
-            const keys = grid ? absoluteRangeKeys(grid, unit.tileR, unit.tileC, unit.dir, 0) : unit.rangeKeys;
-            const ally = battle.injuredAlliesInKeys(keys, unit)[0];
-            if (!ally) return;
-            let amount = unit.s.atk * num(bb.heal_scale, 1);
-            if (tb.hp_ratio != null && ally.hpRatio < num(tb.hp_ratio)) amount *= num(tb.heal_scale, 1);
-            battle.heal(unit, ally, amount, { tags: ['skill'] });
-            battle.fx('heal', { x: ally.x, y: ally.y, id: ally.id });
-          },
-        },
+        heal: true,
+        ...(healGrid ? { trigger: { rule: 'SKILL_RANGE', grid: healGrid, allies: true }, targeting: { rangeGrid: healGrid } } : {}),
+        // the heal-mode attack: the most injured ally of the skill range (acquireTargets, heal profile)
+        attack: { dmgType: 'heal', heal: { mode: 'single' }, healScale: num(bb.heal_scale, 1), projectile: 'none' },
+        onHit({ battle, target }) { if (target) battle.fx('heal', { x: target.x, y: target.y, id: target.id }); },
       },
       talents: [{ install(battle, unit) {
         // the proc is rolled per attack hit; the stun only follows a hit that landed (not dodged / cancelled)
@@ -757,7 +759,7 @@ export default {
         if (unit.skill?.id !== S1) return;
         battle.on('tick', () => {
           const sk = unit.skill;
-          if (!up(unit) || !unit.canAct || !sk.ready || sk.active || unit.s.flags.silence) return;
+          if (!up(unit) || !unit.canAct || !sk.ready || sk.active || sk.opCooling || unit.s.flags.silence) return;
           if (battle.injuredAlliesInKeys(unit.baseRangeKeys || unit.rangeKeys, unit).length) sk.activate('DEFAULT');
         }, { owner: unit });
       },
@@ -832,9 +834,10 @@ export default {
         },
       },
       trait: {
-        // with only bound enemies in range she holds her fire (the mystic trait stores the energy meanwhile)
+        // with only bound enemies in range (or blocked by her — always her targets, Battle.blockedTargets) she holds her
+        // fire (the mystic trait stores the energy meanwhile)
         canAttack(battle, u) {
-          const ok = battle.enemiesInKeys(u.rangeKeys, u, u.profile).some((e) => !bound(e));
+          const ok = battle.enemiesInKeys(u.rangeKeys, u, u.profile).some((e) => !bound(e)) || battle.blockedTargets(u, u.profile).some((e) => !bound(e));
           if (!ok) u.trait.hadTarget = false;
           return ok;
         },
@@ -861,8 +864,11 @@ export default {
       talents: [{ install(battle, unit) {
         battle.on('beforeAttack', (ctx) => {
           if (ctx.attacker !== unit || !ctx.targets.some(bound)) return;
-          const cands = battle.enemiesInKeys(unit.rangeKeys, unit, ctx.profile || unit.profile).filter((e) => !bound(e));
-          sortEnemyTargets(battle, unit, cands, (ctx.profile || unit.profile).priority);
+          const prof = ctx.profile || unit.profile;
+          const cands = battle.enemiesInKeys(unit.rangeKeys, unit, prof);
+          for (const e of battle.blockedTargets(unit, prof)) if (!cands.includes(e)) cands.push(e);
+          for (let i = cands.length - 1; i >= 0; i--) if (bound(cands[i])) cands.splice(i, 1);
+          sortEnemyTargets(battle, unit, cands, prof.priority);
           ctx.targets = cands.slice(0, Math.max(1, ctx.targets.length));
         }, { owner: unit });
       } }],
@@ -921,7 +927,9 @@ export default {
   },
 
   // ---------------------------------------------------------------------------------------------------------------
-  // 1_19 野鬃 夹枪冲锋: wider range (skill grid), ATK +atk, hits push the target away (attack@force, 中等力度).
+  // 1_19 野鬃 夹枪冲锋: wider range (skill grid), ATK +atk, hits push the target away (attack@force 1 = 中力; radial — away
+  // from her centre, PRTS 推与拉: every push but the 推击手' is radial) by the official 力度 − 重量 distance (Battle.push:
+  // weight 0 → 2.14 tiles, 1 → 1.7, 2 → 0.44, 3 → 0.12, ≥ 4 → none; user playtest #6 item 14).
   // 一致向前: after deploying (normal flag 0: first deployment only; elite flag 1: every deployment) every undeployed
   // 【近卫】 operator of the player costs `value` less DP to deploy (≤ max_stack_cnt per operator until it deploys).
   // Alternate S1 骑枪刺击 (PASSIVE, ON_DEPLOY): for `duration` s after every deployment ASPD +attack_speed.
@@ -946,9 +954,7 @@ export default {
         attack: {
           onHit({ battle, unit, target }) {
             if (!target || !target.alive || target.side !== 'enemy') return;
-            let dx = target.x - unit.x, dy = target.y - unit.y;
-            if (Math.hypot(dx, dy) < 1e-6) { dx = unit.fwd[1]; dy = unit.fwd[0]; }
-            battle.displace(target, { x: dx, y: dy }, 0.5 + 0.5 * force, { force: force + 1 });
+            battle.push(target, force, { from: unit });
           },
         },
       },
@@ -981,9 +987,9 @@ export default {
   // attack@buff_prob to stun attack@stun s; afterwards 雷蛇 is stunned `stun` s.
   // 战术防御: when attacked, +sp SP to herself and to one random ally in the talent grid. Elite 雷抗: RES +magic_resistance.
   // Elite module (SPT-X): stealth of enemies inside the range is cancelled.
-  // Alternate S1 充能防御 (AUTO, hurt SP; TANK S1 ⇒ TAKE_DAMAGE from data — the hit that fills SP sets it off): PRTS
-  // "技能拥有8s的持续时间": for bb.duration s DEF +def, and the next damage instance taken is blocked (cancelled — a
-  // blocked hit "导致第一天赋无法触发": no 战术防御 SP, no hurt SP).
+  // Alternate S1 充能防御 (AUTO, hurt SP, "技能自动开启" — an AUTO skill takes no 技能策略: SP_FULL, so the hit that fills SP
+  // sets it off): PRTS "技能拥有8s的持续时间": for bb.duration s DEF +def, and the next damage instance taken is blocked
+  // (cancelled — a blocked hit "导致第一天赋无法触发": no 战术防御 SP, no hurt SP).
   chess_char_1_20_a: (bb, chess) => {
     const t = talentBb(chess, 0);
     const grid = talentGrid(chess, 0);
@@ -993,7 +999,7 @@ export default {
     return {
       skills: {
         [S1]: {
-          kind: 'duration', duration: num(b1.duration, 8), mods: { defPct: num(b1.def) },
+          kind: 'duration', duration: num(b1.duration, 8), mods: { defPct: num(b1.def) }, trigger: 'SP_FULL',
           onStart({ battle, unit, skill }) {
             battle.addBuff(unit, { key: blockKey, duration: skill.duration + 0.05, tags: ['skill'], visible: true });
             battle.fx('shield', { x: unit.x, y: unit.y, id: unit.id });

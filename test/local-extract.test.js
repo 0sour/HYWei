@@ -1,7 +1,7 @@
 // tools/local-extract/extract.py (DESIGN §13 / §15): the job table, the manifest merge of --only, and the helpers that
 // summarise Materials (map/<theme>/materials.json) and GameObjects (mesh/<bundle>/prefab.json) for the official 3D
-// board. The Python helpers run without UnityPy (duck-typed fakes); the real-output checks skip when nothing was
-// extracted on this machine.
+// board, and enemy_scales.py's table of the official enemy model sizes (build-data MODEL_SCALES). The Python helpers
+// run without UnityPy (duck-typed fakes); the real-output checks skip when nothing was extracted on this machine.
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -159,5 +159,18 @@ describe('extracted board-scene files (when a local client was extracted)', { sk
     }
     const bkg = JSON.parse(readFileSync(onDisk(manifest.groups['mesh/map_autochess_bkg'].prefab.path), 'utf8'));
     assert.deepEqual(bkg.map((n) => n.name), ['S_Background_common', 'S_Background_shadow']);
+  });
+});
+
+describe('enemy_scales.py (official enemy model sizes → build-data MODEL_SCALES, user playtest #6 item 9)', { skip: !PY && 'no python3' }, () => {
+  test('group_table: prefabs off the 0.27 standard, grouped by value, "enemy_" dropped; build-data carries the same values', () => {
+    const src = `import sys, json\nsys.path.insert(0, ${JSON.stringify(TOOL)})\nimport enemy_scales as s\n`
+      + `print(json.dumps(s.group_table({'enemy_1005_yokai_3': 0.16, 'enemy_1005_yokai': 0.2, 'enemy_1040_bombd': 0.2, 'enemy_10083_hlbird': 0.27, 'enemy_x': None})))`;
+    const r = spawnSync(PY, ['-c', src], { encoding: 'utf8', env: ENV });
+    assert.equal(r.status, 0, r.stderr);
+    const lines = JSON.parse(r.stdout);
+    assert.deepEqual(lines, ["  [0.16, ['1005_yokai_3']],", "  [0.2, ['1005_yokai', '1040_bombd']],"]);
+    const bd = readFileSync(path.join(ROOT, 'tools/build-data.mjs'), 'utf8');
+    assert.ok(bd.includes(lines[0].trim()), 'build-data MODEL_SCALES: 威龙 0.16');
   });
 });

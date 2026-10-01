@@ -114,7 +114,7 @@ npm start                   # http://localhost:3000
 ## 测试
 
 ```bash
-node --test                 # 单元 + 集成测试（约 2600 项；缺少素材 / 浏览器的用例会自动跳过）
+node --test                 # 单元 + 集成测试（约 2750 项；缺少素材 / 浏览器的用例会自动跳过）
 SP_E2E=1 node --test test/ui/mock.e2e.test.js      # 需要本机 Chrome（CHROME_PATH 可指定路径）
 SP_REAL_E2E=1 node --test test/ui/real.e2e.test.js # 需要 Chrome + 已下载素材
 ```

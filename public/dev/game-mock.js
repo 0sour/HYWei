@@ -287,7 +287,7 @@ function setPhase(phase, variant) {
       let cards;
       if (fam === 'supply') cards = shuffle(shopItems().filter((i) => i.tier >= 3)).slice(0, 6).map((i) => ({ itemId: i.id }));
       else if (fam === 'tactic') cards = shuffle(ch.cards.tactic.filter((t) => t.kind !== 'terrain')).slice(0, 6).map((t) => ({ effectId: t.effectId }));
-      else cards = shuffle(ch.cards.bounty.filter((b) => !b.name.includes('战术特训'))).slice(0, 6).map((b) => ({ effectId: b.effectId }));
+      else cards = shuffle(ch.cards.bounty.filter((b) => b.draft !== false)).slice(0, 6).map((b) => ({ effectId: b.effectId }));
       if (solo) { cards = cards.slice(0, 3); pub.deadline = 0; }
       pub.sp = { family: fam, cards, order: solo ? ['p1'] : ['p4', 'p1', 'ai_2', 'p3'], turn: solo ? 'p1' : 'p1', picks: solo ? {} : { p4: 2 }, untimed: solo };
       pub.players.forEach((p) => { p.status = p.playerId === 'p4' ? 'ready' : 'deciding'; });
@@ -349,6 +349,21 @@ function startCombat(phase) {
   if (VARIANTS.has('paused')) pub.paused = true;
   pub.players.forEach((p, i) => { p.status = phase === PHASE.SETTLE ? 'done' : i === 1 ? 'done' : 'combat'; });
   if (phase === PHASE.UNITE) { pub.players[1].status = 'helping'; pub.players[0].status = 'helping'; }
+  // 联防 live counter (user playtest #6 item 7; server m.public unite / players[].uniteLeft / pendingLp): ?variant=leaker
+  // — you and 灰烬 let enemies through, the AI and Doctor·B help; otherwise Doctor·B leaked. The first leaker's count of
+  // enemies still standing (uncapped: the ×N tag) falls with every kill below.
+  const leakMock = phase === PHASE.UNITE && VARIANTS.has('leaker');
+  const leftOf = (pid, n) => { const p = pub.players.find((x) => x.playerId === pid); if (p) { p.uniteLeft = n; p.pendingLp = Math.min(10, n) || undefined; } };
+  if (phase === PHASE.UNITE) {
+    pub.unite = leakMock ? { helpers: ['ai_2', 'p3'], leakers: ['p1', 'p4'] } : { helpers: ['p1', 'ai_2'], leakers: ['p3'] };
+    if (leakMock) { leftOf('p1', 13); leftOf('p4', 3); pub.players[0].status = 'done'; pub.players[2].status = 'helping'; } else leftOf('p3', 12);
+  }
+  const countKill = () => {
+    if (phase !== PHASE.UNITE) return;
+    const pid = leakMock ? 'p1' : 'p3';
+    const p = S.pub.players.find((x) => x.playerId === pid);
+    if (p && p.uniteLeft > 0) { leftOf(pid, p.uniteLeft - 1); pushPublic(); }
+  };
   if (VARIANTS.has('done')) pub.players[0].status = 'done';
   let fields;
   let rect;
@@ -435,7 +450,7 @@ function startCombat(phase) {
       tgt.hp -= e2boss(tgt) ? dmg * 3 : dmg;
       ev.push(['atk', a.id, tgt.id, 'arrow'], ['dmg', tgt.id, dmg, rnd() < 0.3 ? 'arts' : 'phys']);
       a.sp = (a.sp + 1) % a.spMax;
-      if (tgt.hp <= 0 && !tgt.boss && !tgt.dead) { tgt.dead = true; killed++; ev.push(['die', tgt.id]); }
+      if (tgt.hp <= 0 && !tgt.boss && !tgt.dead) { tgt.dead = true; killed++; ev.push(['die', tgt.id]); countKill(); }
     }
     if (rnd() < 0.15) { const a = pick(allyState); a.hp = Math.min(a.maxHp, a.hp + 180); ev.push(['heal', a.id, 180]); }
     const snapUnits = [
@@ -667,7 +682,8 @@ function applyUiVariants() {
   }
   if (VARIANTS.has('settings')) clickSel('.gm__gear', 400);
   if (VARIANTS.has('collapsed')) clickSel('.funds__collapse', 400);
-  if (VARIANTS.has('detail')) clickSel('.scard .scard__detail', 500);
+  // the first tap on a shop card selects it and opens its detail (there is no ⓘ corner)
+  if (VARIANTS.has('detail')) clickSel('.shopbar__cards .scard:not(.scard--sold)', 500);
   if (VARIANTS.has('detailpiece')) setTimeout(() => {
     const el = document.querySelector('.ff-piece.is-golden') || document.querySelector('.ff-piece');
     el?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 10, clientY: 10 }));
@@ -683,7 +699,7 @@ const SWITCH = [
   ['PREP + temp', PHASE.PREP, 'temp'], ['PREP frozen', PHASE.PREP, 'frozen'], ['PREP dead', PHASE.PREP, 'dead'],
   ['PREP boss (L)', PHASE.PREP, 'boss'], ['PREP boss (R)', PHASE.PREP, 'bossR'],
   ['SP bounty', PHASE.SP_DRAFT, 'bounty'], ['SP supply', PHASE.SP_DRAFT, 'supply'], ['SP tactic', PHASE.SP_DRAFT, 'tactic'], ['SP solo', PHASE.SP_DRAFT, 'solo'],
-  ['COMBAT', PHASE.COMBAT, ''], ['COMBAT done', PHASE.COMBAT, 'done'], ['UNITE', PHASE.UNITE, ''], ['SETTLE', PHASE.SETTLE, ''],
+  ['COMBAT', PHASE.COMBAT, ''], ['COMBAT done', PHASE.COMBAT, 'done'], ['UNITE', PHASE.UNITE, ''], ['UNITE leaker', PHASE.UNITE, 'leaker'], ['SETTLE', PHASE.SETTLE, ''],
   ['FINAL_ASSAULT', PHASE.FINAL_ASSAULT, ''], ['FA overtime soon', PHASE.FINAL_ASSAULT, 'overtime'], ['FA draining', PHASE.FINAL_ASSAULT, 'drain'],
   ['HIDDEN_CORE', PHASE.HIDDEN_CORE, ''], ['COMBAT solo (pause)', PHASE.COMBAT, 'solo'], ['FA solo paused', PHASE.FINAL_ASSAULT, 'solo,paused'],
   ['RESULT win', PHASE.RESULT, ''], ['RESULT lose', PHASE.RESULT, 'defeat'],

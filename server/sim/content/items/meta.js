@@ -10,14 +10,20 @@
 //               golden stays in the hand (the built-in equipped the merged golden on the copy, and its live loop over
 //               the target's items skipped the item after a merge)
 //   紧急调度券   a shop operator leaves its slot only when it was actually granted (built-in cleared the slot first)
-//   寻呼模块     the special refresh shows `refresh_cnt` DIFFERENT operators when the pool allows it
+//   寻呼模块     the special refresh shows `refresh_cnt` DIFFERENT operators (fewer when the pool has no more)
 //   突变细胞     after the battle the carrier becomes a NORMAL random tier+1 operator; its other equipment goes back to
 //               the hand (built-in kept it on the new operator)
-//   教鞭 / “神秘顾客”  trap_create_self_choice {choice_event: hunter_band_1}: the bounty comes from the band bounty
-//               family `enemyeffect_b_*` (research 04 §7: "offer 3 random enemyeffect_b_* bounties … adds 1 enemy to your
-//               next battle, killer gets `coin` funds"); the built-in drew any tier ≤ II kill bounty (incl. 2-round and
-//               faction bounties). [ASSUMED simplification, engine: no PERSONAL_CHOOSE overlay] 3 are drawn and one of
-//               them is taken at random. Falls back to the built-in when the family is empty.
+//   教鞭        trap_create_self_choice {choice_event: hunter_band_1}: the bounty is a 战术特训 card (choices.json
+//               cards.bounty payout `perfect`, e.g. 战术特训·飞行I "若各自行动阶段就达成完美作战，获得1资金") — PRTS
+//               卫戍协议：盟约 下半/PRTS盟约记录 §法术 教鞭 "于3个战术特训的悬赏任务中选择一项", §机变阶段 "※以下悬赏任务仅由
+//               法术教鞭生成", and 杜宾 加练！ "<教鞭>：使用后为下场战斗添加额外敌人，若自身战斗完美作战可获得资金" (user
+//               playtest #6 item 4 review; the built-in drew any tier ≤ II kill bounty, and research 04 §7 [ASSUMED]
+//               the band family `enemyeffect_b_*`).
+//   “神秘顾客”  the same trap_create_self_choice ("选择一项特殊悬赏任务"; no band grants it in act2, research 04): a band
+//               bounty `enemyeffect_b_*` (research 04 §7 [ASSUMED]: "adds 1 enemy to your next battle, killer gets `coin`
+//               funds").
+//               Both: [ASSUMED simplification, engine: no PERSONAL_CHOOSE overlay] 3 cards whose enemy can appear in the
+//               mode are drawn and one of them is taken at random; the built-in runs when the family is empty.
 //   “神秘顾客”  trap_disney_special: when actively destroyed, +count funds and the Art passes to the next alive player
 //               (seat order, cyclic)
 //   天师古鼎     equip_with_another_gain_coin_when_gain_char: a 【炎】 carrier also holding 炎国短刀 (either quality)
@@ -42,14 +48,18 @@ function pieceIsMember(ctx, piece, bondId) {
   return bonds.includes('maniShip') && isCoreBond(bondId) && ctx.bondActive('maniShip') && ctx.bondActive(bondId);
 }
 
-/** Offer size of the personal bounty choice (research 04 §7, [ASSUMED]). */
+/** Offer size of the personal bounty choice (PRTS 法术 教鞭 "于3个战术特训的悬赏任务中选择一项"). */
 const OFFER_SIZE = 3;
-/** Bounty cards of the band bounty family `enemyeffect_b_*` whose enemy can appear in this mode. */
-function bandBounties(ctx) {
+/** cards.bounty entries matching `test` whose enemy can appear in this mode. */
+function bountyCards(ctx, test) {
   const all = ctx.data && ctx.data.choices && ctx.data.choices.cards && Array.isArray(ctx.data.choices.cards.bounty) ? ctx.data.choices.cards.bounty : [];
   const inactive = ctx.gd.inactiveEnemies instanceof Set ? ctx.gd.inactiveEnemies : new Set();
-  return all.filter((c) => c && /^enemyeffect_b_\d+$/.test(String(c.effectId)) && ctx.gd.enemy(c.enemyKey) && !inactive.has(c.enemyKey));
+  return all.filter((c) => c && test(c) && ctx.gd.enemy(c.enemyKey) && !inactive.has(c.enemyKey));
 }
+/** The 战术特训 cards (perfect payout: the chooser's own phase perfect) — what 教鞭 offers. */
+const isTraining = (c) => c.payout === 'perfect';
+/** The band bounty family `enemyeffect_b_*` — what “神秘顾客” offers [ASSUMED]. */
+const isBandBounty = (c) => /^enemyeffect_b_\d+$/.test(String(c.effectId));
 
 function wrap(registry, key, hooks) {
   const base = registry.get(`item:${key}`) || {};
@@ -85,7 +95,8 @@ export function registerMeta(registry) {
       const shares = (id) => { const c = ctx.gd.chess(id); return !!(c && Array.isArray(c.bonds) && c.bonds.some((b) => bonds.has(b))); };
       const ids = [];
       for (let k = 0; k < n; k++) {
-        const id = ctx.rollChess({ maxTier, filter: (x) => shares(x) && !ids.includes(x) }) || ctx.rollChess({ maxTier, filter: shares });
+        // never the same operator twice (user playtest #6 item 19): fewer cards when the pool has no other one
+        const id = ctx.rollChess({ maxTier, filter: (x) => shares(x) && !ids.includes(x) });
         if (id) ids.push(id);
       }
       if (ids.length) ctx.offerChess(ids, { source: 'item' });
@@ -109,11 +120,11 @@ export function registerMeta(registry) {
     },
   }));
 
-  // 教鞭 / “神秘顾客” — trap_create_self_choice {choice_event}: a band bounty (enemyeffect_b_*) for the next battle
-  for (const key of ['chess_item_6_03_m', 'chess_item_6_01_m']) {
+  // 教鞭 / “神秘顾客” — trap_create_self_choice {choice_event}: 教鞭 a 战术特训 card, “神秘顾客” a band bounty (enemyeffect_b_*)
+  for (const [key, family] of [['chess_item_6_03_m', isTraining], ['chess_item_6_01_m', isBandBounty]]) {
     wrap(registry, key, (base) => ({
       onArt(ctx, ev) {
-        const cards = bandBounties(ctx);
+        const cards = bountyCards(ctx, family);
         if (!cards.length) { if (typeof base.onArt === 'function') base.onArt.call(base, ctx, ev); return; }
         const offer = ctx.rng.shuffle(cards.slice()).slice(0, OFFER_SIZE);
         const card = ctx.rng.pick(offer);

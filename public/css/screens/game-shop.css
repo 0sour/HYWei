@@ -82,6 +82,8 @@
 .lvcard.is-max { background: linear-gradient(180deg, #d9b24a, #a07a1c); color: #1d1400; cursor: default; filter: none; }
 
 /* ---- operator / item card ---- */
+/* A tap anywhere on a card is the card's tap (no ⓘ corner — user playtest #6 item 10); the 确认购买 strip takes no
+   pointer. The detail opens with the first tap, a right-click / long press, or a tap while the bar is not editable. */
 .scard-wrap { display: flex; }
 .scard {
   --tc: var(--tier-1);
@@ -126,14 +128,11 @@
 .scard__bond .bglyph { width: .18rem; height: .18rem; }
 .scard__class { display: flex; align-items: center; gap: .05rem; font-size: .13rem; color: var(--text-lo); }
 .scard__prof { width: .18rem; height: .18rem; object-fit: contain; opacity: .85; }
-.scard__detail { position: absolute; right: .04rem; bottom: .04rem; z-index: 3; width: .24rem; height: .24rem; display: grid; place-items: center; color: var(--text-dim); opacity: 0; transition: opacity var(--t-fast), color var(--t-fast); cursor: help; }
-.scard__detail .icon { width: .18rem; height: .18rem; }
-.scard:hover .scard__detail { opacity: 1; }
-.scard__detail:hover { color: var(--mint-400); }
 .scard__mergetag { position: absolute; z-index: 3; right: 0; top: .38rem; font-size: .12rem; font-weight: 700; padding: .01rem .06rem; background: var(--gold); color: #1d1400; letter-spacing: .08em; }
 .scard:not(.is-disabled):not(.scard--sold):hover { transform: translateY(-.08rem); border-color: var(--mint-400); box-shadow: 0 0 0 1px var(--mint-400), 0 .1rem .24rem rgba(23, 249, 183, .22); }
 .scard:not(.is-disabled):not(.scard--sold):active { transform: translateY(-.04rem); }
 .scard.is-disabled { cursor: not-allowed; }
+.shopbar.is-locked .scard:not(.scard--sold) { cursor: help; } /* not editable: a tap opens the detail */
 .scard.is-disabled .scard__art, .scard.is-disabled .scard__itemart { filter: grayscale(.7) brightness(.6); }
 .scard.is-merge { border-color: var(--gold); box-shadow: 0 0 0 1px rgba(255, 198, 0, .6), 0 0 .2rem rgba(255, 198, 0, .3); }
 .scard.is-frozen::after { content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none;
@@ -204,6 +203,10 @@
 @keyframes pulse-gold { 50% { box-shadow: 0 0 .24rem rgba(255, 198, 0, .5); } }
 
 /* ---- two-tap buy / upgrade (research 09 §5): the first tap lifts + enlarges the card and shows 确认购买 ---- */
+/* while a card is armed the bar sits above the detail card its first tap opened (.dpanel, z-index 9): on phones narrower
+   than 768 px the left-docked detail reaches down over the bar's first cards (bottom 87 px from the screen's bottom,
+   devices.css) and took the confirming tap on their top quarter (640×360: 108 of 144 points; user playtest #6 item 10) */
+.shopbar.has-armed { z-index: 10; }
 .scard.is-armed {
   z-index: 3; transform: translateY(-.16rem) scale(1.08) !important; border-color: var(--gold);
   box-shadow: 0 0 0 2px var(--gold), 0 .14rem .32rem rgba(0, 0, 0, .65), 0 0 .3rem rgba(255, 198, 0, .35) !important;

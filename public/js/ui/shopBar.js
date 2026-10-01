@@ -5,8 +5,12 @@
 // `EventOnUpgrade`): the first tap selects a card — it lifts and enlarges, its detail opens and it shows 确认购买
 // (无法购买 + the reason when it cannot be bought) — and a second tap on the same card buys it; the LEVEL card's first
 // tap arms 确认升级 and the second upgrades (已满级 at level 6). A tap anywhere else, a shop change or the end of the
-// editable phase disarms. The D / R / F keys stay one-press shortcuts. There is no drag-to-sell zone: selling is the
-// 出售 +N button of a tapped unit's underframe (ui/underframe.js). After a promotion the operator cards are replaced by
+// editable phase disarms. A tap anywhere on a card is the card's tap — its 确认购买 strip included (it takes no
+// pointer): there is no ⓘ corner (the official cards have none; user playtest #6 item 10 — on phones its invisible
+// 44 px touch area covered the card's bottom-right quarter, half the strip, and a second tap there only re-opened the
+// detail); a card that cannot be bought right now (the bar is not editable: ready, round start) opens its detail. The
+// D / R / F keys stay one-press shortcuts. There is no drag-to-sell zone: selling is the 出售 +N button of a tapped
+// unit's underframe (ui/underframe.js). After a promotion the operator cards are replaced by
 // the 晋升奖励 cards (3 free operators, pick 1 — also two taps) until picked or put off (稍后 → rewardOverlay.js pill).
 // Every operator card shows the skill it will fight with — the player's 干员调配 loadout (m.private.loadout, DESIGN
 // §16): the skill icon above the name, mint-framed with 已调配 in its title when it is not the default skill (and the
@@ -53,11 +57,10 @@ export function ChessCard({ slot, idx, priv, frozen = false, reason = null, free
   const bonds = Array.isArray(c?.bonds) ? c.bonds : [];
   const disabled = !!reason;
   const lo = c ? chessLoadout(c, priv?.loadout, LOOKUPS.getChess) : null;
-  const tap = () => { if (onTap) onTap(idx); else if (!disabled) onBuy(idx); };
+  const tap = () => { if (onTap) onTap(idx); else if (!disabled) onBuy(idx); else onDetail(slot.id); };
   const card = html`<button type="button" class=${cx('scard', `scard--t${tier}`, frozen && 'is-frozen', disabled && 'is-disabled', willMerge && 'is-merge', armed && 'is-armed')}
       onClick=${tap} onContextMenu=${(e) => { e.preventDefault(); onDetail(slot.id); }}
-      aria-label=${`${c?.name || '干员'}，价格 ${slot.price}${armed ? (disabled ? '，无法购买' : '，再次点击确认') : ''}`} aria-disabled=${disabled && !onTap ? 'true' : 'false'}
-      aria-pressed=${onTap ? String(!!armed) : undefined}>
+      aria-label=${`${c?.name || '干员'}，价格 ${slot.price}${armed ? (disabled ? '，无法购买' : '，再次点击确认') : ''}`} aria-pressed=${onTap ? String(!!armed) : undefined}>
     <span class="scard__bg" aria-hidden="true"></span>
     <span class="scard__water" aria-hidden="true">${bonds[0] ? html`<${BondGlyph} bondId=${bonds[0]} />` : null}</span>
     <${Img} src=${chessPortraitUrl(m, c)} class="scard__art" />
@@ -82,8 +85,6 @@ export function ChessCard({ slot, idx, priv, frozen = false, reason = null, free
     ${willMerge ? html`<span class="scard__mergetag">可晋升</span>` : null}
     ${frozen ? html`<span class="scard__ice" aria-hidden="true"><${Icon} name="snow" /></span>` : null}
     ${armed ? html`<${ArmedTag} reason=${reason} free=${free} />` : null}
-    <span class="scard__detail" role="button" tabindex="-1" aria-label="详情" title="查看详情"
-      onClick=${(e) => { e.stopPropagation(); onDetail(slot.id); }}><${Icon} name="info" /></span>
   </button>`;
   return reason && reason !== '已售出' && !armed ? html`<${Tooltip} text=${reason} block=${true} class="scard-wrap">${card}<//>` : card;
 }
@@ -103,11 +104,16 @@ function SkillBadge({ chess, lo }) {
   </span>`;
 }
 
-function ItemCard({ slot, idx, frozen, reason, armed = false, onTap = null, onBuy, onDetail }) {
+/**
+ * Item card (the bar's item slot): the same two taps as an operator card.
+ * @param {{ slot:any, idx:number, frozen?:boolean, reason?:string|null, armed?:boolean, onTap?:(idx:number)=>void,
+ *   onBuy:Function, onDetail:Function }} props
+ */
+export function ItemCard({ slot, idx, frozen = false, reason = null, armed = false, onTap = null, onBuy, onDetail }) {
   const it = data.lookup('items', slot.id);
   const m = data.get('assets');
   const disabled = !!reason;
-  const tap = () => { if (onTap) onTap(idx); else if (!disabled) onBuy(idx); };
+  const tap = () => { if (onTap) onTap(idx); else if (!disabled) onBuy(idx); else onDetail(slot.id, 'item'); };
   const card = html`<button type="button" class=${cx('scard', 'scard--item', frozen && 'is-frozen', disabled && 'is-disabled', armed && 'is-armed')}
       onClick=${tap} onContextMenu=${(e) => { e.preventDefault(); onDetail(slot.id, 'item'); }}
       aria-label=${`${it?.name || '装备'}，价格 ${slot.price}${armed ? (disabled ? '，无法购买' : '，再次点击确认') : ''}`}
@@ -124,7 +130,6 @@ function ItemCard({ slot, idx, frozen, reason, armed = false, onTap = null, onBu
     </span>
     ${frozen ? html`<span class="scard__ice" aria-hidden="true"><${Icon} name="snow" /></span>` : null}
     ${armed ? html`<${ArmedTag} reason=${reason} />` : null}
-    <span class="scard__detail" role="button" tabindex="-1" aria-label="详情" onClick=${(e) => { e.stopPropagation(); onDetail(slot.id, 'item'); }}><${Icon} name="info" /></span>
   </button>`;
   return reason && reason !== '已售出' && !armed ? html`<${Tooltip} text=${reason} block=${true} class="scard-wrap">${card}<//>` : card;
 }

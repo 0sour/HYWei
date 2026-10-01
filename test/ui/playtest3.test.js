@@ -130,7 +130,7 @@ describe('2: the own LP drops live while the battle runs', () => {
       const r = liveLp(null, { phase, round: 3, lp: 40, leaks: 9 });
       assert.deepEqual([r.pending, r.shown, r.base], [0, 40, null], phase);
     }
-    assert.deepEqual(liveLp(null, { phase: PHASE.COMBAT, round: 3, lp: undefined, leaks: 2 }), { base: null, pending: 0, shown: null, unite: false });
+    assert.deepEqual(liveLp(null, { phase: PHASE.COMBAT, round: 3, lp: undefined, leaks: 2 }), { base: null, pending: 0, shown: null, unite: false, left: null });
     assert.match(pendingTip(30, 3), /结算时扣除 3 点/);
     assert.match(pendingTip(30, 10, { unite: true }), /联防中/);
     assert.equal(pendingTip(30, 0), null);
@@ -138,16 +138,16 @@ describe('2: the own LP drops live while the battle runs', () => {
 
   test('team panel rows: the own row takes the top bar\'s live value, a teammate\'s m.public players[].pendingLp; only in COMBAT / 联防', () => {
     const pub = { phase: PHASE.COMBAT };
-    assert.deepEqual(rowLp({ lp: 30, pendingLp: 3 }, pub), { lp: 30, pending: 3, unite: false });
-    assert.deepEqual(rowLp({ lp: 2, pendingLp: 3 }, pub), { lp: 2, pending: 2, unite: false }, 'clamped at the LP left');
-    assert.deepEqual(rowLp({ lp: 30 }, pub), { lp: 30, pending: 0, unite: false });
-    assert.deepEqual(rowLp({ lp: 30, pendingLp: 4 }, { phase: PHASE.UNITE }), { lp: 30, pending: 4, unite: true });
-    assert.deepEqual(rowLp({ lp: 30, pendingLp: 4 }, { phase: PHASE.SETTLE }), { lp: 30, pending: 0, unite: false });
-    assert.deepEqual(rowLp({ lp: 30, pendingLp: 4, alive: false }, pub), { lp: 30, pending: 0, unite: false });
+    assert.deepEqual(rowLp({ lp: 30, pendingLp: 3 }, pub), { lp: 30, pending: 3, unite: false, left: null });
+    assert.deepEqual(rowLp({ lp: 2, pendingLp: 3 }, pub), { lp: 2, pending: 2, unite: false, left: null }, 'clamped at the LP left');
+    assert.deepEqual(rowLp({ lp: 30 }, pub), { lp: 30, pending: 0, unite: false, left: null });
+    assert.deepEqual(rowLp({ lp: 30, pendingLp: 4 }, { phase: PHASE.UNITE }), { lp: 30, pending: 4, unite: true, left: null });
+    assert.deepEqual(rowLp({ lp: 30, pendingLp: 4 }, { phase: PHASE.SETTLE }), { lp: 30, pending: 0, unite: false, left: null });
+    assert.deepEqual(rowLp({ lp: 30, pendingLp: 4, alive: false }, pub), { lp: 30, pending: 0, unite: false, left: null });
     // the own row: the top bar's numbers (m.private lp — m.public may lag behind it by a throttle interval)
-    assert.deepEqual(rowLp({ lp: 30, pendingLp: 1 }, pub, { lp: 30, pending: 5, unite: false }), { lp: 30, pending: 5, unite: false });
-    assert.deepEqual(rowLp({ lp: 30 }, pub, { lp: 25, pending: 0, unite: false }), { lp: 25, pending: 0, unite: false }, 'settled m.private first');
-    assert.deepEqual(rowLp({ lp: 30 }, { phase: PHASE.FINAL_ASSAULT }, { lp: 99, pending: 5 }), { lp: 30, pending: 0, unite: false }, 'boss rounds: the row keeps its own share');
+    assert.deepEqual(rowLp({ lp: 30, pendingLp: 1 }, pub, { lp: 30, pending: 5, unite: false }), { lp: 30, pending: 5, unite: false, left: null });
+    assert.deepEqual(rowLp({ lp: 30 }, pub, { lp: 25, pending: 0, unite: false }), { lp: 25, pending: 0, unite: false, left: null }, 'settled m.private first');
+    assert.deepEqual(rowLp({ lp: 30 }, { phase: PHASE.FINAL_ASSAULT }, { lp: 99, pending: 5 }), { lp: 30, pending: 0, unite: false, left: null }, 'boss rounds: the row keeps its own share');
   });
 
   test('LP tower: lp − pending in red with a −N tick keyed by the pending value (it pops again on every leak), the 联防中 tag', () => {

@@ -268,10 +268,13 @@ function burstLockOf(u) {
 
 /**
  * The element gauge a unit shows (b.snap `elem`, render/units.js): null when every gauge is empty and no burst
- * cooldown runs. Official display (PRTS 元素): one icon, the "当前损伤元素" — the fullest gauge (ties: the lower
- * official element id, constants.js ELEMENT_ORDER) — with its remaining EP; during a 爆发冷却 the bursting element,
- * refilling over the cooldown. Returns `[el, fill 0..1 (2 decimals), cooldownEnd (game s), cooldown (s)]`; the two
- * cooldown numbers are 0 outside a cooldown. `now` = the battle time.
+ * cooldown runs. Official display (PRTS 元素): one icon, the "当前损伤元素" — the fullest gauge, i.e. the least 元素值
+ * left (ties: the lower official element id, constants.js ELEMENT_ORDER) — with a white bar of its remaining 元素值;
+ * during a 爆发冷却 the bursting element, refilling over the cooldown. Returns `[el, fill, cooldownEnd (game s),
+ * cooldown (s)]`; the two cooldown numbers are 0 outside a cooldown. `fill` has 2 decimals and is rounded DOWN
+ * (0.01–0.99 while no burst runs, 1 during one), so the remainder shown (1 − fill) is never less than what is left —
+ * except that a first chip of less than 1 % (under 10 元素值 of 1000) already shows as 1 % taken — and the bar only
+ * runs out when the gauge bursts (user playtest #6). `now` = the battle time.
  */
 export function elementView(u, now) {
   const e = u.elem;
@@ -286,7 +289,8 @@ export function elementView(u, now) {
   let best = null, bv = 0;
   for (const k of ELEMENT_ORDER) { const v = e[k]; if (v > bv) { bv = v; best = k; } }
   if (!best) return null;
-  const fill = Math.min(1, Math.max(0.01, Math.round((bv / u.gaugeMax) * 100) / 100));
+  // rounded down (1e-9: 290 / 1000 × 100 is 28.999…), kept inside 1–99 %: a sliver shows, an empty bar = a burst
+  const fill = Math.min(0.99, Math.max(0.01, Math.floor((bv / u.gaugeMax) * 100 + 1e-9) / 100));
   return [best, fill, 0, 0];
 }
 

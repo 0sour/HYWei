@@ -455,8 +455,9 @@ function hostAction(gd, wave, { fly, token = false }) {
  * alone when the host spawns nothing, e.g. a walker bounty in a FLY round), then the whole list is spread over the
  * action window: unit j at preDelay + j·max(W/total, 0.05·W). Returned here: the bounty specs only (a bounty's
  * consecutive units share a spec); the host action's own units are NOT re-timed — `withBounties` gives the exact
- * combined list. Multi-round bounties ("之后的每场作战", `rounds` > 1) spawn in every battle of the player while they
- * last — the Final Assault and the Hidden Core included (`side`: the player's half of the boss field, see routeByMotion).
+ * combined list. Bounties of several battles (`rounds` > 1: "接下来两场作战", and the multi-round cards, which last
+ * choices.js MULTI_ROUND_BOUNTY_BATTLES) spawn in every battle of the player while they last — the Final Assault and the
+ * Hidden Core included (`side`: the player's half of the boss field, see routeByMotion).
  * @param {Array<{ id: string, card: object }>} bounties
  */
 export function bountySpawns(gd, round, wave, bounties, playerId, { solo = false, side = null } = {}) { // eslint-disable-line no-unused-vars

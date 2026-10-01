@@ -134,7 +134,7 @@ test('stat aggregation: (base+flat)(1+pct)Πmul, res clamp, aspd clamp, interval
   approx(u.hp, 1000, 1e-6);
   u.buffs.push({ key: 'c', stacks: 1, mods: { aspd: -500 } });
   u.markDirty();
-  assert.equal(u.s.aspd, 10);
+  assert.equal(u.s.aspd, 20, 'ASPD floor 20 (PRTS 数值范围)');
 });
 
 test('buffs: replace / extend / stack / independent / keep, expiry and onExpire', () => {

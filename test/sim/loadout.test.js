@@ -84,9 +84,12 @@ test('getChess(id, loadout): selected skill (bb, SP, trigger) and module (stats,
   assert.deepEqual(s1.stats, def0.stats, 'a skill choice never changes stats');
   assert.ok(Object.isFrozen(s1) && Object.isFrozen(s1.skill.bb), 'variant defs are frozen like every def');
   assert.equal(C[INSIDE].skill.skillId, 'skchr_inside_2', 'the raw record is never mutated');
-  // per-index trigger: 角峰 S1 casts when hit (TANK row, skill 1 only); S2 is DEFAULT
+  // per-skill trigger (PRTS 技能策略): 角峰's MANUAL skills both cast when hit (the 重装 row covers every skill); 古米's
+  // AUTO S1 keeps its own rule (DEFAULT in data, its kit: an injured ally of the skill range), his MANUAL S2 TAKE_DAMAGE
   assert.equal(d.getChess('chess_char_1_02_a', { skillIndex: 0 }).skill.trigger.rule, 'TAKE_DAMAGE');
-  assert.equal(d.getChess('chess_char_1_02_a', { skillIndex: 1 }).skill.trigger.rule, 'DEFAULT');
+  assert.equal(d.getChess('chess_char_1_02_a', { skillIndex: 1 }).skill.trigger.rule, 'TAKE_DAMAGE');
+  assert.equal(d.getChess('chess_char_1_10_a', { skillIndex: 0 }).skill.trigger.rule, 'DEFAULT');
+  assert.equal(d.getChess('chess_char_1_10_a', { skillIndex: 1 }).skill.trigger.rule, 'TAKE_DAMAGE');
 
   // modules on the elite: statsBase + module attr; trait / talents of that module; 'none' = the base
   const g = C[MLYSS];
@@ -358,22 +361,24 @@ test('getToken: def.sources / def.count follow the owner loadout (which summons 
 });
 
 test('a Battle built WITHOUT the spec path (server-run fields) resolves mid-battle summons with the owner loadout', { skip }, () => {
-  const CATHY = 'chess_char_4_11_a', SHIELD = 'token_10041_cathy_catsld';
+  // 缪尔赛思 without a 流形 piece: her 援军 is summoned during the battle (凯瑟琳's devices, the old example, are placed
+  // pieces since user playtest #6)
+  const MLYSS = 'chess_char_6_11_a', WTRMAN = 'token_10030_mlyss_wtrman';
   const run = (skillIndex) => {
     const players = [{ playerId: 'p1', seat: 0, side: 'L', colOffset: 0, bonds: {}, playerEffects: [],
-      units: [{ uid: 1, kind: 'chess', chessId: CATHY, row: 10, col: 5, dir: 'RIGHT', ...(skillIndex != null ? { skillIndex } : {}) }] }];
+      units: [{ uid: 1, kind: 'chess', chessId: MLYSS, row: 10, col: 5, dir: 'RIGHT', ...(skillIndex != null ? { skillIndex } : {}) }] }];
     const b = new Battle({ seed: 3, kind: 'normal', stageId: 'act2autochess_m01', timeLimit: 30, players, spawns: [], routes: [], data: freshDs(), recordEvents: false, quiet: true });
-    for (let i = 0; i < 60 && !b.allyUnits.some((u) => u.defId === SHIELD); i++) b.step();
-    const t = b.allyUnits.find((u) => u.defId === SHIELD);
-    assert.ok(t && t.uid == null, 'a device spawned during the battle');
+    for (let i = 0; i < 60 && !b.allyUnits.some((u) => u.defId === WTRMAN); i++) b.step();
+    const t = b.allyUnits.find((u) => u.defId === WTRMAN);
+    assert.ok(t && t.uid == null, 'a 流形 spawned during the battle');
     return [b, t];
   };
   const [b1, t1] = run(0);
   assert.ok(isLoadoutView(b1.data), 'installContent gave the battle the loadout view');
-  assert.equal(b1.allyUnits.find((u) => u.uid === 1).skill.id, C[CATHY].skills[0].skillId);
-  assert.equal(t1.def.skill.id, 'sktok_cathy_catsld_1', 'the summon follows the owner\'s S1');
-  const [, t2] = run(1);
-  assert.equal(t2.def.skill.id, 'sktok_cathy_catsld_2', 'default owner ⇒ default token skill');
+  assert.equal(b1.allyUnits.find((u) => u.uid === 1).skill.id, C[MLYSS].skills[0].skillId);
+  assert.equal(t1.def.skill.id, 'sktok_mlyss_wtrman_1', 'the summon follows the owner\'s S1');
+  const [, t2] = run(null);
+  assert.equal(t2.def.skill.id, 'sktok_mlyss_wtrman_3', 'default owner (S3) ⇒ default token skill');
   // the spec path is not wrapped twice
   const spec = normalSpec([{ uid: 1, chessId: INSIDE, row: 10, col: 5, dir: 'RIGHT', skillIndex: 0 }]);
   const b3 = createBattleFromSpec(spec, freshDs(), { recordEvents: false, quiet: true });

@@ -881,6 +881,34 @@ test('信标: target and item destroyed, offer of 2 same-tier operators; co-op: 
   cover(A('5_04'), B('5_04'));
 });
 
+test('pick-one chess offers never repeat an operator — 信标, 寻呼模块, any offer list (user playtest #6 item 19)', () => {
+  let n = 0;
+  for (let seed = 1; seed <= 24; seed++) {
+    for (const lvl of [1, 3, 6]) {
+      // 寻呼模块: same-bond operators up to the shop level — fewer cards when the pool has no other one, never a repeat
+      let { m, ps, equip } = setup({ seed });
+      ps.shop.level = lvl;
+      const pool1 = plain((c) => c.bonds.length && c.tier <= lvl);
+      const cid = pool1[seed % pool1.length];
+      const t = give(m, ps, cid, 'hand');
+      assert.deepEqual(equip(giveItem(m, ps, A('4_01')), t), OK);
+      for (const o of ps.offers) { const ids = o.slots.map((x) => x.id); assert.equal(new Set(ids).size, ids.length, `寻呼模块 seed ${seed} lv ${lvl}: ${ids}`); n++; }
+      // 信标: operators of the target's tier (topped up from the tier below), never a repeat
+      ({ m, ps, equip } = setup({ seed }));
+      const pool2 = plain((c) => c.tier === lvl && c.bonds.length);
+      const t2 = give(m, ps, pool2[seed % pool2.length], 'hand');
+      assert.deepEqual(equip(giveItem(m, ps, A('5_04')), t2), OK);
+      for (const o of ps.offers) { const ids = o.slots.map((x) => x.id); assert.equal(new Set(ids).size, ids.length, `信标 seed ${seed} tier ${lvl}: ${ids}`); n++; }
+    }
+  }
+  assert.ok(n >= 100, `offers checked (${n})`);
+  // whoever builds the list, the offer drops a repeated operator
+  const { ps } = setup({ seed: 5 });
+  const [a, b] = plain((c) => c.tier === 2);
+  const offer = ps.pushRewardOffer('effect', { ids: [a, a, b, a] });
+  assert.deepEqual(offer.slots.map((x) => x.id), [a, b]);
+});
+
 test('拟态物质: owning 2 copies gives the 3rd (→ elite); otherwise a random same-bond normal operator', () => {
   let { m, ps, equip } = setup({ seed: 9 });
   const cid = plain((c) => c.tier === 2 && c.bonds.length)[0];
@@ -1012,9 +1040,12 @@ test('画卷 (Art): copies the operator on the tile / in front with its elite st
   cover('chess_item_6_02_m');
 });
 
-test('教鞭 / “神秘顾客” (Arts): a band bounty (enemyeffect_b_*: +1 enemy next battle, killer gets its coins); 神秘顾客 destroyed ⇒ +1 fund, passes on', () => {
+test('教鞭 (Art): a 战术特训 bounty (PRTS "于3个战术特训的悬赏任务中选择一项": extra enemies, coins for a perfect own phase); “神秘顾客”: a band bounty; destroyed ⇒ +1 fund, passes on', () => {
+  // the 20 战术特训 cards — the ones the 悬赏决策 draft leaves out ("※以下悬赏任务仅由法术教鞭生成")
+  const training = new Set(DATA.choices.cards.bounty.filter((c) => c.draftExcluded === 'perfect').map((c) => c.effectId));
+  assert.equal(training.size, 20);
   const seen = new Set();
-  for (let s = 0; s < 4; s++) {
+  for (let s = 0; s < 6; s++) {
     const { m, ps } = setup({ seed: 60 + s });
     for (let k = 0; k < 2; k++) {
       const art = giveItem(m, ps, 'chess_item_6_03_m');
@@ -1022,14 +1053,14 @@ test('教鞭 / “神秘顾客” (Arts): a band bounty (enemyeffect_b_*: +1 ene
     }
     assert.equal(ps.bounties.length, 2);
     for (const b of ps.bounties) {
-      assert.match(b.card.effectId, /^enemyeffect_b_\d+$/, 'band bounty family (research 04 §7)');
-      assert.equal(b.card.payout, 'kill');
-      assert.equal(b.card.rounds, 1);
-      assert.equal(b.card.count, 1);
+      assert.ok(training.has(b.card.effectId), `${b.card.effectId} ${b.card.name}: a 战术特训 card (user playtest #6 item 4 review)`);
+      assert.match(b.card.name, /战术特训/);
+      assert.equal(b.card.payout, 'perfect', 'pays for a perfect own phase, not per kill');
+      assert.ok(m.gd.enemy(b.card.enemyKey) && !m.gd.inactiveEnemies.has(b.card.enemyKey), 'its enemy can appear in the mode');
       seen.add(b.card.effectId);
     }
   }
-  assert.ok(seen.size >= 4, 'random pick');
+  assert.ok(seen.size >= 5, 'random pick');
   const { h, m } = setup({ mode: 'coop', humans: 2, seed: 7 });
   const p0 = h.ps('p_0'), p1 = h.ps('p_1');
   const art = giveItem(m, p0, 'chess_item_6_01_m');

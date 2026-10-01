@@ -66,7 +66,9 @@
 // boss fields in real time without snapshots (they share the pool). A silent authority (deadline = time limit + 15 s)
 // or a disconnected one loses the field to the server, which re-simulates the spec; an implausible b.result is
 // replaced by the server's own simulation (fields.js validateClientResult). The shared boss pool, the team LP and the
-// overtime drain live here (b.pool ≤ 4 Hz, b.end; m.public follows a boss fight at ~1 Hz). No b.snap / b.ev is sent in
+// overtime drain live here (b.pool ≤ 4 Hz, b.end; m.public follows a boss fight at ~1 Hz); the first end condition the
+// server registers decides the Final Assault (pool 0 → victory, team LP 0 → defeat; nothing reported after a defeat is
+// credited — _finalEnding, user playtest #6 item 5). No b.snap / b.ev is sent in
 // this mode; g.watch hands out specs. battleIds are `<seed36>[-<matchNo36>].<round>.<seq>[.<fieldId>]` (≤ 64 chars):
 // unique across the matches of a room, so a report that crossed into the next match is ignored like any stale one; a
 // duplicate b.result (a browser re-sending one it believes lost) is answered ok and changes nothing.
@@ -74,7 +76,11 @@
 // clock and the server pacers; m.public.paused; resume shifts every clock / deadline by the pause.
 // Live LP (user playtest #3 item 2): during COMBAT / 联防 m.public players[].pendingLp = min(lpCapPerRound, the counted
 // leaks of the player's own battle so far) (_pendingLpView; omitted when 0) — the teammates' rows of the team panel
-// show lp − pendingLp; the settlement lands with the SETTLE view, where it is gone.
+// show lp − pendingLp; the settlement lands with the SETTLE view, where it is gone. 联防 (user playtest #6 item 7): a
+// leaker's players[].uniteLeft = its enemies still standing on the 联防 field (not spawned yet, alive, or through again;
+// uncapped, live: the authority's b.progress `left`, the server-run timeline or battle; exact once the field has its
+// result — _uniteLeft) and pendingLp = min(lpCapPerRound, uniteLeft): the counter falls as the helpers kill them (and
+// rises when one of them splits or summons — the children are billed to the same leaker).
 // User playtest #4: a match with a single human (独立模拟, or a 同盟 room started alone / with AI teammates) times no
 // phase outside its battles (soloUntimed); the co-op strategy draft has ONE countdown — BAND_TURN_SECONDS per turn,
 // published as m.public.deadline — AI seats pick at once and a turn that runs out takes the highlighted strategy
@@ -124,15 +130,16 @@ import { PlayerState } from './PlayerState.js';
 import { buildDeployMap, boardOrder, pieceDir } from './board.js';
 import { bondList } from './bondsMeta.js';
 import { EffectDispatcher, getDefaultRegistry } from './effectsMeta.js';
-import { generateDraft, applyCard, cardView } from './choices.js';
+import { generateDraft, applyCard, cardView, bountyBattles, isMultiRoundBounty } from './choices.js';
 import { setupMatchWaves, buildNormalWave, buildBossWave, bountySpawns, withBounties, previewOf, weightedPick } from './waves.js';
 import { planUnite, uniteBattleOpts, uniteSurvivors } from './unite.js';
 import { pairPlayers, bossPoolHp, SharedBossPool, hiddenEligible, BOSS_HIT_STEPS } from './finalAssault.js';
 import {
   FieldRunner, DeadBattle, GAME_SPEED, snapFrame, runHeadless, timelineAt, HeadlessPacer, syntheticResult,
   validateClientResult, RESULT_GRACE_MS, BOSS_SILENCE_MS, HARD_CAP_SECONDS, HeadlessJob, HEADLESS_SLICE_MS, CATCHUP_TICKS_PER_INTERVAL,
+  uniteBillBounds,
 } from './fields.js';
-import { buildBattleSpec, createBattleFromSpec, resultDigest, compactResult as compactForVerify, battleProgress } from '../sim/spec.js';
+import { buildBattleSpec, createBattleFromSpec, resultDigest, compactResult as compactForVerify, battleProgress, uniteLeft } from '../sim/spec.js';
 import { CreditPool } from './finalAssault.js';
 import { buildResult } from './results.js';
 import { botPrepBeginSteps, botPrepEndSteps, botPickBand, botPickCard } from './bot.js';
@@ -338,6 +345,10 @@ export class Match {
     this.watchers = new Map();
     this.lastResults = new Map();
     this.unitePlan = null;
+    /** server-run 联防: the leakers' counts last published (_uniteTick) */
+    this._uniteLeftKey = null;
+    /** 联防: { plan, bounds } — per leaker the most survivors settlement can bill (_uniteLeft's clamp) */
+    this._uniteBounds = null;
     this.teamLp = null;
     this.bossPool = null;
     this.hiddenLayerSum = 0;
@@ -1465,10 +1476,11 @@ export class Match {
 
   addBounty(ps, card) {
     if (!ps || !card || !this.gd.enemy(card.enemyKey)) return null;
-    const rounds = Math.max(1, Math.min(99, Number.isInteger(card.rounds) ? card.rounds : 1));
+    // a multi-round card lasts MULTI_ROUND_BOUNTY_BATTLES battles (choices.js; the user's call after playtest #6)
+    const rounds = bountyBattles(card);
     const b = {
       id: `bounty:${this.nextUid()}`,
-      card: { effectId: card.effectId ?? card.id ?? null, name: card.name ?? '悬赏', desc: card.desc ?? '', tier: card.tier ?? 1, coin: Math.max(0, Math.trunc(Number(card.coin) || 0)), payout: card.payout === 'perfect' ? 'perfect' : 'kill', rounds, enemyKey: card.enemyKey, count: Math.max(1, Math.min(20, Number.isInteger(card.count) ? card.count : 1)) },
+      card: { effectId: card.effectId ?? card.id ?? null, name: card.name ?? '悬赏', desc: card.desc ?? '', tier: card.tier ?? 1, coin: Math.max(0, Math.trunc(Number(card.coin) || 0)), payout: card.payout === 'perfect' ? 'perfect' : 'kill', rounds, multiRound: isMultiRoundBounty(card), enemyKey: card.enemyKey, count: Math.max(1, Math.min(20, Number.isInteger(card.count) ? card.count : 1)) },
       roundsLeft: rounds,
     };
     ps.bounties.push(b);
@@ -1822,7 +1834,9 @@ export class Match {
     this._defaultWatch();
     this.markPublic();
     this.tickerText(`联防阶段：${plan.helpers.map((p) => p.name).join('、')} 迎战突破防线的敌人`);
+    this._uniteLeftKey = null;
     this.runner = new FieldRunner(this, this.fields, {
+      onTick: (runner) => this._uniteTick(runner),
       onDone: (runner) => {
         if (this.phase !== PHASE.UNITE) return;
         const res = runner.resultOf(this.fields[0]);
@@ -1944,14 +1958,21 @@ export class Match {
    * LP a player's own battle of this normal round will cost at settlement so far — settle()'s min(lpCapPerRound,
    * counted leaks) — for the teammates' live LP (m.public players[].pendingLp, user playtest #3 item 2; the own client
    * counts its local battle itself). COMBAT: the recorded result once every field is done, else the field's result, else
-   * the authority's b.progress leaks (a server-run field reports none before its result is released); 联防: the own
-   * battle's count — the most the 联防 can charge (settle: min(cap, survivors) ≤ min(cap, counted)). Omitted when 0 and
-   * in every other phase (boss rounds charge the merged team LP live).
-   * @returns {{ pendingLp?: number }}
+   * the authority's b.progress leaks (a server-run field reports none before its result is released); 联防: a leaker's
+   * enemies still standing on the 联防 field (_uniteLeft, uncapped in `uniteLeft`, user playtest #6 item 7), anyone
+   * else's own battle count (0: they were perfect). Omitted when 0 and in every other phase (boss rounds charge the
+   * merged team LP live).
+   * @returns {{ pendingLp?: number, uniteLeft?: number }}
    */
   _pendingLpView(ps) {
     if (!ps || !ps.alive || (this.phase !== PHASE.COMBAT && this.phase !== PHASE.UNITE)) return {};
     const counted = (r) => (r && Array.isArray(r.leaked) ? r.leaked.filter((l) => l && l.counted !== false).length : 0);
+    // 联防: a leaker's enemies still standing on the 联防 field (uncapped), the loss capped like settle()
+    const left = this._uniteLeft(ps);
+    if (left != null) {
+      const loss = Math.min(this.gd.lpCapPerRound, left);
+      return loss > 0 ? { uniteLeft: left, pendingLp: loss } : { uniteLeft: left };
+    }
     let n = 0;
     if (this.lastResults.has(ps.playerId)) n = counted(this.lastResults.get(ps.playerId));
     else if (this.phase === PHASE.COMBAT) {
@@ -1961,6 +1982,58 @@ export class Match {
     }
     const loss = Math.min(this.gd.lpCapPerRound, Math.max(0, Math.trunc(Number(n) || 0)));
     return loss > 0 ? { pendingLp: loss } : {};
+  }
+
+  /**
+   * 联防 (user playtest #6 item 7; PRTS 卫戍协议/帮助 "防卫失败的玩家可通过上方信息栏确认自身所属敌人的剩余数量"): how many of
+   * a leaker's enemies are still standing on the 联防 field — not spawned yet, alive, or through the objective again —
+   * plus its leaks that could not re-enter: what settle() charges it (before the per-round cap) if the 联防 ended now.
+   * It falls as the helpers strike them down and rises when one splits or summons (the children carry the leaker).
+   * Live from the field (client run: the authority's b.progress `left`; server run: the headless timeline on the field
+   * clock, or the streamed battle itself), clamped to what settlement can bill that leaker (fields.js uniteBillBounds:
+   * sent in + the offspring bound, validateClientResult's budget); exact once the field has its result (unite.js
+   * uniteSurvivors; a synthetic result charges the own leaks, as settle()). null for anyone but a leaker of the running
+   * 联防.
+   * @returns {number|null}
+   */
+  _uniteLeft(ps) {
+    const plan = this.unitePlan;
+    if (this.phase !== PHASE.UNITE || !plan || !ps || !plan.leakers.includes(ps)) return null;
+    const pid = ps.playerId;
+    const f = this.fields.find((x) => x && x.kind === 'unite') || null;
+    let res = null;
+    if (f && f.cc) res = f.done ? f.result : null;
+    else if (f && f.battle && f.battle.finished) { try { res = f.battle.result(); } catch { res = null; } }
+    if (res && res.synthetic) {
+      const own = this.lastResults.get(pid);
+      return own && Array.isArray(own.leaked) ? own.leaked.filter((l) => l && l.counted !== false).length : 0;
+    }
+    if (res) return uniteSurvivors(plan, res).get(pid) || 0;
+    const sent = plan.leaked.filter((l) => l.sourcePlayerId === pid).length;
+    let live = null;
+    if (f && f.cc) {
+      if (f.mode === 'server' && f.timeline) {
+        const sample = timelineAt(f.timeline, this._fieldElapsed(f));
+        live = sample && sample[3] && typeof sample[3] === 'object' ? sample[3] : null;
+      } else live = f.progress && f.progress.left && typeof f.progress.left === 'object' ? f.progress.left : null;
+    } else if (f && f.battle) {
+      try { live = uniteLeft(f.battle); } catch { live = null; }
+    }
+    if (!this._uniteBounds || this._uniteBounds.plan !== plan) this._uniteBounds = { plan, bounds: uniteBillBounds(plan.leaked, this.gd) };
+    const bound = this._uniteBounds.bounds.get(pid) ?? sent;
+    const standing = live ? Math.min(bound, Math.max(0, Math.trunc(Number(live[pid]) || 0))) : sent;
+    return standing + (plan.notReentered.get(pid) || 0);
+  }
+
+  /** Server-run 联防 (streaming mode): refresh m.public about once a game second when a leaker's count moved. */
+  _uniteTick(runner) {
+    const f = runner && runner.fields ? runner.fields[0] : null;
+    if (!f || !f.battle || runner.ticks % 30 !== 0) return;
+    let key = '';
+    try { key = JSON.stringify(uniteLeft(f.battle)); } catch { key = ''; }
+    if (key === this._uniteLeftKey) return;
+    this._uniteLeftKey = key;
+    this.markPublic();
   }
 
   /** The connected human who simulates a field: lowest seat among its players (normal: the owner). */
@@ -2223,6 +2296,8 @@ export class Match {
       return OK;
     }
     if (Number.isFinite(msg.leaks)) p.leaks = Math.max(p.leaks, msg.leaks);
+    // 联防: the leakers' enemies still standing (the latest report; clamped where it is read, _uniteLeft)
+    if (f.kind === 'unite' && msg.left && typeof msg.left === 'object') p.left = { ...msg.left };
     this.markPublic();
     return OK;
   }
@@ -2250,9 +2325,10 @@ export class Match {
       for (const pid of f.players) { const d = Number(result.perPlayer[pid] && result.perPlayer[pid].bossDamage) || 0; by[pid] = d; sum += d; }
       if (sum > f.bossAcked) this._creditBoss(f, sum, by);
       // the client emptied the pool as it saw it (server hp − its unacknowledged damage): what is left on the server is
-      // float dust from summing the fields' reports in another order — the boss is down
+      // float dust from summing the fields' reports in another order — the boss is down (pools never hold less than
+      // BOSS_POOL_MIN_HP, finalAssault.js: this only catches a noise-level disagreement at that boundary)
       const pool = this.bossPool;
-      if (result.reason === 'cleared' && pool && pool.hp > 0 && pool.hp < 1) pool.damage(f.players[0] ?? null, pool.hp);
+      if (result.reason === 'cleared' && this._finalEnding !== 'forced' && pool && pool.hp > 0 && pool.hp < 1 + 1e-6) pool.damage(f.players[0] ?? null, pool.hp);
       // a boss field ends only when the shared pool is empty (the client saw it reach 0) or the match forced the end
       // (b.end): any other result — 'forced' / 'timeout' at t = 0, 'cleared' while the pool still holds — would stop
       // the pair's fight (and, with every field done, end the Final Assault as a defeat). The field is handed to the
@@ -2399,7 +2475,9 @@ export class Match {
   _creditBoss(f, cum, by) {
     const pool = this.bossPool;
     const reported = Number(cum);
-    if (!pool || !Number.isFinite(reported)) return;
+    // the team LP ran out first: the run failed at that moment (PRTS "…使目标生命值扣除至0，则无视倒计时直接失败"), so
+    // damage reported afterwards — in flight, or rounded up in the final b.result — changes nothing (user playtest #6)
+    if (!pool || !Number.isFinite(reported) || this._finalEnding === 'forced') return;
     if (!f.bossReported || reported > f.bossReported.cum) f.bossReported = { cum: reported, by: by && typeof by === 'object' ? { ...by } : null };
     const c = Math.min(reported, this._bossDmgBudget(f));
     if (!(c > f.bossAcked)) return;
@@ -2700,7 +2778,8 @@ export class Match {
       const wave = reuse ? this.bossWaves[i].wave : buildBossWave(this.gd, this.rngWaves, this.factions, this.round, { bossId, solo });
       // one spawn list per field, shared by the field's players' onBattleStart handlers (edit it in place)
       const spawns = wave.spawns.map((s) => ({ ...s, mods: s.mods ? { ...s.mods } : undefined }));
-      // multi-round bounties ("之后的每场作战") follow their player into the boss field, on the player's half
+      // bounties with battles left (a multi-round card lasts MULTI_ROUND_BOUNTY_BATTLES) follow their player into the
+      // boss field, on the player's half
       g.forEach((ps, j) => {
         for (const b of bountySpawns(this.gd, this.round, wave, ps.bounties, ps.playerId, { solo: this.isSolo, side: j === 0 ? 'L' : 'R' })) spawns.push(b);
       });
@@ -2874,7 +2953,9 @@ export class Match {
         if (pp && ps) this.dispatch(ps, 'onBattleResult', { result: pp, lpLoss: 0, perfect: !!pp.perfect, boss: true });
       }
     }
-    const victory = this.bossPool.hp <= 0;
+    // the end condition the server registered first decides (client-side combat: _endFinal — pool 0 → victory, team LP 0
+    // → defeat); a boss field's final result may never turn a defeat into a victory (user playtest #6 item 5)
+    const victory = this._finalEnding ? this._finalEnding === 'cleared' : this.bossPool.hp <= 0;
     this._syncTeamLp();
     this.deadline = 0;
     this.overtimeAt = 0;

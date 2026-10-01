@@ -7,7 +7,12 @@
 // watches that player's field at once.
 // Live LP (user playtest #3 item 2): during a normal round's battle each row's tower shows lp − the loss that player's
 // leaks so far will cost (red, −N): the own row the top bar's live value (`self`, ui/hud.js liveLp), a teammate's row
-// m.public players[].pendingLp (server/match/Match.js, ~1 Hz).
+// m.public players[].pendingLp (server/match/Match.js, ~1 Hz). 联防 (user playtest #6 item 7): a leaker's row adds the
+// runner tag ×N — its enemies still standing on the 联防 field, uncapped and live (falling as the helpers kill them,
+// rising when one splits) — next to lp − min(lpCapPerRound, N): the own row the top bar's value, a teammate's row the
+// local 联防 replica's count while it is on screen (`uniteLocal`: the battle runner's state().uniteLeft, the same battle
+// the player watches, so the number moves with the kills on screen), else m.public players[].uniteLeft (the authority's
+// report, ~1 Hz).
 
 import { useEffect, useState } from '../../vendor/hooks.module.js';
 import { PHASE } from '../../../shared/constants.js';
@@ -15,6 +20,7 @@ import { html, Icon, Tooltip } from './components.js';
 import { PlayerAvatar, LpTower, GIcon, LocalSprite } from './gameComponents.js';
 import { EmoteBubble } from './emotes.js';
 import { STATUS_META, sortedPlayers } from './gameLogic.js';
+import { MissTag, uniteRemaining } from './hud.js';
 import { localAsset } from '../data.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
@@ -24,27 +30,48 @@ const STATUS_SPRITE = { ready: 'icon_ready', deciding: 'icon_waiting', done: 'ic
 
 /**
  * A row's LP tower: the settled LP and the pending loss of the round's battle (0 outside COMBAT / UNITE). The own row
- * takes the top bar's live value when there is one (its m.private lp: the same number as the top bar).
+ * takes the top bar's live value when there is one (its m.private lp: the same number as the top bar). `left`: during
+ * 联防 a leaker's enemies still standing (the ×N tag), else null — for a teammate the local 联防 replica's count when
+ * one is given (`uniteLocal`, the runner's state().uniteLeft: { [playerId]: n }, absent = none left; the pending loss
+ * is then min(cap, left)), else m.public players[].uniteLeft / pendingLp.
  * @param {any} p m.public players[] entry @param {any} pub m.public
- * @param {{ lp?: number|null, pending: number, unite: boolean } | null} [self] the own live value (only for the own row)
- * @returns {{ lp: number|null, pending: number, unite: boolean }}
+ * @param {{ lp?: number|null, pending: number, unite: boolean, left?: number|null } | null} [self] the own live value (only for the own row)
+ * @param {{ uniteLocal?: Record<string, number> | null, cap?: number }} [opts]
+ * @returns {{ lp: number|null, pending: number, unite: boolean, left: number|null }}
  */
-export function rowLp(p, pub, self = null) {
+export function rowLp(p, pub, self = null, { uniteLocal = null, cap = 10 } = {}) {
   const pubLp = Number.isFinite(p?.lp) ? p.lp : null;
-  if ((pub?.phase !== PHASE.COMBAT && pub?.phase !== PHASE.UNITE) || p?.alive === false) return { lp: pubLp, pending: 0, unite: false };
+  if ((pub?.phase !== PHASE.COMBAT && pub?.phase !== PHASE.UNITE) || p?.alive === false) return { lp: pubLp, pending: 0, unite: false, left: null };
   const lp = self && Number.isFinite(self.lp) ? self.lp : pubLp;
-  if (lp == null) return { lp, pending: 0, unite: false };
-  const raw = self ? self.pending : p.pendingLp;
+  const leaker = pub.phase === PHASE.UNITE && Array.isArray(pub.unite?.leakers) && pub.unite.leakers.includes(p.playerId);
+  const local = !self && leaker && uniteLocal && typeof uniteLocal === 'object' ? uniteRemaining(uniteLocal[p.playerId] ?? 0, null) : null;
+  const rawLeft = pub.phase !== PHASE.UNITE ? null : self ? self.left : local != null ? local : p.uniteLeft;
+  const left = Number.isFinite(rawLeft) && rawLeft >= 0 ? Math.trunc(rawLeft) : null;
+  if (lp == null) return { lp, pending: 0, unite: false, left };
+  const raw = self ? self.pending : local != null ? Math.min(cap, local) : p.pendingLp;
   const pending = Math.min(lp, Math.max(0, Math.trunc(Number(raw) || 0)));
-  return { lp, pending, unite: pending > 0 && (self ? !!self.unite : pub.phase === PHASE.UNITE) };
+  return { lp, pending, unite: (pending > 0 || left != null) && (self ? !!self.unite : pub.phase === PHASE.UNITE), left };
+}
+
+/**
+ * Tooltip of a row's LP tower with a pending loss (null without one).
+ * @param {{ lp: number|null, pending: number, unite: boolean, left: number|null } | null} lp rowLp(...)
+ * @param {number} [cap] lpCapPerRound
+ */
+export function rowLpTip(lp, cap = 10) {
+  if (!lp || !(lp.pending > 0)) return null;
+  if (lp.unite && lp.left != null) return `目标生命值 ${lp.lp}，联防中：漏过的敌人还剩 ${lp.left} 个，按现在结算扣除 ${lp.pending} 点（每回合至多 ${cap} 点）`;
+  return `目标生命值 ${lp.lp}，${lp.unite ? '联防中，' : ''}结算时扣除${lp.unite ? '至多' : ''} ${lp.pending} 点`;
 }
 
 /**
  * @param {{ pub:any, myId:string, watching:string|null, bubbles: Map<string,{id:string,seq:number}>, onWatch:(p:any)=>void,
- *   compact?: boolean, teamLp?: number|null, self?: { lp?: number|null, pending: number, unite: boolean } | null,
+ *   compact?: boolean, teamLp?: number|null, self?: { lp?: number|null, pending: number, unite: boolean, left?: number|null } | null,
+ *   cap?: number, uniteLocal?: Record<string, number> | null,
  *   observe?: null | { canObserve: (p:any) => { fieldId?: string, reason?: string|null, back?: boolean }, observing: boolean, onBack: () => void } }} props
+ *   uniteLocal: the local 联防 replica's per-leaker counts while it is on screen (battle runner state().uniteLeft), else null
  */
-export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = false, observe = null, self: selfLive = null }) {
+export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = false, observe = null, self: selfLive = null, cap = 10, uniteLocal = null }) {
   const [openPid, setOpenPid] = useState(null);
   const phaseKey = `${pub?.phase}:${pub?.round}`;
   useEffect(() => { setOpenPid(null); }, [phaseKey, watching, observe?.observing]);
@@ -68,7 +95,7 @@ export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = fal
       const open = !!observe && openPid === p.playerId && !self;
       const back = !!observe && self && observe.observing;
       const title = observe ? (self ? (observe.observing ? '返回战场' : '你自己') : `查看 ${p.name} 的战场`) : (self ? '查看自己的阵地' : `查看 ${p.name} 的阵地`);
-      const lp = rowLp(p, pub, self ? selfLive : null);
+      const lp = rowLp(p, pub, self ? selfLive : null, { uniteLocal, cap });
       return html`<div key=${p.playerId} class=${cx('team__row', self && 'is-self', watched && 'is-watched', p.alive === false && 'is-dead', open && 'is-open')}>
         <button type="button" class="team__btn" onClick=${() => click(p, self)} title=${title} aria-expanded=${observe && !self ? String(open) : undefined}>
           <${PlayerAvatar} player=${p} self=${self} />
@@ -80,7 +107,8 @@ export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = fal
           <span class="team__name">${p.name || '博士'}</span>
           <div class="team__line">
             <${LpTower} value=${lp.lp} size="sm" tone=${Number.isFinite(lp.lp) && lp.lp - lp.pending <= 5 ? 'danger' : null} pending=${lp.pending}
-              tip=${lp.pending > 0 ? `目标生命值 ${lp.lp}，${lp.unite ? '联防中，' : ''}结算时扣除${lp.unite ? '至多' : ''} ${lp.pending} 点` : null} />
+              tip=${rowLpTip(lp, cap)} />
+            ${lp.left != null ? html`<${MissTag} n=${lp.left} name=${self ? null : p.name || '博士'} />` : null}
             <${Tooltip} text=${offline ? '连接已断开' : meta.text} placement="right">
               <span class=${cx('team__status', `is-${meta.tone}`, offline && 'is-offline', (offline || STATUS_SPRITE[status]) && localAsset('ui/battle', offline ? 'icon_lost_connect' : STATUS_SPRITE[status]) && 'has-sprite')} aria-label=${meta.text}>
                 ${offline ? html`<${LocalSprite} name="icon_lost_connect" fallback=${html`<${Icon} name="wifiOff" />`} />`

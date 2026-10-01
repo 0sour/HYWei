@@ -3,7 +3,7 @@
 // Aggregation (recomputed lazily whenever buffs change — `unit.markDirty()`):
 //   ATK/DEF/maxHp = (base + Σflat) × (1 + Σpct) × Πmul
 //   res           = clamp((base + Σflat) × Πmul, 0, 100)
-//   aspd          = clamp(base + Σaspd, 10, 600)          (base is 100 for almost everyone)
+//   aspd          = clamp(base + Σaspd, 20, 600)          (base is 100 for almost everyone; floor 20 = PRTS 数值范围)
 //   interval      = bat × (1 + ΣbatPct) × 100 / aspd      (ΣbatPct floored at −0.9)
 //   moveSpeed     = (base + ΣmoveFlat) × ΠmoveMul          (tiles/s = moveSpeed × MOVE_SCALE)
 //   massLevel     = max(0, base + ΣmassFlat)                (重量: displacement, 浮空 halving; 失重 = massFlat −1)

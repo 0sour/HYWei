@@ -6,7 +6,9 @@
 // compact, visible without scrolling: user playtest #3 items 8 / 9), the class trait (特性), stats + range mini-map, skill (the one chosen in the loadout, DESIGN §16: icon, SP
 // info, rich description, 已调配 when not the default), elite module (模组: official type icon from the local-client
 // art, else its letter), equipped items, talents (CHESS_SECTIONS); items — icon, tier,
-// effect; tokens; enemies — stats, rank, faction tags, abilities. Selling / destroying is the underframe's job in the
+// effect; tokens — the owner's variant (a golden owner's summon: its `_b` stats / skill), how a placed summon takes
+// the field (shared/constants.js SKILL_SUMMON_START_DEPLOY), its token skill and talents; enemies — stats, rank,
+// faction tags, abilities. Selling / destroying is the underframe's job in the
 // match (research 09 §5, ui/underframe.js): the panel's own 出售 / 销毁 buttons only render for callers that pass
 // `editable` + handlers. `side` 'right' docks the panel at the right edge (the game screen picks the side away from a
 // selected unit's underframe, gameLogic panelSide).
@@ -23,6 +25,7 @@ import { attackInterval, rangeGridBox, fmtNum, tileKey, chessLoadout, nextThresh
 import { chessPortraitUrl, skillIconUrl, skillRecordIconUrl, profIconUrl, subProfIconUrl, itemIconUrl, enemyIconUrl, tokenAvatarUrl, factionIconUrl, uiUrl, moduleTypeIconUrl } from './assetUrls.js';
 import { data } from '../data.js';
 import { attackRangeGrid } from '../../../shared/loadoutRecord.js';
+import { SKILL_SUMMON_START_DEPLOY } from '../../../shared/constants.js';
 import { moduleBadge } from './loadoutModel.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
@@ -375,14 +378,59 @@ function EnemyDetail({ enemy, snapHp, count, live = null }) {
     <//>` : enemy.descRaw || enemy.desc ? html`<${Section} title="说明"><${RichText} as="p" text=${enemy.descRaw || enemy.desc} class="dtext" /><//>` : null}`;
 }
 
-function TokenDetail({ token, piece, snapHp = null, live = null }) {
+/**
+ * How a summon piece placed in the prep phase takes the field (user playtest #6; sim/content/tokens.js): a talent
+ * summon deploys with the board; a skill's summon (赫默's 医疗探机, 巫恋's 诅咒娃娃) once at the battle start and again
+ * with each skill (`startDeploy`: shared/constants.js SKILL_SUMMON_START_DEPLOY, the PRTS reading the user settled) —
+ * or, with the switch off, only when its owner's skill fires. null for tokens that are no hand piece.
+ * @param {any} token tokens.json record
+ * @param {boolean} [startDeploy] the sim's switch (tests pass both values)
+ */
+export function summonDeployHint(token, startDeploy = SKILL_SUMMON_START_DEPLOY) {
+  if (!token || token.kind !== 'summon' || token.placeable !== true) return null;
+  const talent = Object.values(token.variants || {}).some((v) => (v?.sources || []).includes('talent'));
+  if (talent) return '作战开始时在摆放的位置部署';
+  return startDeploy
+    ? '作战开始时在摆放的位置部署一次，之后所属干员每次发动技能时再次出现（未摆放则不会出现）'
+    : '所属干员发动技能时才在摆放的位置出现（未摆放则不会出现）';
+}
+
+/**
+ * The token variant of the summon's owner (tokens.json `variants`, keyed by owner chess id): a golden owner's `_b`
+ * entry (精锐 赫默's drone ATK 114, 精锐 巫恋's doll −30%), else its normal `_a` entry, else the first one.
+ * @param {any} token tokens.json record
+ * @param {string|null} ownerId the owner's chess id (null: unknown, e.g. a teammate's summon)
+ */
+export function tokenVariantFor(token, ownerId = null) {
+  const vs = token?.variants || {};
+  if (typeof ownerId === 'string') {
+    const v = vs[ownerId] || vs[ownerId.replace(/_b$/, '_a')];
+    if (v) return v;
+  }
+  return Object.values(vs)[0] || null;
+}
+
+/** Chess id of the operator owning a token piece (`ownerUid`), from the player's own pieces (indexPieces). */
+function tokenOwnerId(piece, pieces) {
+  if (!piece || piece.kind !== 'token' || !Number.isInteger(piece.ownerUid)) return null;
+  const owner = pieces?.get(piece.ownerUid)?.piece;
+  return owner && owner.kind === 'chess' ? owner.id : null;
+}
+
+export function TokenDetail({ token, piece, ownerId = null, snapHp = null, live = null }) {
   const m = data.get('assets');
-  const s = token.stats || {};
+  // the owner's variant: its stats, talents and token skill (a golden owner's summon is stronger)
+  const v0 = tokenVariantFor(token, ownerId);
+  const s = v0?.stats || token.stats || {};
   const hp = hpOf(live, snapHp);
   const st = {
     maxHp: liveStat(live, 'maxHp', s.maxHp), atk: liveStat(live, 'atk', s.atk), def: liveStat(live, 'def', s.def),
     blockCnt: liveStat(live, 'blockCnt', s.blockCnt, (v) => String(v)),
   };
+  // what the summon does lives in its talent (凯瑟琳's 支援装置: "使攻击范围内一名友方干员获得…屏障") or token skill (诅咒娃娃)
+  const talents = (v0?.talents || []).filter((t) => t && t.name && t.desc);
+  const skill = v0?.skill && v0.skill.desc && !/^skcom_withdraw/.test(String(v0.skill.skillId || '')) ? v0.skill : null;
+  const hint = piece ? summonDeployHint(token) : null;
   return html`
     <div class="dhead dhead--item">
       <div class="dhead__icon"><${Img} src=${tokenAvatarUrl(m, token.tokenId)} fallback=${html`<${GIcon} name="target" />`} /></div>
@@ -397,7 +445,10 @@ function TokenDetail({ token, piece, snapHp = null, live = null }) {
       <${Stat} k="生命上限" ...${st.maxHp} /><${Stat} k="攻击" ...${st.atk} />
       <${Stat} k="防御" ...${st.def} /><${Stat} k="阻挡数" ...${st.blockCnt} />
     </div>
-    ${token.descRaw || token.desc ? html`<${Section} title="说明"><${RichText} as="p" text=${token.descRaw || token.desc} class="dtext" /><//>` : null}`;
+    ${hint ? html`<p class="dhint"><${Icon} name="info" />${hint}</p>` : null}
+    ${token.descRaw || token.desc ? html`<${Section} title="说明"><${RichText} as="p" text=${token.descRaw || token.desc} class="dtext" /><//>` : null}
+    ${skill ? html`<${Section} title="技能"><p class="dtext"><b>${skill.name}</b> ${skill.desc}</p><//>` : null}
+    ${talents.length ? html`<${Section} title="天赋">${talents.map((t, i) => html`<p class="dtext" key=${i}><b>${t.name}</b> ${t.desc}</p>`)}<//>` : null}`;
 }
 
 /**
@@ -412,7 +463,7 @@ export function resolveDetail(target, pieces) {
     if (!e) return null;
     const p = e.piece;
     if (p.kind === 'item') { const it = data.lookup('items', p.id); return it ? { type: 'item', item: it, piece: p } : null; }
-    if (p.kind === 'token') { const t = data.lookup('tokens', p.id); return t ? { type: 'token', token: t, piece: p } : null; }
+    if (p.kind === 'token') { const t = data.lookup('tokens', p.id); return t ? { type: 'token', token: t, piece: p, ownerId: tokenOwnerId(p, pieces) } : null; }
     const c = data.lookup('chess', p.id);
     return c ? { type: 'chess', chess: c, piece: p } : null;
   }
@@ -427,7 +478,7 @@ export function resolveDetail(target, pieces) {
     const c = data.lookup('chess', u.defId);
     if (c) return { type: 'chess', chess: c, piece: own?.piece || null, unitId: u.id };
     const t = data.lookup('tokens', u.defId);
-    if (t) return { type: 'token', token: t, unitId: u.id };
+    if (t) return { type: 'token', token: t, unitId: u.id, ownerId: tokenOwnerId(own?.piece, pieces) };
     const en = data.lookup('enemies', u.defId);
     return en ? { type: 'enemy', enemy: en, unitId: u.id } : null;
   }
@@ -470,7 +521,7 @@ export function DetailPanel({ detail, editable, snapHp, onClose, onSell, onDestr
         bonds=${bonds} loadout=${loadout} onBond=${onBond} live=${liveNow} />` : null}
       ${detail.type === 'item' ? html`<${ItemDetail} item=${detail.item} piece=${detail.piece} editable=${editable} onDestroy=${destroyIt} />` : null}
       ${detail.type === 'enemy' ? html`<${EnemyDetail} enemy=${detail.enemy} snapHp=${snapHp} count=${detail.count} live=${liveNow} />` : null}
-      ${detail.type === 'token' ? html`<${TokenDetail} token=${detail.token} piece=${detail.piece} snapHp=${snapHp} live=${liveNow} />` : null}
+      ${detail.type === 'token' ? html`<${TokenDetail} token=${detail.token} piece=${detail.piece} ownerId=${detail.ownerId ?? null} snapHp=${snapHp} live=${liveNow} />` : null}
     </div>
   </aside>`;
 }

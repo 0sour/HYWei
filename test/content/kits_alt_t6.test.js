@@ -164,7 +164,9 @@ test('6_01 蕾缪安 S2: a low-HP wanted target is sniped at once (ATK × scale 
 test('6_02 圣聆初雪 S1 铃音吹雪: 2 charges (cast with enemies in range); atk_scale × ATK arts + cold on every enemy in range, pushed along her direction, snow spreads 5 tiles forward', () => {
   for (const id of both('chess_char_6_02')) {
     const sid = 'skchr_sbell2_1', bb = bbOf(id, sid);
-    const h = run({ defs: { enemies: { e: dummy('e') } }, units: [U(id, sid, 10, 4, { carryState: READY })], enemies: [{ key: 'e', pos: [10, 5] }, { key: 'e', pos: [11, 5] }] });
+    // weight-2 dummies: 中力 (1) − 2 = 受力等级 −1 ⇒ the official 0.44-tile push (PRTS 游戏数据基础 §重量公式), so they stay
+    // in her range for the second charge
+    const h = run({ defs: { enemies: { e: dummy('e', { mass: 2 }) } }, units: [U(id, sid, 10, 4, { carryState: READY })], enemies: [{ key: 'e', pos: [10, 5] }, { key: 'e', pos: [11, 5] }] });
     const u = h.unit(id);
     usesSkill(u, sid);
     assert.equal(u.skill.maxCharges, rec(id, sid).maxChargeTime);
@@ -179,11 +181,15 @@ test('6_02 圣聆初雪 S1 铃音吹雪: 2 charges (cast with enemies in range);
     assert.equal(colds.length, 2);
     for (const c of colds) approx(c.duration, bb.cold, 'cold');
     const [e1] = h.enemies();
-    assert.ok(e1.x > 5.5, `pushed forward (${e1.x})`);
+    approx(e1.x, 5 + 0.44 * started(h, u).length, 'pushed forward along her direction by the official 0.44 tiles per cast');
+    approx(e1.y, 10, 'no sideways push');
     // (the pushed enemies clear the snow of the tiles they leave: "首个敌人离开该地块时积雪消失")
     for (let d = 3; d <= bb.trig_cnt; d++) assert.ok((u.mem.snow.get(10 * COLS + 4 + d) ?? 0) >= 1, `snow ${d} tiles ahead`);
+    h.run(2.5);
+    assert.equal(started(h, u).length, 1, 'the next automatic cast waits the 3 s operation cooldown ("自动操作具有3s冷却")');
     h.run(1);
     assert.equal(started(h, u).length, 2, 'the second charge fires too');
+    assert.ok(started(h, u)[1].t - t0 >= 3 - 1e-6);
     done(h);
   }
 });
@@ -255,11 +261,11 @@ test('6_03 余 S1 今日做东: taunt +1 while carried; TAKE_DAMAGE cast, HP/DEF
   assert.equal(d.unit('chess_char_6_03_a').s.taunt, 0);
 });
 
-test('6_03 余 S2 厚礼上宾: atk_scale × ATK arts around him, reachable ground enemies teleported onto his tile; block +2, HP/ATK +, arts attacks', () => {
+test('6_03 余 S2 厚礼上宾: cast when hit (重装 TAKE_DAMAGE); atk_scale × ATK arts around him, reachable ground enemies teleported onto his tile; block +2, HP/ATK +, arts attacks', () => {
   for (const id of both('chess_char_6_03')) {
     const sid = 'skchr_yu_2', bb = bbOf(id, sid);
     const h = run({
-      defs: { enemies: { e: dummy('e') } },
+      defs: { enemies: { e: dummy('e', { atk: 100, bat: 1 }) } },
       units: [U(id, sid, 10, 4, { carryState: READY })],
       enemies: [{ key: 'e', pos: [10, 4] }, { key: 'e', pos: [10, 6] }, { key: 'e', pos: [11, 5] }],
     });
@@ -1153,7 +1159,7 @@ test('default-skill-only hooks do not run under an alternate skill (余 / 维娜
   // 余 S2 active: 闲云隐市 is NOT given to every operator (S3 only)
   {
     const h = run({
-      defs: { chess: { o1: plain('o1'), o2: plain('o2'), o3: plain('o3') }, enemies: { e: dummy('e') } },
+      defs: { chess: { o1: plain('o1'), o2: plain('o2'), o3: plain('o3') }, enemies: { e: dummy('e', { atk: 100, bat: 1 }) } }, // (重装: TAKE_DAMAGE)
       units: [U('chess_char_6_03_a', 'skchr_yu_2', 10, 4, { carryState: READY }), { chessId: 'o1', row: 9, col: 6 }, { chessId: 'o2', row: 11, col: 6 }, { chessId: 'o3', row: 12, col: 6 }],
       enemies: [{ key: 'e', pos: [10, 4] }],
     });

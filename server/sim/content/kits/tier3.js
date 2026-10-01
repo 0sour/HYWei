@@ -7,8 +7,9 @@
 // Profession defaults (server/sim/professions.js) are kept and extended: fastshot fly bonus, instructor, reaperrange,
 // hunter ammo, funnel ramp, phalanx guard, merchant drain, tactician reinforcement, underminer module weaken.
 // Summons: the match hands 伺夜's 狼群 and 巫恋's 诅咒娃娃 to the player as placeable board pieces (tokens.js kits);
-// these kits adopt/replace such pieces instead of adding a second pack/doll, and every summon tile avoids the home
-// tile of an ally that has not (re)deployed yet (freeTile). Offensive skills whose own range differs from the attack
+// 伺夜's kit adopts his pack piece instead of adding a second pack, 巫恋's S2 brings her placed doll onto its tile
+// (tokens.js releaseSkillSummon), and every summon tile avoids the home tile of an ally that has not (re)deployed yet
+// (freeTile). Offensive skills whose own range differs from the attack
 // range trigger on that skill range (CUSTOM_RANGE: 松果 shortened range, 见行者 push row — research 03 §1.4).
 //
 // Client VFX (battle.fx kinds used here, all `{x, y, id, …extra}`): 'aoe' (radius, dmgType), 'strike' (special single
@@ -20,18 +21,19 @@
 // selectable skill of the visible chess, each built from its OWN record at the chess's level (skillData: Lv4 normal /
 // Lv7 elite blackboard, range, charges) — the loader picks the selected one. Talents / trait / install are shared: the
 // parts that belong to one skill only (琳琅诗怀雅 bombs, 菲莱 counters, 雪猎 special bullets…) check the selected skill id.
-// Triggers come from the data record of each skill (skills[i].trigger), except offensive skills with their own range
-// (CUSTOM_RANGE on that range, research 03 §1.4) and 薄绿 S1 (阵法术师 技能1 row SEARCH = "初始攻击范围内出现敌人后自动释放",
-// research 03 C1 ⇒ DEFAULT). Non-default modules: 能天使 MAR-Y (ASPD vs ground), 琳琅诗怀雅 MER-Y (ATK per payment),
+// Triggers come from the data record of each skill (skills[i].trigger: tools/build-data.mjs resolveTrigger — the official
+// 技能策略 incl. SKILL_RANGE for a MANUAL skill's own 技能范围 and the class rows for every MANUAL skill), except
+// 薄绿 S1 (the 阵法术师 row SEARCH = "在初始攻击范围内存在敌人时" ⇒ the engine's DEFAULT for a phalanx, checked every
+// tick) and the kits' own automatic casts (雪猎 special bullets). Non-default modules: 能天使 MAR-Y (ASPD vs ground), 琳琅诗怀雅 MER-Y (ATK per payment),
 // 斯卡蒂 DRE-X (× vs blocked), 瑕光 GUA-X (heal × under 50 %), 伺夜 TAC-Y (×165 % trait, pack-blocked enemies taunt +1),
 // 空弦 MAR-X (fly ×, profession layer). No in-battle effect here: 忍冬 SOL-Y "首次部署时部署费用-4" (the initial
 // deployment is free) and the 集成战略-only ISW-A modules of 琳琅诗怀雅 / 空弦 (their stats and trait cost still apply).
 
 import { absoluteRangeKeys, sortEnemyTargets, canTargetEnemy } from '../../targeting.js';
-import { COLS } from '../../constants.js';
-import { bodyDist, bodyInKeys, bodyOnTile, bodyTileReach } from '../../body.js';
+import { COLS, PUSH_DIRECTIONAL_MIN_DIST } from '../../constants.js';
+import { bodyDist, bodyInKeys, bodyOnTile } from '../../body.js';
 import { normalizeChess, normalizeSkill } from '../../simdata.js';
-import { tacticalPoint as sharedTacticalPoint } from '../tokens.js';
+import { tacticalPoint as sharedTacticalPoint, releaseSkillSummon } from '../tokens.js';
 
 // ---------------------------------------------------------------------------------------------------------------
 // helpers
@@ -113,6 +115,8 @@ const copyGrid = (g) => (Array.isArray(g) && g.length ? g.map((p) => [p[0], p[1]
 const NINE = [[1, -1], [1, 0], [1, 1], [0, -1], [0, 0], [0, 1], [-1, -1], [-1, 0], [-1, 1]];
 /** Two enemy bodies touch within this distance (tiles) — 见行者 collision stun. */
 const COLLIDE = 0.6;
+/** 忍冬 S3's 迷彩 (until her next cast): its own buff key, never merged with another unit status. */
+const CAMOU_KEY = 'vulpis:camou';
 const CN_NUM = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
 /** Number captured by `re` (arabic or a single chinese numeral) in `text`, else `fallback`. */
 function textNum(text, re, fallback) {
@@ -174,6 +178,7 @@ function aura(battle, unit, o) {
       const list = o.side === 'ally' ? battle.allyUnits : battle.enemies;
       for (const x of list) {
         if (!x.alive || !x.deployed || x.hidden || x.kind === 'device') continue;
+        if (o.side === 'ally' && !battle.allySelectable(x, unit)) continue; // never a 孤立 unit (炎佑)
         if (!onTiles(x, set) || (o.filter && !o.filter(x))) continue;
         const mods = typeof o.mods === 'function' ? o.mods(x) : o.mods;
         if (!mods) continue;
@@ -447,6 +452,7 @@ const KITS = {
         let best = null;
         for (const a of battle.allyUnits) {
           if (a === unit || !alive(a) || a.hidden || a.kind === 'device' || a.hpRatio >= healRatio) continue;
+          if (a.s.flags.noHeal || a.profile?.noHeal) continue; // 禁疗 / 孤立: never a heal target
           if (Math.max(Math.abs(a.tileR - unit.tileR), Math.abs(a.tileC - unit.tileC)) !== 1) continue; // 周围八格
           if (!best || a.hpRatio < best.hpRatio || (a.hpRatio === best.hpRatio && a.deploySeq < best.deploySeq)) best = a;
         }
@@ -486,7 +492,8 @@ const KITS = {
                 if (!e) break;
                 spent++;
                 battle.dealDamage(unit, e, { amount: unit.s.atk * cash, type: 'phys', isSkill: true, tags: ['skill', 'swire2Cash'] });
-                if (e.alive) battle.displace(e, { x: unit.fwd[1], y: unit.fwd[0] }, 0.5 + 0.5 * force, { force: force + 1 });
+                // "将目标小力地向前推开": a directional push along her direction (Battle.push, official 力度 − 重量 distance)
+                if (e.alive) battle.push(e, force, { from: unit, dir: { x: unit.fwd[1], y: unit.fwd[0] } });
               }
               fx(battle, 'coin', unit, { n: 0, spent, skill: 'swire2_3' });
             },
@@ -719,10 +726,14 @@ const KITS = {
           const keys = new Set(gridKeys(skillGrid ?? unit.rangeGrid, unit));
           const victims = battle.enemies.filter((e) => e.alive && !e.hidden && !e.s.flags.untargetable && onTiles(e, keys));
           const pushed = new Set(victims);
-          const dist = 0.5 + 0.5 * force; // engine displacement convention (docs/SIM.md §12)
           for (const e of victims) {
-            const expect = e.isBoss ? 0 : dist * Math.max(0, Math.min(1, 1 - 0.25 * Math.max(0, e.s.massLevel - (force + 1))));
-            const moved = battle.displace(e, { x: unit.fwd[1], y: unit.fwd[0] }, dist, { force: force + 1 });
+            // "往身前方向…推开": a directional push whose angle is fixed — PRTS 备注 "不会因为角度过大而改变推动的方向或削减力度"
+            // (only the angle: a target nearer than 0.25 tile still turns radial at 受力等级 −2) — by the official
+            // 力度 − 重量 distance of a 特效 push (PRTS 推与拉 names 见行者's skills 特效类; Battle.push / pushDistance);
+            // stopped short of it ⇒ it hit a wall
+            const near = Math.hypot(e.x - unit.x, e.y - unit.y) < PUSH_DIRECTIONAL_MIN_DIST;
+            const expect = battle.pushDistance(e, near ? force - 2 : force, { effect: true });
+            const moved = battle.push(e, force, { from: unit, dir: { x: unit.fwd[1], y: unit.fwd[0] }, fixedAngle: true, effect: true });
             const wall = expect > 0 && moved + 0.05 < expect;
             battle.applyStatus(e, 'stun', { duration: wall ? sWall : sDirect, source: unit });
           }
@@ -735,9 +746,8 @@ const KITS = {
           }
           fx(battle, 'push', unit, { skill: 'forcer_2', n: victims.length });
         },
-        // "立即将范围内所有敌人…": fires once an enemy is inside the skill range (research 03 §1.4), not only when one
-        // stands on her 2-tile attack range
-        ...(skillGrid ? { trigger: { rule: 'CUSTOM_RANGE', grid: skillGrid } } : {}),
+        // "立即将范围内所有敌人…": the data rule SKILL_RANGE fires it once an enemy is inside the skill range (PRTS 技能
+        // 策略 "仅在技能范围内存在敌人（无视其不可选中）时释放技能"), not only when one stands on her 2-tile attack range
       },
       talents: [{ install(battle, unit) {
         battle.on('hit', (ctx) => {
@@ -758,14 +768,14 @@ const KITS = {
     return kit;
   },
 
-  // ---- 3_08 薄绿 · 阵法术师 — S2 聚能涡旋: each hit pulls the target in front of her (splash arts), end-of-skill burst on
+  // ---- 3_08 薄绿 · 阵法术师 — S2 聚能涡旋: each hit pushes the target towards her (splash arts), end-of-skill burst on
   //      every enemy in range; 地质学者: DEF aura (skill off) / less likely targeted (skill on);
   //      精锐 module PLX-X: keeps part of the guard (DEF/RES) while the skill runs
   //      S1 风语: wider range (skill grid), attacks at attack@atk_scale (群体 arts splash of the trait). Auto-cast: the data
-  //      rule SEARCH is the 阵法术师 技能1 row, officially "初始攻击范围内出现敌人后自动释放" (research 03 Addendum C1,
-  //      BWIKI) = an enemy inside her INITIAL range — the engine's DEFAULT rule, checked every tick for a unit that does
-  //      not attack while its skill is off — not any enemy on the field (the sim's generic SEARCH, research 03 §1.4
-  //      [ASSUMED]): she would burn the skill on enemies that just spawned.
+  //      rule SEARCH is the 阵法术师 row (PRTS 卫戍协议/帮助 "不受基础策略影响，在初始攻击范围内存在敌人时释放技能"; it
+  //      covers every MANUAL skill of the class — user playtest #6) = an enemy inside her INITIAL range — the engine's
+  //      DEFAULT rule, checked every tick for a unit that does not attack while its skill is off — not any enemy on the
+  //      field: she would burn the skill on enemies that just spawned.
   chess_char_3_08_a: (bb, chess, def) => {
     const d = defOf(chess, def);
     const t0 = talentBb(d, 0);
@@ -805,10 +815,9 @@ const KITS = {
           atkScale: num(bb['attack@atk_scale'], 1),
           onHit({ battle, unit, target }) {
             if (!target || !target.alive || target.side !== 'enemy') return;
-            const dx = unit.tileC + unit.fwd[1] - target.x, dy = unit.tileR + unit.fwd[0] - target.y;
-            const len = Math.hypot(dx, dy);
-            if (len < 0.05) return;
-            if (battle.displace(target, { x: dx, y: dy }, Math.min(len, 0.5 + 0.5 * pullForce), { force: pullForce + 1 }) > 0) fx(battle, 'pull', target, { src: unit.id });
+            // PRTS 备注: "此技能的“拖拽”机制实际为反方向（指向薄绿方向）的推开" — a radial push towards her by the
+            // official 力度 − 重量 push distance (小力 vs weight 1: 0.44 tiles), never past her (Battle.push inward)
+            if (battle.push(target, pullForce, { from: unit, inward: true }) > 0) fx(battle, 'pull', target, { src: unit.id });
           },
         },
         onStart: guardOn,
@@ -976,7 +985,7 @@ const KITS = {
         if (sel === S2 || sel == null) {
           battle.on('tick', () => {
             const sk = unit.skill;
-            if (!alive(unit) || !unit.canAct || !sk || !sk.ready || unit.s.flags.silence || (unit.trait.ammo ?? 1) > 0) return;
+            if (!alive(unit) || !unit.canAct || !sk || !sk.ready || sk.opCooling || unit.s.flags.silence || (unit.trait.ammo ?? 1) > 0) return;
             if (battle.enemiesInKeys(unit.baseRangeKeys || unit.rangeKeys, unit, unit.profile).length) sk.activate('DEFAULT');
           }, { owner: unit });
         }
@@ -994,7 +1003,7 @@ const KITS = {
   // ---- 3_12 瑕光 · 守护者 — S3 先贤化身: ATK/DEF +, bonus arts per hit, heals another nearby ally per attack;
   //      剑盾骑士: hurt-SP skills of the team also gain SP on attack; 仁慈: attacks sleeping enemies (first, ×atk_scale);
   //      精锐 module GUA-Y: damage taken −15 %
-  //      S1 光芒涌动 (TAKE_DAMAGE, charges): next attack ×atk_scale phys + heals the most injured ally of the 3×3 (herself
+  //      S1 光芒涌动 (自动触发 ⇒ DEFAULT, charges): next attack ×atk_scale phys + heals the most injured ally of the 3×3 (herself
   //      included) for heal_scale × ATK; S2 慑敌辉光: ATK +, puts every ground enemy on her own tile and every enemy she
   //      blocks to sleep (PRTS 备注; for the skill's duration: no own value in the data) and heals every ally of the
   //      skill range by ATK × ratio each second;
@@ -1176,47 +1185,18 @@ const KITS = {
     return kit;
   },
 
-  // ---- 3_15 巫恋 · 削弱者 (hidden) — S2 诅咒娃娃: places the doll (auto-placed on the tile of the range covering most
-  //      enemies; replaces any doll of hers still standing — the doll is never a prep hand card) whose 3×3 aura lowers
-  //      enemy ATK/DEF, gone after 15 s; 溃败暗示: low-HP enemies fragile
+  // ---- 3_15 巫恋 · 削弱者 (hidden) — S2 诅咒娃娃 "获得一个诅咒娃娃（最多可库存1个）": the doll is a hand piece the player
+  //      places (user playtest #6; PRTS 卫戍协议/帮助); each cast gives one and the placed piece takes the field on its
+  //      own tile (tokens.js releaseSkillSummon: not at the battle start; not placed ⇒ no doll); its token kit keeps the
+  //      3×3 ATK/DEF aura (the token skill's bb) for 15 s; 溃败暗示: low-HP enemies fragile
   chess_char_3_15_a: (bb, chess, def) => {
     const d = defOf(chess, def);
     const t0 = talentBb(d, 0);
     const tokenId = chess?.skill?.overrideTokenKey ?? (d.tokens || []).find((t) => /doll/.test(String(t))) ?? 'token_10006_vodfox_doll';
-    const debuff = { atkPct: num(bb.atk), defPct: num(bb.def) };
-    const dollKit = () => ({
-      skill: null,
-      trait: { noAttack: true },
-      install(battle, doll) {
-        aura(battle, doll, { key: 'skill:vodfox_doll', side: 'enemy', interval: 0.1, tiles: () => doll.rangeKeySet, mods: debuff });
-      },
-    });
     return {
       skill: {
         kind: 'instant',
-        onStart({ battle, unit }) {
-          const tok = battle.tokenDef(tokenId, unit); // the owner's skill / module variant (DESIGN §16)
-          const life = num(tok?.skill?.duration, 0) > 0 ? tok.skill.duration : textNum(d.skill?.description, /(\d+)秒后自动销毁/, 15);
-          const grid = tok?.rangeGrid ?? NINE;
-          const reach = Math.max(1, ...grid.map((p) => Math.max(Math.abs(p[0]), Math.abs(p[1]))));
-          // "最多可库存1个" / deploy limit 1: the new doll replaces any doll of hers still standing — withdrawn first
-          // so its tile is available again
-          for (const t of tokensOf(battle, unit, tokenId)) if (t.alive) battle.retreat(t, { reason: 'expired', permanent: true });
-          const foes = battle.aliveEnemies().filter((e) => !e.hidden);
-          let best = null, bs = -1, bd = Infinity;
-          for (const k of unit.rangeKeys || []) {
-            const r = (k / COLS) | 0, c = k % COLS;
-            if (!freeTile(battle, r, c) || !battle.grid.canStand(r, c, { ranged: true })) continue;
-            let s = 0;
-            for (const e of foes) if (bodyTileReach(e, r, c) <= reach) s++;
-            const dd = Math.abs(r - unit.tileR) + Math.abs(c - unit.tileC);
-            if (s > bs || (s === bs && dd < bd)) { best = [r, c]; bs = s; bd = dd; }
-          }
-          if (!best) return;
-          const doll = battle.spawnToken(unit, tokenId, best[0], best[1], { duration: life, untargetable: true, kit: dollKit() });
-          unit.mem.doll = doll;
-          if (doll) fx(battle, 'summon', doll, { src: unit.id, token: tokenId });
-        },
+        onStart({ battle, unit }) { releaseSkillSummon(battle, unit, tokenId); },
       },
       talents: [{ install(battle, unit) {
         aura(battle, unit, {
@@ -1283,10 +1263,15 @@ const KITS = {
   },
 
   // ---- 3_18 忍冬 · 尖兵 — S3 隐狐之艺: +DP, range +1, ATK +, decaying ASPD, hits all blocked, 0.2 s stun per hit,
-  //      camouflage after a kill until the next cast; 追凶: bonus arts on marked enemies; 蓄势: DP regen + out-of-combat
+  //      after a kill during the skill 迷彩 from its end until the next cast ("进入迷彩状态，直至下一次开启技能") — the
+  //      `camou` status under its own key (ba.camou "不阻挡时不成为敌方普通攻击的目标": only the enemy she blocks attacks
+  //      her, as with 隐匿; it used to be the generic `stealth` = 隐匿 under the key `stealth`, shared with 伪装服's timed
+  //      隐匿, which the unending one then made permanent, and it counted as 隐匿 for 叙拉古 / 家族徽章 — user playtest #6
+  //      "叙拉古阵营隐身不会结束": the bond's 隐匿 ends on time, this 迷彩 officially lasts); 追凶: bonus arts on marked
+  //      enemies; 蓄势: DP regen + out-of-combat
   //      regen; 精锐 module SOL-X: ATK/DEF + while blocking
-  //      S1 小施惩戒 (charges): next attack + extra_damage_ratio × ATK arts and +cost DP; S2 坠刃拷问 (charges, fires
-  //      once an enemy is inside its own range 3-12): +cost DP, ≤ max_target enemies of that range take atk_scale arts and
+  //      S1 小施惩戒 (charges): next attack + extra_damage_ratio × ATK arts and +cost DP; S2 坠刃拷问 (charges, the data rule
+  //      SKILL_RANGE: fires once an enemy is inside its own range 3-12, charges 3 s apart): +cost DP, ≤ max_target enemies of that range take atk_scale arts and
   //      停顿 — the ones already 停顿 are also stunned. (SOL-Y "首次部署时部署费用-4": the initial deployment is free.)
   chess_char_3_18_a: (bb, chess, def) => {
     const d = defOf(chess, def);
@@ -1300,7 +1285,7 @@ const KITS = {
         mods: { atkPct: num(bb.atk) },
         attack: { hitAllBlocked: true, onHitStatus: { key: 'stun', duration: num(bb['attack@stun'], 0.2) } },
         onStart({ battle, unit, skill }) {
-          battle.removeStatus(unit, 'stealth');
+          battle.removeBuff(unit, CAMOU_KEY);
           unit.mem.vulpisKill = false;
           const dp = num(bb.cost, 0);
           if (dp > 0) { battle.addDp(unit.ownerId, dp); fx(battle, 'dp', unit, { n: dp }); }
@@ -1315,7 +1300,7 @@ const KITS = {
         onEnd({ battle, unit, reason }) {
           battle.removeBuff(unit, 'skill:vulpis_aspd');
           if (reason !== 'death' && unit.alive && unit.mem.vulpisKill) {
-            battle.applyStatus(unit, 'stealth', { source: unit });
+            battle.addBuff(unit, { key: CAMOU_KEY, flags: { camou: true }, status: 'camou', source: unit });
             fx(battle, 'camouflage', unit);
           }
         },
@@ -1329,12 +1314,11 @@ const KITS = {
             if (dp > 0) { battle.addDp(unit.ownerId, dp); fx(battle, 'dp', unit, { n: dp }); }
           } },
         }),
-        skchr_vulpis_2: (s) => { // 坠刃拷问 — air units too (PRTS 备注 "※可对空")
+        skchr_vulpis_2: (s) => { // 坠刃拷问 — air units too (PRTS 备注 "※可对空"); data trigger SKILL_RANGE (its 3-12 range)
           const grid = copyGrid(s.rangeGrid);
           const n = Math.max(1, Math.floor(num(s.bb.max_target, 6)));
           return {
             kind: instantKindOf(s),
-            ...(grid ? { trigger: { rule: 'CUSTOM_RANGE', grid } } : {}),
             onStart({ battle, unit }) {
               const dp = num(s.bb.cost, 0);
               if (dp > 0) { battle.addDp(unit.ownerId, dp); fx(battle, 'dp', unit, { n: dp }); }
@@ -1575,8 +1559,11 @@ const KITS = {
         },
       },
       skills: altSkills(chess, d, bb, {
+        // (自动触发: an AUTO skill takes no 技能策略 — the 战术家 row is for MANUAL skills — and this DP skill fires as soon
+        // as it is ready, as before)
         skchr_vigil_1: (s) => ({
           kind: 'instant',
+          trigger: 'SP_FULL',
           onStart({ battle, unit }) {
             dpGain(battle, unit, num(s.bb.cost, 0));
             const w = wolfOf(unit);

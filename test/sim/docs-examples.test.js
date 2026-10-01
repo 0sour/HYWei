@@ -2,7 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBattle, enemyRec, chessRec, checkInvariants } from '../helpers/battleHarness.js';
+import { releaseSkillSummon } from '../../server/sim/content/tokens.js';
 
+const approx = (a, b, msg = '', eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps * Math.max(1, Math.abs(b)), `${msg} ${a} ≈ ${b}`);
 const dummy = (o = {}) => enemyRec({ key: 'enemy_dummy', hp: 1e7, speed: 0, ...o });
 
 test('SIM.md §10: 隐现 S2 fires 14 shots then ends', () => {
@@ -64,50 +66,55 @@ test('SIM.md example 2: 幽灵鲨 undying during the skill, self-stun afterwards
   assert.equal(u.alive, false, 'undying ended with the skill');
 });
 
-test('SIM.md example 5: 赫默 summons a medical drone that expires after 10 s', () => {
-  const kit = () => ({
+test('SIM.md example 5: 赫默 brings her placed medical drone onto its tile; it expires after 10 s', () => {
+  const kit = (bb) => ({
     skill: {
-      kind: 'instant', trigger: 'SP_FULL',
-      onStart({ battle, unit }) {
-        for (const k of unit.rangeKeys) {
-          const r = Math.floor(k / 21), c = k % 21;
-          if (!battle.unitAt(r, c) && battle.grid.canStand(r, c, { ranged: true })) { battle.spawnToken(unit, 'token_10000_silent_healrb', r, c, { duration: 10 }); break; }
-        }
-      },
+      kind: 'instant', heal: true,
+      onStart({ battle, unit }) { releaseSkillSummon(battle, unit, 'token_10000_silent_healrb', { cap: bb.cnt }); },
     },
   });
-  const h = makeBattle({ kits: { chess_char_2_02_a: kit }, units: [{ chessId: 'chess_char_2_02_a', row: 10, col: 4 }] });
+  const h = makeBattle({
+    defs: { chess: { t_guard: chessRec({ id: 't_guard', profession: 'WARRIOR', skill: null, stats: { atk: 0, maxHp: 1e5 } }) } },
+    kits: { chess_char_2_02_a: kit },
+    units: [{ chessId: 'chess_char_2_02_a', row: 10, col: 4, uid: 1 }, { chessId: 't_guard', row: 10, col: 5, uid: 2 }, { kind: 'token', tokenId: 'token_10000_silent_healrb', ownerUid: 1, row: 11, col: 4, uid: 3 }],
+  });
   const u = h.unit('chess_char_2_02_a');
+  const drone = h.unit(3);
+  h.step();
+  assert.equal(drone.alive, true, 'the placed piece deploys once with the board (SKILL_SUMMON_START_DEPLOY)');
+  h.run(10.1);
+  assert.equal(drone.alive, false, 'its 10 s');
+  h.unit('t_guard').hp = 1000;
   h.runUntil(() => u.skill.activations === 1, 60);
-  const drone = h.b.allyUnits.find((x) => x.kind === 'token');
-  assert.ok(drone && drone.alive);
+  h.step();
+  assert.ok(drone.alive && drone.tileR === 11 && drone.tileC === 4);
   assert.equal(drone.profile.dmgType, 'heal');
   h.run(10.1);
   assert.equal(drone.alive, false);
 });
 
-test('SIM.md example 6: 古米 TAKE_DAMAGE heal on the next attack', () => {
-  const kit = (bb) => ({
+test('SIM.md example 6: 古米 备用军粮 — an AUTO heal skill cast by an injured ally of its range (no enemy), the next attack is the heal', () => {
+  const kit = (bb, chess, def) => ({
     skill: {
-      kind: 'instant',
-      attack: { onHit({ battle, unit }) {
-        const ally = battle.alliesInRadius(unit.x, unit.y, 1.5, unit.ownerId).sort((a, b) => a.hpRatio - b.hpRatio)[0];
-        if (ally) battle.heal(unit, ally, unit.s.atk * bb.heal_scale);
-      } },
+      kind: 'instant', heal: true,
+      trigger: { rule: 'SKILL_RANGE', grid: def.skill.rangeGrid, allies: true },
+      targeting: { rangeGrid: def.skill.rangeGrid },
+      attack: { dmgType: 'heal', heal: { mode: 'single' }, healScale: bb.heal_scale },
     },
   });
   const h = makeBattle({
-    defs: { chess: { t_ally: chessRec({ id: 't_ally', skill: null, stats: { maxHp: 10000, atk: 0 } }) }, enemies: { enemy_dummy: dummy({ atk: 50, bat: 1 }) } },
+    defs: { chess: { t_ally: chessRec({ id: 't_ally', skill: null, stats: { maxHp: 10000, atk: 0 } }) } },
     kits: { chess_char_1_10_a: kit },
     units: [{ chessId: 'chess_char_1_10_a', row: 9, col: 5 }, { chessId: 't_ally', row: 10, col: 5 }],
-    enemies: [{ key: 'enemy_dummy', pos: [9, 5], time: 8 }], autoFinish: false, // spawns on 古米's tile ⇒ blocked
+    autoFinish: false, // no enemy at all
   });
   const g = h.unit('chess_char_1_10_a');
   h.run(7);
+  assert.equal(g.skill.rule, 'SKILL_RANGE');
+  assert.equal(g.skill.activations, 0, 'ready, nobody injured');
   h.unit('t_ally').hp = 2000;
-  assert.equal(g.skill.rule, 'TAKE_DAMAGE');
-  assert.equal(g.skill.activations, 0, 'ready but not hit yet');
-  h.run(4);
-  assert.ok(g.skill.activations >= 1);
-  assert.ok(h.unit('t_ally').hp > 2000, 'healed by the empowered attack');
+  h.run(2);
+  assert.equal(g.skill.activations, 1);
+  approx(h.unit('t_ally').hp, 2000 + g.s.atk * g.def.skill.bb.heal_scale, 'healed by her heal-mode attack');
+  checkInvariants(h.b);
 });

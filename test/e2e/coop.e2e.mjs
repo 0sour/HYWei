@@ -1063,13 +1063,27 @@ describe('browser E2E against the real server', { skip: !ENABLED && 'needs Chrom
             await c.page.waitForSelector('.dband.is-taken .dband__taken', { timeout: 4000 });
             if (!shotDraft.has('taken')) {
               shotDraft.add('taken');
+              // the strategy grid scrolls and the AI's weighted pick can sit below the fold: scroll it into view
+              // like a player would (a 15 s "nothing clickable" flake whenever the taken band was out of view)
+              await c.page.evaluate(() => document.querySelector('.dband.is-taken')?.scrollIntoView({ block: 'center' }));
+              await sleep(150);
               await c.click('.dband.is-taken', null, { any: true });
               await sleep(250);
               assert.equal(await c.exists('.draft-detail__btns .btn--primary:not([disabled])'), false, '队友已选: confirm disabled');
               await c.shot('draft-taken');
             }
           }
-          await c.click('.dband:not(.is-taken)', null, { nth: c === host ? 3 : 7 });
+          // the nth free strategy, skipping 老鲤 (【得闲饮茶】 holds the funds of rounds 1–2 back until round 3: a human on
+          // it has nothing to deploy in the first battles, and the round-1 facing chain needs board operators)
+          const bandName = await c.page.evaluate((nth) => {
+            const free = [...document.querySelectorAll('.dband:not(.is-taken)')].filter((el) => el.querySelector('.dband__name')?.textContent.trim() !== '老鲤');
+            const el = free[nth] || free[0];
+            el?.scrollIntoView({ block: 'nearest' });
+            return el?.querySelector('.dband__name')?.textContent.trim() || null;
+          }, c === host ? 3 : 7);
+          assert.ok(bandName, `${c.label}: a free strategy to pick`);
+          await sleep(150);
+          await c.click('.dband:not(.is-taken)', bandName);
           await sleep(250);
           if (!shotDraft.has(`${c.label}-sel`)) { shotDraft.add(`${c.label}-sel`); await c.shot('draft-selected'); }
           await c.click('.draft-detail__btns .btn--primary', '确认选择');

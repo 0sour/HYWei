@@ -376,6 +376,9 @@ test('号角 S3: ATK +25 %, BAT −1.2 s, then overload ATK +50 % with HP loss; 
   approx(h.unit('t_tank').s.atk, 100 * (1 + t0.atk), 1e-6, '军事要塞 on another Defender');
   approx(u.s.atk, u.base.atk * (1 + t0.atk), 1e-6, '… and on herself');
   u.skill.gainSp(1000);
+  h.run(1);
+  assert.equal(u.skill.activations, 0, '重装 TAKE_DAMAGE: not before a hit');
+  h.b.dealDamage(h.enemies()[0], u, { amount: 10, type: 'phys' });
   assert.ok(h.runUntil(() => u.skill.active, 5));
   const start = h.b.time;
   const total = u.def.skill.duration, ov = bb['horn_s_3[overload_start].damage_duration'];
@@ -622,7 +625,9 @@ test('凛御银灰 S2: 6 front enemies in the skill range take 260 % ATK phys + 
 });
 
 // ------------------------------------------------------------------------------------------------------------------
-test('凛御银灰 S2 auto-cast follows DEFAULT: an enemy in his initial (melee) range, not merely in the skill range', () => {
+test('凛御银灰 S2 auto-cast: SKILL_RANGE — an enemy inside the skill range casts it, no attack needed (PRTS 技能策略)', () => {
+  // PRTS 卫戍协议/帮助 技能操作: "携带拥有技能范围的技能（非攻击距离增加）的干员：不通过普通攻击/治疗触发技能，仅在技能范围内存在敌人
+  // （无视其不可选中）时释放技能" (it used to wait for an enemy in his melee range — user playtest #6 report 15)
   const h = makeBattle({
     defs: { enemies: { enemy_dummy: dummy() } },
     units: [{ chessId: 'chess_char_5_14_a', row: 10, col: 3 }],
@@ -630,15 +635,14 @@ test('凛御银灰 S2 auto-cast follows DEFAULT: an enemy in his initial (melee)
     hooks: ['damaged'], captureNoisy: true, autoFinish: false, timeLimit: 30,
   });
   const u = h.unit('chess_char_5_14_a');
+  assert.equal(u.skill.rule, 'SKILL_RANGE');
   h.step();
   u.skill.gainSp(1000);
-  h.run(3);
-  assert.equal(u.skill.activations, 0, 'enemies only in the skill range: no cast');
-  const e = h.spawn('enemy_dummy', { pos: [10, 4] });
-  assert.ok(h.runUntil(() => u.skill.activations > 0, 3), 'cast right before attacking the enemy in front');
+  h.run(0.2);
+  assert.equal(u.skill.activations, 1, 'enemies only in the skill range: cast');
+  assert.equal(h.hooksOf('damaged').filter((c) => c.source === u && c.dmg?.isAttack && !c.dmg.isSkill).length, 0, 'no attack needed');
   const hits = tagged(h, 'svash2');
-  assert.equal(new Set(hits.map((c) => c.target.id)).size, 3, 'the burst still covers the whole skill range');
-  assert.ok(hits.some((c) => c.target === e));
+  assert.equal(new Set(hits.map((c) => c.target.id)).size, 2, 'the burst covers the skill range');
   clean(h);
 });
 
@@ -937,8 +941,8 @@ test('录武官 S2: ATK +45 %; healed allies heal 80 HP per hit taken for 10 s; 
   const hp = a.hp;
   h.b.dealDamage(null, a, { amount: 500, type: 'true' });
   approx(a.hp, hp - 500 + bb['attack@fixed_heal_value'], 1e-6);
-  // "治疗干员后": a summon healed by her gets no guard
-  const tok = h.b.spawnToken(a, 'token_10015_dusk_drgn', 11, 3, { kit: { skill: null } });
+  // "治疗干员后": a summon healed by her gets no guard (纸偶: a summon without 禁疗 — “小自在” holds it, PRTS)
+  const tok = h.b.spawnToken(a, 'token_10022_kazema_shadow', 11, 3, { kit: { skill: null } });
   tok.hp = 100;
   assert.ok(h.runUntil(() => tok.hp > 100, 5));
   assert.ok(!tok.hasBuff('reckpr:guard'));
@@ -1236,7 +1240,7 @@ test('elite 夕 / 白面鸮: the module range is part of the initial range the D
   clean(h);
 });
 
-test('安洁莉娜 T2 兼职工作: no regeneration for allies under 禁疗 (PRTS)', () => {
+test('安洁莉娜 T2 兼职工作: an HP-regen attribute — allies under 禁疗 regenerate too (PRTS 备注 "不受治疗加成和禁疗影响")', () => {
   const h = makeBattle({
     defs: { chess: { t_a: ally('t_a'), t_b: ally('t_b') } },
     units: [{ chessId: 'chess_char_5_20_a', row: 10, col: 4 }, { chessId: 't_a', row: 12, col: 4 }, { chessId: 't_b', row: 12, col: 6 }],
@@ -1248,7 +1252,9 @@ test('安洁莉娜 T2 兼职工作: no regeneration for allies under 禁疗 (PRT
   a.hp = b.hp = 5000;
   h.run(2);
   assert.ok(a.hp > 5000);
-  assert.equal(b.hp, 5000, '禁疗');
+  assert.ok(b.hp > 5000, '禁疗 does not stop a 生命回复速度 attribute (PRTS 异常效果 禁疗)');
+  approx(b.hp, a.hp, 1e-6, 'same regen');
+  assert.equal(h.b.heal(h.unit('chess_char_5_20_a'), b, 100), 0, 'while heals still miss it');
   clean(h);
 });
 

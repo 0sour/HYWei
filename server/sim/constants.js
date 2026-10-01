@@ -16,6 +16,14 @@ export const MOVE_SCALE = 0.5;
 /** Ranged enemies stop moving this long after each attack (DESIGN §5.5). */
 export const ATTACK_PAUSE = 0.35;
 /**
+ * Collider radius of an allied unit (PRTS 作战机制 §碰撞体积与位置识别: "我方干员碰撞体积基本均为以0.25格为半径的圆形" —
+ * "关于碰撞体积与远程索敌，碰撞箱碰撞是为最常用的方式，索敌抬手等均使用碰撞箱"; the Ifrit 0.1 collider example). A ranged enemy's
+ * normal attack takes an ally whose collider touches its range circle: centre distance ≤ rangeRadius + this
+ * (ai.js enemyAttack; user playtest #6 follow-up — 萨卡兹枯朽战车's 2.2 reaches 2.45). [ASSUMED] every ally, summons
+ * included; enemy skills / zones of content keep their own (point) radius.
+ */
+export const ALLY_COLLIDER_RADIUS = 0.25;
+/**
  * Block contact (PRTS 游戏数据基础 §阻挡半径; 作战机制 §碰撞体积与位置识别 "中点判定 … 案例: 阻挡"): an unblocked enemy whose
  * position lies within the blocker's radius of the blocker's centre touches it — compared on squared distances, as the
  * official client does. Ground blocking 0.70709997 (² 0.49999037); air blocking (起飞 / blockFly units against flyers)
@@ -83,6 +91,31 @@ export const ELEMENT_ORDER = Object.freeze(['neural', 'erosion', 'burn', 'apopto
 /** 麻痹 (ba.palsy): each stack cancels one normal attack of an enemy; at most 3 stacks, lasts until consumed. */
 export const PALSY_MAX = 3;
 
+/**
+ * Push / pull (位移; user playtest #6 item 14). The 受力等级 is the source's 力度 minus the target's current 重量等级
+ * (massLevel, 失重 counts) — PRTS 游戏数据基础 §重量公式 (力度: 微小力 −1, 小力 0, 中力 1, 较大力 2, 大力 3, 大力+1 4, 特大力
+ * 5) and PRTS 推与拉. PUSH_TILES = the official push distance per 受力等级 (游戏数据基础 "推力-位移近似对应表": ≤ −3 → 0,
+ * −2 → 0.12, −1 → 0.44, 0 → 1.7, 1 → 2.14, 2 → 2.96, ≥ 3 → 3.53 tiles). Pulls (拖拽 / 捕网, "拉力-位移近似对应表"):
+ * ≥ 0 → all the way to the pull point (必定拉至身前), −1 → PULL_WEAK_SHARE of the starting distance, −2 → PULL_CRAWL
+ * tiles, ≤ −3 → nothing. A pull "至面前" aims at the point PULL_ORIGIN tiles in front of the puller (拉力起点 "干员前方0.5格
+ * 距离处") and stops once the target is within PULL_STOP_RADIUS of the puller's centre (急停 "拖拽者中心半径0.6708").
+ * A directional push (推击手 / 朝部署方向) on a target more than 45° off the direction or nearer than
+ * PUSH_DIRECTIONAL_MIN_DIST becomes radial with 受力等级 −2 (推与拉 "特殊修正").
+ * PRTS 推与拉 gives two columns of 理想移动距离: 弹道 (a push carried by a projectile — "温蒂的23技能、阿消的12技能"; equal
+ * to the 游戏数据基础 table above) and 特效 (an effect push, one frame less of travel — "食铁兽的12技能、见行者的12技能"):
+ * PUSH_TILES_EFFECT, used by the skills in PUSH_EFFECT_SKILLS (见行者 S1 护身射击 / S2 惊爆射击, the only 特效 pushers of
+ * the pool PRTS names). [ASSUMED: every other push of the pool (野鬃, 山, 莫斯提马, 琳琅诗怀雅, 圣聆初雪, 薄绿) uses the 弹道
+ * column — PRTS does not classify them; the two columns differ by 7–12 %.]
+ */
+export const PUSH_TILES = Object.freeze({ '-2': 0.12, '-1': 0.44, 0: 1.7, 1: 2.14, 2: 2.96, 3: 3.53 });
+export const PUSH_TILES_EFFECT = Object.freeze({ '-2': 0.085, '-1': 0.374, 0: 1.562, 1: 1.987, 2: 2.773, 3: 3.331 });
+export const PUSH_EFFECT_SKILLS = Object.freeze(new Set(['skchr_forcer_1', 'skchr_forcer_2']));
+export const PULL_WEAK_SHARE = 0.35;
+export const PULL_CRAWL = 0.03;
+export const PULL_ORIGIN = 0.5;
+export const PULL_STOP_RADIUS = 0.6708;
+export const PUSH_DIRECTIONAL_MIN_DIST = 0.25;
+
 /** Freeze caused by cold on cold (DESIGN §5.3). */
 export const COLD_FREEZE_DURATION = 3;
 /** 浮空 (ba.levitate): the duration is halved on units heavier than this weight (massLevel). */
@@ -96,6 +129,15 @@ export const FREEZE_RES_DOWN = 15;
 
 /** Default DP rules (DESIGN §5.5), overridable by Battle opts.flags. */
 export const DP_DEFAULTS = Object.freeze({ dpInit: 10, dpPerSec: 1, dpMax: 99 });
+/**
+ * Cooldown of the automatic skill operations (PRTS 卫戍协议/帮助 §作战阶段 技能操作: "自动操作具有3s冷却，在完成一次操作或作战
+ * 开始时部署的单位将进入冷却"), in battle seconds [ASSUMED: the game clock, like every skill timer]: the engine auto-casts
+ * a MANUAL skill no sooner than this after its previous cast and after the unit's battle-start deployment
+ * (skills.js; Battle._deploy `initial` sets `opReadyAt` from `battle.flags.startOpCooldown`, default this value). Kits
+ * with an automatic cast of their own check `skill.opCooling`. AUTO skills fire by their own rule and are not
+ * operations.
+ */
+export const AUTO_OP_COOLDOWN = 3;
 /**
  * State of a knocked-out operator waiting to redeploy on its own tile (b.snap `down` entries, Battle.snapshot): its
  * respawn timer runs (COUNTING), then it waits for the player's DP to reach its cost (WAIT_DP) or for its tile to be
@@ -126,8 +168,13 @@ export const DEPLOY_ANIM_TIME = 0.5;
 /** Stage devices that act as ground obstacles for pathing (阻隔工事). */
 export const OBSTACLE_DEVICES = Object.freeze({ trap_1105_accrate: { hp: 100, name: '阻隔工事' } });
 
-/** Default enemy/op aggregation clamps. */
-export const ASPD_MIN = 10;
+/**
+ * ASPD (攻击速度) clamps for every unit. The attribute's floor is 20 (PRTS 数值范围: ATTACK_SPEED 默认下限 20; 游戏数据基础
+ * "攻击速度属性实际被限制了下限为20" — so two −50 slows on base 100 leave ASPD 20, interval = 5 × BAT, not 10 × BAT; user
+ * playtest #6 item 17). The interval formula's own 10–600 clamp ("参与攻击间隔计算时会被限定在10~600以内") then only binds
+ * at the top.
+ */
+export const ASPD_MIN = 20;
 export const ASPD_MAX = 600;
 
 /** Client event buffer cap (events are dropped oldest-first beyond this when nobody drains). */
@@ -143,3 +190,13 @@ export const REGEN_EVENT_MIN = 1;
 
 /** Row offset mapping board rows (9..12) onto boss-field rows (2..5). */
 export const BOSS_ROW_OFFSET = -7;
+
+/**
+ * Shared boss pool (Final Assault / Hidden Core): a pool holding less than this many HP is empty — the hit that would
+ * leave less takes the rest (server SharedBossPool, browser LocalBossPool) and a browser pool reading below it is 0.
+ * Pool HP is a float: the server subtracts each field's reported damage per player, the browser shows `server hp −
+ * unacknowledged local damage`, and their rounding could leave dust (3.6e-12) that no hit could remove — the local
+ * cumulative counter absorbed it — so the leader stood at "0 HP" until the overtime drain ended the run (user playtest
+ * #6 item 5). With the rule a pool always reads 0 or at least 1 HP: 0 on the HUD = the leader is down.
+ */
+export const BOSS_POOL_MIN_HP = 1;

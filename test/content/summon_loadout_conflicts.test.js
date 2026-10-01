@@ -80,7 +80,14 @@ test('赫默: the medical drone lives its owner\'s withdraw duration (module var
   const life = (lo) => (lo === NONE ? 16 : base.rawToken(DRONE).variants[HEMO].skill.duration);
   assert.equal(life(DEF), 10);
   for (const lo of ORDERS(DEF, NONE)) {
-    const { h, ops } = duel({ chessId: HEMO, lo, tokens });
+    // the drone is a hand piece the player places; it deploys once with the board (SKILL_SUMMON_START_DEPLOY), then
+    // S2 brings it back onto its tile (user playtest #6) — both lifetimes are checked on the start deploy and on a cast
+    const { h, ops } = duel({ chessId: HEMO, lo, tokens, extra: [{ kind: 'token', tokenId: DRONE, ownerUid: 1, row: 11, col: 4 }] });
+    const start = ops.map((u) => summons(h, u, DRONE)[0]);
+    assert.ok(start.every((d) => d && d.alive), 'both start deploys');
+    assertLifetimes(h, start, lo.map(life));
+    h.run(6);                                         // past the token's redeploy time
+    assert.ok(ops.every((u) => u.skill.activations === 0), 'no cast yet');
     const drones = castAndCollect(h, ops, DRONE);
     assertLifetimes(h, drones, lo.map(life));
     done(h);
@@ -146,7 +153,7 @@ test('巫恋: the 诅咒娃娃 lasts its owner\'s module variant of the token sk
   const life = (lo) => want(tokens, DOLL, VOD, lo).skill.duration;
   assert.deepEqual([life(DEF), life(NONE)], [15, 5]);
   for (const lo of ORDERS(DEF, NONE)) {
-    const { h, ops } = duel({ chessId: VOD, lo, tokens });
+    const { h, ops } = duel({ chessId: VOD, lo, tokens, extra: [{ kind: 'token', tokenId: DOLL, ownerUid: 1, row: 11, col: 4 }] });
     const dolls = castAndCollect(h, ops, DOLL);
     assertLifetimes(h, dolls, lo.map(life));
     done(h);
@@ -176,14 +183,16 @@ test('凯瑟琳: device shield cap and deploy limit follow the owner\'s module v
   const limit = (lo) => (lo === NONE ? 1 : base.rawToken(CATSLD).variants[CATHY].stats.deployLimit);
   assert.deepEqual([cap(DEF), cap(NONE), limit(DEF)], [0.2, 0.5, 2]);
   for (const lo of ORDERS(DEF, NONE)) {
-    // one more operator each, so the default limit (2) and the patched one (1) differ in devices placed
-    const { h, ops } = duel({ chessId: CATHY, lo, tokens, extra: [{ chessId: 'chess_char_1_02_a', row: 11, col: 4 }] });
+    // two placed devices each (hand pieces, user playtest #6), facing her and one more operator: the default limit (2)
+    // keeps both, the patched one (1) withdraws the first deployed
+    const dev = (row, col) => ({ kind: 'token', tokenId: CATSLD, ownerUid: 1, row, col });
+    const { h, ops } = duel({ chessId: CATHY, lo, tokens, extra: [{ chessId: 'chess_char_1_02_a', row: 11, col: 4 }, dev(10, 3), dev(11, 3)] });
     h.run(0.5);
     ops.forEach((u, i) => {
       const devs = summons(h, u, CATSLD).filter((d) => d.alive);
       assert.equal(devs.length, limit(lo[i]), `${u.player.playerId} devices (deploy limit)`);
       for (const d of devs) {
-        const t = h.b.unitAt(d.mem.tr, d.mem.tc);
+        const t = d.mem.target;
         assert.ok(t && t.kind === 'op' && t.ownerId === u.ownerId, `${u.player.playerId} device points at its operator`);
         approx(t.findBuff('cathy:shield')?.shield ?? 0, u.s.maxHp * cap(lo[i]), `${u.player.playerId} shield`);
       }

@@ -1,6 +1,8 @@
 // Content tests for user playtest #4 items 11 and 12 (server/sim/content/tokens.js, kits/tier2.js):
-//   #11 赫默's 医疗无人机 appears only when her S2 fires — never on the field at battle start (tools/build-data.mjs:
-//       a skill's summon is not a prep hand card; test/match/loadout.test.js covers the prep side);
+//   #11 赫默's 医疗无人机 comes with her S2 — since user playtest #6 it is a hand piece the player places, it deploys
+//       once on that tile at the battle start (PRTS 卫戍协议/帮助 §作战阶段; settled by the user after playtest #6 —
+//       shared/constants.js SKILL_SUMMON_START_DEPLOY) and re-appears there each time S2 fires
+//       (test/content/playtest6_summons.test.js, the prep side test/match/playtest6_summons.test.js);
 //   #12 the 炎 bond's “炎佑” (PRTS “炎佑” 级别0(卫戍协议)): follows the highest-aggro enemy of the whole field and stays
 //       where it is without one (no fixed return point); 祛恶之焰 [模式乙] locks one target, channels up to 20 s (no normal
 //       attacks meanwhile), ends when the lock is lost or on silence; burn on every damage it deals; 元素脆弱 aura
@@ -20,19 +22,23 @@ const flameRec = (h) => h.b.data.rawToken(TOKEN_IDS.yanyou).skills.find((s) => s
 // =====================================================================================================================
 // #11 赫默
 
-test('#11 赫默 (full kit, default S2): no drone at battle start; the 医疗探机 appears when 医疗无人机 fires', REAL, () => {
-  const h = makeBattle({ defs: { chess: { test_guard: guard() } }, units: [{ chessId: 'chess_char_2_02_a', row: 10, col: 3 }, { chessId: 'test_guard', row: 10, col: 4 }], autoFinish: false, timeLimit: 90 });
+test('#11 赫默 (full kit, default S2): the placed 医疗探机 deploys once at battle start (10 s), then again when 医疗无人机 fires', REAL, () => {
+  const h = makeBattle({
+    defs: { chess: { test_guard: guard() } },
+    units: [{ chessId: 'chess_char_2_02_a', row: 10, col: 3, uid: 1 }, { chessId: 'test_guard', row: 10, col: 4, uid: 2 }, { kind: 'token', tokenId: TOKEN_IDS.healDrone, ownerUid: 1, row: 9, col: 4, uid: 3 }],
+    autoFinish: false, timeLimit: 90,
+  });
   h.step();
   const hm = h.unit('chess_char_2_02_a');
   assert.equal(hm.skill.id, 'skchr_silent_2');
   const drones = () => h.b.allyUnits.filter((u) => u.defId === TOKEN_IDS.healDrone && u.alive);
-  assert.equal(drones().length, 0, 'nothing but the operators at t = 0');
+  assert.equal(drones().length, 1, 'the free start deploy (PRTS: "作战开始时无视持有状态自动部署1个")');
+  assert.deepEqual([drones()[0].tileR, drones()[0].tileC], [9, 4], 'on its piece\'s tile');
   h.unit('test_guard').hp = 1000;
-  const cost = hm.skill.spCost;
-  h.run(cost - 2);
+  h.run(10.5);
   assert.equal(hm.skill.activations, 0);
-  assert.equal(drones().length, 0, 'no drone before the skill is ready');
-  assert.ok(h.runUntil(() => hm.skill.activations >= 1, 10), 'S2 fires once its SP is full (initSp 0)');
+  assert.equal(drones().length, 0, 'gone after its 10 s; no second one before the skill');
+  assert.ok(h.runUntil(() => hm.skill.activations >= 1, 30), 'S2 fires once its SP is full (initSp 0)');
   h.step();
   assert.equal(drones().length, 1, 'the drone comes with the skill');
   assert.equal(drones()[0].ownerUnit, hm);

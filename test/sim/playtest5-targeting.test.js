@@ -201,7 +201,6 @@ function floaterDuel(id, skillIndex, { col = 5, secs = 30 } = {}) {
 test('#1 ground-only skills and talents spare a hovering enemy (the worst 731a01c offenders + the PRTS "不可对空" notes)', () => {
   const cases = [
     ['chess_char_6_19_a', 1, 5, '锏 S2 无声的嘲笑'],
-    ['chess_char_6_19_a', 2, 5, '锏 S3 归于宁静'],
     ['chess_char_6_07_a', 0, 5, '维娜·维多利亚 S1 重铸晖光'],
     ['chess_char_5_06_a', 2, 5, '隐德来希 S3 灵与欲的惜别'],
     ['chess_char_6_12_a', 2, 4, '迷迭香 S3 “如你所愿”'],
@@ -217,8 +216,10 @@ test('#1 ground-only skills and talents spare a hovering enemy (the worst 731a01
   }
 });
 
-test('#1 skills PRTS marks "可对空" still hit a hovering enemy (德克萨斯 S2 剑雨, 焰尾 S2 “红松林”)', () => {
-  for (const [id, idx, tag, name] of [['chess_char_1_08_a', 1, 'skill', '德克萨斯 S2'], ['chess_char_4_19_a', 1, 'redPine', '焰尾 S2']]) {
+test('#1 skills PRTS marks "可对空" still hit a hovering enemy (德克萨斯 S2 剑雨, 焰尾 S2 “红松林”, 锏 S3 归于宁静)', () => {
+  // 锏 S3: PRTS 备注 "※可对空。不会拖拽自身中心半径0.6708范围内的敌人" (user playtest #6, WF audit — it used to sit in the
+  // ground-only list above)
+  for (const [id, idx, tag, name] of [['chess_char_1_08_a', 1, 'skill', '德克萨斯 S2'], ['chess_char_4_19_a', 1, 'redPine', '焰尾 S2'], ['chess_char_6_19_a', 2, 'slash', '锏 S3']]) {
     const r = floaterDuel(id, idx);
     assert.ok((r.floaterTags.get(tag) || 0) > 0, `${name}: ${JSON.stringify([...r.floaterTags])}`);
   }

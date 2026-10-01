@@ -104,12 +104,13 @@ export function normalizeSkill(rec) {
   let rule = normTriggerRule(typeof trig === 'string' ? trig : trig.rule);
   const matchedBy = typeof trig === 'object' ? String(trig.matchedBy ?? '') : '';
   const skillIndex = s.skillIndex ?? s.index ?? null;
-  // Research correction (03 addendum C1): profession/subprofession rows apply to skill 1 only.
-  if (/^(profession|subProfession)/.test(matchedBy) && skillIndex != null && skillIndex !== 0) rule = 'DEFAULT';
+  const skillType = String(s.skillType ?? s.type ?? 'MANUAL').toUpperCase();
+  // Class rows (profession / subprofession, research-shaped records carry `matchedBy`) apply to every MANUAL skill of the
+  // class and never to an AUTO one (PRTS 卫戍协议/帮助 技能策略; tools/build-data.mjs resolveTrigger does the same for data).
+  if (/^(profession|subProfession)/.test(matchedBy) && skillType !== 'MANUAL') rule = 'DEFAULT';
   const trigGrid = toArrayOfPairs((typeof trig === 'object' && (trig.customRangeGrid ?? trig.rangeGrid ?? trig.grid)) || rec.skillTriggerCustomRangeGrid);
   if (/^skcom_withdraw/.test(String(s.skillId ?? s.id ?? ''))) return null;
   const durRaw = s.duration ?? bb.duration ?? 0;
-  const skillType = String(s.skillType ?? s.type ?? 'MANUAL').toUpperCase();
   return {
     id: s.skillId ?? s.id ?? 'skill',
     name: s.name ?? '',
@@ -300,6 +301,8 @@ export function normalizeToken(id, t0, ownerChessId = null, variantOverride = nu
     canHitFly: t.canHitFly ?? null,
     targetPriority: t.targetPriority ?? null,
     untargetable: t.untargetable ?? /不会受到攻击|不会成为/.test(desc),
+    // abnormal effects held from the start (tokens.json `abnormal`, PRTS summon pages): 'healFree' 禁疗, 'isolated' 孤立
+    abnormal: Array.isArray(t0.abnormal) ? t0.abnormal.filter((x) => typeof x === 'string') : [],
     immune: immuneSet(t.immunities),
     trait: desc,
     traitBb: t.trait && typeof t.trait === 'object' ? { ...(t.trait.bb || {}) } : {},

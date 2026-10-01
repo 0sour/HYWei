@@ -18,36 +18,10 @@ import { canTargetEnemy } from '../../targeting.js';
 import { bodyInKeys } from '../../body.js';
 import {
   num, talentBb, moduleBb, traitBb, up, cheb, byEnemyAttack, onHitBy, onHitOn, onDamagedOn, enemiesInGrid,
-  alliesInGridOf, enemyInRange, statBuff, toggleBuff, installAura, spTimeBonus, freeTileAround, summonTileFree, instantKind,
+  alliesInGridOf, enemyInRange, statBuff, toggleBuff, installAura, spTimeBonus, freeTileAround, instantKind,
   tinmanKit, batMod,
 } from './tier1.js';
-
-/**
- * The tokens.json variant a summon of `owner` gets — its chess (else the normal `_a` sibling, else the first variant)
- * with the owner's selected skill / module merged, as simdata getToken does — for fields normalizeToken drops (the
- * withdraw skill's duration). Exact when two players of one field give the same chess different loadouts (DESIGN §16).
- */
-function ownTokenVariant(battle, tokId, owner) {
-  const vs = battle.tokenDef(tokId, owner)?.raw?.variants;
-  if (!vs || typeof vs !== 'object') return null;
-  const oid = String(owner?.defId ?? '');
-  let v = vs[oid] ?? vs[oid.replace(/_b$/, '_a')] ?? Object.values(vs)[0] ?? null;
-  const lo = owner?.def?.loadout;
-  if (v && lo && !lo.isDefault) {
-    if (!lo.skillIsDefault && v.bySkill?.[lo.skillIndex]) v = { ...v, ...v.bySkill[lo.skillIndex] };
-    if (!lo.moduleIsDefault && v.byModule?.[lo.moduleId]) v = { ...v, ...v.byModule[lo.moduleId] };
-  }
-  return v;
-}
-
-/** Lifetime (s) of a token `owner` summons: its own withdraw skill duration, else "N秒后自动销毁" in the owner's skill text. */
-function tokenLifetime(battle, tokId, owner, desc) {
-  const raw = battle.tokenDef(tokId, owner)?.raw;
-  const v = num(ownTokenVariant(battle, tokId, owner)?.skill?.duration, num(raw?.skill?.duration));
-  if (v > 0) return v;
-  const m = String(desc || '').match(/(\d+(?:\.\d+)?)秒后自动销毁/);
-  return m ? +m[1] : 0;
-}
+import { releaseSkillSummon } from '../tokens.js';
 
 /** Largest element gauge of a unit (every element — 侵蚀 included: the bosses' attacks fill it on operators). */
 const elemLoad = (a) => Math.max(a.elem.burn, a.elem.neural, a.elem.necrosis, a.elem.apoptosis, a.elem.erosion ?? 0);
@@ -92,10 +66,12 @@ export default {
   }),
 
   // ---------------------------------------------------------------------------------------------------------------
-  // 2_02 赫默 医疗无人机 (AUTO, heal trigger): deploy a medical drone (overrideTokenKey, stats from tokens.json variants)
-  // next to the most injured ally in range; it heals around itself and self-destructs after its lifetime; at most `cnt`
-  // drones at once. 强化注射: every 【医疗】 operator on the field ASPD +attack_speed. Elite module (PHY-Y): heals on
-  // ground units ×heal_scale (module 'none': no bonus).
+  // 2_02 赫默 医疗无人机 (AUTO, heal trigger): "获得一个医疗无人机 / 最多可库存1个无人机；无人机投入战场后治疗周围友军，
+  // 10秒后自动销毁" — the 医疗探机 is a hand piece the player places (user playtest #6; PRTS 卫戍协议/帮助): each cast gives
+  // one (stock ≤ cnt) and the placed piece takes the field on its own tile (tokens.js releaseSkillSummon: not at the
+  // battle start — user playtest #4; not placed ⇒ no drone); it heals around itself and self-destructs after 10 s (token
+  // kit). 强化注射: every 【医疗】 operator on the field ASPD +attack_speed. Elite module (PHY-Y): heals on ground units
+  // ×heal_scale (module 'none': no bonus).
   // S1 治疗强化·γ型 (alt): ATK +atk for its duration (no drone).
   chess_char_2_02_a: (bb, chess) => {
     const tokId = chess?.skill?.overrideTokenKey ?? (chess?.tokens ?? [])[0] ?? 'token_10000_silent_healrb';
@@ -105,23 +81,7 @@ export default {
     return {
       skill: {
         kind: 'instant', heal: true,
-        onStart({ battle, unit }) {
-          const focus = battle.injuredAlliesInKeys(unit.rangeKeys, unit)[0] ?? unit;
-          let best = null, bd = Infinity;
-          for (const k of unit.rangeKeys || []) {
-            const r = (k / COLS) | 0, c = k % COLS;
-            if (!summonTileFree(battle, r, c) || !battle.grid.canStand(r, c, { ranged: true })) continue;
-            const d = Math.max(Math.abs(r - focus.tileR), Math.abs(c - focus.tileC)) + 0.01 * (Math.abs(r - unit.tileR) + Math.abs(c - unit.tileC));
-            if (d < bd) { bd = d; best = [r, c]; }
-          }
-          if (!best) return;
-          const drones = (unit.mem.drones ?? []).filter((d) => d.alive);
-          while (drones.length >= cnt) battle.retreat(drones.shift(), { reason: 'expired', permanent: true });
-          const life = tokenLifetime(battle, tokId, unit, chess?.skill?.desc);
-          const d = battle.spawnToken(unit, tokId, best[0], best[1], life > 0 ? { duration: life } : {});
-          if (d) { drones.push(d); battle.fx('summon', { x: d.x, y: d.y, id: d.id, token: tokId }); }
-          unit.mem.drones = drones;
-        },
+        onStart({ battle, unit }) { releaseSkillSummon(battle, unit, tokId, { cap: cnt }); },
       },
       skills: { 'skcom_heal_up[3]': { kind: 'duration', heal: true, mods: { atkPct: num(bb.atk) } } },
       talents: [{ install(battle, unit) {
@@ -135,8 +95,9 @@ export default {
   },
 
   // ---------------------------------------------------------------------------------------------------------------
-  // 2_03 崖心 (hidden) 束缚链: up to max_target enemies in the large front grid are dragged (force 1 = 中等) to the tile in front
-  // of her, take atk_scale × ATK true damage and are stunned `stun` s. 雪境猎手: ATK/DEF +atk/+def while not blocking.
+  // 2_03 崖心 (hidden) 束缚链: up to max_target enemies in the large front grid are dragged (force 1 = 中力; Battle.pullToFront:
+  // the official 力度 − 重量 pull — weight ≤ 1 all the way in front of her, 2 a third of the way, 3 barely, ≥ 4 not at all),
+  // take atk_scale × ATK true damage and are stunned `stun` s. 雪境猎手: ATK/DEF +atk/+def while not blocking.
   // Elite module (HOK-X, trait value/dist): dragged enemies take `value` arts per `dist` tiles travelled.
   chess_char_2_03_a: (bb, chess, def) => {
     const t = talentBb(chess, 0);
@@ -147,11 +108,9 @@ export default {
         kind: 'instant',
         onStart({ battle, unit }) {
           const foes = enemiesInGrid(battle, unit, def?.skill?.rangeGrid ?? null, { n: Math.max(1, Math.floor(num(bb.max_target, 1))) });
-          const fx0 = unit.tileC + unit.fwd[1], fy0 = unit.tileR + unit.fwd[0];
           for (const e of foes) {
             const sx = e.x, sy = e.y;
-            const dx = fx0 - e.x, dy = fy0 - e.y, dist = Math.hypot(dx, dy);
-            const moved = dist > 0.05 ? battle.displace(e, { x: dx, y: dy }, dist, { force: force + 1 }) : 0; // same force mapping as generic.js
+            const moved = battle.pullToFront(e, unit, force);
             battle.fx('pull', { x: e.x, y: e.y, id: e.id, fromX: sx, fromY: sy });
             if (moved > 0 && num(tb.value) > 0) {
               battle.dealDamage(unit, e, { amount: num(tb.value) * moved / Math.max(0.01, num(tb.dist, 1)), type: 'arts', isSkill: true, canDodge: false, tags: ['drag'] });
@@ -698,7 +657,7 @@ export default {
         battle.every(1, () => {
           if (!up(unit)) return;
           const amt = unit.s.atk * r;
-          for (const a of battle.allies()) if (a.hp < a.s.maxHp) battle.heal(unit, a, amt, { aura: true, tags: ['talent'] });
+          for (const a of battle.alliesFor(unit)) if (a.hp < a.s.maxHp) battle.heal(unit, a, amt, { aura: true, tags: ['talent'] });
         }, { owner: unit });
       } }],
     };

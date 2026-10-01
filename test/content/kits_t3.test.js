@@ -508,11 +508,12 @@ test('3_14 初雪: 自然震慑 DEF/RES shred aura; 虚弱化 fragile under 40 %
   done(h);
 });
 
-test('3_15 巫恋: 诅咒娃娃 placed where enemies are, −ATK/DEF around it, gone after its lifetime; 溃败暗示 fragile', () => {
+test('3_15 巫恋: S2 brings the placed 诅咒娃娃 onto its tile, −ATK/DEF around it, gone after its lifetime; 溃败暗示 fragile', () => {
   const id = 'chess_char_3_15_a', bb = BB(id), t0 = TB(id, 0);
   const h = makeBattle({
     defs: { enemies: { enemy_a: dummy('enemy_a', { def: 200, atk: 100 }), enemy_b: dummy('enemy_b', { def: 200, atk: 100 }) } }, timeLimit: 80,
-    units: [{ chessId: id, row: 10, col: 3 }], enemies: [{ key: 'enemy_a', pos: [11, 5] }, { key: 'enemy_b', pos: [10, 5] }],
+    units: [{ chessId: id, row: 10, col: 3, uid: 1 }, { kind: 'token', tokenId: 'token_10006_vodfox_doll', ownerUid: 1, row: 10, col: 4, uid: 2 }],
+    enemies: [{ key: 'enemy_a', pos: [11, 5] }, { key: 'enemy_b', pos: [10, 5] }],
   });
   const u = h.unit(id);
   h.step();
@@ -520,15 +521,20 @@ test('3_15 巫恋: 诅咒娃娃 placed where enemies are, −ATK/DEF around it, 
   a.hp = a.s.maxHp * (t0.hp_ratio / 2);
   h.run(0.3);
   approx(a.s.dmgTakenMul, t0.damage_scale);
+  const doll = h.unit(2);
+  const life = ds.getToken('token_10006_vodfox_doll', id).skill.duration;
+  assert.equal(doll.alive, true, 'the placed doll deploys once at the start (PRTS; shared/constants.js SKILL_SUMMON_START_DEPLOY)');
+  assert.ok(h.runUntil(() => !doll.alive, life + 1), 'its lifetime');
+  h.run(doll.base.respawnTime + 0.1);
+  assert.equal(doll.alive, u.skill.activations > 0, 'then only with S2');
+  const n0 = u.skill.activations;
   fill(u);
-  assert.ok(h.runUntil(() => u.skill.activations === 1, 5));
-  const doll = u.mem.doll;
-  assert.ok(doll && doll.alive && doll.defId === 'token_10006_vodfox_doll');
-  assert.ok(Math.abs(doll.tileR - 10.5) <= 1 && Math.abs(doll.tileC - 5) <= 1, 'next to both enemies');
+  assert.ok(h.runUntil(() => u.skill.activations === n0 + 1 && doll.alive, 5));
+  assert.ok(doll.alive && doll.defId === 'token_10006_vodfox_doll');
+  assert.deepEqual([doll.tileR, doll.tileC], [10, 4], 'on the tile the player chose');
   h.run(0.3);
   approx(b.s.def, 200 * (1 + bb.def));
   approx(b.s.atk, 100 * (1 + bb.atk));
-  const life = ds.getToken('token_10006_vodfox_doll', id).skill.duration;
   h.run(life);
   assert.equal(doll.alive, false, 'destroyed');
   h.run(0.3);
@@ -608,7 +614,7 @@ test('3_18 忍冬: 隐狐之艺 DP, decaying ASPD, all blocked + stun, camouflag
   assert.ok(h.hooksOf('attack').some((c) => c.attacker === u && c.isSkill && c.targets.length === 2), 'hits every blocked enemy');
   assert.ok(h.hooksOf('statusApplied').some((c) => c.source === u && c.status === 'stun' && Math.abs(c.duration - bb['attack@stun']) < 1e-9));
   h.runUntil(() => !u.skill.active, 20);
-  assert.ok(!u.s.flags.stealth, 'no kill ⇒ no camouflage');
+  assert.ok(!u.s.flags.camou, 'no kill ⇒ no camouflage');
   done(h);
 
   const c = makeBattle({
@@ -621,11 +627,11 @@ test('3_18 忍冬: 隐狐之艺 DP, decaying ASPD, all blocked + stun, camouflag
   c.spawn('enemy_f', { pos: [10, 5] });
   assert.ok(c.runUntil(() => z.skill.active, 5));
   c.runUntil(() => !z.skill.active, 20);
-  assert.ok(z.s.flags.stealth, 'camouflage after a kill during the skill');
+  assert.ok(z.s.flags.camou && !z.s.flags.stealth, 'camouflage (迷彩, not 隐匿) after a kill during the skill');
   fill(z);
   c.spawn('enemy_f', { pos: [10, 5] });
   assert.ok(c.runUntil(() => z.skill.activations === 2, 5));
-  assert.ok(!z.s.flags.stealth, 'until the next cast');
+  assert.ok(!z.s.flags.camou, 'until the next cast');
   done(c);
 
   const q = makeBattle({ units: [{ chessId: id, row: 10, col: 4 }], timeLimit: 30 });
@@ -937,28 +943,41 @@ test('3_10 松果: 电能过载 opens only once an enemy stands inside the short
   done(h);
 });
 
-test('3_15 巫恋: a cast replaces the doll placed in the prep phase (one doll), never on a dead operator’s tile; 精锐 −30 %', () => {
+test('3_15 巫恋: the doll placed in the prep phase deploys at the start, then waits for S2 and is the one doll (each cast brings it back); 精锐 −30 %', () => {
   const gid = 'chess_char_3_15_b', bb = BB(gid);
   const h = makeBattle({
-    defs: { enemies: { enemy_a: dummy('enemy_a', { def: 200, atk: 100 }), enemy_b: dummy('enemy_b', { def: 200, atk: 100 }) } }, timeLimit: 60,
+    defs: { enemies: { enemy_a: dummy('enemy_a', { def: 200, atk: 100 }), enemy_b: dummy('enemy_b', { def: 200, atk: 100 }) } }, timeLimit: 120,
     units: [{ chessId: gid, row: 10, col: 3, uid: 1 }, { kind: 'token', tokenId: 'token_10006_vodfox_doll', ownerUid: 1, row: 10, col: 5, uid: 2 },
       { chessId: 'chess_char_3_16_a', row: 11, col: 4, uid: 3 }],
     enemies: [{ key: 'enemy_a', pos: [12, 4] }, { key: 'enemy_b', pos: [11, 5] }],
   });
-  const u = h.unit(1), piece = h.unit(2), cu = h.unit(3);
+  const u = h.unit(1), piece = h.unit(2);
   h.step();
-  assert.ok(piece.alive && piece.ownerUnit === u, 'board doll deployed');
-  h.b.dealDamage(null, cu, { type: 'true', amount: 1e7 });
+  assert.ok(piece.alive && piece.ownerUnit === u, 'the board doll deploys once at the start');
+  assert.ok(h.runUntil(() => !piece.alive, 20), 'its lifetime');
+  h.run(piece.base.respawnTime + 0.1);
+  const n0 = u.skill.activations;
+  assert.equal(piece.alive, n0 > 0, 'then only with the skill');
   fill(u);
-  assert.ok(h.runUntil(() => u.skill.activations === 1, 5));
-  const dolls = h.b.allyUnits.filter((t) => t.alive && t.defId === 'token_10006_vodfox_doll');
-  assert.equal(dolls.length, 1, 'deploy limit 1');
-  assert.equal(piece.alive, false, 'the prep-phase doll was replaced');
-  assert.notDeepEqual([dolls[0].tileR, dolls[0].tileC], [11, 4], 'not on the dead operator’s home tile');
+  assert.ok(h.runUntil(() => u.skill.activations === n0 + 1 && piece.alive, 5));
+  const dolls = () => h.b.allyUnits.filter((t) => t.alive && t.defId === 'token_10006_vodfox_doll');
+  assert.equal(dolls().length, 1, 'one doll');
+  assert.equal(dolls()[0], piece, 'the prep-phase piece itself');
+  assert.deepEqual([piece.tileR, piece.tileC], [10, 5]);
   h.run(0.3);
   const b = h.enemy('enemy_b');
   approx(b.s.def, 200 * (1 + bb.def));
-  assert.equal(b.findBuff('skill:vodfox_doll').mods.atkPct, bb.atk, 'ATK −30 % (her module weaken stacks on top)');
+  assert.equal(b.findBuff('token:curseDoll').mods.atkPct, bb.atk, 'ATK −30 % (her module weaken stacks on top)');
+  // gone after its lifetime, back on the same tile with the next cast
+  assert.ok(h.runUntil(() => !piece.alive, 20));
+  const gone = h.b.time;
+  fill(u);
+  assert.ok(h.runUntil(() => u.skill.activations === n0 + 2, 5));
+  // the doll's redeploy time (data respawnTime 5 s) runs from the moment it left
+  assert.ok(h.runUntil(() => piece.alive, 6));
+  assert.ok(h.b.time - gone >= piece.base.respawnTime - 1e-6, 'after its redeploy time');
+  assert.ok(piece.tileR === 10 && piece.tileC === 5, 'the next cast: the same tile');
+  assert.equal(dolls().length, 1);
   done(h);
 });
 
@@ -1134,7 +1153,7 @@ test('忍冬 迷彩: after a kill during 隐狐之艺 ranged enemies stop target
   h.spawn('enemy_f', { pos: [10, 5] });
   assert.ok(h.runUntil(() => u.skill.active, 5));
   h.runUntil(() => !u.skill.active, 20);
-  assert.ok(u.s.flags.stealth);
+  assert.ok(u.s.flags.camou);
   h.spawn('enemy_r', { pos: [11, 6] });
   h.run(4);
   assert.equal(h.hooksOf('damaged').filter((c) => c.target === u && c.source?.defId === 'enemy_r').length, 0, 'not targeted while camouflaged');

@@ -6,7 +6,7 @@
 //     renderer swaps the texture without touching geometry,
 //   * FX atlas (one base texture ⇒ particles batch / fit a ParticleContainer),
 //   * status icons, tier chips, backdrop gradients,
-//   * HUD rings: element gauge icons and the redeploy countdown ring (hudRings / ringArc),
+//   * HUD rings: the element discs of the element gauge row and the redeploy countdown ring (hudRings / ringArc),
 //   * avatar-in-rarity-diamond composites (cached per unit asset id) for the Spine fallback.
 // Everything procedural is deterministic (seeded noise) and generated lazily on first use. Requires
 // globalThis.PIXI and a DOM canvas at call time (never at import time).
@@ -1159,16 +1159,21 @@ export function itemTexture(key, img, color) {
 }
 
 // =============================================================================================================
-// HUD rings (user playtest #4 items 8 and 9): the element gauge icon of a unit (PRTS 元素: "模型下部会显示对应的元素
+// HUD rings (user playtest #4 items 8 and 9): the element icon of a unit's gauge row (PRTS 元素: "模型下部会显示对应的元素
 // 图标，并以白条显示剩余的元素值" — operators: the element's disc with its glyph; enemies: "小尺寸图标（不显示元素图标，
-// 仅根据元素种类改变背景色）") inside a white ring of the remaining 元素值, and the redeploy countdown ring above a
-// knocked-out operator. One 512×576 atlas: RING_STEPS + 1 arc frames (white, clockwise from 12 o'clock) and the discs.
+// 仅根据元素种类改变背景色）"; the white bar beside it — in the element's `tint` while it refills over a 爆发冷却 — is a
+// plain sprite, render/units.js; since user playtest #6 the gauge is no ring any more, and the discs have a light rim),
+// and the redeploy countdown ring above a knocked-out operator. One 512×576 atlas: RING_STEPS + 1 arc frames (white,
+// clockwise from 12 o'clock) and the discs.
 // Official element colours / glyphs after the client icons (图标 元素 sanity / water / fire / dark), drawn procedurally
 // (the local-client extraction has no general battle HUD sprites).
 
 /** Arc frames: `arcs[k]` covers k / RING_STEPS of the circle. */
 export const RING_STEPS = 48;
-/** Element disc colours (official icons: 神经 teal, 侵蚀 steel blue, 灼燃 rust, 凋亡 charcoal) and glyph colours. */
+/**
+ * Element disc colours (official icons: 神经 teal, 侵蚀 steel blue, 灼燃 rust, 凋亡 charcoal) and glyph colours; `tint` =
+ * the element's bright colour (the gauge bar refilling over a 爆发冷却, render/units.js).
+ */
 export const ELEMENT_RING = Object.freeze({
   neural: Object.freeze({ disc: '#13806c', glyph: '#bfe6df', tint: 0x1fae93 }),
   erosion: Object.freeze({ disc: '#2d5d86', glyph: '#cfdcea', tint: 0x4a8cc4 }),
@@ -1179,7 +1184,20 @@ export const ELEMENT_RING = Object.freeze({
 const RING_KEYS = Object.keys(ELEMENT_RING);
 const RC = 64;              // cell px
 const RING_R = 26, RING_W = 6.5, DISC_R = 21.5;
+/** The element disc's diameter as a share of its atlas cell (a sprite `d / HUD_DISC` px wide draws a `d` px disc). */
+export const HUD_DISC = (2 * DISC_R) / RC;
 let _rings = null;
+
+/**
+ * The rim of an element disc: a light inner ring (about 1 px at the drawn size) inside a dark edge, so the dark discs
+ * (凋亡) stay readable on the dark ground (user playtest #6) [ASSUMED look].
+ */
+function discRim(c, cx, cy) {
+  c.strokeStyle = 'rgba(255,255,255,0.5)'; c.lineWidth = 3;
+  c.beginPath(); c.arc(cx, cy, DISC_R - 2.5, 0, Math.PI * 2); c.stroke();
+  c.strokeStyle = 'rgba(0,0,0,0.55)'; c.lineWidth = 1.5;
+  c.beginPath(); c.arc(cx, cy, DISC_R, 0, Math.PI * 2); c.stroke();
+}
 
 function drawElementGlyph(c, el, cx, cy, col) {
   c.fillStyle = col; c.strokeStyle = col; c.lineCap = 'round'; c.lineJoin = 'round';
@@ -1239,10 +1257,10 @@ export function hudRings() {
   RING_KEYS.forEach((el, i) => {
     const x = i * RC, cx = x + RC / 2, cy = row + RC / 2;
     c.fillStyle = ELEMENT_RING[el].disc; c.beginPath(); c.arc(cx, cy, DISC_R, 0, Math.PI * 2); c.fill();
-    c.strokeStyle = 'rgba(0,0,0,0.5)'; c.lineWidth = 1.5; c.stroke();
     c.save(); c.beginPath(); c.arc(cx, cy, DISC_R - 1, 0, Math.PI * 2); c.clip();
     drawElementGlyph(c, el, cx, cy, ELEMENT_RING[el].glyph);
     c.restore();
+    discRim(c, cx, cy);
     frames['a:' + el] = [x, row];
   });
   {
@@ -1260,7 +1278,7 @@ export function hudRings() {
   RING_KEYS.forEach((el, i) => {
     const x = i * RC, cx = x + RC / 2, cy = row + RC + RC / 2;
     c.fillStyle = ELEMENT_RING[el].disc; c.beginPath(); c.arc(cx, cy, DISC_R, 0, Math.PI * 2); c.fill();
-    c.strokeStyle = 'rgba(0,0,0,0.5)'; c.lineWidth = 1.5; c.stroke();
+    discRim(c, cx, cy);
     frames['e:' + el] = [x, row + RC];
   });
   const base = P.BaseTexture.from(canvas, { mipmap: P.MIPMAP_MODES.ON });

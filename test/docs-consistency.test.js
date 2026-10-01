@@ -10,7 +10,10 @@
 // dragged model held under it, a single human untimed, the strategy draft's one countdown, 机变 two taps, knocked-out
 // operators and the official element gauges, live stats, the shop-only items, skill summons, 炎佑; user playtest #5
 // (DESIGN §19): blocking by contact radius, 联防 forced exit, huge-boss hit areas and 自缚, the element pipeline rules,
-// boss-field deployment, the phone prep camera — and the normative §3 / §5.1 / §5.5 / §6.1 / §7 lines that changed.
+// boss-field deployment, the phone prep camera — and the normative §3 / §5.1 / §5.5 / §6.1 / §7 lines that changed; user
+// playtest #6 (DESIGN §20): summons placed by hand (start deploy), skill triggers and the operation cooldown, every
+// blocker hits what it blocks, push force vs weight, the ASPD floor, the enemies' collider reach, the boss pool floor,
+// multi-round bounties lasting two battles, the 联防 counter, the element gauge — and the user's settled decisions.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -23,7 +26,9 @@ import { SOLO_RECONNECT_FALLBACK_SEC } from '../server/lobby.js';
 import { moduleTypeIconUrl } from '../public/js/ui/assetUrls.js';
 import { validateC2S } from '../shared/protocol.js';
 import { ERR, PHASE } from '../shared/constants.js';
-import { PROJECTILE_SPEEDS, BOOMERANG_RETURN_SPEED, ELEMENT, ELEMENT_ORDER, DOWN_STATE, BLOCK_RADIUS, FORCED_EXIT } from '../server/sim/constants.js';
+import { PROJECTILE_SPEEDS, BOOMERANG_RETURN_SPEED, ELEMENT, ELEMENT_ORDER, DOWN_STATE, BLOCK_RADIUS, FORCED_EXIT, ASPD_MIN, BOSS_POOL_MIN_HP, AUTO_OP_COOLDOWN, ALLY_COLLIDER_RADIUS } from '../server/sim/constants.js';
+import { SKILL_SUMMON_START_DEPLOY } from '../shared/constants.js';
+import { MULTI_ROUND_BOUNTY_BATTLES } from '../server/match/choices.js';
 import { SELF_BOUND } from '../server/sim/content/bosses.js';
 import * as BOARD from '../server/match/board.js';
 import * as DAMAGE from '../server/sim/damage.js';
@@ -303,8 +308,9 @@ test('user playtest #4 (DESIGN §18): picking by tile, timers, 机变 two taps, 
   assert.ok(special.shopExcluded && special.shopExcludedBy, '灼燃维式重锤 is never sold');
   assert.match(dataRow('shopExcluded`, `shopExcludedBy'), /isShopItem/);
   assert.match(PLAYING, /突变细胞只来自昆图斯的策略/);
-  assert.equal(DATA.tokens.token_10000_silent_healrb.placeable, false, '赫默\'s drone is no hand piece');
-  assert.match(dataRow('displayType`, `placeable'), /DEFAULT \*\*and\*\* a talent summon/);
+  // (#11 revisited by user playtest #6: the drone is a hand piece again, still only on the field when her skill fires)
+  assert.equal(DATA.tokens.token_10000_silent_healrb.placeable, true, '赫默\'s drone is a hand piece (user playtest #6)');
+  assert.match(dataRow('displayType`, `placeable'), /manually deployable summon/);
   assert.ok(!/ATK\/HP are \*\*replaced\*\*/.test(DATA_MD), 'DATA: 炎佑 stats are added (最终加算)');
   assert.match(DESIGN, /with no enemy on the field it stays where it is/);
 });
@@ -361,13 +367,10 @@ test('user playtest #5 (DESIGN §19): blocking, 联防 forced exit, huge bosses,
   assert.match(PLAYING, /\*\*立刻接替阻挡\*\*/);
   assert.match(PLAYING, /召唤物在所有干员之后/);
   assert.match(PLAYING, /近地悬浮/);
-  // integration QA residuals: blocked-first / out-of-range selection is melee-only (code = §5.5 = §19.2 = SIM = PLAYING);
-  // the forced-out timer is re-read after battleStart; the gauge intake's 5 % floor; the boss field's devices
-  assert.match(s55, /\(1\) the enemies it blocks \(melee units only, in range or not\)/);
-  assert.match(s55, /a ranged operator on a melee tile blocks but attacks only what its range holds/);
-  assert.ok(!/every blocker, ranged ones on melee tiles included/.test(DESIGN), '§19.2: the old [ASSUMED] is gone');
-  assert.match(SIM, /A ranged operator standing on a melee tile blocks, but targets by its range alone/);
-  assert.match(PLAYING, /站在近战位的远程干员也能阻挡/);
+  // integration QA residuals (the melee-only blocked-first rule is superseded by §20.3 — the user's "阻挡了就一定要能打到",
+  // checked in the §20 test); the forced-out timer is re-read after battleStart; the gauge intake's 5 % floor; the boss
+  // field's devices
+  assert.match(S19, /Ranged operators on melee tiles[^\n]*superseded by §20\.3/);
   assert.match(s55, /after which the forced-out operators' timers are re-read/);
   assert.match(SIM, /Right after `battleStart`\s+its timer is re-read/);
   assert.match(s55, /max\(0\.05, 1 − 损伤抵抗\/100\)/);
@@ -381,4 +384,88 @@ test('user playtest #5 (DESIGN §19): blocking, 联防 forced exit, huge bosses,
   assert.ok(!/BOSS_WALL_ROW/.test(layout), 'no boss-field device filter in the 3D board');
   assert.match(S19, /进联防复活时间确实是重新算/);
   assert.ok(!/its full redeploy timer \[ASSUMED\]/.test(DESIGN), 'the full 联防 timer is no longer [ASSUMED]');
+});
+
+test('user playtest #6 (DESIGN §20): summons, skill triggers, blocking, push force, enemies, boss pool, bounties, element gauge — code and every doc agree', () => {
+  const sec = (n) => DESIGN.slice(DESIGN.indexOf(`## ${n}.`), DESIGN.indexOf(`## ${n + 1}.`) > 0 ? DESIGN.indexOf(`## ${n + 1}.`) : undefined);
+  const sub = (a, b) => DESIGN.slice(DESIGN.indexOf(`### ${a}`), DESIGN.indexOf(`### ${b}`));
+  const S20 = sec(20);
+  assert.match(DESIGN, /## 20\. User playtest #6 \(v2\.5\)/);
+  for (let i = 1; i <= 9; i++) assert.match(S20, new RegExp(`### 20\\.${i} `), `§20.${i}`);
+  const intro = S20.slice(0, S20.indexOf('### 20.1'));
+  for (let i = 1; i <= 19; i++) assert.match(intro, new RegExp(`#${i} `), `the intro maps report #${i}`);
+  const s55 = DESIGN.slice(DESIGN.indexOf('### 5.5'), DESIGN.indexOf('### 5.6'));
+  const s56 = DESIGN.slice(DESIGN.indexOf('### 5.6'), DESIGN.indexOf('## 6.'));
+  const s209 = S20.slice(S20.indexOf('### 20.9'));
+  // the user's settled decisions (2026-10-01): code = §20 = §20.9 table (with the one-line flips) = SIM / PLAYING / META
+  assert.equal(SKILL_SUMMON_START_DEPLOY, true, '#1/#2: a placed skill summon deploys once at the battle start (PRTS)');
+  assert.match(s209, /SKILL_SUMMON_START_DEPLOY = false/);
+  assert.match(s55, /a skill's placed summon \(赫默 医疗探机, 巫恋 诅咒娃娃\) included, once and free/);
+  assert.match(SIM, /deploys once at the battle start/);
+  assert.match(PLAYING, /医疗探机、诅咒娃娃开战时也在摆放的位置免费部署一次/);
+  assert.match(sec(18), /#11 skill summons are not prep pieces\*\* — \*\*superseded by §20\.1/);
+  assert.match(s209, /token_10041_cathy_catsld/, '凯瑟琳\'s device stays a hand card');
+  for (const [name, text] of [['build-data', readFileSync(join(ROOT, 'tools/build-data.mjs'), 'utf8')], ['DATA.md', DATA_MD]]) {
+    assert.ok(!/question to the user|awaits the user's confirmation/.test(text), `${name}: the 凯瑟琳 question is settled`);
+  }
+  assert.equal(MULTI_ROUND_BOUNTY_BATTLES, 2, '#4: multi-round bounties last two battles (the user\'s call)');
+  assert.match(s209, /MULTI_ROUND_BOUNTY_BATTLES = null/);
+  assert.match(META, /MULTI_ROUND_BOUNTY_BATTLES = null` restores the official red "每场"/);
+  assert.match(PLAYING, /官方的「多轮悬赏」（原文写「之后的每场作战」）在这里也按「接下来两场作战」处理/);
+  assert.ok(!/红字「每场」的是多轮悬赏/.test(PLAYING), 'PLAYING: no 每场 card any more');
+  assert.equal(ALLY_COLLIDER_RADIUS, 0.25, '#12: ranged enemies reach an operator by its 0.25 collider');
+  assert.match(s209, /ALLY_COLLIDER_RADIUS = 0/);
+  assert.match(sec(3), /centre distance ≤ `rangeRadius` \+ 0\.25/);
+  assert.match(s55, /whose 0\.25 collider touches their radius/);
+  assert.match(SIM, /centre distance ≤ `rangeRadius` \+ `ALLY_COLLIDER_RADIUS` 0\.25/);
+  assert.match(S20, /reach 2\.2 → 2\.45 \(13 → 21 tiles around it\)/);
+  // #17: every blocker hits what it blocks (code: no melee gate; §5.5 = §19.2 superseded = §20.3 = SIM = PLAYING)
+  assert.match(s209, /gate `Battle\.blockedTargets` \/ `sortEnemyTargets` blocked-first on a melee position again/);
+  assert.match(s55, /\*\*Every blocker\*\* — melee units/);
+  assert.match(s55, /\(1\) the enemies it blocks \(every blocker, in range or not, §20\.3\)/);
+  assert.ok(!/melee units only, in range or not|a ranged operator on a melee tile blocks but attacks only what its range holds/.test(DESIGN), '§5.5: the melee-only rule is gone');
+  assert.match(SIM, /\*\*every blocker\*\* — melee units/);
+  assert.ok(!/targets by its range alone: no/.test(SIM), 'SIM: the melee-only rule is gone');
+  assert.match(PLAYING, /\*\*阻挡了就一定能打到\*\*/);
+  const battleSrc = readFileSync(join(ROOT, 'server/sim/Battle.js'), 'utf8');
+  assert.ok(!/meleeUnit/.test(battleSrc) && !/export function meleeUnit/.test(readFileSync(join(ROOT, 'server/sim/targeting.js'), 'utf8')), 'no melee gate in the engine');
+  // #15 / #16: skill triggers and the 3 s operation cooldown (code = §5.6 = §19.2 superseded)
+  assert.equal(AUTO_OP_COOLDOWN, 3);
+  assert.match(s56, /`SKILL_RANGE` \(a MANUAL skill with a 技能范围 of its own/);
+  assert.match(s56, /\*\*every MANUAL skill\*\* of the class and never an AUTO skill/);
+  assert.match(s56, /`AUTO_OP_COOLDOWN` \(3 s\) after its previous cast and after the unit's battle-start deployment/);
+  assert.match(sec(19), /灰毫 S2 专注轰击 — \*\*superseded by §20\.2\*\*/);
+  assert.ok(!/so her S1 is TAKE_DAMAGE and S2 stays DEFAULT/.test(DESIGN), '§19.2: 灰毫 S2 is TAKE_DAMAGE now');
+  assert.ok(!/the battle-start part is left out/.test(readFileSync(join(ROOT, 'server/sim/constants.js'), 'utf8')), 'AUTO_OP_COOLDOWN comment');
+  assert.match(DATA_MD, /13 MANUAL skills \(26 normal \+ elite records\)/);
+  assert.match(sub('20.2', '20.3'), /180 % \(精锐 200 %\)/, '#8: the elite shield ratio');
+  // #14 / #17: push force vs weight, ASPD floor, 孤立 (code = §5.2 / §5.3 / §5.4 = §20.3)
+  assert.equal(ASPD_MIN, 20);
+  assert.match(sec(5), /`aspd = clamp\(100 \+ Σaspd \+ base-100, 20, 600\)`/);
+  assert.match(sec(5), /isolated \(孤立: no friendly selector picks it/);
+  assert.match(sec(5), /`battle\.push\(e, force, \{ from, dir, fixed, fixedAngle, inward, effect \}\)`/);
+  assert.match(sec(19), /锏 S3 归于宁静 \(added by §20\.3\)/);
+  // #5: the boss pool floor and the verdict (code = §5.5 = §14 = §6.1)
+  assert.equal(BOSS_POOL_MIN_HP, 1);
+  assert.match(s55, /A pool holding less than 1 HP is empty \(`constants\.js BOSS_POOL_MIN_HP`/);
+  assert.match(sec(14), /the first one the server registers decides the verdict \(`Match\._finalEnding`\)/);
+  assert.match(sec(6), /team LP 0 ⇒ defeat at once \(PRTS 直接失败\)/);
+  // #7 / #19: the 联防 counter (§17.5 revised, §8.2, §14) and the promotion reward (§6.2)
+  assert.match(sec(17), /\*\*revised by §20\.6\*\*/);
+  assert.ok(!/the own battle's count stays on show as an upper bound tagged 联防中/.test(DESIGN), '§17.5: the frozen 联防 count is gone');
+  assert.match(sec(8), /uniteLeft\? \/\* 联防: the leaker's enemies still standing/);
+  assert.match(sec(14), /`b\.progress \{ battleId, gt, killed, total, leaks\?, left\?, bossDmg\?, by\?, done\? \}`/);
+  assert.match(sec(6), /3 \*\*different\*\* free chess of tier `min\(level\+1, 6\)`/);
+  assert.match(S20, /105 cards: 56 next-battle incl\. 源石虫·特训, 42 two-battle, 7 multi-round/);
+  // #11 / #9 / #13: the gauge look (§18.3 / §19.5 superseded, §8.2 fill), model scale and fear (§9, §5.3, §2)
+  assert.match(sec(18), /superseded by §20\.8/);
+  assert.match(sec(19), /The gauge's look is the official icon \+ white bar since §20\.8/);
+  assert.match(sec(8), /rounded DOWN and kept at 0\.01–0\.99 outside a burst/);
+  assert.match(sec(9), /enemies\.json `modelScale`/);
+  assert.match(sec(2), /fear\.js +恐惧 movement of enemies/);
+  // the 机变 card and the card tap (§10 = §18.2 = §20.7)
+  assert.match(sec(10), /a tap anywhere on the card, its confirm strip included, is the card's tap/);
+  assert.match(sec(18), /Each card shows its full effect text \(§20\.7\)/);
+  // README: the test count stays in the right order of magnitude
+  assert.match(README, /约 27\d0 项/);
 });

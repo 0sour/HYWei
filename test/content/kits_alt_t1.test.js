@@ -309,7 +309,8 @@ test('1_10 古米 S2 食粮烹制: disarm s cooking (no attacks, DEF +def), then
     const s = rec(id, 'skchr_sunbr_2'), bb = s.bb, tb = raw(id).trait.bb;
     const ally = chessRec({ id: 't_ally', profession: 'WARRIOR', rangeGrid: [[0, 0]], skill: null, stats: { maxHp: 20000 } });
     const h = run({
-      defs: { enemies: { e: dummy('e') }, chess: { ...noGarrison(id), t_ally: ally } },
+      // a MANUAL 重装 skill: the TAKE_DAMAGE strategy (PRTS 卫戍协议/帮助 "不受技能范围影响，受到伤害时释放技能")
+      defs: { enemies: { e: dummy('e', { atk: 300, bat: 1 }) }, chess: { ...noGarrison(id), t_ally: ally } },
       units: [entry(id, s.skillId, { row: 9, col: 5, carryState: READY }), { chessId: 't_ally', row: 10, col: 6 }],
       enemies: [{ key: 'e', pos: [9, 5] }],
     });
@@ -318,7 +319,7 @@ test('1_10 古米 S2 食粮烹制: disarm s cooking (no attacks, DEF +def), then
     a.hp = a.s.maxHp * 0.3;
     assert.ok(h.runUntil(() => u.skill.active, 5));
     const st = started(h, u)[0].t;
-    assert.equal(started(h, u)[0].reason, 'DEFAULT');
+    assert.equal(started(h, u)[0].reason, 'TAKE_DAMAGE');
     approx(u.s.def, u.base.def * (1 + bb.def), `${id} cooking DEF`);
     approx(u.s.atk, u.base.atk, 'no ATK while cooking');
     h.runUntil(() => h.b.time >= st + bb.disarm - 0.2, 20);
@@ -482,19 +483,20 @@ test('1_19 野鬃 S1 骑枪刺击 (PASSIVE): ASPD +attack_speed for `duration` s
   }
 });
 
-test('1_20 雷蛇 S1 充能防御: TAKE_DAMAGE — DEF +def for bb.duration s; the next hit is blocked (no 战术防御 SP from it)', () => {
+test('1_20 雷蛇 S1 充能防御: 自动触发 "技能自动开启" (SP_FULL, no 技能策略) — DEF +def for bb.duration s; the next hit is blocked (no 战术防御 SP from it)', () => {
   for (const id of pair('20')) {
     const s = rec(id, 'skchr_liskam_1'), bb = s.bb, t = tal(id);
     const mate = chessRec({ id: 't_mate', profession: 'WARRIOR', rangeGrid: [[0, 0]], skill: { spType: 'INCREASE_WHEN_ATTACK', spCost: 200 } });
     const h = run({
       defs: { enemies: { a: dummy('a', { atk: 700, bat: 1 }) }, chess: { ...noGarrison(id), t_mate: mate } },
       units: [entry(id, s.skillId, { row: 9, col: 4, carryState: READY }), { chessId: 't_mate', row: 10, col: 4 }],
-      enemies: [{ key: 'a', pos: [9, 4] }],
+      enemies: [{ key: 'a', pos: [9, 4], time: 1 }], // arrives after the skill is on (it needs no hit to start)
     });
     const u = sel(h, id, s.skillId), m = h.unit('t_mate');
     assert.ok(h.runUntil(() => u.skill.active, 10));
     const st = h.b.time;
-    assert.equal(started(h, u)[0].reason, 'TAKE_DAMAGE');
+    assert.equal(started(h, u)[0].reason, 'SP_FULL');
+    assert.ok(st < 0.5, 'on as soon as it is ready, before any hit');
     approx(u.s.def, u.base.def * (1 + bb.def), `${id} DEF`);
     const hp = u.hp;
     const sp = m.skill.sp;
@@ -671,9 +673,11 @@ test('1_20 雷蛇 反击电弧: attack interval +70 % of the base (PRTS 增大(+
   for (const id of pair('20')) {
     const bb = raw(id).skill.bb;
     assert.equal(raw(id).skill.skillId, 'skchr_liskam_2');
-    const h = run({ defs: { enemies: { e: dummy('e') }, chess: noGarrison(id) }, units: [{ chessId: id, row: 9, col: 4, carryState: READY }], enemies: [{ key: 'e', pos: [9, 5] }] });
+    // 重装 S2: TAKE_DAMAGE (the enemy has to hit her)
+    const h = run({ defs: { enemies: { e: dummy('e', { atk: 300, bat: 1 }) }, chess: noGarrison(id) }, units: [{ chessId: id, row: 9, col: 4, carryState: READY }], enemies: [{ key: 'e', pos: [9, 4] }] });
     const u = h.unit(id);
     assert.ok(h.runUntil(() => u.skill.active, 5));
+    assert.equal(started(h, u)[0].reason, 'TAKE_DAMAGE');
     approx(u.s.interval, u.base.bat * (1 + bb.base_attack_time) * 100 / u.s.aspd, `${id} interval ×${1 + bb.base_attack_time}`);
     h.runUntil(() => !u.skill.active, 30);
     approx(u.s.interval, u.base.bat * 100 / u.s.aspd, 'restored');

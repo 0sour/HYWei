@@ -184,7 +184,9 @@ test('见行者 (3_07) 惊爆射击 pushes along her direction (DOWN: the enemy 
   checkInvariants(h.b);
 });
 
-test('薄绿 (3_08) 聚能涡旋 pulls toward the tile in front along her direction', () => {
+test('薄绿 (3_08) 聚能涡旋 pushes the target towards her centre whatever her direction (PRTS 备注: a reversed radial push)', () => {
+  // PRTS 薄绿 S2 备注 "此技能的“拖拽”机制实际为反方向（指向薄绿方向）的推开" / 推与拉 (radial force): towards her centre,
+  // the official push distance (小力 vs weight 0: 1.7 tiles), stopping at the 急停 radius in front of her [ASSUMED]
   const id = 'chess_char_3_08_a';
   const run = (dir) => {
     const h = makeBattle({ defs: { enemies: { enemy_d: dummy('enemy_d', { mass: 0 }) } }, timeLimit: 60, units: [{ chessId: id, row: 9, col: 4, dir }], enemies: [{ key: 'enemy_d', pos: [11, 4] }] });
@@ -195,10 +197,11 @@ test('薄绿 (3_08) 聚能涡旋 pulls toward the tile in front along her direct
     h.run(3);
     return h.enemy('enemy_d');
   };
-  const up = run('UP');
-  assert.ok(up.y < 11 - 0.2 && Math.abs(up.x - 4) < 0.05, `UP: pulled straight down toward (10,4) (${up.x}, ${up.y})`);
-  const right = run('RIGHT');
-  assert.ok(right.x > 4.2, `RIGHT: pulled toward (9,5) (${right.x}, ${right.y})`);
+  for (const dir of ['UP', 'RIGHT']) {
+    const e = run(dir);
+    assert.ok(e.y < 11 - 0.2 && Math.abs(e.x - 4) < 0.05, `${dir}: pushed straight down towards her (${e.x}, ${e.y})`);
+    assert.ok(Math.hypot(e.x - 4, e.y - 9) >= 0.6708 - 1e-6, `${dir}: stops in front of her, not on her tile (${e.y})`);
+  }
 });
 
 test('乌尔比安 (5_05) S3 throws the anchor straight ahead along his direction (and triggers on the rotated grid)', () => {
@@ -223,18 +226,27 @@ test('乌尔比安 (5_05) S3 throws the anchor straight ahead along his directio
   assert.ok(!r.h.hooksOf('skillStart').some((c) => c.unit === r.u), 'facing RIGHT: nothing ahead, no cast');
 });
 
-test('凯瑟琳 (4_11) places a device behind her operator along ITS direction, facing the operator', () => {
+test('凯瑟琳 (4_11): a placed device shields the operator on the tile IT faces (range 1-1 rotated by its direction)', REAL, () => {
   const id = 'chess_char_4_11_a', ally = 'chess_char_1_02_a';
-  const place = (dir) => {
-    const h = makeBattle({ units: [{ chessId: id, row: 12, col: 2 }, { chessId: ally, row: 10, col: 5, dir }], timeLimit: 30, hooks: [] });
+  // the device at (10,5); operators on its four neighbours; its direction picks the one it serves (user playtest #6)
+  const serve = (dir) => {
+    const h = makeBattle({
+      units: [
+        { chessId: id, row: 12, col: 2, uid: 1 },
+        { chessId: ally, row: 10, col: 6, uid: 2 }, { chessId: ally, row: 11, col: 5, uid: 3 },
+        { chessId: ally, row: 9, col: 5, uid: 4 }, { chessId: ally, row: 10, col: 4, uid: 5 },
+        { kind: 'token', tokenId: 'token_10041_cathy_catsld', ownerUid: 1, row: 10, col: 5, uid: 6, dir },
+      ],
+      timeLimit: 30, hooks: [],
+    });
     h.run(0.2);
-    const d = h.b.allyUnits.find((x) => x.defId === 'token_10041_cathy_catsld' && x.alive && x.mem.tr === 10 && x.mem.tc === 5);
-    assert.ok(d, `a device serves the ${dir} operator`);
-    return [d.tileR, d.tileC, d.dir];
+    const shielded = h.b.allyUnits.filter((x) => x.kind === 'op' && x.findBuff('cathy:shield')).map((x) => `${x.tileR},${x.tileC}`);
+    return shielded;
   };
-  assert.deepEqual(place('UP'), [9, 5, 'UP'], 'below an UP operator, pointing up at it');
-  assert.deepEqual(place('RIGHT'), [10, 4, 'RIGHT']);
-  assert.deepEqual(place('LEFT'), [10, 6, 'LEFT']);
+  assert.deepEqual(serve('RIGHT'), ['10,6']);
+  assert.deepEqual(serve('UP'), ['11,5'], 'row 0 is the bottom: UP faces the row above');
+  assert.deepEqual(serve('DOWN'), ['9,5']);
+  assert.deepEqual(serve('LEFT'), ['10,4']);
 });
 
 test('余 (6_03) S3 fire wall runs through his tile perpendicular to his direction (UP / DOWN: his row; RIGHT / LEFT: his column)', REAL, () => {

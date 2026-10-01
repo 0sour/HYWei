@@ -1,5 +1,6 @@
 // Active effects list (m.private.effects: band / 机变 / team / item / garrison effects with counters):
-// compact icon column at the right edge, rich-text tooltip per effect.
+// compact icon column at the right edge, rich-text tooltip per effect. `counterText` (a 悬赏's "还剩 N 场作战", user
+// playtest #6 item 4) replaces the bare counter in the tooltip's kind line.
 
 import { html, Tooltip, MicroLabel } from './components.js';
 import { Img, RichText, GIcon } from './gameComponents.js';
@@ -16,7 +17,7 @@ export function EffectsList({ effects }) {
   return html`<div class="effects" aria-label="生效中的效果">
     <${MicroLabel}>EFFECTS</${MicroLabel}>
     ${list.slice(0, 10).map((e, i) => html`<${Tooltip} key=${e.id ?? i} placement="bottom" text=${html`<div class="efftip">
-        <b>${e.name || '效果'}</b><span class="efftip__kind">${KIND[e.iconKind] || ''}${e.counter != null ? ` · ${e.counter}` : ''}</span>
+        <b>${e.name || '效果'}</b><span class="efftip__kind">${KIND[e.iconKind] || ''}${e.counterText ? ` · ${e.counterText}` : e.counter != null ? ` · ${e.counter}` : ''}</span>
         <${RichText} as="p" text=${e.desc || ''} />
       </div>`}>
       <span class=${`effect effect--${e.iconKind || 'x'}`}>

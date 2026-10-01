@@ -30,10 +30,14 @@
 //   "立即流失N%当前生命" + hp_ratio ⇒ self HP loss at start (宴, 风丸); hp_ratio + "恢复/回复…生命" ⇒ self heal at start.
 // Passive skills only apply stat mods (for bb.duration s when the text says "N秒内": 宴) and the self/counter effects
 //   above — their scales describe procs (bombs, sword rain, counters) that need a hand-authored kit.
-// force→onHit displacement (pull when the text says 拖拽 or for hookmasters, push otherwise; 0.5+0.5·force tiles).
+// force→onHit displacement with the official 力度 − 重量 rules (Battle.push / pullToFront): a pull "至面前" when the text says
+//   拖拽 or for hookmasters, else a push — along the unit's direction when the text says 朝部署方向 / 向前 / 身前方向 or for
+//   推击手 (directional), otherwise away from the unit (radial); a skill of constants.js PUSH_EFFECT_SKILLS (见行者 S1) pushes
+//   by PRTS 推与拉's 特效 column.
 
 import { normalizeSkill } from '../simdata.js';
 import { sortEnemyTargets } from '../targeting.js';
+import { PUSH_EFFECT_SKILLS } from '../constants.js';
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : (typeof v === 'string' && v !== '' && Number.isFinite(+v) ? +v : undefined));
 
@@ -212,8 +216,10 @@ export function genericSkillSpec(sk, bb = sk?.bb ?? {}, def = null) {
   // ---- displacement
   const forceRaw = g('force');
   const hasForce = !passive && forceRaw !== undefined;
-  const force = Math.max(0, forceRaw ?? 0);
+  const force = forceRaw ?? 0; // 力度 (微小力 −1 … 特大力 5)
   const pull = /拖拽/.test(desc) || (!/推开|击退/.test(desc) && def && def.subProf === 'hookmaster');
+  const directional = !pull && (/朝部署方向|向前|身前方向/.test(desc) || (def && def.subProf === 'pusher'));
+  const effectPush = PUSH_EFFECT_SKILLS.has(sk.id);
   const hitElement = element && !counterText;
 
   const healAlly = (battle, unit) => {
@@ -223,7 +229,7 @@ export function genericSkillSpec(sk, bb = sk?.bb ?? {}, def = null) {
     }
     let best = null;
     for (const a of battle.injuredAlliesInKeys(unit.rangeKeys, unit)) if (!(allyHealOthersOnly && a === unit)) { best = a; break; }
-    if (!best) best = battle.alliesInRadius(unit.x, unit.y, 1.5, null).filter((a) => a.hp < a.s.maxHp && !(allyHealOthersOnly && a === unit)).sort((a, b) => a.hpRatio - b.hpRatio)[0] ?? null;
+    if (!best) best = battle.alliesInRadius(unit.x, unit.y, 1.5, null).filter((a) => a.hp < a.s.maxHp && !(allyHealOthersOnly && a === unit) && (a === unit || !(a.s.flags.noHeal || a.profile?.noHeal))).sort((a, b) => a.hpRatio - b.hpRatio)[0] ?? null;
     if (best) battle.heal(unit, best, unit.s.atk * allyHealScale);
   };
   const onHit = hitStatuses.length || hasForce || hitElement || allyHeal
@@ -235,11 +241,9 @@ export function genericSkillSpec(sk, bb = sk?.bb ?? {}, def = null) {
         for (const s of hitStatuses) ctx.battle.applyStatus(ctx.target, s.key, { duration: s.duration, source: ctx.unit });
       }
       if (hasForce && ctx.target.alive && ctx.target.side === 'enemy') {
-        const dx = ctx.target.x - ctx.unit.x, dy = ctx.target.y - ctx.unit.y;
-        const len = Math.hypot(dx, dy) || 1;
-        const dir = pull ? { x: -dx / len, y: -dy / len } : { x: dx / len, y: dy / len };
-        const dist = pull ? Math.max(0, Math.min(len - 0.6, 0.5 + 0.5 * force)) : 0.5 + 0.5 * force;
-        if (dist > 0) ctx.battle.displace(ctx.target, dir, dist, { force: force + 1 });
+        const u = ctx.unit;
+        if (pull) ctx.battle.pullToFront(ctx.target, u, force);
+        else ctx.battle.push(ctx.target, force, { from: u, dir: directional && u.fwd ? { x: u.fwd[1], y: u.fwd[0] } : null, effect: effectPush });
       }
     }
     : null;

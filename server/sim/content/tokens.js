@@ -6,7 +6,8 @@
 // Every tokenId of data/tokens.json has a kit, so `battle.spawnToken(owner, tokenId, r, c)` works with data defaults
 // even when the summoner's kit passes no options:
 //   医疗探机      heal profile (data), untargetable, self-destructs after its withdraw skill time (10 s)
-//   诅咒娃娃      no attack, aura: enemies in its range ATK/DEF + bb.atk/bb.def (−25 %/−30 %), 15 s (skill duration)
+//   诅咒娃娃      no attack, aura: enemies in its range ATK/DEF + bb.atk/bb.def (−25 %/−30 %), 15 s (skill duration);
+//                 leaves when 巫恋 leaves (PRTS 备注) — the drone stays when 赫默 leaves (PRTS 医疗探机 备注)
 //   沙之碑        on appear: owner ATK × atk_scale arts + stun (skill range 3×3), blocks 3 (no attack), talent duration 20 s
 //   战术装备      on appear: stun around (bb.stun), blocked enemies DEF + talent def (−160), talent duration 25 s
 //   “小自在”      arts melee blocker, talent duration 25 s; kills emit `summonKill` (夕's 化境 is the 夕 kit's job)
@@ -31,9 +32,11 @@
 //                 its blast fx carries `consumed: true` so clients play the explosion, not a death sound)
 //   从不混淆的方向 untargetable marker; when the owner's skill ends it vanishes and the owner returns to its tile
 //   黄金盟誓      attacks deal true damage (trait); lasts while the owner's skill runs
-//   防护单元      untargetable device: shield = 凯瑟琳 max HP × max_shield_ratio on one operator in its range (effects
-//                 do not stack), refilled by shield_ratio_each_trigger /s when the target was not hit for `interval`
-//                 s (always while 凯瑟琳's skill runs, owner bb overwrite_ratio)
+//   防护单元      untargetable, invulnerable device placed by the player (a hand piece, user playtest #6): shield =
+//                 凯瑟琳 max HP × max_shield_ratio on the operator in its range (range 1-1: the tile it faces; effects do
+//                 not stack — `cathy:shield`, read by 凯瑟琳 S1 岁月锻打), in full whenever it takes a new operator,
+//                 refilled by shield_ratio_each_trigger /s when the target was not hit for `interval` s (always while
+//                 凯瑟琳's timed skill runs, owner bb overwrite_ratio)
 //   投递坐标 / 风雪之眼 / 保护目标  inert pieces (no attack; 风雪之眼 untargetable) — their effects belong to the owner kit
 //   炎佑 (enemy_9012_acloon)  flying ally: flies after the highest-aggro enemy of the field and hovers over it, stays
 //                 put when there is none; 3-target arts + burn on every hit, 元素脆弱 aura, 祛恶之焰 channel (yanyouKit)
@@ -48,15 +51,28 @@
 // sees its 援军 standing; with the engine's default reinforcement the talent token replaces the generic 援军. Without
 // a board piece the token takes a tactical point: a free walkable tile of the owner's range on an enemy ground path
 // first (`tacticalPoint`), then the one nearest to the owner.
+// Placed summons (PRTS 卫戍协议/帮助 §作战阶段; user playtest #6): every board summon piece marks the tile its summon
+// deploys on. The talent ones the owner holds from the start (狼群, 海嗣, 流形, 凯瑟琳's devices) deploy with the
+// board, after the operators. A skill's summon (赫默's 医疗探机, 巫恋's 诅咒娃娃: "获得一个…") also deploys once with the
+// board, for free and ignoring the holding ("在赫默的技能未开启前未持有该召唤物，但作战开始时无视持有状态自动部署1个";
+// settled by the user after playtest #6 — shared/constants.js SKILL_SUMMON_START_DEPLOY, re-exported here; false =
+// the playtest #4 reading, `deferDeploy`: off the field until the skill). Then it is docked on its tile
+// (`dockSkillSummons`; the tile stays reserved) and takes the field there each time the owner's skill gives one
+// (`releaseSkillSummon`; PRTS "若战场区初始部署有召唤物，若召唤物在战斗期间退场，将在满足条件后立即原地再部署1个"): one
+// in stock at most ("最多可库存1个"), after the token's redeploy time once it left, free [ASSUMED: no DP], never while
+// its owner is off the field — a stocked one deploys as soon as the owner is back. A skill's summon or a device
+// (凯瑟琳) that was not placed never appears (the hidden 待部署区 deploys nothing by itself), nor does 海嗣; only the
+// tacticians' 狼群 / 流形 still come as 援军 on a tactical point (above).
 // Fallbacks (only while the summoner still uses the generic kit — a hand-authored kit takes over): skill summons
-// (赫默/巫恋/蜜蜡/风丸/维娜/耀骑士临光/迷迭香 S3) spawn at skill start — also under a hand-authored kit when only the
-// SELECTED skill runs the generic spec (a non-default skill the kit has no `skills` entry for) — 夕 spawns 小自在 on
-// its first attack, 凯瑟琳 deploys her devices at battle start.
+// (赫默/巫恋 through their placed pieces as above; 蜜蜡/风丸/维娜/耀骑士临光/迷迭香 S3 on a tile of their own) spawn at
+// skill start — also under a hand-authored kit when only the SELECTED skill runs the generic spec (a non-default skill
+// the kit has no `skills` entry for) — and 夕 spawns 小自在 on its first attack.
 // Operator loadouts (DESIGN §16): variants, `sources` and counts are those of the owner's selected skill / module
 // (variantOf / tokenSources: getToken(id, owner.defId, owner.def.loadout)); a skill summon runs only when that skill
 // makes the token (Battle.spawnToken also refuses summons the owner's loadout does not produce).
 //
-// Exports for other content: spawnYanyou, spawnMapChar, findSummonTile, summonToken, tacticalPoint, wolfShadows, TOKEN_IDS.
+// Exports for other content: spawnYanyou, spawnMapChar, findSummonTile, summonToken, tacticalPoint, wolfShadows,
+// releaseSkillSummon, SKILL_SUMMON_START_DEPLOY, CAT_SHIELD_KEY, TOKEN_IDS.
 
 import { COLS, ROWS, MOVE_SCALE } from '../constants.js';
 import { absoluteRangeKeys, sortEnemyTargets, canTargetEnemy } from '../targeting.js';
@@ -64,10 +80,13 @@ import { bodyInKeys, bodyOnTile } from '../body.js';
 import { hasHp } from '../damage.js';
 import { genericKit } from './generic.js';
 import { normDir, localOrder } from '../dir.js';
+import { SKILL_SUMMON_START_DEPLOY } from '../../../shared/constants.js';
 
 const num = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : (typeof v === 'string' && v.trim() !== '' && Number.isFinite(+v) ? +v : d));
 const GRID_3X3 = Object.freeze([[1, -1], [1, 0], [1, 1], [0, -1], [0, 0], [0, 1], [-1, -1], [-1, 0], [-1, 1]]);
 const GRID_PLUS = Object.freeze([[1, 0], [0, -1], [0, 0], [0, 1], [-1, 0]]);
+/** Buff key of the 爬行号·防护单元 shield on an operator (凯瑟琳 S1 岁月锻打 buffs the operators holding one). */
+export const CAT_SHIELD_KEY = 'cathy:shield';
 
 export const TOKEN_IDS = Object.freeze({
   healDrone: 'token_10000_silent_healrb',
@@ -236,6 +255,93 @@ function bindToOwnerSkill(battle, unit) {
   }, { owner: unit });
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// placed skill summons (user playtest #6; see the header "Placed summons")
+
+// SKILL_SUMMON_START_DEPLOY (shared/constants.js — also read by the summon card's hint): true = the PRTS reading the
+// user settled after playtest #6, the placed piece of a skill's summon also deploys once, for free, at the battle
+// start; false = the playtest #4 reading (it comes with the skill). Re-exported for content and tests.
+export { SKILL_SUMMON_START_DEPLOY };
+/** Seconds between two tries of a docked piece whose tile is busy / whose redeploy time is still running. */
+const DOCK_RETRY = 0.5;
+
+/**
+ * How the owner's loadout makes a board summon piece of a manually deployable summon (owner-loadout `sources`):
+ * 'skill' (only its skill makes it), 'none' (the owner's skill / module makes none — 赫默 on S1 with a drone piece; the
+ * match never hands such a card out), else null (a talent summon, or not a placed hand piece).
+ */
+function pieceSource(battle, u) {
+  if (!u || u.kind !== 'token' || u.uid == null || !u.ownerUnit || u.ownerUnit.kind !== 'op') return null;
+  if (u.def?.raw?.placeable !== true) return null;
+  const src = tokenSources(battle, u.defId, u.ownerUnit);
+  if (src.includes('talent')) return null;
+  if (src.includes('skill')) return 'skill';
+  return src.length ? 'none' : null;
+}
+
+/**
+ * Dock the board pieces of skill summons (before the start): off the field with the board (`deferDeploy`, unless
+ * SKILL_SUMMON_START_DEPLOY), and whenever one leaves (10 s drone, 15 s doll) it stays its tile's piece — not removed,
+ * its hooks kept, Battle.isReservedTile — ready again after the token's redeploy time (data respawnTime, 5 s). A piece
+ * its owner's loadout does not make never deploys.
+ */
+function dockSkillSummons(battle) {
+  for (const u of battle.allyUnits) {
+    const how = pieceSource(battle, u);
+    if (how === 'none') { u.deferDeploy = true; continue; }
+    if (how !== 'skill') continue;
+    u.mem.docked = true;
+    u.mem.readyAt = -Infinity;
+    if (!SKILL_SUMMON_START_DEPLOY) u.deferDeploy = true;
+    battle.on('death', (ctx) => {
+      if (ctx.unit !== u || battle.finished) return;
+      u.removed = false;
+      u.mem.readyAt = battle.time + Math.max(0, num(u.base.respawnTime, 0));
+      deployDocked(battle, u);
+    }, { owner: u, priority: -10 });
+    // the owner back on the field with one in stock: the condition of the PRTS redeploy is met at once
+    battle.on('deploy', (ctx) => {
+      if (ctx.unit === u.ownerUnit && !battle.finished) deployDocked(battle, u);
+    }, { owner: u });
+  }
+}
+
+/**
+ * Deploy a docked piece on its tile when its owner holds one and it is ready; retried while it waits. Not while the
+ * owner is off the field [ASSUMED: as in the base game, a summon is deployed only while its owner stands] — the stock
+ * stays, and the piece deploys as soon as the owner is back (its `deploy` hook, dockSkillSummons).
+ */
+function deployDocked(battle, u) {
+  const stock = u.ownerUnit?.mem.summonStock;
+  if (!stock || !(stock[u.defId] > 0) || u.alive || u.removed || battle.finished || !u.ownerUnit.alive) return false;
+  const wait = u.mem.readyAt - battle.time;
+  if (wait > 1e-9 || !battle.redeploy(u, { free: true })) {
+    if (!u.mem.dockRetry) {
+      u.mem.dockRetry = true;
+      battle.after(Math.max(wait, DOCK_RETRY), () => { u.mem.dockRetry = false; deployDocked(battle, u); }, { owner: u });
+    }
+    return false;
+  }
+  stock[u.defId]--;
+  battle.fx('summon', { x: u.x, y: u.y, id: u.id, token: u.defId });
+  return true;
+}
+
+/**
+ * The owner's skill gives it one `tokenId` ("获得一个医疗无人机"; at most `cap` in stock — "最多可库存1个"): its placed
+ * piece takes the field on its own tile now, or as soon as it is ready (the previous one still up / just gone).
+ * Returns the piece deployed now, else null — also when the player placed none (the summon then never appears).
+ */
+export function releaseSkillSummon(battle, owner, tokenId, { cap = 1 } = {}) {
+  if (!owner) return null;
+  const pieces = battle.allyUnits.filter((t) => t.kind === 'token' && t.defId === tokenId && t.ownerUnit === owner && t.mem.docked);
+  if (!pieces.length) return null;
+  const stock = owner.mem.summonStock || (owner.mem.summonStock = {});
+  stock[tokenId] = Math.min(Math.max(1, Math.floor(num(cap, 1))), (stock[tokenId] || 0) + 1);
+  for (const p of pieces) if (deployDocked(battle, p)) return p;
+  return null;
+}
+
 function inRectTile(battle, r, c) { return Number.isInteger(r) && Number.isInteger(c) && battle.grid.inRect(r, c); }
 
 /**
@@ -264,8 +370,10 @@ function countNear(list, r, c, rad = 1) {
 
 /**
  * Pick a summon tile for `owner` (null when none). placement:
- *   'ally'     — any standable tile in the owner's range covering the most injured allies (医疗探机)
- *   'enemy'    — any standable tile in range covering the most enemies (诅咒娃娃)
+ *   'ally'     — any standable tile in the owner's range covering the most injured allies (a healing skill summon that
+ *                is no hand piece; 医疗探机 itself is placed by the player — releaseSkillSummon)
+ *   'enemy'    — any standable tile in range covering the most enemies (a debuff skill summon that is no hand piece;
+ *                诅咒娃娃 itself is placed by the player)
  *   'melee'    — melee-deployable tile in range, on the enemy path and near the enemies first (沙之碑)
  *   'adjacent' — melee-deployable tile among the 8 surrounding tiles (纸偶, 黄金盟誓)
  *   'plus'     — melee-deployable tile among the 4 neighbours (“耀阳”)
@@ -282,7 +390,10 @@ export function findSummonTile(battle, owner, placement = 'melee', opts = {}) {
   const melee = opts.melee ?? (placement === 'melee' || placement === 'adjacent' || placement === 'plus');
   const enemies = battle.enemies.filter((e) => e.alive && !e.hidden);
   const focus = opts.at ?? mostAdvancedEnemy(battle) ?? owner;
-  const injured = placement === 'ally' ? battle.allies(owner.ownerId).filter((a) => a.hp < a.s.maxHp - 1e-6) : null;
+  // injured allies a heal could reach: never 孤立 (Battle.alliesFor) nor 禁疗 units (炎佑, the 禁疗 summons)
+  const injured = placement === 'ally'
+    ? battle.alliesFor(owner, owner.ownerId).filter((a) => a.hp < a.s.maxHp - 1e-6 && !(a.s.flags.noHeal || a.profile?.noHeal))
+    : null;
   let best = null, bestS = null;
   for (const k of keys) {
     const r = (k / COLS) | 0, c = k % COLS;
@@ -359,7 +470,11 @@ function curseDoll(bb, raw, def) {
       },
     },
     trait: { noAttack: true },
-    install(battle, unit) { onDeploy(battle, unit, () => scheduleLifetime(battle, unit, life)); },
+    install(battle, unit) {
+      onDeploy(battle, unit, () => scheduleLifetime(battle, unit, life));
+      // PRTS 诅咒娃娃 备注: "巫恋退场时强制撤退场上的诅咒娃娃" (knocked out or withdrawn)
+      battle.on('death', (ctx) => { if (ctx.unit === unit.ownerUnit && unit.alive) battle.retreat(unit, { reason: 'expired', permanent: true }); }, { owner: unit });
+    },
   };
 }
 
@@ -738,7 +853,7 @@ function manifold(bb, raw, def) {
       if (!unit.mem.noCopy) {
         battle.on('tick', () => {
           const sk = unit.skill;
-          if (!sk || !unit.alive || !unit.deployed || sk.active || !sk.ready || !unit.canAct || unit.s.flags.silence) return;
+          if (!sk || !unit.alive || !unit.deployed || sk.active || !sk.ready || sk.opCooling || !unit.canAct || unit.s.flags.silence) return;
           if (pickCopyTarget(battle, unit)) sk.activate('MLYSS_WTRMAN');
         }, { owner: unit });
       }
@@ -818,19 +933,25 @@ function goldenOath(bb, raw, def) {
   };
 }
 
-/** 爬行号·防护单元 (凯瑟琳 talent 定向支援信号). */
+/**
+ * 爬行号·防护单元 (凯瑟琳 talent 定向支援信号; a hand piece the player places and turns, user playtest #6): "使一名干员
+ * 获得相当于凯瑟琳生命上限20%的屏障（若目标最近5秒内未受攻击，则每秒补充…不超过初始上限），装置效果不叠加" — the operator
+ * on its range (1-1: its tile + the tile it faces) gets the full shield when the device takes it (deploy, or a new /
+ * redeployed operator there), then the refill; untargetable ("不会受到攻击") and invulnerable (enemy AoE sweeping every
+ * ally in a radius would otherwise destroy the 100-HP device). The buff key is 凯瑟琳 S1 岁月锻打's test.
+ */
 function catShield(bb, raw, def) {
   const t = talentBb(def, 'max_shield_ratio');
   const idle = num(t.interval, 0);
   const every = num(t['catsld_t_1[timer][interval].interval'], 1);
   const maxRatio = num(t.max_shield_ratio, 0);
   const refill = num(t.shield_ratio_each_trigger, 0);
-  const KEY = 'catsld:shield';
   return {
     skill: null,
     trait: { noAttack: true },
     install(battle, unit) {
       const st = stateOf(battle);
+      battle.addBuff(unit, { key: 'token:catDevice', flags: { invulnerable: true }, persist: true, allowDead: true });
       const ownerHp = () => { const o = ownerOf(unit); return o ? o.s.maxHp : unit.s.maxHp; };
       const valid = (a) => a && a.alive && a.deployed && a.kind === 'op';
       const pick = () => {
@@ -851,18 +972,19 @@ function catShield(bb, raw, def) {
       const give = (a, amount) => {
         const cap = ownerHp() * maxRatio;
         if (!(cap > 0) || !(amount > 0)) return;
-        const b = a.findBuff(KEY);
-        if (b) { b.shield = Math.min(cap, (b.shield || 0) + amount); a.markDirty(); } else battle.addBuff(a, { key: KEY, shield: Math.min(cap, amount), duration: Infinity, source: unit });
+        const b = a.findBuff(CAT_SHIELD_KEY);
+        if (b) { b.shield = Math.min(cap, (b.shield || 0) + amount); a.markDirty(); } else battle.addBuff(a, { key: CAT_SHIELD_KEY, shield: Math.min(cap, amount), duration: Infinity, visible: true, source: unit });
       };
-      onDeploy(battle, unit, () => {
+      const connect = () => {
         const a = pick();
         if (a) { give(a, ownerHp() * maxRatio); battle.fx('catShield', { x: a.x, y: a.y, id: a.id, from: unit.id }); }
-      });
+        return a;
+      };
+      onDeploy(battle, unit, connect);
       battle.every(every, () => {
         if (!unit.alive || !unit.deployed) return;
-        let a = unit.mem.target;
-        if (!valid(a)) a = pick();
-        if (!a) return;
+        const a = unit.mem.target;
+        if (!valid(a)) { connect(); return; }
         const o = ownerOf(unit);
         const skillOn = !!(o && o.alive && o.skill && o.skill.active && o.skill.isTimed);
         const rate = skillOn ? num(o.skill.bb?.overwrite_ratio, refill) : refill;
@@ -1170,7 +1292,7 @@ function touchKit(bb, raw, def) {
         unit.mem.touchExtraAt = n;
         let best = target.hp < target.s.maxHp - 1e-6 ? target : null;
         for (const a of battle.alliesInRadius(target.x, target.y, 1, unit.ownerId)) {
-          if (a === target || a.hp >= a.s.maxHp - 1e-6) continue;
+          if (a === target || a.hp >= a.s.maxHp - 1e-6 || a.s.flags.noHeal || a.profile?.noHeal) continue; // (禁疗 / 孤立)
           if (Math.abs(a.tileR - target.tileR) + Math.abs(a.tileC - target.tileC) !== 1) continue;
           if (!best || a.hpRatio < best.hpRatio) best = a;
         }
@@ -1260,7 +1382,9 @@ export default kits;
  * hand-authored kit without a spec for a non-default selected skill (content/index.js selectSkillSpec, `skillSource:
  * 'generic'`) — and the data says that skill makes the token (owner-loadout `sources` has 'skill'). Placement per
  * token; 迷迭香 S3 “如你所愿”: "立即在攻击范围内的近战位部署两个战术装备" (the token's deployLimit — 2, 20 with
- * module uniequip_003_rosmon — only caps how many stand; SKILL_SUMMON_PER_CAST).
+ * module uniequip_003_rosmon — only caps how many stand; SKILL_SUMMON_PER_CAST). 医疗探机 / 诅咒娃娃 are hand pieces
+ * (data `placeable`): their entries only mark them as skill summons — releaseSkillSummon deploys the player's piece on
+ * its own tile, and their 'ally' / 'enemy' placement would apply only to data without such a piece.
  */
 const SKILL_SUMMONS = Object.freeze({
   [TOKEN_IDS.healDrone]: 'ally',
@@ -1326,6 +1450,9 @@ function ensureReinforcement(battle, owner, tokenId) {
 export function install(battle) {
   const st = stateOf(battle);
 
+  // the placed pieces of skill summons wait on their tiles for the skill (user playtest #6, see the header)
+  dockSkillSummons(battle);
+
   // last deployed operator per player (“耀阳”: 上一名部署干员势力为【卡西米尔】) — tokens are not operators
   battle.on('deploy', (ctx) => {
     const u = ctx.unit;
@@ -1383,6 +1510,8 @@ export function install(battle) {
         battle.on('skillStart', (ctx) => {
           if (ctx.unit !== owner) return;
           for (const t of skillSummons) {
+            // a hand piece (医疗探机 / 诅咒娃娃) deploys where the player placed it — nowhere when not placed
+            if (battle.data.rawToken?.(t)?.placeable === true) { releaseSkillSummon(battle, owner, t); continue; }
             for (let i = 0; i < (SKILL_SUMMON_PER_CAST[t] ?? 1); i++) if (!summonToken(battle, owner, t, SKILL_SUMMONS[t])) break;
           }
         }, { owner });
@@ -1402,31 +1531,6 @@ export function install(battle) {
         const d = battle.spawnToken(owner, TOKEN_IDS.duskDragon, tile[0], tile[1], life > 0 ? { duration: life } : {});
         if (d) battle.fx('duskDragon', { x: d.x, y: d.y, id: d.id });
       }, { owner });
-    }
-    if (toks.includes(TOKEN_IDS.catShield)) {
-      const deployDevices = () => {
-        if (!owner.alive || !owner.deployed) return;
-        const probe = battle.data.getToken?.(TOKEN_IDS.catShield, owner.defId, owner.def?.loadout ?? null);
-        const v = ownVariant(battle.data.rawToken?.(TOKEN_IDS.catShield), owner);
-        const limit = Math.max(1, Math.floor(num(v?.stats?.deployLimit, 1)));
-        const stock = Math.max(1, Math.floor(num(v?.count ?? v?.stats?.deckStack, limit)));
-        const grid = probe?.rangeGrid ?? [[0, 0], [0, 1]];
-        let placed = battle.allyUnits.filter((t) => t.alive && t.defId === TOKEN_IDS.catShield && t.ownerUnit === owner).length;
-        const used = new Set();
-        for (const k of owner.rangeKeys || []) {
-          if (placed >= Math.min(limit, stock)) break;
-          const r = (k / COLS) | 0, c = k % COLS;
-          if (!tileFree(battle, r, c) || !battle.grid.canStand(r, c, { ranged: true })) continue;
-          // the device helps the operator in its own range (the tile in front)
-          const keys = absoluteRangeKeys(grid, r, c, owner.dir, 0);
-          const ally = keys.map((kk) => battle.unitAt((kk / COLS) | 0, kk % COLS)).find((a) => a && a.kind === 'op' && a.ownerId === owner.ownerId && !used.has(a.id));
-          if (!ally) continue;
-          if (battle.spawnToken(owner, TOKEN_IDS.catShield, r, c)) { placed++; used.add(ally.id); }
-        }
-      };
-      // initial deployment: wait until every board unit stands (the devices need the operator in front of them)
-      battle.on('battleStart', deployDevices, { owner });
-      battle.on('deploy', (ctx) => { if (ctx.unit === owner && battle.started && !ctx.initial) deployDevices(); }, { owner, priority: -20 });
     }
   }
 }

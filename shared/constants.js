@@ -52,6 +52,18 @@ export const AREA = Object.freeze({ BOARD: 'board', HAND: 'hand', TEMP: 'temp', 
 
 export const PIECE_KIND = Object.freeze({ CHESS: 'chess', ITEM: 'item', TOKEN: 'token' });
 
+/**
+ * Whether the placed piece of a skill's summon (赫默's 医疗探机, 巫恋's 诅咒娃娃) also deploys once, for free, at the
+ * battle start. true = the PRTS reading (卫戍协议/帮助 §作战阶段: "所有手动部署的召唤物，无视所属干员的持有状态…作战开始时
+ * 立即部署一次", example 赫默's drone), settled by the user on 2026-10-01 after playtest #6 (DESIGN §20); false = the
+ * playtest #4 reading ("是赫默开技能释放一次，不是开局直接就部署了"): it takes its tile only when the owner's skill gives one.
+ * Either way the piece re-appears on its tile each time the owner's skill gives one.
+ * One switch for everything that depends on it: the sim (server/sim/content/tokens.js dockSkillSummons) and the summon
+ * card's hint (public/js/ui/detailPanel.js summonDeployHint). docs/PLAYING.md §4 and docs/SIM.md (token pieces) state
+ * the rule in prose — test/ui/playtest6_summons.test.js fails until they match the value.
+ */
+export const SKILL_SUMMON_START_DEPLOY = true;
+
 // Snapshot unit flag bits (DESIGN §8.2)
 export const UF = Object.freeze({
   BLOCKED: 1, STUNNED: 2, FROZEN: 4, STEALTH: 8, SKILL: 16, SHIELD: 32, INVULN: 64, COLD: 128, SLEEP: 256, FLYING: 512,

@@ -14,7 +14,12 @@
 // while m.public.paused every clock here is frozen at the pause moment (`frozenAt`).
 // Normal rounds (user playtest #3 item 2): the LP tower drops live as the own battle's enemies enter the blue gate —
 // lp − min(lpCapPerRound, counted leaks) in red with a −N tick, 联防中 while a 联防 may still save part of it (liveLp;
-// the leaks come from the local battle runner, else m.public players[].pendingLp).
+// the leaks come from the local battle runner, else m.public players[].pendingLp). 联防 (user playtest #6 item 7; PRTS
+// 卫戍协议/帮助 "防卫失败的玩家可通过上方信息栏确认自身所属敌人的剩余数量"): a leaker's phase capsule carries the official
+// runner tag ×N (research 09 `tag_miss`; art ui/battle bg_miss_enemy [ASSUMED]) = its enemies still standing on the 联防
+// field, uncapped and live — falling as the helpers kill them, rising when one splits or summons (the local 联防
+// replica's runner state().uniteLeft, else m.public players[].uniteLeft); the LP tower shows lp − min(lpCapPerRound, N).
+// The same MissTag sits in the leakers' team rows (ui/teamPanel.js), its tooltip naming the teammate there (missTip).
 // 准备就绪 is refused while the temp overflow row (临时整备区) holds pieces: the reason shows under the button
 // (user playtest #3 item 3; the row's own label is ui/underframe.js TempRowNotice).
 
@@ -24,7 +29,7 @@ import { html, Button, Icon, PingPill, Countdown, Tooltip, MicroLabel, Difficult
 import { Sprite, LpTower, GIcon, LocalSprite } from './gameComponents.js';
 import { localAsset } from '../data.js';
 import { serverNow } from '../store.js';
-import { isCombatPhase, isBossPhase, prepCapsuleLabel, bossFrac, fmtNum, shopBlockReason } from './gameLogic.js';
+import { isCombatPhase, isBossPhase, prepCapsuleLabel, bossFrac, bossPctText, fmtNum, shopBlockReason } from './gameLogic.js';
 import { overtimeState, overtimeDrainPerSec, remainAt } from './matchStatus.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
@@ -33,17 +38,19 @@ const cx = (...p) => p.flat().filter(Boolean).join(' ');
  * Phase capsule: prep label, kills n/m (combat/unite), kills + boss HP bar (boss rounds).
  * @param {{ pub:any, hud:any }} props
  */
-export function PhaseCapsule({ pub, hud }) {
+export function PhaseCapsule({ pub, hud, miss = null }) {
   const phase = pub?.phase;
   if (isBossPhase(phase)) {
-    const boss = pub.bossHp || hud?.boss || null;
+    // the battle on screen first: its snapshot carries the live pool (the local simulation's own damage on top of the
+    // server's b.pool, or the server's 20 Hz stream); m.public.bossHp refreshes at ~1 Hz and lags the leader's death
+    const boss = hud?.boss || pub.bossHp || null;
     const frac = bossFrac(boss);
     return html`<div class="capsule capsule--boss" role="status">
       <${Sprite} k="hudPanel/icon_boss" class="capsule__icon" fallback=${html`<${GIcon} name="skull" class="capsule__icon" />`} />
       ${hud?.total != null ? html`<span class="capsule__kills num"><b>${hud.killed ?? 0}</b>/${hud.total}</span>` : null}
       <div class="bossbar" title=${boss ? `${fmtNum(boss.hp)} / ${fmtNum(boss.max)}` : '敌方领袖'}>
         <div class="bossbar__fill" style=${`width:${frac == null ? 100 : frac * 100}%`}></div>
-        <span class="bossbar__txt num">${frac == null ? '敌方领袖' : `${(frac * 100).toFixed(frac < 0.1 ? 1 : 0)}%`}</span>
+        <span class="bossbar__txt num">${frac == null ? '敌方领袖' : bossPctText(frac)}</span>
       </div>
     </div>`;
   }
@@ -53,12 +60,40 @@ export function PhaseCapsule({ pub, hud }) {
         fallback=${html`<${Icon} name="sword" class="capsule__icon" />`} />
       <span class="capsule__kills num"><b>${hud?.killed ?? 0}</b>/${hud?.total ?? '--'}</span>
       ${phase === PHASE.UNITE ? html`<span class="capsule__tag">联防</span>` : null}
+      ${phase === PHASE.UNITE && Number.isFinite(miss) ? html`<${MissTag} n=${miss} />` : null}
     </div>`;
   }
   return html`<div class="capsule capsule--prep" role="status">
     <${Sprite} k="hudPanel/icon_rest" class="capsule__icon" fallback=${html`<${Icon} name="rook" class="capsule__icon" />`} />
     <span class="capsule__label">${prepCapsuleLabel(phase)}</span>
   </div>`;
+}
+
+/**
+ * Tooltip of a MissTag: the own tag speaks to the player ("你漏过的…"), a teammate's row names that teammate (the viewer
+ * may be one of the helpers fighting those enemies).
+ * @param {number} n enemies still standing @param {string|null} [name] the leaker's name (null = the viewer)
+ */
+export function missTip(n, name = null) {
+  const who = name ? `${name} 漏过的敌人` : '你漏过的敌人';
+  return n > 0 ? `${who}还剩 ${n} 个（${name ? '联防中' : '队友正在迎战'}）` : `${who}已全部被击倒`;
+}
+
+/**
+ * The official escaped-enemy tag (research 09: the 联防 capsule's orange runner tag ×N, node `tag_miss`; drawn with
+ * ui/battle `bg_miss_enemy` — [ASSUMED] that sprite is its art: an orange pill with a runner and ×, the number after it):
+ * during 联防 a leaker's enemies still standing on the 联防 field (user playtest #6 item 7) — the own in the phase capsule
+ * and the own team row, a teammate's in that teammate's row (`name`). CSS look-alike without the art.
+ * @param {{ n: number, name?: string|null }} props name: the leaker's name on a teammate's row (null = the viewer)
+ */
+export function MissTag({ n, name = null }) {
+  const v = Math.max(0, Math.trunc(Number(n) || 0));
+  const art = localAsset('ui/battle', 'bg_miss_enemy');
+  return html`<span class=${cx('misstag', art && 'has-art', v === 0 && 'is-clear')} data-testid="miss-tag"
+      title=${missTip(v, name)} aria-label=${`剩余敌人 ${v}`}
+      style=${art ? `background-image:url("${art}")` : null}>
+    ${art ? null : html`<span class="misstag__icon" aria-hidden="true"><${GIcon} name="skull" />×</span>`}<b class="misstag__n num">${v}</b>
+  </span>`;
 }
 
 // ---- live LP of the own battle (user playtest #3 item 2) --------------------------------------------------------
@@ -92,34 +127,56 @@ export function ownLeaks(local, server) {
 }
 
 /**
+ * A leaker's enemies still standing on the 联防 field from its two sources (user playtest #6 item 7): the local 联防
+ * replica's count (runner state().uniteLeft[own id] — the same deterministic battle the player is watching, so the tag
+ * matches the field on screen) and the server's m.public players[].uniteLeft (the authority's b.progress, ~1 Hz; exact
+ * once the field is done). The count falls as the helpers strike enemies down and rises when one splits or summons, so
+ * neither source bounds the other: the replica wins while it runs, the server's value fills in without one (not loaded
+ * yet, not on screen). null when neither is known (not a leaker, or nothing yet).
+ * @param {any} local @param {any} server
+ * @returns {number|null}
+ */
+export function uniteRemaining(local, server) {
+  for (const v of [local, server]) if (Number.isFinite(v) && v >= 0) return Math.trunc(v);
+  return null;
+}
+
+/**
  * The own LP while a normal round's battle runs: the loss its counted leaks will cost is shown at once (red, −N)
  * instead of only at settlement. `base` — kept by the caller between renders — is the settled m.private state the
  * pending loss applies to: { round, lp, statsLeaks } as first seen in the round's COMBAT / 联防. The pending part is
  * dropped as soon as the settlement lands — m.private lp or stats.leaks changed (Match.flush sends m.private before the
  * SETTLE m.public) — or the phase leaves COMBAT / UNITE or the round changes, so the loss is never subtracted twice.
- * 联防 (UNITE): a leaker finally loses min(cap, the survivors of the 联防 battle that came from them) — never more than
- * its own battle's count, which stays on show marked `unite` (联防中: teammates may still save part of it) until the
+ * 联防 (UNITE): a leaker finally loses min(cap, the survivors of the 联防 battle that came from them); `uniteLeft` (its
+ * enemies still standing, uniteRemaining — user playtest #6 item 7) replaces the own battle's count, so the loss falls
+ * live as the helpers kill them, marked `unite` (联防中) with `left` = that uncapped number for the ×N tag. Without
+ * `uniteLeft` (not a leaker, or no count yet) the own battle's count stays on show. The pending part goes when the
  * settlement lands. Boss rounds are not handled here (the merged team LP moves live through b.pool / m.public.teamLp).
  * @param {{ round: any, lp: number, statsLeaks: number|null } | null} base
- * @param {{ phase: string, round: any, lp: any, statsLeaks?: any, leaks?: any, cap?: number, alive?: boolean }} s
- * @returns {{ base: { round: any, lp: number, statsLeaks: number|null } | null, pending: number, shown: number|null, unite: boolean }}
+ * @param {{ phase: string, round: any, lp: any, statsLeaks?: any, leaks?: any, cap?: number, alive?: boolean, uniteLeft?: number|null }} s
+ * @returns {{ base: { round: any, lp: number, statsLeaks: number|null } | null, pending: number, shown: number|null, unite: boolean, left: number|null }}
  */
-export function liveLp(base, { phase, round, lp, statsLeaks = null, leaks = 0, cap = 10, alive = true }) {
-  if (!Number.isFinite(lp)) return { base: null, pending: 0, shown: null, unite: false };
-  if (!LEAK_PHASES.has(phase) || alive === false) return { base: null, pending: 0, shown: lp, unite: false };
+export function liveLp(base, { phase, round, lp, statsLeaks = null, leaks = 0, cap = 10, alive = true, uniteLeft = null }) {
+  if (!Number.isFinite(lp)) return { base: null, pending: 0, shown: null, unite: false, left: null };
+  if (!LEAK_PHASES.has(phase) || alive === false) return { base: null, pending: 0, shown: lp, unite: false, left: null };
   const sl = Number.isFinite(statsLeaks) ? statsLeaks : null;
   const b = base && base.round === round ? base : { round, lp, statsLeaks: sl };
   const landed = lp !== b.lp || (sl != null && b.statsLeaks != null && sl !== b.statsLeaks);
-  const pending = landed ? 0 : Math.min(lp, pendingLoss(leaks, cap));
-  return { base: b, pending, shown: lp - pending, unite: phase === PHASE.UNITE && pending > 0 };
+  const left = phase === PHASE.UNITE && Number.isFinite(uniteLeft) && uniteLeft >= 0 && !landed ? Math.trunc(uniteLeft) : null;
+  const pending = landed ? 0 : Math.min(lp, pendingLoss(left != null ? left : leaks, cap));
+  return { base: b, pending, shown: lp - pending, unite: phase === PHASE.UNITE && (pending > 0 || left != null), left };
 }
 
 /**
  * Tooltip of an LP tower with a pending loss (null without one).
  * @param {number} lp settled LP @param {number} pending @param {{ unite?: boolean, cap?: number }} [opts]
  */
-export function pendingTip(lp, pending, { unite = false, cap = 10 } = {}) {
+export function pendingTip(lp, pending, { unite = false, cap = 10, left = null } = {}) {
   if (!(pending > 0)) return null;
+  if (unite && Number.isFinite(left)) {
+    const each = left > cap ? `剩余不足 ${cap} 个后，队友每击倒一个少扣 1 点` : '队友每击倒一个就少扣 1 点';
+    return `目标生命值 ${lp}：联防中，你漏过的敌人还剩 ${left} 个，${each}；按现在结算扣除 ${pending} 点（每回合至多 ${cap} 点）`;
+  }
   return unite
     ? `目标生命值 ${lp}：联防中，队友正在迎战你漏过的敌人，结算时按联防后剩余的敌人扣除（至多 ${pending} 点）`
     : `目标生命值 ${lp}：本回合已有 ${pending >= cap ? `${cap} 个以上` : `${pending} 个`}敌人进入蓝门，结算时扣除 ${pending} 点（每回合至多 ${cap} 点）`;
@@ -245,9 +302,10 @@ export function PauseButton({ paused, busy = false, onToggle }) {
  *   onReady:(r:boolean)=>void, readyBusy?:boolean, readyCount?:number, playerCount?:number,
  *   pen?:boolean, penAvail?:boolean, onPen?:(on:boolean)=>void, config?: any, frozenAt?: number|null,
  *   pause?: { show: boolean, paused: boolean, busy?: boolean, onToggle: () => void } | null,
- *   live?: { pending: number, unite: boolean } | null }} props
+ *   live?: { pending: number, unite: boolean, left?: number|null } | null }} props
  *   frozenAt: the server time every clock shows while the solo match is paused (null = live)
- *   live: the own battle's pending LP loss (liveLp): the tower shows lp − pending in red with a −N tick, 联防中 during 联防
+ *   live: the own battle's pending LP loss (liveLp): the tower shows lp − pending in red with a −N tick, 联防中 during 联防;
+ *     `left` (a leaker in 联防): its enemies still standing — the capsule's ×N tag
  */
 export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, onReady, readyBusy, readyCount, playerCount, pen = false, penAvail = false, onPen = () => {},
   config = null, frozenAt = null, pause = null, live = null }) {
@@ -289,9 +347,9 @@ export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, 
         <span class="roundbox__label">回合</span>
         <b class="roundbox__num num">${roundText}</b>
       </div>
-      <${PhaseCapsule} pub=${pub} hud=${hud} />
+      <${PhaseCapsule} pub=${pub} hud=${hud} miss=${!boss && Number.isFinite(live?.left) ? live.left : null} />
       <${LpTower} value=${lp} size="lg" tone=${lowLp ? 'danger' : boss ? 'team' : null} pending=${pending}
-        note=${pending > 0 && live?.unite ? '联防中' : null} tip=${pendingTip(lp, pending, { unite: !!live?.unite, cap })} />
+        note=${pending > 0 && live?.unite ? '联防中' : null} tip=${pendingTip(lp, pending, { unite: !!live?.unite, cap, left: live?.left ?? null })} />
       <${Tooltip} text=${btn.right.tip} placement="bottom">
         <${CheckBtn} sprite=${btn.right.sprite} cls=${cx('enemybtn', btn.right.grey && 'is-grey')} label=${btn.right.label}
           chev=${btn.right.grey ? null : '▶▶'} disabled=${btn.right.grey && !pen} onClick=${onRight} testid="check-enemy" />

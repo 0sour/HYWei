@@ -32,7 +32,7 @@ export const MUL_KEYS = Object.freeze([
 export const FLAG_KEYS = Object.freeze([
   'stun', 'freeze', 'sleep', 'silence', 'disarm', 'stealth', 'invulnerable', 'unblockable', 'levitate', 'fear',
   'cold', 'reveal', 'bind', 'noHeal', 'untargetable', 'blockFly', 'noMove', 'noSp', 'burstLock', 'hidden',
-  'noBlock', 'tremble', 'hitCount', 'hitCountArts', 'attract', 'float', 'noDisplace',
+  'noBlock', 'tremble', 'hitCount', 'hitCountArts', 'attract', 'float', 'noDisplace', 'isolated', 'camou',
 ]);
 
 /**
@@ -62,12 +62,18 @@ export const STATUS = Object.freeze({
   // never the element gauge (元素损伤 has its own multiplier, `elemTakenMul`; damage.js)
   elemFragile: { mods: (v) => ({ elementalTakenMul: 1 + (v ?? 0.2) }), valued: 0.2 },
   silence: { flags: { silence: true }, immune: 'silence' },
-  // 恐惧: 无法被阻挡并四散逃跑 (no attacks, unblockable, stops advancing along its route)
+  // 恐惧: 无法被阻挡并四散逃跑 (no attacks, unblockable; leaves its route and runs to random tiles of the fan away from the
+  // source — fear.js, stamped by Battle.applyStatus)
   fear: { flags: { fear: true, unblockable: true }, immune: 'feared' },
   // 战栗: 被阻挡后无法进行普通攻击
   tremble: { flags: { tremble: true }, immune: 'feared' },
   disarm: { flags: { disarm: true } },
+  // 隐匿 (ba.invisible): 不阻挡时不成为敌方攻击的目标 (an ally: only the enemy it blocks attacks it — targeting.js)
   stealth: { flags: { stealth: true } },
+  // 迷彩 (ba.camou): "不阻挡时不成为敌方普通攻击的目标（无法躲避溅射类攻击）" — an ally's camouflage keeps the enemies off
+  // it like 隐匿 (only the enemy it blocks attacks it: targeting.js canTargetAlly; shown the same way, snapshot.js), but
+  // it is not 隐匿 (叙拉古 / 家族徽章 read `stealth` only) and has its own buff keys
+  camou: { flags: { camou: true } },
   reveal: { flags: { reveal: true } },
   invulnerable: { flags: { invulnerable: true } },
   // 浮空: 变为空中单位 (Unit.isFlying)，无法移动、攻击及使用技能; 对重量大于3的单位持续时间减半; the state holds 不可阻挡 +

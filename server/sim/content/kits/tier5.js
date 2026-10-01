@@ -19,10 +19,13 @@
 // - Non-stacking auras refresh a short buff with a fixed key every 0.25 s while the source is on the field.
 //   SP auras ("同类效果取最高") share the buff key `aura:spRecovery` (mods.spRecoveryFlat): the highest value wins.
 // - Skills whose auto-cast needs a condition the engine rules can't express use the NEVER trigger (CUSTOM_RANGE with an
-//   empty grid) plus their own activation — 塞雷娅 (`autoCast`: an injured ally in the heal area of the skill; her
-//   initial range is her own tile), 华法琳 (heal target below half HP, checked right before the heal), 号角 S1 / 塞雷娅 S1
-//   (the data TAKE_DAMAGE rule, `hurtCast`: a hit arms one charge only while none is waiting for its attack). Every other kit
-//   keeps the data rule (DEFAULT = about to attack + an enemy in the INITIAL range, research 03 Addendum C1).
+//   empty grid) plus their own activation — 塞雷娅 S2 (`autoCast`: an injured ally in the heal area of the skill; her
+//   initial range is her own tile), 华法琳 (heal target below half HP, checked right before the heal). 塞雷娅 S1 (自动触发)
+//   uses the engine's DEFAULT rule with `allies` / `hpAtMost` (about to attack + an ally of the skill area at ≤ half HP:
+//   the heal replaces that attack). Every other
+//   kit keeps the data rule (tools/build-data.mjs resolveTrigger, the official 技能策略: DEFAULT = about to attack + an
+//   enemy in the INITIAL range; SKILL_RANGE for a MANUAL skill's own 技能范围; the class rows — 重装 TAKE_DAMAGE … — for
+//   every MANUAL skill; AUTO skills never take a class row).
 // - fx kinds emitted (battle.fx(kind, {x, y, id, …})): 'aoe' {r, skill}, 'healAoe' {r}, 'summon' {token}, 'anchor'
 //   {fromX, fromY, r}, 'teleport', 'zone' {r, duration}, 'iceSpike' {r}, 'extraAttack', 'downed', 'revive' {r},
 //   'overload', 'ember', 'bloodBattle', 'reborn', 'candle', 'wake' {scale}, 'mote', 'hpShare', 'knockout', 'crit',
@@ -35,7 +38,7 @@ import { frontOf, rotateOffset, toLocal } from '../../dir.js';
 import { mitigate, hasHp } from '../../damage.js';
 
 // ---- text-only constants (the official blackboards carry no key for these) --------------------------------------
-/** 华法琳 S1 "只当目标生命值不满一半时才会触发"; 山 module "生命值高于50%时". */
+/** 华法琳 S1 "只当目标生命值不满一半时才会触发"; 塞雷娅 S1 "血量小于等于一半"; 山 module "生命值高于50%时". */
 const HALF_HP = 0.5;
 /** 夕 S1 "下一次攻击溅射范围扩大" — expanded splash radius (tiles; the splash-caster default is 1.1). PRTS: "溅射半径扩大至1.7". */
 const DUSK_SPLASH_RADIUS = 1.7;
@@ -118,8 +121,6 @@ const skillRange = (chess, def, extra = null) => {
   const g = skillGrid(chess, def);
   return g || extra ? { ...(g ? { rangeGrid: g } : {}), ...(extra || {}) } : undefined;
 };
-/** Push distance of an AK force level (same mapping as content/generic.js: 中等力度 = 1 → 1 tile). */
-const pushTiles = (force) => 0.5 + 0.5 * force;
 /** "攻击范围内存在N名及以上敌人时攻击速度+X" (modules REA-Y). */
 function crowdAspd(battle, unit, key, aspd, cnt) {
   if (!aspd || !(cnt > 0)) return;
@@ -179,21 +180,6 @@ function autoCast(battle, unit, cond) {
   }, { owner: unit });
 }
 
-/**
- * TAKE_DAMAGE auto-cast of a "下次攻击" skill with charges (号角 S1, 塞雷娅 S1 — spec trigger NEVER): a hit taken arms
- * the skill (the engine rule's conditions: not an element-gauge hit, not `noSp`, able to act, not silenced) only while no
- * armed charge is waiting for its attack. The engine rule re-activates a pending instant skill on every hit, so two hits
- * before her next attack would spend both charges of the elite on that one attack.
- */
-function hurtCast(battle, unit) {
-  battle.on('damaged', (c) => {
-    if (c.target !== unit || !c.dmg || c.dmg.noSp || c.dmg.type === 'element' || !on(unit)) return;
-    const sk = unit.skill;
-    if (!sk || sk.noSkill || sk.pending || !sk.ready || (sk.active && sk.isTimed) || !unit.canAct || unit.s.flags.silence) return;
-    sk.activate('TAKE_DAMAGE');
-  }, { owner: unit });
-}
-
 /** Periodic check while the unit is on the field. */
 function whileOn(battle, unit, sec, fn) {
   battle.every(sec, () => { if (on(unit)) fn(); }, { owner: unit });
@@ -203,7 +189,7 @@ function whileOn(battle, unit, sec, fn) {
 function spAura(battle, unit, value, filter) {
   if (!(value > 0)) return;
   whileOn(battle, unit, AURA_IV, () => {
-    for (const a of battle.allies()) {
+    for (const a of battle.alliesFor(unit)) {
       if (!filter(a)) continue;
       const cur = a.findBuff('aura:spRecovery');
       if (cur && num(cur.mods?.spRecoveryFlat) > value + 1e-9) continue;
@@ -788,12 +774,12 @@ const KITS = {
             const near = battle.enemiesInRadius(main.x, main.y, RING1).filter((e) => !e.isFlying && !e.s.flags.untargetable && !e.s.flags.sleep)
               .sort((a, b) => (a === main ? -1 : b === main ? 1 : 0) || dist(a, main) - dist(b, main) || a.spawnSeq - b.spawnSeq)
               .slice(0, Math.max(1, num(bb.max_target, 2)));
-            const fr = unit.tileR + unit.fwd[0], fc = unit.tileC + unit.fwd[1];
             const force = num(bb.force, 1);
             battle.fx('anchor', { x: main.x, y: main.y, id: unit.id, fromX: unit.x, fromY: unit.y, r: RING1 });
             for (const e of near) {
-              const dx = fc - e.x, dy = fr - e.y, d = Math.hypot(dx, dy);
-              if (d > 0.1) battle.displace(e, { x: dx, y: dy }, d, { force: force + 1 });
+              // "中等力度地拖拽至面前": the 捕网's pull uses the 拖拽 rules (PRTS 推与拉 §捕网 "力的大小：同拖拽") —
+              // Battle.pullToFront, the official 力度 − 重量 pull
+              battle.pullToFront(e, unit, force);
               if (e.alive) battle.dealDamage(unit, e, { amount: unit.s.atk * num(bb.atk_scale), type: 'phys', isSkill: true, tags: ['skill', 'anchorPull'] });
             }
           },
@@ -893,7 +879,7 @@ const KITS = {
         skchr_etlchi_2: () => ({
           kind: 'duration', attack: { noAttack: true },
           onStart({ battle, unit }) {
-            const other = battle.allies().filter((a) => a !== unit && a.ground && a.hp > 0)
+            const other = battle.alliesFor(unit).filter((a) => a !== unit && a.ground && a.hp > 0)
               .sort((a, b) => aroundN(battle, b) - aroundN(battle, a) || dist(a, unit) - dist(b, unit) || a.id - b.id)[0] ?? null;
             unit.mem.sickles = other ? [unit, other] : [unit];
             unit.mem.sickleAcc = 0;
@@ -1136,7 +1122,7 @@ const KITS = {
   // max HP/s at the end. T1 军事要塞: all Defenders ATK +20 % while she is on the field.
   // T2 血战: once per deployment, lethal damage → full heal, max HP −50 %, ASPD +18, DEF +18 %.
   // Module (elite): ×1.1 vs blocked enemies.
-  // S1 照明榴弹 (instant / 2 charges elite, TAKE_DAMAGE): next attack atk_scale × ATK; a ranged (unblocked) one also
+  // S1 照明榴弹 (instant / 2 charges elite, 自动触发 ⇒ DEFAULT): next attack atk_scale × ATK; a ranged (unblocked) one also
   // splashes projectile_range and lights the impact for projectile_delay_time s (enemies within projectile_range lose
   // 隐匿). S2 暴风号令 (ammo 10): every attack attack@s2.atk_scale × ATK phys splash; 过载 for the second half of the
   // ammo [ASSUMED like S3]: + attack@s2.magic_atk_scale × ATK arts to every enemy hit (manual close never happens in the
@@ -1155,7 +1141,7 @@ const KITS = {
     return {
       skills: lazySkills({
         skchr_horn_1: () => ({
-          kind: instantKind(chess, def), trigger: NEVER, // TAKE_DAMAGE (data) via hurtCast: one armed charge at a time
+          kind: instantKind(chess, def), // 自动触发 "下次攻击": the data rule DEFAULT (an AUTO skill takes no 技能策略)
           attack: {
             atkScale: num(bb.atk_scale, 1),
             onHit({ battle, unit, x, y }) {
@@ -1221,7 +1207,6 @@ const KITS = {
         const aspd = num(tm.attack_speed); // FOR-Y: 不阻挡敌人时…攻击速度+10
         if (aspd) whileOn(battle, unit, 0.2, () => { if (!unit.blocking.length) battle.addBuff(unit, { key: 'horn:moduleY', duration: 0.3, mods: { aspd } }); });
         if (sid === 'skchr_horn_1') {
-          hurtCast(battle, unit);
           // the pending shot: a ranged (unblocked) attack widens its splash and lights the impact
           battle.on('beforeAttack', (c) => {
             if (c.attacker !== unit || !unit.skill?.pending || !c.profile) return;
@@ -1436,8 +1421,9 @@ const KITS = {
   // 塞雷娅 — S2 药物配置 (instant, time SP): heals every ally in the skill range for heal_scale × ATK (cast when one is
   // injured). T1 莱茵充能护服: every 20 s on the field ATK +5 % / DEF +4 % (×5). T2 精神回复: +1 SP to every ally she heals.
   // Module (elite): heals on allies below 50 % ×1.15.
-  // S1 急救 (instant / 2 charges elite, TAKE_DAMAGE): her next attack heals the ally below half HP with the lowest HP
-  // ratio in the skill area (周围) for heal_scale × ATK. S3 钙质化 (duration): allies in the skill area heal
+  // S1 急救 (instant / 2 charges elite, 自动触发: cast at her attack when an ally of the skill area 周围 is at ≤ half HP):
+  // that attack is instead a heal of the lowest such ally for heal_scale × ATK.
+  // S3 钙质化 (duration; the 重装 strategy TAKE_DAMAGE): allies in the skill area heal
   // attack@heal_scale × ATK per second; enemies there take arts ×demkni_s_3.damage_scale and move −60 %.
   // Module GUA-Y (elite): damage taken −15 %.
   chess_char_5_11_a: (bb, chess, def) => {
@@ -1454,16 +1440,15 @@ const KITS = {
     return {
       skills: lazySkills({
         skchr_demkni_1: () => ({
-          kind: instantKind(chess, def), trigger: NEVER, // TAKE_DAMAGE (data) via hurtCast: one armed charge at a time
-          attack: {
-            onHit({ battle, unit }) {
-              const t = battle.unitsInGrid(unit, grid, { side: 'ally' }).filter((a) => healable(a, unit) && a.hpRatio < HALF_HP)
-                .sort((a, b) => a.hpRatio - b.hpRatio || a.id - b.id)[0];
-              if (!t) return;
-              battle.heal(unit, t, unit.s.atk * num(bb.heal_scale, 1));
-              battle.fx('healAoe', { x: t.x, y: t.y, id: t.id, r: 0.5 });
-            },
-          },
+          // 自动触发: its own rule, no 技能策略 — PRTS 备注 "此技能仅在周围有符合血量条件的友方单位时可触发，触发时会替换当次
+          // 攻击" and the corrected text "血量小于等于一半": checked when she is about to attack (an enemy target, the basic
+          // rule), an ally of the skill area at ≤ half HP casts it and that attack becomes the heal (unlike 古米's 备用军粮,
+          // no heal mode is left waiting: the engine withdraws a cast whose ally was healed before the attack)
+          kind: instantKind(chess, def),
+          trigger: { rule: 'DEFAULT', grid, allies: true, hpAtMost: HALF_HP },
+          targeting: { rangeGrid: grid },
+          attack: { dmgType: 'heal', heal: { mode: 'single', hpAtMost: HALF_HP }, healScale: num(bb.heal_scale, 1), projectile: 'none' },
+          onHit({ battle, target }) { if (target) battle.fx('healAoe', { x: target.x, y: target.y, id: target.id, r: 0.5 }); },
         }),
         skchr_demkni_3: () => ({
           kind: 'duration',
@@ -1512,7 +1497,6 @@ const KITS = {
       install(battle, unit) {
         // S2 only: the NEVER-trigger skill casts itself when an ally in its area is injured
         if (!sid || sid === 'skchr_demkni_2') autoCast(battle, unit, () => zone(battle, unit).some((a) => a.hp < a.s.maxHp - 1e-6));
-        if (sid === 'skchr_demkni_1') hurtCast(battle, unit);
         lowHpHealUp(battle, unit, tb);
         if (num(tb.damage_resistance) > 0) permBuff(battle, unit, 'saria:moduleY', { dmgTakenMul: 1 - num(tb.damage_resistance) });
       },
@@ -1761,8 +1745,10 @@ const KITS = {
     };
     return {
       skills: lazySkills({
+        // (自动触发: an AUTO skill takes no 技能策略 — an AUTO DP skill fires as soon as it is ready, like 伺夜 S1)
         skchr_svash2_1: () => ({
           kind: instantKind(chess, def),
+          trigger: 'SP_FULL',
           onStart({ battle, unit }) {
             battle.addDp(unit.ownerId, num(bb.cost));
             const { pick } = waitingArea(battle, unit);
@@ -1916,7 +1902,7 @@ const KITS = {
     const tickSpecial = (battle, unit, z, seaHits) => {
       if (z.type === 'guard') {
         const inZone = (a) => Math.abs(a.tileR - z.r) <= 1 && Math.abs(a.tileC - z.c) <= 1;
-        const allies = battle.allies().filter(inZone);
+        const allies = battle.alliesFor(unit).filter(inZone);
         for (const a of allies) battle.addBuff(a, { key: 'thorn2:bastion', duration: AURA_DUR, mods: mods({ defFlat: num(bb.def) }) });
         if (z.acc >= 1 - 1e-9) {
           z.acc -= 1;
@@ -1997,7 +1983,7 @@ const KITS = {
           const cnt = num(t1.cnt, 6);
           const ally = num(t1.attack_speed_ally), allyX = num(t1.attack_speed_ally_extra), foe = num(t1.attack_speed_enemy), foeX = num(t1.attack_speed_enemy_extra);
           whileOn(battle, unit, AURA_IV, () => {
-            for (const a of battle.allies()) {
+            for (const a of battle.alliesFor(unit)) {
               const v = ally + (straightRun(battle, a.tileR, a.tileC) >= cnt ? allyX : 0);
               if (v) battle.addBuff(a, { key: 'thorn2:vision', duration: AURA_DUR, mods: { aspd: v } });
             }
@@ -2097,10 +2083,9 @@ const KITS = {
             hits: 2,
             onEachHit({ battle, unit, target, kind }) {
               if (kind !== 'main' || !target || !target.alive || target.side !== 'enemy') return;
-              const force = num(bb['attack@force'], 1);
-              const dx = target.x - unit.x, dy = target.y - unit.y;
-              const dir = Math.hypot(dx, dy) > 0.05 ? { x: dx, y: dy } : { x: unit.fwd[1], y: unit.fwd[0] };
-              battle.displace(target, dir, pushTiles(force), { force: force + 1 });
+              // "中等力度地推动" (PRTS 备注: on the 2nd hit of each attack — onEachHit runs after both): a radial push by
+              // the official 力度 − 重量 distance (Battle.push)
+              battle.push(target, num(bb['attack@force'], 1), { from: unit });
             },
           },
         }),
@@ -2155,9 +2140,7 @@ const KITS = {
         attack: {
           onHit({ battle, unit, target }) {
             if (!target || !target.alive || target.side !== 'enemy' || target.blockedBy) return;
-            const fx0 = unit.tileC + unit.fwd[1], fy0 = unit.tileR + unit.fwd[0];
-            const dx = fx0 - target.x, dy = fy0 - target.y, d = Math.hypot(dx, dy);
-            if (d > 0.1) battle.displace(target, { x: dx, y: dy }, d, { force: force + 1 });
+            battle.pullToFront(target, unit, force); // the official 力度 − 重量 pull (Battle.pullToFront)
           },
         },
       },
@@ -2311,12 +2294,14 @@ const KITS = {
       talents: [
         { install(battle, unit) { // 加速力场
           const aspd = num(t0.attack_speed);
-          if (aspd) whileOn(battle, unit, AURA_IV, () => { for (const a of battle.allies()) battle.addBuff(a, { key: 'aglina:field', duration: AURA_DUR, mods: { aspd } }); });
+          if (aspd) whileOn(battle, unit, AURA_IV, () => { for (const a of battle.alliesFor(unit)) battle.addBuff(a, { key: 'aglina:field', duration: AURA_DUR, mods: { aspd } }); });
         } },
         { install(battle, unit) { // 兼职工作
           const hp = num(t1.hp_recovery_per_sec);
-          // PRTS 备注: an HP-regeneration attribute ("生命回复速度"), not given to allies under 禁疗 (the noHeal status)
-          if (hp > 0) whileOn(battle, unit, AURA_IV, () => { if (!unit.skill?.active) for (const a of battle.allies()) if (!a.s.flags.noHeal) battle.addBuff(a, { key: 'aglina:parttime', duration: AURA_DUR, mods: { hpRegen: hp } }); });
+          // an HP-regeneration attribute, so 禁疗 does not stop it — PRTS 备注 "生命回复的提供方式为增加目标的'生命回复速度'属性，
+          // 不受治疗加成和禁疗影响" (异常效果 禁疗: "增减生命回复速度…的效果不会被识别为治疗类能力"); a 孤立 unit (炎佑) is not
+          // selected (Battle.alliesFor)
+          if (hp > 0) whileOn(battle, unit, AURA_IV, () => { if (!unit.skill?.active) for (const a of battle.alliesFor(unit)) battle.addBuff(a, { key: 'aglina:parttime', duration: AURA_DUR, mods: { hpRegen: hp } }); });
         } },
       ],
     };

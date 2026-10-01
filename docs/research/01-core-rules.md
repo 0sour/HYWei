@@ -926,5 +926,5 @@ Machine-readable copy: `01-core-data.json → _criticAddendum.enemyStatMultiplie
 
 ### A5. Other resolved items
 - The **华法琳** granted-trait cap should be **12 / 24 per battle**. The official 3/27 notice changed it and PRTS lists 7/14 → 12/24. The client data still shows 7/14, even though the other 3/27 changes (奇迹 18 %, 远见 80/150, 商业包装方案 8/7) are already in it. See 02.
-- The skill auto-cast rows with `skillIndex` 0 mean **skill 1 only** (BWIKI "重装职业干员 技能1，受到伤害后自动释放"). See 03.
+- ~~The skill auto-cast rows with `skillIndex` 0 mean skill 1 only (BWIKI "重装职业干员 技能1，受到伤害后自动释放").~~ Superseded by user playtest #6 (DESIGN §20): the class rows apply to **every MANUAL skill** of the class and never to an AUTO skill (PRTS 卫戍协议/帮助 names whole classes; the 阵法术师 row must cover 薄绿's default S2, a phalanx that never attacks with its skill off); a MANUAL skill with its own 技能范围 (not an attack-range change) uses SKILL_RANGE; automatic operations have a 3 s cooldown. See 03 C1.
 - Asset URLs: 40 random URLs from `07-assets.json` were re-checked on 2026-09-27; 40/40 returned `200`.

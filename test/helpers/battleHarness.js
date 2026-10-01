@@ -22,7 +22,10 @@
 //   kits          { [baseChessId]: (bb, chess, def) => Kit } injected kits (take precedence over kits/tier*.js)
 //   extraContent  [{ install(battle) }] extra content modules installed after the domain modules (content tests)
 //   defs          { chess: {id: record}, enemies: {key: record}, tokens: {id: record} } extra/override data records
-//   flags, sharedBoss, modeId, round, setup(battle), recordEvents (default true)
+//   flags, sharedBoss, modeId, round, setup(battle), recordEvents (default true). The harness sets
+//                 flags.startOpCooldown = 0 unless given: the official 3 s operation cooldown of the battle-start
+//                 deployment (Battle default AUTO_OP_COOLDOWN) would hold back every test that fills a skill's SP at
+//                 t ≈ 0 to stand for a skill that became ready mid-fight; tests of that rule pass it explicitly
 //   autoFinish    end when all enemies are dead (default: true when any spawn is scheduled, else false so a
 //                 battle without enemies keeps running until its time limit)
 //   hooks         list of hook names to capture (default: all DESIGN events)
@@ -187,7 +190,7 @@ export function makeBattle(opts = {}) {
   const battle = new Battle({
     seed: opts.seed ?? 1, kind, modeId: opts.modeId ?? 'mode_multi_normal', round: opts.round ?? 1, stage, rect: opts.rect,
     timeLimit: timeLimit ?? (kind === 'boss' || kind === 'hidden' ? Infinity : 60), players, spawns, routes,
-    sharedBoss: opts.sharedBoss ?? null, flags: opts.flags, fieldId: opts.fieldId ?? 'test', data,
+    sharedBoss: opts.sharedBoss ?? null, flags: { startOpCooldown: 0, ...opts.flags }, fieldId: opts.fieldId ?? 'test', data,
     content: opts.content ?? 'full', recordEvents: opts.recordEvents !== false, logger: opts.logger ?? quietLogger(opts.verbose),
     quiet: opts.verbose ? false : true, devices: opts.devices,
     autoFinish: opts.autoFinish ?? spawns.length > 0, kits: opts.kits, extraContent: opts.extraContent,

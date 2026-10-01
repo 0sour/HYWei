@@ -340,12 +340,15 @@
 .spov__who.is-done .spov__wstate { color: var(--mint-400); }
 .spov__who.is-cur .spov__wstate { color: var(--gold); }
 .spov__grid { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr); gap: .2rem; }
-.spov__grid--3 { grid-template-columns: repeat(3, minmax(0, 4.3rem)); grid-template-rows: minmax(0, 5rem); justify-content: center; align-content: start; gap: .36rem; margin-top: .3rem; }
-.spov__grid--3 .spcard { justify-content: flex-start; padding-top: .62rem; }
-.spov__grid--3 .spcard__icon { width: 1.6rem; height: 1.6rem; margin-bottom: .1rem; }
-.spov__grid--3 .spcard--bounty .spcard__icon { width: 1.4rem; height: 1.4rem; }
+.spov__grid--3 { grid-template-columns: repeat(3, minmax(0, 4.3rem)); grid-template-rows: minmax(0, 4.6rem); justify-content: center; align-content: start; gap: .36rem; margin-top: .3rem; }
+.spov__grid--3 .spcard__icon { width: 1.3rem; height: 1.3rem; }
+/* The official card (research 06 §11.5; the official 悬赏 / 机密商店 / 战术 screenshots): a framed icon at the top-left
+   with the bold name beside it, the effect text under both across the card, left-aligned; the tier chip on the icon's
+   corner, the taker's round avatar at the top-right (user playtest #6 item 6: the centred icon + name used to push the
+   text out of a phone-sized card). --sp-px: the card's side padding; --tk / --tk-at: the taker avatar's size / inset. */
 .spcard {
-  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .12rem; padding: .3rem .3rem .24rem; overflow: hidden; text-align: center;
+  --sp-px: .2rem; --tk: .5rem; --tk-at: .08rem;
+  position: relative; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: .12rem; padding: .16rem var(--sp-px); overflow: hidden; text-align: left;
   background: linear-gradient(180deg, rgba(210, 224, 219, .12), rgba(120, 140, 132, .06)); border: 1px solid rgba(200, 220, 212, .25); color: var(--text-hi);
   transition: transform var(--t-fast) var(--ease-out), border-color var(--t-fast), background var(--t-fast), opacity var(--t-med);
 }
@@ -357,24 +360,34 @@
 .spcard.is-taken > :not(.spcard__taker) { opacity: .38; filter: grayscale(.7); }
 .spcard.is-mine { border-color: var(--mint-400); box-shadow: inset 0 0 0 1px var(--mint-400); }
 .spcard.is-mine > :not(.spcard__taker) { opacity: 1; filter: none; }
-.spcard__tier { position: absolute; left: .12rem; top: .12rem; }
-.spcard__icon { width: 1.3rem; height: 1.3rem; display: grid; place-items: center; flex: none; }
+.spcard__tier { position: absolute; left: .08rem; top: .08rem; z-index: 1; }
+.spcard__head { flex: none; display: flex; align-items: center; gap: .18rem; min-width: 0; }
+.spcard__icon { width: 1rem; height: 1rem; display: grid; place-items: center; flex: none; padding: .04rem;
+  border: 2px solid rgba(214, 228, 222, .7); background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, .1), rgba(0, 0, 0, .32)); }
 .spcard__icon img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 .06rem .12rem rgba(0, 0, 0, .6)); }
-.spcard__icon .icon { width: .7rem; height: .7rem; color: var(--mint-500); }
-.spcard--bounty .spcard__icon { width: 1.1rem; height: 1.1rem; border: 2px solid rgba(255, 90, 74, .5); background: radial-gradient(circle, #3a1c18, #140d0c); }
+.spcard__icon .icon { width: 60%; height: 60%; color: var(--mint-500); }
+.spcard--bounty .spcard__icon { padding: 0; border-color: rgba(255, 90, 74, .55); background: radial-gradient(circle, #3a1c18, #140d0c); }
 .spcard--bounty .spcard__icon img { object-fit: cover; }
-.spcard__body { display: flex; flex-direction: column; align-items: center; gap: .08rem; min-height: 0; }
-.spcard__name { font-size: .26rem; font-weight: 900; letter-spacing: .06em; }
-.spcard__desc { font-size: .16rem; line-height: 1.65; color: var(--text-md); max-width: 4.6rem; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
-.spov__grid--3 .spcard__desc { -webkit-line-clamp: 8; }
-.spcard__tags { display: flex; gap: .08rem; }
+.spcard__title { display: flex; flex-direction: column; align-items: flex-start; gap: .06rem; min-width: 0; }
+.spcard__name { font-size: .28rem; font-weight: 900; letter-spacing: .04em; line-height: 1.25; }
+/* the effect text: the official rich text (highlighted numbers, set bonuses, line breaks), clamped by lines — 7 fit a 3×2
+   card (the longest item, 信标, takes 7 at 16:9 and on phones narrower than ≈ 740 px); it never shrinks below them
+   (flex: none) */
+.spcard__desc { flex: none; font-size: .2rem; line-height: 1.4; color: var(--text-md); display: -webkit-box; -webkit-line-clamp: 7; -webkit-box-orient: vertical; overflow: hidden; }
+.spov__grid--3 .spcard__desc { -webkit-line-clamp: 10; }
+.spcard__tags { display: flex; flex-wrap: wrap; gap: .06rem; }
 .spcard__tag { font-size: .13rem; font-weight: 700; padding: .01rem .08rem; }
 .spcard__tag--team { background: var(--mint-500); color: var(--text-on-mint); }
 .spcard__tag--coin { background: var(--gold); color: #1d1400; }
-.spcard__taker { position: absolute; right: .12rem; top: .12rem; display: flex; align-items: center; gap: .06rem; padding: .03rem .1rem .03rem .03rem;
-  background: rgba(8, 11, 10, .92); border: 1px solid var(--mint-500); border-radius: .3rem; font-size: .13rem; color: var(--mint-400); font-weight: 700; }
-.spcard__taker .pavatar { --pa: .4rem; border-radius: 50%; overflow: hidden; border: 2px solid var(--mint-400); }
+/* the taker's badge: the round avatar alone at the card's top-right corner, as in the official screenshots (the player's
+   name is its tooltip and part of the card's accessible name); a taken card's head keeps clear of it, so a long name
+   wraps before the badge instead of running under it (the avatar + name pill of v2.4.1 covered long names once the name
+   moved into the top row) */
+.spcard__taker { position: absolute; right: var(--tk-at); top: var(--tk-at); z-index: 1; display: block; border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(8, 11, 10, .9), 0 .04rem .12rem rgba(0, 0, 0, .6); }
+.spcard__taker .pavatar { --pa: var(--tk); border-radius: 50%; overflow: hidden; border: 2px solid var(--mint-400); }
 .spcard.is-taken .spcard__taker { filter: none; }
+.spcard.is-taken .spcard__head { padding-right: calc(var(--tk) + var(--tk-at) - var(--sp-px) + .08rem); }
 /* the card being picked (g.choice in flight): mint frame + a 选择中 strip with the sweeping busy bar of the buttons
    (components.css btn-busy) — no spinner over the card's text (user playtest #3 item 9) */
 .spcard.is-busy { border-color: var(--mint-400); box-shadow: inset 0 0 0 1px var(--mint-400); }
@@ -393,13 +406,37 @@
 .spov.has-armed .spcard.is-pickable:not(.is-armed) { filter: brightness(.7); }
 .spov.has-armed .spcard.is-pickable:not(.is-armed):hover { filter: none; }
 .spcard__confirm {
-  position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; display: flex; flex-direction: column; align-items: center;
-  padding: .05rem 0 .05rem; background: linear-gradient(0deg, var(--gold), #e0a800); color: #1d1400; pointer-events: none;
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; display: flex; align-items: baseline; justify-content: center; gap: .1rem;
+  padding: .04rem 0 .05rem; background: linear-gradient(0deg, var(--gold), #e0a800); color: #1d1400; pointer-events: none;
   animation: confirm-in var(--t-fast) var(--ease-out);
 }
 .spcard__confirm b { font-size: .18rem; font-weight: 900; letter-spacing: .22em; padding-left: .22em; }
-.spcard__confirm small { font-size: .11rem; letter-spacing: .1em; opacity: .75; }
+.spcard__confirm small { font-size: .12rem; letter-spacing: .1em; opacity: .75; }
 .spov__confirm { animation: pulse-gold 1.2s var(--ease-in-out) infinite; }
+/* Short landscape phones (height < 10.8rem: the root size is clamped at 40 px, theme.css, so the page is only ≈ 9rem
+   tall): a tighter header (no CONTINGENCY micro line, smaller margins) gives the grid ≈ .65rem more, and a smaller icon
+   and tighter spacing leave a 3×2 card room for 7 lines of text (≈ 4 – 5.4 × 2.9rem: 162 × 116 px at 640×360, the
+   smallest supported phone; 201 × 119 at 756×366, the user's Android) — every shop item, bounty and tactic text fits in
+   full, taken or not (test/ui/playtest6-ui.e2e.test.js). */
+@media (max-height: 431.98px) {
+  .spov__inner { top: .84rem; bottom: .22rem; gap: .1rem; }
+  .spov__titles > .micro { display: none; }
+  .spov__grid { gap: .12rem; }
+  .spcard { --sp-px: .12rem; --tk: .4rem; --tk-at: .04rem; gap: .06rem; padding: .08rem var(--sp-px); }
+  .spcard__tier { left: .03rem; top: .03rem; }
+  .spcard__head { gap: .12rem; }
+  .spcard__icon { width: .72rem; height: .72rem; padding: .02rem; }
+  .spov__grid--3 .spcard__icon { width: 1rem; height: 1rem; }
+  .spcard__name { font-size: .23rem; }
+  .spcard__desc { font-size: .19rem; }
+  .spov__grid--3 .spcard__desc { -webkit-line-clamp: 10; }
+}
+/* The narrowest of them (640×360): with Noto Sans SC — the page's web font and Android's CJK font — the longest text
+   (海沟实验体) wraps to 8 lines in a 162 px card, one more than the clamp; a slightly tighter line height gives the 8th
+   line room (QA, playtest #6). */
+@media (max-height: 431.98px) and (max-width: 699.98px) {
+  .spcard__desc { line-height: 1.3; -webkit-line-clamp: 8; }
+}
 
 /* Grid image boxes: definite 100% tracks so `height: 100%` images resolve against the box (an auto track would
    let non-square art overflow its frame). */

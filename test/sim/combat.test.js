@@ -289,7 +289,7 @@ test('淤困 (enemy_9007_acelem) parasite hosts side by side: one burst spreads 
   assert.ok(hpA - A.hp < 2 * ELEMENT.burn.ally.damage && hpB - B.hp < 2 * ELEMENT.burn.ally.damage);
 });
 
-test('statuses (official terms): tremble only stops attacks while blocked; fear = unblockable + no attack + no advance; stunned blocker lets go', () => {
+test('statuses (official terms): tremble only stops attacks while blocked; fear = unblockable + no attack + no advance (no source: it stays on its tile, fear.js); stunned blocker lets go', () => {
   const g = chessRec({ id: 't_guard', profession: 'WARRIOR', stats: { atk: 0, blockCnt: 2, maxHp: 1e6 }, skill: null });
   const h = makeBattle({
     defs: { chess: { t_guard: g }, enemies: { enemy_walker: walker({ atk: 100, bat: 1 }) } },
@@ -309,13 +309,14 @@ test('statuses (official terms): tremble only stops attacks while blocked; fear 
   assert.equal(e.blockedBy, null, 'a stunned operator blocks nothing');
   assert.equal(u.blocking.length, 0);
   h.run(1.2);
-  // fear: released, no attacks, does not advance
+  // fear: released, no attacks, does not advance — without a source there is no 恐惧可达地块: it flutters on its own tile
   if (!e.blockedBy) assert.ok(h.runUntil(() => e.blockedBy === u, 20));
   h.b.applyStatus(e, 'fear', { duration: 2 });
   assert.equal(e.blockedBy, null);
-  const x0 = e.x, a1 = e.stats.attacks;
+  const x0 = e.x, a1 = e.stats.attacks, tc = Math.round(e.x);
   h.run(1.9);
-  approx(e.x, x0);
+  assert.ok(Math.abs(e.x - tc) <= 0.5 && Math.round(e.x) === Math.round(x0), `stays on its tile (${x0} → ${e.x})`);
+  assert.equal(e.blockedBy, null);
   assert.equal(e.stats.attacks, a1);
   h.run(0.5);
   assert.ok(e.blockedBy === u || e.x < x0, 'walks / is blocked again after the fear');

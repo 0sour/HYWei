@@ -389,9 +389,17 @@ test('阿罗玛 elite module: farther targets take up to ×1.1', () => {
   approx(hits[1].amount, u.s.atk * (1 + tb.damage_scale), 1e-6, 'distance 5 ≥ max_dist');
 });
 
-test('凯瑟琳: 2 support devices shield allies (20 % of her HP), 6 %/s after 5 s unhit; S2: 6 %/s regardless, no attacks', () => {
+test('凯瑟琳: 2 placed support devices shield allies (20 % of her HP), 6 %/s after 5 s unhit; S2: 6 %/s regardless, no attacks', () => {
   const id = 'chess_char_4_11_a', bb = D(id).skill.bb;
-  const h = makeBattle({ units: [{ chessId: id, row: 10, col: 5 }, { chessId: 'chess_char_1_02_a', row: 9, col: 6 }], timeLimit: 120, hooks: ['attack'], captureNoisy: true });
+  // the devices are hand pieces the player places and turns (user playtest #6): one faces the ally, one faces her
+  const h = makeBattle({
+    units: [
+      { chessId: id, row: 10, col: 5, uid: 1 }, { chessId: 'chess_char_1_02_a', row: 9, col: 6, uid: 2 },
+      { kind: 'token', tokenId: 'token_10041_cathy_catsld', ownerUid: 1, row: 9, col: 5, uid: 3, dir: 'RIGHT' },
+      { kind: 'token', tokenId: 'token_10041_cathy_catsld', ownerUid: 1, row: 10, col: 6, uid: 4, dir: 'LEFT' },
+    ],
+    timeLimit: 120, hooks: ['attack'], captureNoisy: true,
+  });
   h.run(0.2);
   const u = h.unit(id), ally = h.unit('chess_char_1_02_a');
   const devs = h.b.allyUnits.filter((x) => x.defId === 'token_10041_cathy_catsld' && x.alive);
@@ -1103,7 +1111,8 @@ test('elite (精锐) kits read the Lv7 blackboard: skill magnitudes differ from 
     assert.equal(waves.size, D('chess_char_4_16_b').skill.duration);
     assert.ok([...waves.values()].every((n) => n === bb.max_target));
   }
-  // 歌蕾蒂娅: force 1 pulls twice as far per pulse as force 0
+  // 歌蕾蒂娅 S3 tornado pulse on a weight-1 enemy √2 from the marked point (PRTS 推与拉): elite 中力 (1) = 受力等级 0 ⇒ all the
+  // way to the point (its 0.05 急停); normal 小力 (0) = −1 ⇒ 35 % of the starting distance
   {
     const pulled = (id) => {
       const [h, u] = mk(id);
@@ -1115,7 +1124,8 @@ test('elite (精锐) kits read the Lv7 blackboard: skill magnitudes differ from 
       h.run(D(id).skill.bb.interval + 0.1);
       return Math.hypot(side.x - x0, side.y - y0);
     };
-    approx(pulled('chess_char_4_12_b'), 2 * pulled('chess_char_4_12_a'), 0.05);
+    approx(pulled('chess_char_4_12_b'), Math.SQRT2 - 0.05, 0.02);
+    approx(pulled('chess_char_4_12_a'), 0.35 * Math.SQRT2, 0.02);
   }
 });
 
@@ -1137,18 +1147,21 @@ test('焰尾 S3 dodge stacks independently with the 卡西米尔 aura (elite 80 
   }
 });
 
-test('凯瑟琳: a device sits orthogonally next to its operator and re-shields it after it redeploys on that tile', () => {
+test('凯瑟琳: a placed device serves the operator it faces and re-shields it after it redeploys on that tile', () => {
   const id = 'chess_char_4_11_a';
-  const h = makeBattle({ units: [{ chessId: id, row: 10, col: 5 }, { chessId: 'chess_char_1_02_a', row: 9, col: 7 }], timeLimit: 200, hooks: [] });
+  const h = makeBattle({
+    units: [
+      { chessId: id, row: 10, col: 5, uid: 1 }, { chessId: 'chess_char_1_02_a', row: 9, col: 7, uid: 2 },
+      { kind: 'token', tokenId: 'token_10041_cathy_catsld', ownerUid: 1, row: 9, col: 6, uid: 3, dir: 'RIGHT' },
+    ],
+    timeLimit: 200, hooks: [],
+  });
   h.run(0.2);
   const u = h.unit(id), ally = h.unit('chess_char_1_02_a');
   const tb = h.b.data.getToken('token_10041_cathy_catsld', u.defId).talents[0].bb;
-  const devs = h.b.allyUnits.filter((x) => x.defId === 'token_10041_cathy_catsld' && x.alive);
-  for (const d of devs) {
-    const t = h.b.unitAt(d.mem.tr, d.mem.tc);
-    assert.equal(Math.abs(d.tileR - d.mem.tr) + Math.abs(d.tileC - d.mem.tc), 1, 'orthogonal neighbour');
-    assert.ok(t && t.kind === 'op');
-  }
+  const dev = h.b.allyUnits.find((x) => x.defId === 'token_10041_cathy_catsld' && x.alive);
+  assert.ok(dev && dev.tileR === 9 && dev.tileC === 6, 'on its placed tile');
+  assert.equal(dev.mem.target, ally, 'serves the operator in front of it');
   h.b.dealDamage(null, ally, { amount: 1e9, type: 'true' });
   assert.equal(ally.alive, false);
   assert.ok(h.runUntil(() => ally.alive, 150), 'redeployed');

@@ -23,6 +23,7 @@
 
 import { Battle } from './Battle.js';
 import { toDataSource, withUnitLoadouts } from './simdata.js';
+import { BOSS_POOL_MIN_HP } from './constants.js';
 
 export const SPEC_VERSION = 1;
 
@@ -133,10 +134,14 @@ export function createBattleFromSpec(spec, dataSource, opts = {}) {
 /**
  * Client-side view of the shared boss HP pool (DESIGN §14 b.pool): the server owns the pool; this field adds its own
  * damage locally and shows `server hp − local damage the server has not acknowledged yet`.
- *   damage(playerId, amount)  called by the sim; returns the damage dealt (≤ the remaining displayed hp)
+ *   damage(playerId, amount)  called by the sim; returns the damage dealt (≤ the remaining displayed hp; the hit that
+ *                             would leave less than BOSS_POOL_MIN_HP (1) takes the rest)
  *   sync(serverHp, ackedCum)  a b.pool broadcast: the server's hp and how much of THIS field's cumulative damage
  *                             (`cum`) it has already counted
  *   cum / byPlayer            cumulative damage of this field (reported as b.progress.bossDmg / .by)
+ * `hp` below 1 reads 0 (the leader is down; user playtest #6 item 5): the difference of the server's float hp and the
+ * local counters can leave dust (3.6e-12) smaller than half an ulp of `cum`, which no hit could remove — `cum += dust`
+ * changes nothing — so the leader stood at "0 HP" and the field never ended.
  */
 export class LocalBossPool {
   constructor(maxHp, hp = maxHp) {
@@ -149,7 +154,10 @@ export class LocalBossPool {
     this.byPlayer = {};
   }
 
-  get hp() { return Math.max(0, this.serverHp - Math.max(0, this.cum - this.acked)); }
+  get hp() {
+    const h = this.serverHp - Math.max(0, this.cum - this.acked);
+    return h < BOSS_POOL_MIN_HP ? 0 : h;
+  }
 
   /** Only used by the sim's fallback path when damage() throws. */
   set hp(v) {
@@ -161,7 +169,7 @@ export class LocalBossPool {
     const a = Number(amount);
     const left = this.hp;
     if (!Number.isFinite(a) || a <= 0 || left <= 0) return 0;
-    const dealt = Math.min(left, a);
+    const dealt = left - a < BOSS_POOL_MIN_HP ? left : a;
     this.cum += dealt;
     if (playerId != null) this.byPlayer[playerId] = (this.byPlayer[playerId] || 0) + dealt;
     return dealt;
@@ -199,8 +207,36 @@ export function attachLpMeter(battle) {
 }
 
 /**
+ * 联防 (user playtest #6 item 7): each source player's enemies still standing on a unite field — not spawned yet,
+ * alive, or already through the objective again — i.e. what settlement would charge them if the battle ended now
+ * (server/match/unite.js uniteSurvivors: the unite result's counted leaks + unspawned entries by `sourcePlayerId`;
+ * alive enemies become leaks on a timeout, keyed like Battle._recordLeak). It falls as the helpers strike them down and
+ * rises when one splits or summons (content-spawned children inherit the parent's sourcePlayerId).
+ * `{ [playerId]: n }` (a player with none left is absent), or null for a battle without the sim's state (a stand-in).
+ * @returns {Record<string, number> | null}
+ */
+export function uniteLeft(battle) {
+  if (!battle) return null;
+  const out = {};
+  const add = (pid) => { if (typeof pid === 'string' && pid) out[pid] = (out[pid] || 0) + 1; };
+  if (battle.finished && typeof battle.result === 'function') {
+    const r = battle.result();
+    if (!r || !r.perPlayer) return null;
+    for (const pp of Object.values(r.perPlayer)) for (const l of (pp && pp.leaked) || []) if (l && l.counted !== false) add(l.sourcePlayerId);
+    for (const u of r.unspawned || []) if (u) add(u.sourcePlayerId);
+    return out;
+  }
+  if (!battle._perPlayer || !Array.isArray(battle._pending) || !Array.isArray(battle.enemies)) return null;
+  for (const p of battle._pending) if (p) add(p.sourcePlayerId);
+  for (const e of battle.enemies) if (e && e.alive && e.counted) add(e.sourcePlayerId ?? e.ownerId);
+  for (const pp of Object.values(battle._perPlayer)) for (const l of (pp && pp.leaked) || []) if (l && l.counted !== false) add(l.sourcePlayerId);
+  return out;
+}
+
+/**
  * Progress numbers of a battle for b.progress / the teammates' waiting UI: game time, kills, total, counted leaks
- * (normal / unite) and the boss pool damage of this field.
+ * (normal / unite), the boss pool damage of this field and — unite fields — `left` (uniteLeft: each leaker's enemies
+ * still standing).
  */
 export function battleProgress(battle) {
   const r = battle && typeof battle.result === 'function' && battle.finished ? battle.result() : null;
@@ -209,7 +245,7 @@ export function battleProgress(battle) {
   for (const k of Object.keys(pp)) for (const l of pp[k].leaked || []) if (l && l.counted !== false) leaks++;
   const pool = battle && battle.sharedBoss;
   const gt = Number(battle && battle.time) || 0;
-  return {
+  const out = {
     gt: Math.round(gt * 1000) / 1000,
     killed: Math.max(0, Math.trunc(Number(battle && battle.killed) || 0)),
     total: Math.max(0, Math.trunc(Number(battle && battle.total) || 0)),
@@ -217,6 +253,11 @@ export function battleProgress(battle) {
     bossDmg: pool && Number.isFinite(pool.cum) ? pool.cum : 0,
     done: !!(battle && battle.finished),
   };
+  if (battle && battle.kind === 'unite') {
+    const left = uniteLeft(battle);
+    if (left) out.left = left;
+  }
+  return out;
 }
 
 const r4 = (v) => Math.round((Number(v) || 0) * 1e4) / 1e4;

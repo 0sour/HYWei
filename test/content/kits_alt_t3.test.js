@@ -460,7 +460,10 @@ test('3_10 松果 S1 RMA长钉 (charges): an immediate extra shot ×atk_scale ig
     assert.ok(sk.some((c) => c.target.defId === 'enemy_s'), 'every enemy in range');
     const plain = atkHits(h, u, false).find((c) => c.target.defId === 'enemy_d');
     approx(plain.amount, u.s.atk * front - 300, 1e-6, 'the ignore is for the skill shot only');
-    assert.ok(h.runUntil(() => u.skill.activations >= d.skill.maxCharges, 8), 'every stored charge is used, one per attack');
+    // every stored charge is used, one per attack — at least AUTO_OP_COOLDOWN (3 s) apart ("自动操作具有3s冷却")
+    assert.ok(h.runUntil(() => u.skill.activations >= d.skill.maxCharges, 15), 'every stored charge is used');
+    const casts = h.hooksOf('attack').filter((c) => c.attacker === u && c.isSkill).map((c) => c.t);
+    for (let i = 1; i < casts.length; i++) assert.ok(casts[i] - casts[i - 1] >= 3 - 1e-6, `casts ${casts[i - 1]} → ${casts[i]}`);
     done(h);
   }
 });
@@ -490,20 +493,20 @@ test('3_11 雪猎 S1 强力击·β型: next shot ×atk_scale (× trait), 裂云�
   }
 });
 
-test('3_12 瑕光 S1 光芒涌动 (TAKE_DAMAGE, charges): next attack ×atk_scale + heals the most injured ally of the 3×3', () => {
+test('3_12 瑕光 S1 光芒涌动 (自动触发 ⇒ DEFAULT, charges): next attack ×atk_scale + heals the most injured ally of the 3×3', () => {
   for (const id of BOTH('chess_char_3_12_a')) {
     const b = SB(id, 'skchr_blemsh_1');
     const h = makeBattle({ defs: { enemies: { enemy_d: dummy('enemy_d') } }, timeLimit: 60, hooks: ['damaged', 'heal'], captureNoisy: true,
       units: [U(id, 'skchr_blemsh_1', 10, 4), { chessId: 'chess_char_3_16_a', row: 11, col: 4 }, { chessId: 'chess_char_3_05_a', row: 12, col: 4 }],
       enemies: [{ key: 'enemy_d', pos: [10, 5] }] });
     const u = h.unit(id), ally = h.unit('chess_char_3_16_a'), far = h.unit('chess_char_3_05_a');
-    assert.equal(u.skill.rule, 'TAKE_DAMAGE');
+    // an AUTO skill takes no 技能策略 (the 重装 TAKE_DAMAGE row is for MANUAL skills): it fires with her next attack
+    assert.equal(u.skill.rule, 'DEFAULT');
     h.step();
     ally.hp = ally.s.maxHp * 0.6;
     far.hp = far.s.maxHp * 0.3; // outside the 3×3
     fill(u);
-    h.b.dealDamage(h.enemy('enemy_d'), u, { type: 'phys', amount: 1 });
-    assert.ok(u.skill.active && u.skill.pending, 'cast when hit; next attack armed');
+    assert.ok(h.runUntil(() => u.skill.activations >= 1, 5), 'cast with her next attack, no hit needed');
     h.runUntil(() => !u.skill.active, 5);
     const sk = atkHits(h, u, true);
     assert.equal(sk.length, 1);
@@ -519,7 +522,8 @@ test('3_12 瑕光 S2 慑敌辉光: ATK +, ground enemies on her tile sleep for t
   for (const id of BOTH('chess_char_3_12_a')) {
     const b = SB(id, 'skchr_blemsh_2'), t1 = TB(id, 1);
     const dur = LD(id, 'skchr_blemsh_2').skill.duration;
-    const h = makeBattle({ defs: { enemies: { enemy_d: dummy('enemy_d'), enemy_n: dummy('enemy_n') } }, timeLimit: 60, hooks: ['damaged', 'heal'], captureNoisy: true,
+    // (a MANUAL 重装 skill: TAKE_DAMAGE — the enemy she blocks hits her)
+    const h = makeBattle({ defs: { enemies: { enemy_d: dummy('enemy_d', { atk: 200, bat: 1 }), enemy_n: dummy('enemy_n') } }, timeLimit: 60, hooks: ['damaged', 'heal', 'skillStart'], captureNoisy: true,
       units: [U(id, 'skchr_blemsh_2', 10, 4), { chessId: 'chess_char_3_16_a', row: 10, col: 6 }],
       enemies: [{ key: 'enemy_d', pos: [10, 4] }, { key: 'enemy_n', pos: [10, 5] }] });
     const u = h.unit(id), ally = h.unit('chess_char_3_16_a');
@@ -529,6 +533,7 @@ test('3_12 瑕光 S2 慑敌辉光: ATK +, ground enemies on her tile sleep for t
     ally.hp = ally.s.maxHp * 0.3;
     fill(u);
     assert.ok(h.runUntil(() => u.skill.active, 3));
+    assert.equal(h.hooksOf('skillStart').find((c) => c.unit === u).reason, 'TAKE_DAMAGE');
     h.step();
     approx(u.s.atk, u.base.atk * (1 + b.atk));
     assert.ok(e.s.flags.sleep, 'her tile: asleep');
@@ -557,14 +562,13 @@ test('3_12 瑕光 精锐 module GUA-X: heals on allies under 50 % HP ×1.15 (not
   assert.equal(u.findBuff('trait:blemsh_guard'), null);
   ally.hp = ally.s.maxHp * 0.4;
   fill(u);
-  h.b.dealDamage(h.enemy('enemy_d'), u, { type: 'phys', amount: 1 });
-  h.runUntil(() => !u.skill.pending, 5);
+  h.runUntil(() => u.skill.activations >= 1 && !u.skill.pending, 5);
   let heal = h.hooksOf('heal').filter((c) => c.source === u).at(-1);
   approx(heal.amount, u.s.atk * b.heal_scale * tb.heal_scale, 1e-6, 'under 50 %');
   ally.hp = ally.s.maxHp * 0.6;
+  const n1 = u.skill.activations;
   fill(u);
-  h.b.dealDamage(h.enemy('enemy_d'), u, { type: 'phys', amount: 1 });
-  h.runUntil(() => !u.skill.pending, 5);
+  h.runUntil(() => u.skill.activations > n1 && !u.skill.pending, 5);
   heal = h.hooksOf('heal').filter((c) => c.source === u).at(-1);
   approx(heal.amount, u.s.atk * b.heal_scale, 1e-6, 'above 50 %');
   done(h);
@@ -677,7 +681,9 @@ test('3_18 忍冬 S1 小施惩戒: next attack + extra arts and +DP; S2 坠刃�
     assert.equal(atkHits(g, v).length, 0, 'nothing in her own range');
     const gdp = gp.dp;
     v.skill.gainSp(v.skill.spCost - v.skill.sp + 0.01, 'test'); // one charge
-    assert.ok(g.runUntil(() => v.skill.activations === 1, 1), 'CUSTOM_RANGE on the skill range');
+    assert.equal(v.skill.rule, 'SKILL_RANGE');
+    assert.ok(g.runUntil(() => v.skill.activations === 1, 1), 'SKILL_RANGE: an enemy on the skill range');
+    const first = g.b.time;
     approx(gp.dp, gdp + b2.cost);
     const e1 = g.enemy('enemy_e1');
     const hit = tagged(g, 'vulpisTorture', v);
@@ -687,7 +693,8 @@ test('3_18 忍冬 S1 小施惩戒: next attack + extra arts and +DP; S2 坠刃�
     assert.ok(!e1.s.flags.stun, 'not 停顿 before: no stun');
     for (const [i, k] of keys.slice(1).entries()) g.spawn(k, { pos: [[9, 5], [11, 5], [10, 5], [10, 6], [11, 4], [9, 4]][i] });
     v.skill.gainSp(v.skill.spCost + 0.01, 'test');
-    assert.ok(g.runUntil(() => v.skill.activations === 2, 1));
+    assert.ok(g.runUntil(() => v.skill.activations === 2, 4));
+    assert.ok(g.b.time - first >= 3 - 1e-6, 'the next automatic cast waits the 3 s operation cooldown');
     const second = tagged(g, 'vulpisTorture', v).slice(1);
     assert.equal(second.length, b2.max_target, '≤ max_target enemies');
     if (second.some((c) => c.target === e1)) assert.ok(e1.s.flags.stun, 'already 停顿 ⇒ stunned');
