@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Battle } from '../../server/sim/Battle.js';
 import { makeBattle, chessRec, enemyRec, flatStage, hashOf, checkInvariants } from '../helpers/battleHarness.js';
-import { UF, ANIM } from '../../shared/constants.js';
+import { UF, ANIM, BOND_LAYER_CAP } from '../../shared/constants.js';
 import { EV } from '../../shared/protocol.js';
 import { getDefaultSource, spawnsFromTemplate, hasGeneratedData } from '../../server/sim/simdata.js';
 import { LocalBossPool } from '../../server/sim/spec.js';
@@ -476,6 +476,19 @@ test('layers & coins: addLayers records gains (normal field) and emits client ev
   assert.ok(h.eventsOf('layer').some((e) => e[1] === 'p1' && e[2] === 'yanShip' && e[3] === 3));
   const h2 = makeBattle({ content: 'none', flags: { layerGainsEnabled: false } });
   assert.equal(h2.b.addLayers('p1', 'yanShip', 3), 0);
+});
+
+test('layers: an IN_BATTLE gain stops at BOND_LAYER_CAP (999, MAX_GARRISON_STACK) — the battle\'s count and the reported gain', () => {
+  assert.equal(BOND_LAYER_CAP, 999);
+  const h = makeBattle({ content: 'none', bonds: { yanShip: { count: 3, active: true, tier: 1, layers: 995 } } });
+  h.step();
+  assert.equal(h.b.addLayers('p1', 'yanShip', 3, 'test'), 3);
+  assert.equal(h.b.addLayers('p1', 'yanShip', 5, 'test'), 1, 'only the room left under the cap');
+  assert.equal(h.b.addLayers('p1', 'yanShip', 5, 'test'), 0, 'at the cap: nothing');
+  assert.equal(h.b.getPlayer('p1').bonds.yanShip.layers, 999);
+  h.b.forceEnd('forced');
+  assert.deepEqual(h.result().perPlayer.p1.layerGains, { yanShip: 4 });
+  assert.deepEqual(h.eventsOf('layer').map((e) => e[3]), [3, 1], 'the client sees what was added');
 });
 
 test('tokens: spawnToken deploys a token next to its owner; manual token pieces deploy from input', () => {

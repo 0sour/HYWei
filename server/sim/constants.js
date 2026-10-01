@@ -200,3 +200,17 @@ export const BOSS_ROW_OFFSET = -7;
  * #6 item 5). With the rule a pool always reads 0 or at least 1 HP: 0 on the HUD = the leader is down.
  */
 export const BOSS_POOL_MIN_HP = 1;
+
+/**
+ * How the percentage attribute bonuses (ATK / DEF / max HP "+X%") of the 卫戍 systems combine: 盟约, 策略, 装备, the
+ * 机变 cards and the per-layer 特质 (garrisons' 每叠加N层 …+X%). Official: PRTS 卫戍协议：盟约 下半/PRTS盟约记录 "盟约效果，
+ * 策略效果，装备效果提供的属性加成均为直接乘算"; 直接乘算 is the modifier class whose values are SUMMED with every other
+ * 直接乘算 — a skill's "攻击力+X%" included — before multiplying (PRTS 游戏数据基础 属性基本公式 "直接乘算结果 D_t = t₁ + t₂ +
+ * … + tₙ", A = (A₀ + D_p)(1 + D_t); PRTS 作战机制 X₂ = X₁(1 + b₁% + b₂%)). 'add' = that rule: the engine's additive
+ * atkPct / defPct / hpPct (content/support directMods). 'multiply' = the v2.5 reading (each source its own ×(1 + x)
+ * atkMul / defMul / hpMul), which compounded: at 600 精准 layers a ranged operator with four more such bonuses dealt
+ * ×74 instead of ×12 and Final Assault leaders fell in seconds (user report after playtest #6). "提升至X%/X倍" effects
+ * (炎佑 ×1.5, 攻击海怪敌人时攻击力提升至150%) and the char_attribute_mul 特质 (+20 % / +25 % on the chess itself, a rune on
+ * the base attributes) stay multipliers.
+ */
+export const DIRECT_BONUS_STACKING = 'add';

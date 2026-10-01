@@ -22,12 +22,12 @@
 // battle continues. After MAX_INTERNAL_ERRORS the battle force-ends as a timeout.
 
 import { TICK, ROWS, COLS, BLOCK_RADIUS_SQ, DP_DEFAULTS, DOWN_STATE, FORCED_EXIT, MAX_BATTLE_TIME, MAX_INTERNAL_ERRORS, COLD_FREEZE_DURATION, OBSTACLE_DEVICES, EVENT_BUFFER_CAP, BOSS_ROW_OFFSET, MAX_HOOK_DEPTH, MAX_ALIVE_ENEMIES, LEVITATE_HALF_WEIGHT, RESIST_DEFAULT, RESIST_PALSY_DECAY, PUSH_TILES, PUSH_TILES_EFFECT, PULL_WEAK_SHARE, PULL_CRAWL, PULL_ORIGIN, PULL_STOP_RADIUS, PUSH_DIRECTIONAL_MIN_DIST, AUTO_OP_COOLDOWN } from './constants.js';
-import { GEO } from '../../shared/constants.js';
+import { GEO, layerGainRoom } from '../../shared/constants.js';
 import { createRng } from './rng.js';
 import { Grid } from './grid.js';
 import { Unit } from './units.js';
 import { makeBuff, STATUS, RESIST_STATUSES } from './buffs.js';
-import { dealDamage as pipeDamage, heal as pipeHeal, applyHpLoss, makeDamageInfo, reduceElement, palsyBuff, elementView } from './damage.js';
+import { dealDamage as pipeDamage, heal as pipeHeal, applyHpLoss, makeDamageInfo, reduceElement, palsyBuff, elementView, leaderHitCancelled } from './damage.js';
 import { absoluteRangeKeys, canTargetEnemy } from './targeting.js';
 import { bodyKeys, bodyInKeys, bodyInRadius } from './body.js';
 import { normDir, mirrorDir, localOrder, localBefore } from './dir.js';
@@ -1351,19 +1351,39 @@ export class Battle {
     buff.data = { ...buff.data, attract: { r, c, pts: null, i: 0, ver: -1 } };
   }
 
-  /** "同名效果取最高": keep the strongest value; a weaker one that outlasts it resumes afterwards (buff.data.tail). */
+  /**
+   * "同名效果取最高" for a content effect that is not a catalogue status (no immunities, 抵抗, `beforeStatus` /
+   * `statusApplied` hooks or status icon): ONE instance of `key` per target whatever the number of sources — the
+   * strongest `value` applies, a weaker application only extends past the stronger one's end (it then resumes), an
+   * equal one refreshes to the longer duration. `mods(value)` builds the buff's mods. The engine's default for two
+   * same-named buffs (PRTS 作战机制 "同名buff的默认叠加策略buff只能表现出一个"). Returns true when applied.
+   * @param {object} target
+   * @param {string} key
+   * @param {{ duration: number, value: number, mods: (v: number) => object, source?: object|null }} opts
+   */
+  applyStrongest(target, key, { duration, value, mods, source = null } = {}) {
+    if (!target || !target.alive || !(Number(duration) > 0) || !Number.isFinite(value) || typeof mods !== 'function') return false;
+    this._applyValuedStatus(target, key, { mods, valued: value, plain: true }, Number(duration), value, source);
+    return true;
+  }
+
+  /**
+   * "同名效果取最高": keep the strongest value; a weaker one that outlasts it resumes afterwards (buff.data.tail). A
+   * `plain` template (applyStrongest) is an ordinary invisible buff, not a status.
+   */
   _applyValuedStatus(target, key, tpl, duration, value, source) {
     const strength = (v) => Math.abs(Number.isFinite(v) ? v : tpl.valued);
     const make = (v, dur, tail) => ({
       ...(tpl.buff || null),   // extra buff fields of the status (抵抗: the 麻痹 decay tick)
-      key, duration: dur, refresh: 'replace', mods: tpl.mods(v), flags: tpl.flags || null, status: key, visible: true, source,
+      key, duration: dur, refresh: 'replace', mods: tpl.mods(v), flags: tpl.flags || null, status: tpl.plain ? null : key,
+      visible: !tpl.plain, source,
       data: { value: v, tail },
       onExpire: ({ battle, unit, buff }) => {
         const t = buff.data.tail;
         if (t && t.until - battle.time > 1e-6 && unit.alive) battle.addBuff(unit, make(t.value, t.until - battle.time, null));
       },
     });
-    const old = target.buffs.find((b) => b.key === key && b.status === key);
+    const old = target.buffs.find((b) => b.key === key && (tpl.plain || b.status === key));
     if (!old) { this.addBuff(target, make(value, duration, null)); return; }
     const oldV = old.data && Number.isFinite(old.data.value) ? old.data.value : tpl.valued;
     const oldEnd = this.time + old.timeLeft, newEnd = this.time + duration;
@@ -1400,12 +1420,17 @@ export class Battle {
    * DamageInfo this loss derives from (damage passed on to a leader, split, shared…): its tags are inherited and it is
    * kept as `dmg.origin`, so `damaged` handlers that skip their own tagged damage also skip what it turned into; a loss
    * derived from 无来源 damage (`from.sourceless`, element bursts) is 无来源 too (hooks see no source, `source` is credited).
+   * `sourceless: true` makes the loss itself 无来源 ("受到等量的无来源生命流失": hooks see no source; `source` keeps the
+   * credit — the stats and the per-player shared-pool tally).
+   * On a leader in a boss / hidden battle a loss of ≥ BOSS_HIT_LIMIT is cancelled like a hit (damage.js leaderHitCancelled).
    */
-  loseHp(target, amount, { source = null, silent = false, tags = null, from = null } = {}) {
+  loseHp(target, amount, { source = null, silent = false, tags = null, from = null, sourceless = false } = {}) {
     if (!target || !target.alive || !(amount > 0)) return 0;
+    // 限伤 (shared/constants.js BOSS_HIT_LIMIT): a loss passed on to a leader (parts' 传递, 无人机) is one hit too
+    if (leaderHitCancelled(this, target, amount)) return 0;
     const t = ['hpLoss'];
     for (const list of [from && from.tags, tags]) if (Array.isArray(list)) for (const x of list) if (!t.includes(x)) t.push(x);
-    return applyHpLoss(this, source, target, amount, { type: 'true', tags: t, noSp: true, silent, origin: from ?? null, sourceless: !!(from && from.sourceless) });
+    return applyHpLoss(this, source, target, amount, { type: 'true', tags: t, noSp: true, silent, origin: from ?? null, sourceless: !!sourceless || !!(from && from.sourceless) });
   }
 
   reduceElement(target, amount, element = null) { return reduceElement(target, amount, element); }
@@ -1966,19 +1991,29 @@ export class Battle {
     return ps.dp;
   }
 
-  /** Record an IN_BATTLE layer gain (no-op when gains are disabled). Returns the layers added. */
+  /**
+   * Record an IN_BATTLE layer gain (no-op when gains are disabled). Returns the layers added: at most the room left
+   * under BOND_LAYER_CAP (999, shared/constants.js) on the live copy — the client's AddBondCount `min(L + n, 999)`; the
+   * `layerGain` hook (魔王's +1 …) runs first, then the clamp; a bond already at the cap gains 0 (no hook, no event).
+   * Without a live copy of the bond (a partial PlayerBattleInput) the battle's own gains count; the match's settle
+   * clamps the persistent count the same way.
+   */
   addLayers(playerId, bondId, n, reason = '', opts = {}) {
     if (!this.flags.layerGainsEnabled || !(n > 0) || !Number.isFinite(n) || playerId == null) return 0;
     const pp = this._pp(playerId);
     if (!pp) return 0;
+    const ps = this.getPlayer(playerId);
+    const live = ps && ps.bonds[bondId] ? (ps.bonds[bondId].layers ?? 0) : (pp.layerGains[bondId] ?? 0);
+    if (!(layerGainRoom(live, Infinity) > 0)) return 0;
     const source = opts.source ?? null;
     const ctx = { playerId, bondId, n, reason, source, tile: Array.isArray(opts.tile) ? opts.tile : this._sourceTile(source) };
     if (this._hooks.layerGain) { this.emit('layerGain', ctx); if (!(ctx.n > 0) || !Number.isFinite(ctx.n)) return 0; }
-    pp.layerGains[bondId] = (pp.layerGains[bondId] ?? 0) + ctx.n;
-    const ps = this.getPlayer(playerId);
-    if (ps && ps.bonds[bondId]) ps.bonds[bondId].layers = (ps.bonds[bondId].layers ?? 0) + ctx.n;
-    this._ev(['layer', playerId, bondId, ctx.n]);
-    return ctx.n;
+    const add = layerGainRoom(live, ctx.n);
+    if (!(add > 0)) return 0;
+    pp.layerGains[bondId] = (pp.layerGains[bondId] ?? 0) + add;
+    if (ps && ps.bonds[bondId]) ps.bonds[bondId].layers = (ps.bonds[bondId].layers ?? 0) + add;
+    this._ev(['layer', playerId, bondId, add]);
+    return add;
   }
 
   /**

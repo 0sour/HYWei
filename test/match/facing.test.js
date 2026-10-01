@@ -142,7 +142,7 @@ test('effect-placed pieces: a transformation / a merge elite taking a consumed c
   const np = ps.transformChess(a, other);
   assert.ok(np && ps.board.get(tileKey(9, 3)) === np, 'kept the tile');
   assert.equal(np.dir, 'DOWN');
-  // merge with a full hand and temp: the elite takes a consumed copy's freed board tile, with its dir
+  // merge of deployed copies (PRTS: the elite goes to the consumed copy's board position), with its dir
   ps.board.clear();
   ps.hand.fill(null);
   ps.temp.fill(null);

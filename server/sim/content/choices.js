@@ -48,16 +48,17 @@
 //   env_gbuff_new_with_verify act1autochess_debuff_3 {value}   自愈: every damage instance an own unit (operator or
 //                                                        summon) takes heals it `value` (not HP loss 流失, not gauge
 //                                                        fills, not while a 禁疗 status is on)
-//   env_gbuff_new_with_verify act1autochess_debuff_9 {atk, def} 无瑕: operators at full HP get ATK/DEF ×(1 + x)
+//   env_gbuff_new_with_verify act1autochess_debuff_9 {atk, def} 无瑕: operators at full HP get ATK/DEF +x
 //   env_gbuff_new halfIdle_magic_resist_penetration {magic_resist_penetrate_fixed}  火力: operators ignore N RES
 //   env_gbuff_new halfIdle_def_penetration {def_penetrate}                        锐利: operators ignore x DEF
 //   char_respawntime_mul {scale}                         征召: operators' redeploy time × scale
 //   enemy_attribute_mul / enemy_attribute_add {atk|def|magic_resistance|max_hp|attack_speed|move_speed}
 //     (+ bbStr enemy_level_type ELITE / BOSS)            排斥/责罚/裁决: enemies of the player's half (ownerId)
 //                                                        of that rank get the debuff at spawn (all ranks without a type)
-//   Attribute bonuses are 直接乘算 (support/index.js convention): ×(1 + x) multipliers; flat values stay flat.
+//   Operator attribute bonuses are 直接乘算 (support directMods: additive with every other percentage, PRTS 盟约记录 /
+//   游戏数据基础); flat values stay flat; the enemies' enemy_attribute_mul stays a multiplier.
 
-import { gameData, num, buffsOf, passiveBuff, effectRecord } from './support/index.js';
+import { gameData, num, buffsOf, passiveBuff, effectRecord, directMods } from './support/index.js';
 import { isShopItem } from '../simdata.js';
 
 // =====================================================================================================================
@@ -305,9 +306,10 @@ export function registerMeta(registry) {
 
 const RUNE = Object.freeze({ heal: 'act1autochess_debuff_3', flawless: 'act1autochess_debuff_9' });
 
-/** Operator mods of an env_gbuff blackboard (numbers only; 直接乘算 for attributes). */
+/** Operator mods of an env_gbuff blackboard (numbers only; 直接乘算 for attributes — support directMods). */
 function opModsOf(p) {
   const mods = {};
+  const direct = { atk: 0, def: 0, hp: 0 };
   const add = (k, v) => { if (Number.isFinite(v) && v !== 0) mods[k] = (mods[k] ?? 0) + v; };
   const mul = (k, v) => { if (Number.isFinite(v) && v !== 0) mods[k] = (mods[k] ?? 1) * (1 + v); };
   for (const [k, raw] of Object.entries(p || {})) {
@@ -318,15 +320,15 @@ function opModsOf(p) {
       case 'magic_resist_penetrate': add('resIgnorePct', v); break;
       case 'def_penetrate': add('defIgnorePct', v); break;
       case 'def_penetrate_fixed': add('defIgnoreFlat', v); break;
-      case 'atk': mul('atkMul', v); break;
-      case 'def': mul('defMul', v); break;
-      case 'max_hp': mul('hpMul', v); break;
+      case 'atk': direct.atk += v; break;
+      case 'def': direct.def += v; break;
+      case 'max_hp': direct.hp += v; break;
       case 'attack_speed': add('aspd', Math.abs(v) < 1 ? v * 100 : v); break;
       case 'damage_scale': mul('dmgDealtMul', v); break;
       default: break;
     }
   }
-  return mods;
+  return directMods(direct, mods);
 }
 
 /** Enemy mods of an enemy_attribute_mul / _add blackboard. */

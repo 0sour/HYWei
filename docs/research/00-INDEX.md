@@ -17,6 +17,7 @@ Tags: **[DATA]** client game data · **[VERIFIED]** official or wiki rule text, 
 | `05-enemies-levels.md` / `05-enemies.json` / `05-maps.json` | Stage terrains (8 active), 38 wave templates with routes, 326 enemies, special-enemy pools, generation algorithm, bosses, bounties, LP rules. Addendum: DP, hidden-core thresholds, multi FUNNY rounds, stat scaling. | `05-maps.json: stages, roundLevels`; `05-enemies.json: enemies, specialEntries, bosses, bountyEffects, generation, _criticAddendum` |
 | `06-multiplayer-ux.md` | Co-op flow and state machine, 联防, shared vs individual, shared pool, cross-player effects, emotes and broadcasts, settlement, per-screen UI layout, style guide, server notes. Addendum: TL;DR fixes, banned-operator UI. | – |
 | `07-assets.md` / `07-assets.json` | Verified URL patterns and resolved URLs for avatars, portraits, skills, bond/item/band icons, UI, Spine (ops + enemies), BGM/SFX, fonts; build plan. Addendum: spot check 40/40 OK. | `operators[*]`, `enemies[*]`, `bonds`, `items`, `bands`, `autochessUi`, `audio` |
+| `11-limits-official.md` | Official limits read from the client (2.7.71 il2cpp) and the community: bond layers cap at **999** per bond (`MAX_GARRISON_STACK`, `AddBondCount` = min(L + n, 999)); in boss battles outside training a single hit of **≥ 300000** on a leader (`IsBossEnemy` = an `autoChessData.bossInfoDict` enemyId) is **cancelled** ("限伤", `MAX_BATTLE_DAMAGE`); implemented in DESIGN §20.12. | `shared/constants.js BOND_LAYER_CAP / BOSS_HIT_LIMIT` |
 
 ## 2. Match structure
 
@@ -72,7 +73,7 @@ Boss rounds: the battle continues past the timer. Merged team LP drains **1/s af
 
 The visible chess per tier are 16/17/19/22/19/19. The item slot uses the same tier shares, then picks uniformly within the tier [ASSUMED].
 
-**Merge:** 3 copies of the same chess (board or hand) merge into 1 elite (`_b`), sent to the **hand**. 风丸 needs 2. Elites never merge. The equipment of the merged copies returns to the hand. Reward: the shop temporarily shows 3 operators of tier min(shopLv+1, 6) at price **0**; take 1; no refresh or freeze; gone at round end. A purchase that completes a merge is allowed with a full hand. [VERIFIED]
+**Merge:** 3 copies of the same chess (board or hand) merge into 1 elite (`_b`), sent to the **hand** — or, when a consumed copy was deployed, to **that copy's board position** (PRTS 卫戍协议/帮助 "若消耗已部署至作战区的干员，则发送至作战区对应位置"; 01 A1 row 7). 风丸 needs 2. Elites never merge. The equipment of the merged copies returns to the hand. Reward: the shop temporarily shows 3 operators of tier min(shopLv+1, 6) at price **0**; take 1; no refresh or freeze; gone at round end. A purchase that completes a merge is allowed with a full hand. [VERIFIED]
 
 ## 4. Board, hand, combat
 
@@ -86,7 +87,7 @@ The visible chess per tier are 16/17/19/22/19/19. The item slot uses the same ti
 | Skill auto-cast | Default: SP ready + about to attack/heal + an enemy in the **initial** range. ~~`skillTriggerDataList` rows with `skillIndex` 0 = skill 1 only (TANK S1 → on damage: only 古米 and 灰毫 this season)~~ — Superseded by user playtest #6 (DESIGN §20): the class rows apply to **every MANUAL skill** of the class and never to an AUTO skill (PRTS 卫戍协议/帮助 names whole classes; the 阵法术师 row must cover 薄绿's default S2, a phalanx that never attacks with its skill off); a MANUAL skill with its own 技能范围 (not an attack-range change) uses SKILL_RANGE; automatic operations have a 3 s cooldown. charId rows per 03. | VERIFIED (class-row reading superseded) |
 | Speed | 2× forced, no manual control | VERIFIED |
 | Board geometry | 19×21 stage. Player board rows 9–12, cols 2–10. Gates (9,10) and (12,10); R1–3 use only the lower one. Goal (9,2). Col 9 is a non-deployable lane. Hand row 7 cols 0–9. Temp hand row 8 cols 4–8. Boss field rows 1–5. | DATA |
-| Bond counting | Distinct operators on board. 远见/奇迹/投资人 also count the hand. 绝技 counts elites. Layers persist all match; **no IN_BATTLE layer gains in 联防 or boss rounds**. | DATA/VERIFIED |
+| Bond counting | Distinct operators on board. 远见/奇迹/投资人 also count the hand. 绝技 counts elites. Layers persist all match; **no IN_BATTLE layer gains in 联防 or boss rounds**; each bond's layers stop at **999** (research 11). | DATA/VERIFIED |
 
 ## 5. LP, 联防, Final Assault, Hidden Core
 
@@ -98,6 +99,7 @@ The visible chess per tier are 16/17/19/22/19/19. The item slot uses the same ti
 | Elimination | LP ≤ 0: out; copies return to the pool | VERIFIED/COMM |
 | Final Assault (R14) | LP of all alive players **merged**, no cap. Players in pairs, and an **odd player alone**. Movable bosses spawn one per alive player's side and share one HP pool. Overtime −1 LP/s after 150 s. Wave leaks cost `lifePointReduce`. | VERIFIED |
 | Boss HP pool (`bloodPoint`, F/N/H/A) | boss_1 247.5k/675k/1.8M/3.6M · boss_2 225k/400k/800k/3M · boss_3 285k/708.75k/2M/4M · boss_4 307.5k/708.75k/2.1M/4.2M · boss_5 200k/390k/780k/3M · boss_6 285k/705k/1.99M/3.98M · boss_7 277.5k/787.5k/2M/4M. Pick weights 6/6/6/5/10/5/5. | DATA |
+| Boss-hit limit (限伤) | Final Assault / Hidden Core: one hit of ≥ 300000 on a leader deals **0** (cancelled, not clamped); minions, normal rounds and 联防 unaffected (research 11). | DATA/COMM |
 | Hidden Core (R15, 险境+) | Solo: activated layers **> 350** and LP > 1. Co-op: team sum **> 1200** and merged LP > 1. Bosses boss_8/9/10 (weights 50/40/40; HP N 937.5k/900k/1.0125M, H 3.6M/2.8M/3.8M, A 7.2M/3.95M/7.6M). Failure doesn't affect the clear. | VERIFIED/DATA |
 
 **Enemy scaling (non-boss)**, per mode and round [VERIFIED via PRTS, user-sourced]:

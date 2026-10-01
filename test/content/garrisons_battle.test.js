@@ -481,9 +481,10 @@ test('attrByBond (26 ids): floor(Σ layers of the listed ACTIVE bonds / divide_n
     const k = Math.floor((L * list.length) / div);
     const m = h.unit('op').findBuff(`gar:${gid}`).mods;
     const want = {};
-    if (bb.atk) want.atkMul = 1 + bb.atk * k;
-    if (bb.max_hp) want.hpMul = 1 + bb.max_hp * k;
-    if (bb.def) want.defMul = 1 + bb.def * k;
+    // "每叠加N层…+X%" is 直接乘算: the additive percentage bucket (support directMods)
+    if (bb.atk) want.atkPct = bb.atk * k;
+    if (bb.max_hp) want.hpPct = bb.max_hp * k;
+    if (bb.def) want.defPct = bb.def * k;
     if (bb.attack_speed) want.aspd = bb.attack_speed * k;
     if (bb.hp_recovery_per_sec) want.hpRegen = bb.hp_recovery_per_sec * k;
     if (bb.sp_recovery_per_sec) want.spRecoveryFlat = bb.sp_recovery_per_sec * k;

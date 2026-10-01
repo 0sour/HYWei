@@ -3,6 +3,7 @@
 // dealDamage order: (element → gauge path) | invulnerable? → 'hit' hook (mutable DamageInfo, may set cancel)
 //   → dodge (phys/arts, canDodge) → mitigation (phys: DEF, arts: RES, true: none)
 //   → × source dmgDealtMul (× phys/artsDealtMul) × target dmgTakenMul (not for 元素伤害) × type-taken mul × dmg.mul
+//   → 限伤 (leaders in boss / hidden battles: a hit of ceil(final) ≥ BOSS_HIT_LIMIT is cancelled, see leaderHitCancelled)
 //   → shields (hit-negating barriers first, then HP shields) → HP loss (boss pool routing) → 'damaged' hook
 //   → SP-on-hurt / TAKE_DAMAGE trigger → fatal/kill.
 // Phys: max(A − max(0, D×(1−defIgnorePct) − defIgnoreFlat), 5 %·A); Arts: max(A×(1 − R′/100), 5 %·A) with
@@ -45,6 +46,7 @@
 // has `hitSleep` or the damage carries `ignoreSleep`.
 
 import { MIN_DAMAGE_RATIO, ELEMENT, ELEMENT_ORDER, PALSY_MAX } from './constants.js';
+import { BOSS_HIT_LIMIT } from '../../shared/constants.js';
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -110,6 +112,26 @@ export function mitigate(amount, type, target, ign = {}) {
     return Math.max(amount * (1 - D / 100), MIN_DAMAGE_RATIO * amount);
   }
   return amount;
+}
+
+/**
+ * 限伤 — the official boss-hit limit (shared/constants.js BOSS_HIT_LIMIT, docs/research/11-limits-official.md §2;
+ * client `AutoChessStepModeManager._OnBossEnemyTakeDamage`: `d = ceil(value); if (d >= 300000) modifier.Cancel()`).
+ * True when the hit of `amount` HP about to land on `target` is cancelled: the target is a leader (`isBoss`: the
+ * tag-'boss' units — data/bosses.json enemyKey, the official IsBossEnemy list — and their mirrored copies; never a part,
+ * escort, drone or other minion), the battle is a boss / hidden one (the client's step mode: every boss battle outside
+ * training) and ceil(amount) ≥ BOSS_HIT_LIMIT. The cancel is whole (no clamp): no HP / pool loss, no credit, no damage
+ * number. A 'hitCap' fx event `{ id, n: ceil(amount) }` marks it for the client, which draws nothing — the official
+ * shows no number [ASSUMED]. Every HP-damage kind is checked as the official `modifier.isDamage` (phys, arts, true,
+ * 元素伤害 incl. element bursts, DoT ticks — they all come through dealDamage — and losses passed on to a leader through
+ * Battle.loseHp); element 损伤 (gauge fill, 'element') removes no HP and is never checked. Deterministic (Math.ceil of
+ * the same double on every engine).
+ */
+export function leaderHitCancelled(battle, target, amount) {
+  if (!(BOSS_HIT_LIMIT > 0) || !target || !target.isBoss || (battle.kind !== 'boss' && battle.kind !== 'hidden')) return false;
+  if (!(Math.ceil(amount) >= BOSS_HIT_LIMIT)) return false;
+  battle.fx('hitCap', { x: target.x, y: target.y, id: target.id, n: Math.ceil(amount) });
+  return true;
 }
 
 /** Absorb damage with shields on `target`. Returns the remaining amount. */
@@ -196,6 +218,9 @@ export function dealDamage(battle, source, target, dmgIn) {
   mul *= type === 'phys' ? ts.physTakenMul : type === 'arts' ? ts.artsTakenMul : type === 'elemental' ? ts.elementalTakenMul : ts.trueTakenMul;
   final *= mul;
   if (!(final > 0) || !Number.isFinite(final)) final = 0;
+  // 限伤: a leader's hit of ≥ BOSS_HIT_LIMIT in a boss / hidden battle is cancelled before it reaches shields / HP — what
+  // ran before it (the attack, its SP, `hit` hook effects, separate element 损伤) stays; nothing after it happens
+  if (final > 0 && leaderHitCancelled(battle, target, final)) return 0;
   final = absorbShields(battle, target, final);
   return applyHpLoss(battle, source, target, final, dmg);
 }

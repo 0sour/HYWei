@@ -10,6 +10,8 @@
 // SP_IDLE_BOTS=1: AI seats only ready up (no shop, no board) — test/ui/playtest2.real.e2e.test.js observes their battles.
 // SP_START_ITEMS=<itemId,…>: the starter kit also puts these items into the hand (test/ui/leftovers.e2e.test.js: three
 // distinct equipment items → the equip-replace dialog).
+// SP_START_SHOP=<chessId,…>: the starter kit also stocks the first shop slots with these chess at their normal price
+// (test/ui/playtest6-elite.e2e.test.js: the copy that completes a merge).
 // Not a test file (node --test runs it as a no-op module when NODE_TEST_CONTEXT is set).
 
 import { startServer } from '../../server/index.js';
@@ -25,6 +27,7 @@ if (!process.env.NODE_TEST_CONTEXT) {
   const idleBots = process.env.SP_IDLE_BOTS === '1';
   const kitIds = String(process.env.SP_START_CHESS || '').split(',').map((x) => x.trim()).filter(Boolean);
   const kitItems = String(process.env.SP_START_ITEMS || '').split(',').map((x) => x.trim()).filter(Boolean);
+  const kitShop = String(process.env.SP_START_SHOP || '').split(',').map((x) => x.trim()).filter(Boolean);
 
   class FastMatch extends Match {
     constructor(opts) {
@@ -75,6 +78,9 @@ if (!process.env.NODE_TEST_CONTEXT) {
         if (slot < 0 || !this.gd.item(itemId)) continue;
         try { ps.hand[slot] = ps.newPiece('item', itemId); } catch { /* best effort */ }
       }
+      kitShop.forEach((id, i) => {
+        if (i < ps.shop.slots.length && this.gd.chess(id)) ps.shop.slots[i] = { kind: 'chess', id, basePrice: this.gd.chessPrice(id), frozen: false, sold: false };
+      });
       ps.addFunds(20, { reason: 'income' });
       ps.recompute();
     }

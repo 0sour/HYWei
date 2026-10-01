@@ -625,6 +625,19 @@ test('缄默德克萨斯 S1 细雨无声: passive ATK up for its duration; hits 
   }
 });
 
+test('缄默德克萨斯 S2: two copies cut the RES of an enemy around both once (同名效果取最高, DESIGN §20.10)', () => {
+  const id = 'chess_char_4_16_a', bb = D(id, 1).skill.bb;
+  const h = battle([U(id, 10, 4, 1), U(id, 11, 4, 1)], { enemies: { enemy_res: dummy({ key: 'enemy_res', res: 50 }) } });
+  h.step();
+  const two = h.b.allyUnits.filter((u) => u.def.id === id);
+  assert.equal(two.length, 2);
+  const e = h.spawn('enemy_res', { pos: [10, 5] });
+  for (const u of two) { h.b.retreat(u); assert.ok(h.b.redeploy(u)); }
+  assert.equal(dmgBy(h, two[0], tagged('burst')).length + dmgBy(h, two[1], tagged('burst')).length, 2, 'both bursts hit it');
+  assert.equal(e.buffs.filter((b) => String(b.key).startsWith('texas2:resDown')).length, 1, 'one RES cut');
+  approx(e.s.res, 50 * (1 + bb.magic_resistance), 1e-6, 'once, not twice');
+});
+
 test('缄默德克萨斯 S2 阵雨连绵: deploy burst atk_scale arts + RES down around her; ATK up; attacks become arts double hits', () => {
   for (const id of pair('chess_char_4_16_a')) {
     const sk = D(id, 1).skill, bb = sk.bb;

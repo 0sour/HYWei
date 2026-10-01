@@ -16,6 +16,9 @@
 //                 freeze toggle released
 //   prep handlers buy / sell / refresh / levelUp pay exactly price / +sell price / refresh price (free first) / level
 //                 price, the level rises by one and its price resets to the next base; Ready only with an empty temp
+//   merges        a merge consuming a deployed copy puts the elite on that copy's tile (of several, the first in deploy
+//                 order legal for it — board.js mergeTile; a transformed piece's own tile counts) with its facing, else
+//                 into the hand / temp; the deploy count never grows (PRTS 卫戍协议/帮助, user playtest #6 follow-up)
 //   combat start  nothing overdue in temp, everyone ready, funds lost (carry bands excepted), unfrozen shop cleared,
 //                 one field per alive player
 //   drafts        every seat holds an allowed band with LP = totalHp; 机变: one card per alive player, card ↔ picker
@@ -38,6 +41,7 @@
 
 import { PHASE } from '../../shared/constants.js';
 import { collectViolations } from './invariants.js';
+import { mergeTile, pieceDir, canPlace, positionClass } from './board.js';
 import { pairPlayers, bossPoolHp, hiddenEligible } from './finalAssault.js';
 import { helperOrder } from './unite.js';
 import { BAND_TURN_SECONDS } from './Match.js';
@@ -220,6 +224,36 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
         if (ps.shop.upgradePrice !== next) fail(`${ps.playerId}: upgrade price after level-up ${ps.shop.upgradePrice}, expected ${next}`);
       });
       return res;
+    });
+    // merges (PRTS 卫戍协议/帮助 "若消耗已部署至作战区的干员，则发送至作战区对应位置", user playtest #6 follow-up): with a
+    // deployed copy among the consumed ones the elite stands on the first such tile in deploy order that is legal for
+    // it (the incoming piece's own tile when a transformation merged it in place), with that copy's facing; else in the
+    // hand / temp. A merge never grows the deploy count. Every owned normal copy is consumed (merges are immediate).
+    wrap(ps, '_mergeChess', function (orig, baseId, incoming, opts) {
+      const tiles = new Map(); // tile key → facing of the copy standing there
+      for (const [k, p] of ps.board) if (p.kind === 'chess' && !gd.isGolden(p.id) && gd.baseIdOf(p.id) === baseId) tiles.set(k, pieceDir(p));
+      if (opts && opts.fromKey) tiles.set(opts.fromKey, pieceDir({ dir: opts.fromDir }));
+      // a transformation (transformChess) detached its deployed carrier before the merge: it still counts as deployed
+      const deployed0 = ps.deployCount + (opts && opts.fromKey ? 1 : 0);
+      const elite = orig(baseId, incoming, opts);
+      if (elite) check('merge', () => {
+        const id = ps.playerId;
+        const loc = ps.find(elite.uid);
+        if (!loc) { fail(`${id}: the elite of ${baseId} is not owned after its merge`); return; }
+        if (ps.deployCount > deployed0) fail(`${id}: a merge of ${baseId} grew the deploy count ${deployed0} → ${ps.deployCount}`);
+        // a pure read of the deploy field (Match.deployMapFor, as invariants.js): the audit must not refresh the cache
+        const dmap = typeof m.deployMapFor === 'function' ? m.deployMapFor(ps) : ps.deployMap();
+        const pos = positionClass(gd.chess(elite.id));
+        const want = mergeTile([...tiles.keys()].map((key) => ({ key })), (r, c) => canPlace(dmap, pos, r, c));
+        if (want) {
+          if (loc.area !== 'board' || loc.key !== want.key) fail(`${id}: the elite of ${baseId} went to ${loc.area} ${loc.key || ''}, expected the deployed copy's tile ${want.key}`);
+          else if (pieceDir(elite) !== tiles.get(want.key)) fail(`${id}: the elite of ${baseId} faces ${pieceDir(elite)}, its copy faced ${tiles.get(want.key)}`);
+        } else if (loc.area === 'board' && (!tiles.has(loc.key) || ps.hand.some((x) => x == null) || ps.temp.some((x) => x == null))) {
+          // only the no-room fallback (hand and temp full, no deployed tile legal for it) leaves it on a copy's tile
+          fail(`${id}: the elite of ${baseId} took tile ${loc.key} although no consumed copy stood on a legal tile`);
+        }
+      });
+      return elite;
     });
     wrap(ps, 'endPrep', function (orig) {
       // a temp piece that got there by other means (not _putTemp) was in temp during this prep: due now

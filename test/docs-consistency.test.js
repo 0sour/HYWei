@@ -13,7 +13,9 @@
 // boss-field deployment, the phone prep camera — and the normative §3 / §5.1 / §5.5 / §6.1 / §7 lines that changed; user
 // playtest #6 (DESIGN §20): summons placed by hand (start deploy), skill triggers and the operation cooldown, every
 // blocker hits what it blocks, push force vs weight, the ASPD floor, the enemies' collider reach, the boss pool floor,
-// multi-round bounties lasting two battles, the 联防 counter, the element gauge — and the user's settled decisions.
+// multi-round bounties lasting two battles, the 联防 counter, the element gauge — and the user's settled decisions; the
+// playtest6b follow-up (DESIGN §20.10–§20.13): leader HP and 直接乘算, the elite on the consumed copy's tile, the official
+// 999 layer cap (one implementation) and 限伤 300000, the 假想敌：胄 kit — and the normative lines they rewrote.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -27,9 +29,10 @@ import { moduleTypeIconUrl } from '../public/js/ui/assetUrls.js';
 import { validateC2S } from '../shared/protocol.js';
 import { ERR, PHASE } from '../shared/constants.js';
 import { PROJECTILE_SPEEDS, BOOMERANG_RETURN_SPEED, ELEMENT, ELEMENT_ORDER, DOWN_STATE, BLOCK_RADIUS, FORCED_EXIT, ASPD_MIN, BOSS_POOL_MIN_HP, AUTO_OP_COOLDOWN, ALLY_COLLIDER_RADIUS } from '../server/sim/constants.js';
-import { SKILL_SUMMON_START_DEPLOY } from '../shared/constants.js';
+import { SKILL_SUMMON_START_DEPLOY, BOND_LAYER_CAP, BOSS_HIT_LIMIT, layerGainRoom } from '../shared/constants.js';
+import * as SIM_CONST from '../server/sim/constants.js';
 import { MULTI_ROUND_BOUNTY_BATTLES } from '../server/match/choices.js';
-import { SELF_BOUND } from '../server/sim/content/bosses.js';
+import { SELF_BOUND, PART_TRANSFER, BLADE_TRANSFER, DRONE_LINK_BASE } from '../server/sim/content/bosses.js';
 import * as BOARD from '../server/match/board.js';
 import * as DAMAGE from '../server/sim/damage.js';
 import { SUB } from '../server/sim/professions.js';
@@ -391,7 +394,7 @@ test('user playtest #6 (DESIGN §20): summons, skill triggers, blocking, push fo
   const sub = (a, b) => DESIGN.slice(DESIGN.indexOf(`### ${a}`), DESIGN.indexOf(`### ${b}`));
   const S20 = sec(20);
   assert.match(DESIGN, /## 20\. User playtest #6 \(v2\.5\)/);
-  for (let i = 1; i <= 9; i++) assert.match(S20, new RegExp(`### 20\\.${i} `), `§20.${i}`);
+  for (let i = 1; i <= 13; i++) assert.match(S20, new RegExp(`### 20\\.${i} `), `§20.${i}`);
   const intro = S20.slice(0, S20.indexOf('### 20.1'));
   for (let i = 1; i <= 19; i++) assert.match(intro, new RegExp(`#${i} `), `the intro maps report #${i}`);
   const s55 = DESIGN.slice(DESIGN.indexOf('### 5.5'), DESIGN.indexOf('### 5.6'));
@@ -467,5 +470,145 @@ test('user playtest #6 (DESIGN §20): summons, skill triggers, blocking, push fo
   assert.match(sec(10), /a tap anywhere on the card, its confirm strip included, is the card's tap/);
   assert.match(sec(18), /Each card shows its full effect text \(§20\.7\)/);
   // README: the test count stays in the right order of magnitude
-  assert.match(README, /约 27\d0 项/);
+  assert.match(README, /约 28\d0 项/);
+});
+
+test('user playtest #6 follow-up: a merge consuming a deployed copy puts the elite on that tile (code + research + META / PLAYING / SIM agree)', () => {
+  const R01 = doc('docs/research/01-core-rules.md');
+  const INDEX = doc('docs/research/00-INDEX.md');
+  const PS = doc('server/match/PlayerState.js');
+  // code: one deployed copy + one hand copy + the acquired one → the elite on the deployed copy's tile
+  const h = makeMatch({ mode: 'solo', difficulty: 'NORMAL', seed: 71 }).start();
+  h.toPrep(1);
+  h.setStage('act2autochess_m04');
+  const m = h.m;
+  const ps = h.ps('p_0');
+  for (const p of [...ps.board.values(), ...ps.hand.filter(Boolean)]) if (p.kind === 'chess') ps.returnCopies(p);
+  ps.board.clear();
+  ps.hand.fill(null);
+  ps.recompute();
+  const id = Object.values(DATA.chess).find((c) => !c.isGolden && c.tier === 1 && c.position === 'MELEE' && m.pool.has(c.chessId) && m.gd.mergeCount(c.chessId) === 3 && !m.gd.placeableTokens(c.chessId).length).chessId;
+  const [r, c] = BOARD.legalTiles(ps.deployMap(), 'melee')[0];
+  const a = ps.newPiece('chess', id, { poolCopies: m.pool.take(id, 1) });
+  a.dir = 'UP';
+  ps.board.set(BOARD.tileKey(r, c), a);
+  ps.hand[0] = ps.newPiece('chess', id, { poolCopies: m.pool.take(id, 1) });
+  ps.recompute();
+  const elite = ps.acquireChess(id, { source: 'test' });
+  assert.equal(ps.find(elite.uid).key, BOARD.tileKey(r, c), 'the elite on the deployed copy\'s tile');
+  assert.equal(elite.dir, 'UP');
+  m.dispose();
+  // the research no longer says "not to a board tile"; every doc names the official sentence
+  const official = /若消耗已部署至作战区的干员，则发送至作战区对应位置/;
+  assert.ok(!/1 elite goes to the hand, not to a board tile\.\*\*/.test(R01), 'research 01 A1 row 7 is corrected');
+  assert.match(R01, /\| 7 \| promotion reward[^\n]*to that copy's board position/);
+  // its machine-readable companion too (not read by build-data; the tile among several deployed copies is assumed)
+  const promo = JSON.parse(doc('docs/research/01-core-data.json'))._criticAddendum.promotion;
+  assert.match(promo.eliteGoesTo, official, '01-core-data.json promotion.eliteGoesTo quotes PRTS');
+  assert.notEqual(promo.eliteGoesTo, 'hand');
+  assert.equal(promo.eliteTileAmongSeveralDeployed?.assumed, true);
+  for (const [name, text] of [['research 01', R01], ['00-INDEX', INDEX], ['META', META], ['SIM', SIM], ['PlayerState', PS]]) assert.match(text.replace(/\s+|\/\/\s/g, ''), official, `${name} quotes PRTS`);
+  assert.match(INDEX, /to \*\*that copy's board position\*\*/);
+  assert.match(META, /of several, the one that deploys first \(row desc, then col asc; `board\.js mergeTile`/);
+  assert.ok(!/it takes a freed\s+board tile of a consumed copy only when the hand and temp are both full/.test(META), 'META: the old fallback-only wording is gone');
+  assert.ok(!/only with the hand and temp both full does it take a/.test(PS), 'PlayerState header: the old fallback-only wording is gone');
+  assert.match(PLAYING, /精锐会直接出现在\*\*那名干员的位置\*\*/);
+  assert.ok(!/精锐进入整备区（满了进入临时整备区），原先配发的装备退回整备区。/.test(PLAYING), 'PLAYING: the hand-only wording is gone');
+});
+
+test('playtest6b follow-up (DESIGN §20.10–§20.13): leader HP, 直接乘算, elite to the board, one official 999 cap, 限伤 300000, the 胄 kit — code and every doc agree', () => {
+  const sec = (n) => DESIGN.slice(DESIGN.indexOf(`## ${n}.`), DESIGN.indexOf(`## ${n + 1}.`) > 0 ? DESIGN.indexOf(`## ${n + 1}.`) : undefined);
+  const S20 = sec(20);
+  const subsec = (n) => { const a = S20.indexOf(`### 20.${n} `); const b = S20.indexOf('\n### 20.', a + 5); return S20.slice(a, b > 0 ? b : undefined); };
+  const intro = S20.slice(0, S20.indexOf('### 20.1 '));
+  const s209 = subsec(9);
+  const BALANCE = doc('docs/BALANCE.md');
+  const R02 = doc('docs/research/02-bonds.md');
+  const R11 = doc('docs/research/11-limits-official.md');
+  // the intro names the follow-up and the four sections, in merge order
+  assert.match(intro, /\*\*Follow-up \(`playtest6b`, 2026-10-02\)\.\*\*/);
+  for (const n of [10, 11, 12, 13]) assert.match(intro, new RegExp(`§20\\.${n}`), `the intro names §20.${n}`);
+  // one layer cap: shared/constants.js only — the boss-HP branch's sim/constants.js copy is gone
+  assert.equal(BOND_LAYER_CAP, 999);
+  assert.equal(layerGainRoom(995, 10), 4);
+  assert.ok(!('BOND_LAYER_CAP' in SIM_CONST) && !('layerRoom' in SIM_CONST), 'no second cap in server/sim/constants.js');
+  for (const f of ['server/match/PlayerState.js', 'server/match/Match.js', 'server/sim/Battle.js']) {
+    const src = doc(f);
+    assert.match(src, /layerGainRoom/, `${f} clamps with layerGainRoom`);
+    assert.ok(!/layerRoom\b/.test(src), `${f}: no layerRoom`);
+  }
+  // 限伤: official constant, not an overflow — no doc keeps the boss-HP branch's "fixed-point overflow, not modelled"
+  assert.equal(BOSS_HIT_LIMIT, 300000);
+  for (const [name, text] of [['BALANCE', BALANCE], ['DATA', DATA_MD], ['PLAYING', PLAYING], ['SIM', SIM], ['META', META], ['research 02', R02], ['DESIGN', DESIGN]]) {
+    assert.ok(!/reads as the engine's fixed-point overflow|is \[inference\] and is not modelled|Not modelled: the largest damage/.test(text), `${name}: 限伤 is not called an unmodelled overflow`);
+    assert.ok(!/BOND_LAYER_CAP`?\)? ?\[ASSUMED\]|999 \[ASSUMED\]|awaiting the user's confirmation/.test(text), `${name}: the 999 cap is official, not [ASSUMED]`);
+  }
+  assert.match(BALANCE, /superseded by that binary evidence/);
+  assert.match(R11, /MAX_BATTLE_DAMAGE = 300000/);
+  assert.match(R02, /MAX_GARRISON_STACK = 999/);
+  // §20.9: elite settled, 999 / 限伤 official with their flips, the fixed leader pool settled (aliveScaling off in the data)
+  assert.match(s209, /\| A merge's elite \(§20\.11\) \| takes the consumed deployed copy's tile/);
+  assert.match(s209, /`shared\/constants\.js BOND_LAYER_CAP = 0`/);
+  assert.match(s209, /`shared\/constants\.js BOSS_HIT_LIMIT = 0`/);
+  assert.match(s209, /Settled by the user \("保持固定血量"\)[^\n]*aliveScaling` is \*\*false\*\*/);
+  assert.equal(DATA.config.bossHpScale.aliveScaling, false, 'the user chose the fixed leader pool');
+  assert.equal(SIM_CONST.DIRECT_BONUS_STACKING, 'add');
+  assert.match(s209, /DIRECT_BONUS_STACKING = 'multiply'/);
+  // the normative lines
+  const s52 = DESIGN.slice(DESIGN.indexOf('### 5.2'), DESIGN.indexOf('### 5.3'));
+  const s53 = DESIGN.slice(DESIGN.indexOf('### 5.3'), DESIGN.indexOf('### 5.4'));
+  const s55 = DESIGN.slice(DESIGN.indexOf('### 5.5'), DESIGN.indexOf('### 5.6'));
+  const s62 = DESIGN.slice(DESIGN.indexOf('### 6.2'), DESIGN.indexOf('### 6.3'));
+  const s63 = DESIGN.slice(DESIGN.indexOf('### 6.3'), DESIGN.indexOf('### 6.4'));
+  assert.match(s52, /are 直接乘算 and go into `Σpct`/);
+  assert.match(s53, /`Battle\.applyStrongest`/);
+  assert.match(s55, /\*\*限伤\*\*[^\n]*`ceil\(final\) ≥ 300000` is cancelled[^\n]*before HP shields/);
+  assert.match(s62, /elite onto the consumed deployed copy's tile, else to the hand \(§20\.11\)/);
+  assert.ok(!/A merge's elite always goes to the hand/.test(DESIGN), '§6.2: the hand-first wording is gone');
+  assert.match(s63, /`BOND_LAYER_CAP` = 999 layers \(the client's `MAX_GARRISON_STACK`/);
+  assert.match(sec(8), /`'hitCap' \{id, n\}` = a cancelled 限伤 hit, drawn as nothing/);
+  assert.match(sec(9), /fx\.promote instead of fx\.deploy/);
+  assert.match(sec(14), /`layerGains ≤ min\(60 \+ 4·round, 999 − the bond's starting layers\)`/);
+  assert.match(sec(2), /pick\.js, promote\.js/);
+  // leader parts and drones: one share, 1:1 (PRTS 等量); drones read the pool
+  assert.equal(PART_TRANSFER, 1);
+  assert.equal(BLADE_TRANSFER, PART_TRANSFER);
+  assert.equal(DRONE_LINK_BASE, 'pool');
+  assert.match(sec(7), /pass every damage they take to their leader 1:1 as 无来源 HP loss \(`PART_TRANSFER` 1/);
+  assert.match(SIM, /`PART_TRANSFER` 1 for 斩胄之剑 \/ 破胄之锤 \(`BLADE_TRANSFER`, the same\s+constant\) and 碎铳之簧/);
+  assert.ok(!/`PART_TRANSFER` 0\.5 \[ASSUMED\]/.test(SIM), 'SIM: no ½ spring transfer');
+  assert.match(PLAYING, /无人机死亡时（不论是谁击落；漏过去不算）/);
+  // §20.13: the 胄 audit, short
+  assert.match(subsec(13), /fires \*\*one\*\* 刺胄之弹 below 20 % too/);
+  assert.match(subsec(13), /\*\*any\*\* drone death costs the leader 2 % max HP/);
+});
+
+test('playtest6b QA residuals (DESIGN §20.14): the held boss result, the cue between two preps, the 可晋升 line — code and every doc agree', () => {
+  const S20 = DESIGN.slice(DESIGN.indexOf('## 20.'));
+  const s2014 = S20.slice(S20.indexOf('### 20.14 '));
+  assert.ok(s2014.length > 100, '§20.14 exists');
+  const intro = S20.slice(0, S20.indexOf('### 20.1 '));
+  assert.match(intro, /residual issues are handled in §20\.14/);
+  // the held 'cleared' result: Match.js = §14 = §20.14 = META
+  const match = doc('server/match/Match.js');
+  assert.match(match, /if \(result\.reason === 'cleared' && pool && reported - f\.bossAcked >= pool\.hp - 1\) \{\s*f\.heldResult = result;/);
+  assert.match(match, /_bossHandover\(f, why, \{ demote = false \} = \{\}\) \{\s*if \(f\.done \|\| f\.mode !== 'client' \|\| f\.heldResult\) return;/);
+  assert.match(match, /const BOSS_MIN_CLEAR_GS = 5;/, 'the budget itself is unchanged');
+  const s14 = DESIGN.slice(DESIGN.indexOf('## 14.'), DESIGN.indexOf('## 15.'));
+  assert.match(s14, /it is \*\*held\*\* \(`f\.heldResult`/);
+  assert.match(META, /waits for the budget instead \(`f\.heldResult`/);
+  assert.match(s2014, /\*\*Fast boss kills handed over \(fixed\)\.\*\*/);
+  // the promotion cue between two preps (render/app.js promoBase) and the touch line (shopBar mergeHint)
+  assert.match(doc('public/js/render/app.js'), /if \(prepPieces\.length\) promoBase = prepPieces;/);
+  assert.match(doc('public/js/ui/shopBar.js'), /export function mergeHint\(priv, chessId\)/);
+  assert.match(s2014, /`promoBase`/);
+  assert.match(s2014, /可晋升：精锐干员将出现在作战区原位置/);
+  assert.match(PLAYING, /详情卡里也会写明去向/);
+  // the measurements: real seconds, the integrated build, the pre-merge numbers labelled
+  const s2010 = S20.slice(S20.indexOf('### 20.10 '), S20.indexOf('### 20.11 '));
+  assert.match(s2010, /\*\*Measured\*\* \(real seconds/);
+  assert.match(s2010, /Integrated build \(QA 6b on `cca11e6`/);
+  const BALANCE = doc('docs/BALANCE.md');
+  assert.match(BALANCE, /\*\*2026-10-02 — the integrated build \(QA 6b/);
+  assert.match(BALANCE, /measured on the boss-HP workstream's boards, \*\*before\*\* the elite-to-board merge/);
 });

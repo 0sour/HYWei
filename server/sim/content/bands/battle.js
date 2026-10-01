@@ -4,8 +4,8 @@
 // (numbers from the blackboard, never hard-coded). Band buffs apply in every battle kind (normal / 联防 / boss /
 // hidden); IN_BATTLE layer gains are no-ops where the match disables them (support.gainLayers).
 //
-//   act1autochess_band2_buff  阿米娅 众志合一   ≥ value_i active bonds (highest i) ⇒ every operator ATK × (1 + atk_i),
-//                                               HP × (1 + max_hp_i) (直接乘算, bonds snapshot at combat start)
+//   act1autochess_band2_buff  阿米娅 众志合一   ≥ value_i active bonds (highest i) ⇒ every operator ATK +atk_i,
+//                                               HP +max_hp_i (直接乘算 — support directMods —, bonds snapshot at combat start)
 //   act1autochess_band28_buff 埃芒加德 命结之秘 the first max_respawn_cnt operator knock-downs of the battle revive at
 //                                               once at full HP (runs after every other death saver, items included)
 //   act1autochess_band13_buff 克莱门莎 崇高牺牲 a <bond_id> operator knocked down ⇒ +its tier (等阶) <bond_id> layers
@@ -18,13 +18,13 @@
 //   act1autochess_band18_buff 休谟斯 回收利用   a ground (地面) operator's skill ends ⇒ a random operator on its 4
 //                                               neighbouring tiles gains `sp` SP
 //   act1autochess_band15_buff 卡莱莎 食腐之蝶   an operator knocked down ⇒ every other unit of the player on the field
-//                                               ATK × (1 + atk × n), n ≤ max_stack_cnt (+20 % … +200 %, additive stacks),
+//                                               ATK +atk × n, n ≤ max_stack_cnt (+20 % … +200 %, additive stacks),
 //                                               until that unit is knocked down itself or the battle ends
 //   act1autochess_band19_buff 陈 以己之长       the player's operators' physical / arts damage becomes 弱点伤害
 //   act2autochess_band12_buff 夕 墨色真颜       at combat start operators of which ≥ 2 of the same name (same base chess,
-//                                               elite or not) stand on the field get ATK × (1 + atk)
+//                                               elite or not) stand on the field get ATK +atk
 //   act2autochess_band3_buff  伊奥莱塔 统御号令 at combat start n = elite operators on the field ⇒ every elite operator
-//                                               ATK × (1 + atk_per_cnt × n), HP × (1 + max_hp_per_cnt × n)
+//                                               ATK +atk_per_cnt × n, HP +max_hp_per_cnt × n (all 直接乘算)
 //   auto_chess_change_map     Touch 外勤医疗    "所有玩家场地上出现一名<预备干员-医疗>": while any alive player of the match
 //                                               holds band_amedic, every player's field gets the map character of the
 //                                               variant whose common_condition holds for that player's elites on the field
@@ -34,7 +34,7 @@
 
 import {
   num, buffsOf, bandRecord, isOp, onField, isElite, tierOf, unitBonds, activeBondIds, playerOps, passiveBuff, fxOn,
-  matchBands, gainLayers, alliesAround, N4, baseChessId, isGroundOp,
+  matchBands, gainLayers, alliesAround, N4, baseChessId, isGroundOp, directMods,
 } from '../support/index.js';
 import { weaknessRetype, addShieldLayer, PRIO_REVIVE } from '../items/battle.js';
 import { spawnMapChar } from '../tokens.js';
@@ -58,9 +58,7 @@ const BY_KEY = {
       if (n >= num(p[`value_${i}`], Infinity)) { atk = num(p[`atk_${i}`]); hp = num(p[`max_hp_${i}`]); }
     }
     if (!(atk > 0 || hp > 0)) return;
-    const mods = {};
-    if (atk) mods.atkMul = 1 + atk;
-    if (hp) mods.hpMul = 1 + hp;
+    const mods = directMods({ atk, hp });
     for (const u of playerOps(battle, ps.playerId)) passiveBuff(battle, u, keyOf(bandId), mods);
   },
 
@@ -157,7 +155,7 @@ const BY_KEY = {
         if (a === d) continue;
         const cur = a.findBuff(key);
         const n = Math.min(cap, (cur && cur.data ? cur.data.n : 0) + 1);
-        battle.addBuff(a, { key, mods: { atkMul: 1 + step * n }, refresh: 'replace', data: { n }, visible: true });
+        battle.addBuff(a, { key, mods: directMods({ atk: step * n }), refresh: 'replace', data: { n }, visible: true });
       }
     });
   },
@@ -184,7 +182,7 @@ const BY_KEY = {
       }
       for (const list of groups.values()) {
         if (list.length < 2) continue;
-        for (const u of list) passiveBuff(battle, u, keyOf(bandId), { atkMul: 1 + atk });
+        for (const u of list) passiveBuff(battle, u, keyOf(bandId), directMods({ atk }));
       }
     });
   },
@@ -197,9 +195,7 @@ const BY_KEY = {
       const elites = deployedOps(battle, ps.playerId).filter(isElite);
       const n = elites.length;
       if (!n) return;
-      const mods = {};
-      if (a) mods.atkMul = 1 + a * n;
-      if (h) mods.hpMul = 1 + h * n;
+      const mods = directMods({ atk: a * n, hp: h * n });
       for (const u of elites) passiveBuff(battle, u, keyOf(bandId), mods);
     });
   },

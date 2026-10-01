@@ -21,13 +21,15 @@
 //   * Shop: per-level chess slots + item slot, copy-weighted rolls from the SHARED pool (pool.js); refresh 1 (free
 //     refreshes first), one toggle freezes all unsold slots until the next round start (a manual refresh while frozen
 //     rerolls everything and the new slots stay frozen), level-up price = base − rounds elapsed (floor 0).
-//   * Merge: 3 normal copies (风丸 2) on board/hand/temp → 1 elite to the hand; equipment returns to the hand; a
+//   * Merge: 3 normal copies (风丸 2) on board/hand/temp → 1 elite; equipment returns to the hand; a
 //     reward offer of 3 different free chess of tier min(level+1, 6) is queued (never one operator twice — user
 //     playtest #6 item 19; a short tier tops up from the tier below; pick 1, expires at prep end; an offer earned
-//     after the prep — SETTLE / Final Assault effects — is kept for the next prep). The elite goes to the hand
-//     (research 01 A1 "1 elite goes to the hand, not to a board tile"), overflow temp — also outside PREP (a
-//     SETTLE merge's elite waits in temp for the next prep); only with the hand and temp both full does it take a
-//     freed board tile of a consumed copy.
+//     after the prep — SETTLE / Final Assault effects — is kept for the next prep). Where the elite goes (PRTS
+//     卫戍协议/帮助 "发送1名【精锐】状态的该干员至手牌区（若消耗已部署至作战区的干员，则发送至作战区对应位置）", user
+//     playtest #6 follow-up): when a consumed copy stood on the board, onto that copy's tile with its facing (of several,
+//     the one that deploys first — board.js mergeTile, [ASSUMED]); it replaces a deployed copy, so the deploy count
+//     never grows, and it gets its own summon stack (grantTokensFor). Otherwise to the hand, overflow temp — also
+//     outside PREP (a SETTLE merge's elite waits in temp for the next prep).
 //   * Items: equip max 2 (a 3rd replaces the equipped item the player picks — g.equip replaceUid, the oldest when
 //     absent; equipped items are otherwise locked: g.destroy refuses them),
 //     2 identical normal items (hand/temp/equipped) merge into the golden item in the hand, items are never sold
@@ -35,7 +37,8 @@
 //   * Tokens (PRTS 卫戍协议/帮助 §战斗部署, user playtest #6): placing an owner with manually deployable summons
 //     (tokens.json `placeable`: 赫默's 医疗探机 and 巫恋's 诅咒娃娃 with their S2, 凯瑟琳's 爬行号·防护单元, 海嗣 / 狼群 /
 //     流形) sends one stack (deployLimit copies — 凯瑟琳 2) to the hand, placed by hand like any piece (no deploy slot);
-//     withdrawing/selling/merging the owner removes its tokens, moving it on the board (also when a summon dragged onto
+//     withdrawing/selling/merging the owner removes its tokens (an elite that takes a merged copy's tile gets a fresh
+//     stack of its own, like any deployment), moving it on the board (also when a summon dragged onto
 //     it swaps it away) sends its placed summons back onto their stack ("移动干员时，其所属召唤物全部退场并重置至手牌区");
 //     a summon stack removed from temp at a prep deadline comes back at the next round start (startRound tops every
 //     board owner's summons up to the deploy limit, "干员所属召唤物会于下一回合返还"). In battle a skill's summon takes its
@@ -51,9 +54,9 @@
 //     it during INFO_CHECK only. battleInput() resolves every chess unit to `skillIndex` + `moduleId` (resolveLoadout:
 //     normal chess → moduleId null, elite → uniEquipId | 'none'); m.private exposes `loadout`.
 
-import { ERR, GEO, PHASE } from '../../shared/constants.js';
+import { ERR, GEO, PHASE, layerGainRoom } from '../../shared/constants.js';
 import { checkLoadout, resolveLoadout } from '../../shared/protocol.js';
-import { FIELD, tileKey, parseKey, inField, canPlace, positionClass, boardOrder, freeSlot, pieceDir, parseDir } from './board.js';
+import { FIELD, tileKey, parseKey, inField, canPlace, positionClass, boardOrder, freeSlot, pieceDir, parseDir, mergeTile } from './board.js';
 import { offsetTile } from '../sim/dir.js';
 import { computeBonds, bondList, bondSnapshot, activatedLayers } from './bondsMeta.js';
 import { itemKey } from './gamedata.js';
@@ -461,15 +464,28 @@ export class PlayerState {
 
   /**
    * Merge `need` normal copies of `baseId` (the incoming, not yet stowed piece first, then temp, hand, board) into
-   * the elite. Returns the elite piece (or null if the elite could not be stored).
+   * the elite — PRTS 卫戍协议/帮助 §干员的获得与精锐化: "发送1名【精锐】状态的该干员至手牌区（若消耗已部署至作战区的干员，
+   * 则发送至作战区对应位置）" (the user's playtest #6 follow-up confirms it). The tile (`mergeTile`): when a consumed copy
+   * stood on the board the elite takes its tile and facing — of several, the one that deploys first (board reading
+   * order: top → bottom, then left → right) [ASSUMED]; `fromKey` / `fromDir` = the tile the incoming piece stood on (a
+   * transformation of a deployed operator) counts as such a copy. It replaces a deployed copy, so the deploy count never
+   * grows. Otherwise the elite goes to the hand, overflow temp — outside PREP too (a SETTLE merge's elite waits in temp
+   * through the next prep, tempDue). The copies' equipment returns to the hand ("干员晋级后已配发装备会回收至整备区";
+   * overflow temp; with both full it stays on the elite, up to its equipPerChess (2) slots — any further item is
+   * destroyed with a log warning, as before the official rule); their summons are removed, and an elite on the board
+   * gets its own summon stack (grantTokensFor: its loadout, like any deployment). Returns the elite piece (or null if
+   * the elite could not be stored).
+   * @param {string} baseId
+   * @param {any} incoming the acquired, not yet stowed copy (null: only owned copies)
+   * @param {{ fromKey?: string|null, fromDir?: string }} [opts]
    */
-  _mergeChess(baseId, incoming) {
+  _mergeChess(baseId, incoming, { fromKey = null, fromDir = undefined } = {}) {
     const need = this.gd.mergeCount(baseId);
     const goldenId = this.gd.goldenIdOf(baseId);
     if (!(need > 1) || !goldenId) return null;
     const locs = this._chessLocations().filter((l) => !this.gd.isGolden(l.piece.id) && this.gd.baseIdOf(l.piece.id) === baseId);
     const consumed = [];
-    if (incoming) consumed.push({ piece: incoming, area: 'new' });
+    if (incoming) consumed.push({ piece: incoming, area: 'new', key: fromKey || undefined, dir: fromDir });
     for (const l of locs) { if (consumed.length >= need) break; consumed.push(l); }
     if (consumed.length < need) return null;
     let copies = 0;
@@ -482,27 +498,21 @@ export class PlayerState {
       l.piece.items = [];
     }
     const elite = this.newPiece('chess', goldenId, { poolCopies: copies });
-    const boardLoc = consumed.find((l) => l.area === 'board' && !this.board.has(l.key));
-    const toBoard = () => {
-      // same operator as a consumed copy, so its freed tile is legal; it keeps that copy's facing
-      elite.dir = pieceDir(boardLoc.piece);
-      this.board.set(boardLoc.key, elite);
-      this.grantTokensFor(elite);
-      return 'board';
-    };
-    // the elite goes to the hand, overflow temp — outside PREP too (a merge completed by SETTLE / battle-result effects):
-    // a temp piece that arrived after the prep waits there through the next prep (tempDue)
-    let where = this.stow(elite, { allowTemp: true });
-    if (!where && boardLoc) {
-      // hand and temp both full ⇒ every consumed copy stood on the board: the elite takes the first freed tile
-      // instead of being lost
-      where = toBoard();
-    }
+    const deployed = consumed.filter((l) => l.key && !this.board.has(l.key)).map((l) => ({ key: l.key, dir: l.area === 'new' ? l.dir : pieceDir(l.piece) }));
+    const toTile = (t) => { elite.dir = parseDir(t.dir) || 'RIGHT'; this.board.set(t.key, elite); return 'board'; };
+    const tile = mergeTile(deployed, (r, c) => this._legal(elite, r, c));
+    let where = tile ? toTile(tile) : this.stow(elite, { allowTemp: true });
+    // hand and temp full and no deployed tile legal for it (a terrain change not re-checked yet): it stays on the first
+    // deployed copy's tile rather than being lost, like a piece _evictIllegal finds no room for
+    if (!where && deployed.length) where = toTile(mergeTile(deployed));
     for (const it of items) {
       if (this.stow(it, { allowTemp: true })) continue;
       if (where && elite.items.length < this.gd.equipPerChess) { elite.items.push(it); continue; }
       this.m.log.warn?.(`[match ${this.m.roomCode}] ${this.playerId}: returned item ${it.id} destroyed (no space)`);
     }
+    // deployed like any operator placed by hand: its manually deployable summons join the hand (after the returned
+    // equipment, which would be lost in temp — a summon stack removed there comes back at the next round start)
+    if (where === 'board') this.grantTokensFor(elite);
     if (!where) {
       this.m.pool.give(baseId, copies);
       this.m.toast(this, 'warn', '整备区已满，晋升的精锐干员无法放入');
@@ -514,7 +524,7 @@ export class PlayerState {
     this.pushRewardOffer('merge');
     const rec = this.gd.chess(goldenId);
     this.m.tickerFor('GOLDEN_CHAR', [this.name, rec ? rec.name : goldenId], { playerId: this.playerId });
-    this.m.dispatch(this, 'onMerge', { kind: 'chess', piece: elite, baseId, consumed: consumed.map((l) => l.piece.uid) });
+    this.m.dispatch(this, 'onMerge', { kind: 'chess', piece: elite, baseId, consumed: consumed.map((l) => l.piece.uid), area: where });
     return elite;
   }
 
@@ -533,7 +543,8 @@ export class PlayerState {
 
   /**
    * Replace a chess piece by another chess (突变细胞 and similar). The new piece keeps the tile when legal (else goes
-   * to the hand/temp) and keeps the equipment; pool copies are swapped; completes a merge when possible.
+   * to the hand/temp) and keeps the equipment; pool copies are swapped; completes a merge when possible — a deployed
+   * piece's tile then counts as a consumed copy's for the elite (_mergeChess fromKey, when legal for it).
    */
   transformChess(piece, newId) {
     const loc = this.find(piece.uid);
@@ -549,7 +560,7 @@ export class PlayerState {
     let np = this.newPiece('chess', newId, { poolCopies: taken });
     np.items = items;
     if (!rec.isGolden && this.completesChessMerge(newId)) {
-      np = this._mergeChess(base, np);
+      np = this._mergeChess(base, np, loc.area === 'board' ? { fromKey: loc.key, fromDir: pieceDir(piece) } : undefined);
       if (!np) { this.recompute(); return null; }
     } else if (loc.area === 'board') {
       const [r, c] = parseKey(loc.key);
@@ -724,13 +735,16 @@ export class PlayerState {
     this.m.dispatch(this, 'onSpend', { amount, reason, total: this.stats.gold });
   }
 
-  /** Bond layer gain (prep-side). `requireActive` = "使已激活的【X】层数+N". Returns layers added. */
+  /**
+   * Bond layer gain (prep-side). `requireActive` = "使已激活的【X】层数+N". Returns layers added: at most the room left
+   * under BOND_LAYER_CAP (999, shared/constants.js) — a gain at the cap adds 0 and dispatches nothing.
+   */
   addLayers(bondId, n, { requireActive = false, reason = '' } = {}) {
     if (!this.gd.bond(bondId) || !Number.isFinite(n) || n <= 0) return 0;
     if (requireActive && !(this.bonds[bondId] && this.bonds[bondId].active)) return 0;
-    const add = Math.floor(n);
-    if (add <= 0) return 0;
     const before = this.layers[bondId] || 0;
+    const add = layerGainRoom(before, Math.floor(n));
+    if (add <= 0) return 0;
     this.layers[bondId] = before + add;
     this.recompute();
     this.m.dispatch(this, 'onLayers', { bondId, from: before, to: before + add, reason });

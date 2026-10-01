@@ -5,9 +5,11 @@
 // never edit it; module-specific helpers live in the submodules.
 //
 // Conventions shared by every wave-B module (details in docs/CONTENT.md):
-//   * Attribute bonuses from bonds, bands, equipment and 机变 cards are "直接乘算" (research 02 §2.1): each source is its
-//     own multiplier on the final stat → `atkMul` / `defMul` / `hpMul` (1 + x), never the skill-style `atkPct`.
-//     ASPD stays additive (`aspd`), damage bonuses are `dmgDealtMul`, redeploy changes `redeployMul`.
+//   * Attribute bonuses ("+X%" ATK / DEF / max HP) from bonds, bands, equipment, 机变 cards and the per-layer 特质 are
+//     "直接乘算" (PRTS 盟约记录; PRTS 游戏数据基础: 直接乘算 values are summed with every other 直接乘算, a skill's "攻击力+X%"
+//     included) → `directMods({ atk, def, hp })` = the additive `atkPct` / `defPct` / `hpPct` (constants.js
+//     DIRECT_BONUS_STACKING; 'multiply' restores the v2.5 per-source ×(1 + x) `atkMul`). "提升至X%" effects stay
+//     multipliers. ASPD stays additive (`aspd`), damage bonuses are `dmgDealtMul`, redeploy changes `redeployMul`.
 //   * Match-long passives use `passiveBuff()` (persist + allowDead + replace): idempotent by key, survive death.
 //   * Buff keys / fx `src` are namespaced: `bond:<bondId>…`, `item:<itemKey>…`, `gar:<effectKey>…`, `band:<bandId>…`,
 //     `choice:<effectId>…`.
@@ -16,7 +18,7 @@
 //     `PlayerBattleInput.contentInfo`, written by the `global:contentb_info` meta handler (support/meta.js).
 
 import { getData } from '../../../data.js';
-import { COLS } from '../../constants.js';
+import { COLS, DIRECT_BONUS_STACKING } from '../../constants.js';
 import { frontOf, offsetTile } from '../../dir.js';
 import { bodyInKeys, bodyDist, bodyInRadius, bodyOnTile, bodyTileReach } from '../../body.js';
 
@@ -266,6 +268,25 @@ export const inRange = (u, target) => !!(u && target && u.rangeKeySet && onKeys(
 
 // =====================================================================================================================
 // battle: buffs, fx, per-battle state
+
+/**
+ * Buff mods of a 直接乘算 attribute bonus (bonds, bands, equipment, 机变 cards, per-layer 特质): ratios `atk` / `def` /
+ * `hp` (+0.3 = "+30%"; negative lowers) → `atkPct` / `defPct` / `hpPct`, summed by the engine with every other additive
+ * percentage (constants.js DIRECT_BONUS_STACKING 'add', the official rule); 'multiply' → `atkMul` / `defMul` / `hpMul`
+ * = 1 + x (the v2.5 reading). Zero / non-finite parts are left out; `extra` mods are merged in.
+ */
+export function directMods({ atk = 0, def = 0, hp = 0 } = {}, extra = null) {
+  const m = {};
+  const put = (pct, mul, v) => {
+    if (!(typeof v === 'number' && Number.isFinite(v)) || v === 0) return;
+    if (DIRECT_BONUS_STACKING === 'multiply') m[mul] = Math.max(0, 1 + v);
+    else m[pct] = v;
+  };
+  put('atkPct', 'atkMul', atk);
+  put('defPct', 'defMul', def);
+  put('hpPct', 'hpMul', hp);
+  return extra ? Object.assign(m, extra) : m;
+}
 
 /** Match-long passive buff (survives death/redeploy; re-adding the same key replaces it — idempotent). */
 export function passiveBuff(battle, u, key, mods, extra = {}) {

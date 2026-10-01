@@ -67,7 +67,7 @@ test('PREP: a player who un-readies right after everybody was ready keeps the pr
   m.dispose();
 });
 
-test('merge with a full hand and a full temp: the elite takes a freed board tile and keeps the returned items', () => {
+test('merge with a full hand and a full temp: the elite takes its deployed copy\'s tile (PRTS) and keeps the returned items', () => {
   const { m, ps } = prepSolo({ seed: 903 });
   const id = chessOfTier(1, (c) => c.position === 'MELEE').find((c) => m.pool.has(c) && m.gd.mergeCount(c) === 3);
   const t1 = legalTileFor(m, ps, id);
@@ -87,7 +87,8 @@ test('merge with a full hand and a full temp: the elite takes a freed board tile
   checkInvariants(m);
   assert.deepEqual(m.handle('p_0', { t: 'g.buy', slot: 0 }), { ok: true }, 'a purchase that completes a merge is allowed with a full hand');
   const elite = [...ps.board.values()].find((p) => p.id === m.gd.goldenIdOf(id));
-  assert.ok(elite, 'the elite stands on a freed tile');
+  assert.ok(elite, 'the elite stands on a consumed copy\'s tile');
+  assert.equal(ps.find(elite.uid).key, `${t1[0]},${t1[1]}`, 'the copy that deploys first (legalTileFor walks the deploy order)');
   assert.equal(elite.poolCopies, 3, 'it holds all three copies');
   assert.deepEqual(elite.items.map((x) => x.id).sort(), ['chess_item_1_01_e_a', 'chess_item_2_04_e_a'], 'returned items are kept on it');
   checkInvariants(m);

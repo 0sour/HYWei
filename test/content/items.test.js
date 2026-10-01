@@ -77,7 +77,7 @@ const STAT_CASES = [
   [A('6_11'), { spRecovery: 1.2 }], [B('6_11'), { spRecovery: 1.35 }],                   // 家族徽章
 ];
 
-test('stat equipment: every percentage is its own multiplier (normal / golden numbers from data)', () => {
+test('stat equipment: percentages are 直接乘算 — additive with each other (normal / golden numbers from data)', () => {
   for (const [id, want] of STAT_CASES) {
     const h = fight({ units: [{ chessId: 't_op', row: 10, col: 4, items: [id] }] });
     h.step(1);
@@ -85,13 +85,14 @@ test('stat equipment: every percentage is its own multiplier (normal / golden nu
     for (const [k, v] of Object.entries(want)) close(s[k], v, `${id} ${k}`);
     cover(id);
   }
-  // two items multiply (维式重锤 ×1.15 × 阿戈尔重刃 ×1.4), a normal + golden copy of one item both apply
+  // two items add up (PRTS 盟约记录 "装备效果提供的属性加成均为直接乘算"; 直接乘算 values are summed, PRTS 游戏数据基础):
+  // 维式重锤 +15 % and 阿戈尔重刃 +40 % = +55 %, not ×1.15 × 1.4; a normal + golden copy of one item both apply
   const h = fight({ units: [{ chessId: 't_op', row: 10, col: 4, items: [A('1_01'), A('3_07')] }] });
   h.step(1);
-  close(h.unit('t_op').s.atk, 500 * 1.15 * 1.4, 'stacked');
+  close(h.unit('t_op').s.atk, 500 * (1 + 0.15 + 0.4), 'stacked');
   const h2 = fight({ units: [{ chessId: 't_op', row: 10, col: 4, items: [A('1_01'), B('1_01')] }] });
   h2.step(1);
-  close(h2.unit('t_op').s.atk, 500 * 1.15 * 1.25, 'normal + golden');
+  close(h2.unit('t_op').s.atk, 500 * (1 + 0.15 + 0.25), 'normal + golden');
   checkInvariants(h2.b);
 });
 
@@ -179,8 +180,8 @@ test('歌利亚头盔: HP +25 % / +45 %, and +15 % / +25 % more when nobody stan
     const ops = { t_op: op('t_op'), t_f: op('t_f') };
     const free = fight({ ops, units: [{ chessId: 't_op', row: 10, col: 4, items: [id] }] });
     free.step(1);
-    close(free.unit('t_op').s.maxHp, 2000 * base * ex, `${id} free`);
-    close(free.unit('t_op').hp, 2000 * base * ex, `${id} deployed at full HP`);
+    close(free.unit('t_op').s.maxHp, 2000 * (base + ex - 1), `${id} free (+25 % and +15 % add up: 直接乘算)`);
+    close(free.unit('t_op').hp, 2000 * (base + ex - 1), `${id} deployed at full HP`);
     const blocked = fight({ ops, units: [{ chessId: 't_op', row: 10, col: 4, items: [id] }, { chessId: 't_f', row: 10, col: 5 }] });
     blocked.step(1);
     close(blocked.unit('t_op').s.maxHp, 2000 * base, `${id} front occupied`);

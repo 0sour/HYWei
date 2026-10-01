@@ -8,7 +8,10 @@
 //                                               and the field clear of `hud(kind, size)` = { top, bottom } px of
 //                                               DOM HUD along the top / bottom edge (projection.js clearHud; user
 //                                               playtest #5 item 9: the shop bar covered the bench on phones)
-//   view.setPrep(privateState, { editable, canPlace })       hand/temp/board pieces; editable enables drag & drop
+//   view.setPrep(privateState, { editable, canPlace })       hand/temp/board pieces; editable enables drag & drop; a
+//                                               new board piece flashes (fx.deploy); a merge's elite — on the tile of
+//                                               the deployed copy it replaced, or on its bench slot — gets the
+//                                               promotion cue instead (render/promote.js, fx.promote)
 //   view.enterBattle(fieldMeta)                 m.field { fieldId, kind, rect, stageId, units: [UnitInfo] }
 //   view.pushSnapshot(snap); view.pushEvents(ev | { ev, gt })  b.snap / b.ev wire frames as received (game time in
 //                                               `gt`; a numeric `t` is accepted for raw Battle snapshots / recordings)
@@ -101,6 +104,7 @@ import { AREAS, areaFor, unionAreas } from './board3d/layout.js';
 import { layoutPen, penSignature } from './pen.js';
 import { IDENTITY, bossPrepField, tilesToDisp } from './prepfield.js';
 import { pickOnTile, pickBattle, hitRectAt } from './pick.js';
+import { promotionsOf } from './promote.js';
 
 const VENDOR = { pixi: '/vendor/pixi.min.js', spine: '/vendor/pixi-spine.js' };
 const PIECE_DIRS = new Set(['UP', 'RIGHT', 'DOWN', 'LEFT']);
@@ -427,6 +431,10 @@ export async function createFieldView(host, options = {}) {
   let pendingView = null;     // tile band/focus to apply when the camera transition ends
   const views = new Map();    // key → view (prep: 'p:'+uid; battle: unit id)
   let prepPieces = [];        // { uid, piece, area, idx, row, col, key }
+  // the last prep pieces before a battle / scouting board emptied prepPieces: a merge completed between two preps (a band
+  // or 机变 grant at ROUND_START, a SETTLE merge) is still recognised by the next setPrep (QA 6b)
+  let promoBase = [];
+  const promotions = [];      // the last merges cued by setPrep (fx.promote): { uid, id, area, row, col, idx, copies } — dev / tests
   let battleMeta = null;
   const infos = new Map();    // battle unit id → UnitInfo
   // battle ids whose view finished its death / leak fade: a snapshot may still list them for a moment (the sim keeps
@@ -845,6 +853,20 @@ export async function createFieldView(host, options = {}) {
     addList(src.board, 'board');
     const seen = new Set();
     const prevBoard = new Set(prepPieces.filter((p) => p.area === 'board').map((p) => p.uid));
+    // merges since the last state (render/promote.js): new elite uid → where its consumed copies stood (their views
+    // still exist until the sweep below) — the elite gets the promotion cue instead of the deploy flash
+    const promoFrom = new Map();
+    const before = prepPieces.length ? prepPieces : promoBase;
+    promoBase = [];
+    for (const [uid, copies] of promotionsOf(before, list, (id) => data.chess(id))) {
+      // the consumed copies' views (gone after a battle rebuilt the scene: their slots instead) — the streaks' origins
+      promoFrom.set(uid, copies.map((g) => {
+        const cv = views.get(g.key);
+        if (cv && !cv.destroyed) return { x: cv.x, y: cv.y, z: cv.z || 0 };
+        const w = slotWorld(g);
+        return w ? { x: w.x, y: w.y, z: w.z || 0 } : null;
+      }).filter(Boolean));
+    }
     for (const e of list) {
       if (seen.has(e.uid)) continue; // duplicate uid in bad state: keep the first
       seen.add(e.uid);
@@ -863,7 +885,13 @@ export async function createFieldView(host, options = {}) {
         v._sig = sig;
         v.setWorld(w.x, w.y, w.z);
         views.set(key, v);
-        if (e.area === 'board' && prevBoard.size && !prevBoard.has(e.uid)) { v.onDeploy?.(); fx.deploy(v); }
+        if (promoFrom.has(e.uid)) {
+          // a merge's elite: on the tile of the deployed copy it replaced, or on its bench slot
+          if (e.area === 'board') v.onDeploy?.();
+          fx.promote(v, promoFrom.get(e.uid).filter((f) => Math.abs(f.x - w.x) + Math.abs(f.y - w.y) > 1e-3));
+          promotions.push({ uid: e.uid, id: e.piece.id, area: e.area, row: e.row ?? null, col: e.col ?? null, idx: e.idx ?? null, copies: promoFrom.get(e.uid).length });
+          if (promotions.length > 20) promotions.shift();
+        } else if (e.area === 'board' && prevBoard.size && !prevBoard.has(e.uid)) { v.onDeploy?.(); fx.deploy(v); }
       } else {
         const prevHome = v._home;
         const moved = !prevHome || prevHome.x !== w.x || prevHome.y !== w.y || prevHome.z !== w.z;
@@ -1226,6 +1254,7 @@ export async function createFieldView(host, options = {}) {
     drag.reset();
     endDragVisual(false);
     clearViews();
+    if (prepPieces.length) promoBase = prepPieces;
     prepPieces = [];
     infos.clear();
     gone.clear();
@@ -1783,6 +1812,7 @@ export async function createFieldView(host, options = {}) {
     /** Dev hooks (demo / tests). */
     debug: {
       app, get cam() { return cam; }, get board3d() { return board3d; }, tiles, views, penViews, interp, fx, ctx, drag, get camKind() { return viewKind(camKind, camOpts); },
+      promotions,
       // picking (render/pick.js) at canvas px: the prep piece / battle view / pen view there, the ground tile under it
       pick: { pieceAt, battleUnitAt, penUnitAt, groundTile },
     },

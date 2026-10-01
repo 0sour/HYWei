@@ -9560,7 +9560,11 @@
    "source": "official intro '多余的装备无法进行出售，可以销毁'"
   },
   "promotion": {
-   "eliteGoesTo": "hand",
+   "eliteGoesTo": "hand; when a consumed copy was deployed, that copy's board position (PRTS 卫戍协议/帮助 '发送1名【精锐】状态的该干员至手牌区（若消耗已部署至作战区的干员，则发送至作战区对应位置）'; user-confirmed after playtest #6)",
+   "eliteTileAmongSeveralDeployed": {
+    "rule": "the consumed deployed copy that deploys first (board row desc, then col asc; mirrored on the right boss half), with its facing",
+    "assumed": true
+   },
    "equipmentReturnsTo": "hand",
    "reward": "shop temporarily shows 3 ops of tier min(shopLevel+1,6) at price 0; take 1; no refresh/freeze; expires at round end",
    "verified": true

@@ -199,6 +199,8 @@
 .dempty { font-size: .14rem; }
 .dhint { display: flex; align-items: flex-start; gap: .06rem; font-size: .14rem; color: var(--text-lo); line-height: 1.6; }
 .dhint .icon { width: .16rem; height: .16rem; margin-top: .03rem; flex: none; }
+/* a merge-completing shop / reward card's 可晋升 destination (the tag's colour; touch shows no title — QA 6b) */
+.dhint--merge { color: var(--gold); }
 .dactions { display: flex; justify-content: flex-end; gap: .1rem; padding-top: .06rem; border-top: 1px solid var(--line); }
 .dsell { margin-left: .06rem; color: #1d1400; }
 .dfactions { display: flex; flex-wrap: wrap; gap: .06rem; }

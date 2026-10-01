@@ -487,7 +487,7 @@ The gate is the start of the action's route. R1–R3 use only the lower gate. No
 | 4 | `pickEntries` `inactiveIn`, `pickReplacement` filters attached keys | inactive list also filters N/E replacements | only `specialEnemyKey` is filtered | [DATA], [WIKI] 上半 note | change |
 | 5 | `data/tuning.json → modes[*].enemyHpMul / enemyAtkMul` (all 8 modes, e.g. multi 险境 R13 HP ×0.55) | custom per-round multipliers from `tools/balance.mjs` | none; only the PRTS table (`config.enemyScale`) | [WIKI] | **delete** (keep `titles.comment_3`, which is unrelated) |
 | 6 | `data/tuning.json → mode_single_funny.bossHpMul 0.6` | leader pool ×0.6 in solo 标准 | none | — | **delete** |
-| 7 | `config.bossHpScale` `bloodPoint × alive/4`, solo ×0.25 [ASSUMED] | pool scales with alive players | co-op: split leaders share HP, "敌方领袖的总生命值不变" → pool = `bloodPoint` (no alive scaling found); **solo: unknown** | [WIKI] notice 5114 / PRTS 下半 | co-op: use `bloodPoint` as is; solo: keep a config value, flagged unknown |
+| 7 | `config.bossHpScale` `bloodPoint × alive/4`, solo ×0.25 [ASSUMED] | pool scales with alive players | co-op: split leaders share HP, "敌方领袖的总生命值不变" → pool = `bloodPoint` (no alive scaling found); **solo: unknown**. **Re-read 2026-10-01 (DESIGN §20.10):** notice 5114's full sentence is "在联合模拟的最终攻势阶段，部分敌方领袖会同时出现在战场的左右两侧，两侧的敌方领袖共享生命值（敌方领袖的总生命值不变）" — the left / right copies of one pair field share the HP; it says nothing about the number of players. The one note on that is community (巴哈姆特 12294 "聯機隊友(撤退/死掉)變少，最後boss血條也會變少", no proportion); it is kept as the config switch `bossHpScale.aliveScaling` (× alive / 4), **off** until the user confirms it from official play — it would shorten fights after eliminations, the opposite of the playtest report | [WIKI] notice 5114 / PRTS 下半 | co-op: `bloodPoint` whatever the alive count (× alive / 4 behind the switch, [ASSUMED proportion]); solo: keep a config value, flagged unknown |
 | 8 | `waves.js bountySpawns` `soloMul 0.7` for "perfect" bounties | bounty HP/ATK/DEF ×0.7 **on top of** the solo 0.7 base | no bounty-specific rule; the "70 %" note is the global solo base, already in `enemyScale` | [WIKI] 上半 11/18 log | remove `soloMul` |
 | 9 | `bountySpawns` timing | t = 4 s, +5 s per bounty, interval 3, `routeByMotion` | attached to the template's first N / NF action window (§5) | [DATA] | change |
 | 10 | `buildUniteWave` | grouped by slot class N/E/S/…, compressed into 40 % of the time limit | walkers → `lrsldr` action, flyers → `yokai`, tokens → T/TF; per-owner 0.5 s spacing | [DATA] (partial) | change |
@@ -536,7 +536,7 @@ Everything in `docs/BALANCE.md` §4 (the tuned tables) and the `tools/balance.mj
 2. **Stat scaling and balance.**
    - Delete every `enemyHpMul`, `enemyAtkMul` and `bossHpMul` in `data/tuning.json`. Keep the `titles` block.
    - Remove the `soloMul` in `bountySpawns`.
-   - `config.bossHpScale`: co-op pool = `bloodPoint[difficulty]` with no alive-player factor; solo stays a flagged config value.
+   - `config.bossHpScale`: co-op pool = `bloodPoint[difficulty]` with no alive-player factor; solo stays a flagged config value. (2026-10-01: × alive / 4 available behind `aliveScaling`, off, see §6 #7.)
    - Keep `enemyScale` (PRTS table) and the 终极 speed ×1.15 from R3.
    - Re-run `tools/balance.mjs --tuning off` only to report, not to tune.
 3. **Pathing** (`server/sim/grid.js`, `server/sim/ai.js`, `server/sim/Battle.js`):
@@ -566,7 +566,7 @@ Everything in `docs/BALANCE.md` §4 (the tuned tables) and the `tools/balance.mj
 | # | Question | Default |
 |---|---|---|
 | 1 | Do 射击台 (act1 m03 (10,3)/(10,4)) and 土石结构 block ground movement? | Block [ASSUMED] |
-| 2 | Leader HP pool in solo, and in co-op with fewer than 4 alive players | co-op `bloodPoint`; solo config value (flagged) |
+| 2 | Leader HP pool in solo, and in co-op with fewer than 4 alive players | co-op `bloodPoint` (× alive / 4 behind `aliveScaling`, off — ask the user, 2026-10-01); solo config value (flagged) |
 | 3 | Unit of `maxPlayTime` | Real seconds (×2 game) [ASSUMED] |
 | 4 | Exact 联防 predelay formula (`_CalculateActionPredelayConsiderUid`) | 0.5 s per owner [ASSUMED] |
 | 5 | DEF reduction in the 70 % / 80 % bases | HP/ATK only (下半 text) |

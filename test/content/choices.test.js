@@ -782,7 +782,8 @@ test('battle plans come from the blackboards; gates as documented', () => {
   assert.deepEqual(gateOf(EFF('allybuff_select_14')), { kind: 'sameRow', count: 3 });
   assert.deepEqual(gateOf(EFF('allybuff_select_11')), { kind: 'always', count: 0 });
   assert.equal(battlePlanOf(refOf('allybuff_select_11')).heal, 50);
-  assert.deepEqual(battlePlanOf(refOf('allybuff_select_18')).flawless, { atkMul: 1.3, defMul: 1.3 });
+  // 无瑕 "攻击力和防御力+30%": 直接乘算 — the additive percentage bucket (constants.js DIRECT_BONUS_STACKING)
+  assert.deepEqual(battlePlanOf(refOf('allybuff_select_18')).flawless, { atkPct: 0.3, defPct: 0.3 });
   assert.deepEqual(battlePlanOf(refOf('allybuff_select_14')).opMods, { redeployMul: 0.5 });
   assert.deepEqual(battlePlanOf(refOf('enemydebuff_select_8')).enemy, [{ rank: 'BOSS', mods: { defFlat: -200 } }]);
   for (const id of TEAM_PREP) assert.equal(battlePlanOf(refOf(id)), null, `${id}: prep only`);

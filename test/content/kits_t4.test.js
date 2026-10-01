@@ -494,7 +494,7 @@ test('灵知 S2: 130 % ATK arts + 2.5 s cold to all in range; fully charged cast
   approx(burst[0].amount, u.s.atk * bb.atk_scale, 1e-6);
   assert.ok(a.s.flags.freeze && b.s.flags.freeze, 'charged cast: second cold ⇒ freeze');
   h.run(0.2);
-  approx(a.findBuff(`gnosis:fragile:${u.id}`).mods.dmgTakenMul, t0.damage_scale_freeze, 1e-9, 'frozen ×2 fragile');
+  approx(a.findBuff('gnosis:fragile').mods.dmgTakenMul, t0.damage_scale_freeze, 1e-9, 'frozen ×2 fragile');
   // next (single-charge) cast only chills once per enemy
   assert.ok(h.runUntil(() => u.skill.activations >= 2, 20));
   const starts = noisy(h, 'skillStart').filter((c) => c.unit === u).map((c) => c.t);
@@ -550,6 +550,41 @@ test('莱恩哈特 S2: 170 % ATK arts to all enemies in the wider skill range + 
   h.run(bb.duration + 0.1);
   approx(outR.s.res, 50, 1e-9, 'debuff expired');
   assert.ok(inR.alive);
+});
+
+test('同名效果取最高: two 灵知 never compound 坚冰, two 莱恩哈特 never compound the RES cut (one instance per enemy, the strongest)', () => {
+  // DESIGN §20.10 (the 奥术 rule): a pair / 联防 partner's copy of the same operator puts the same-named effect on the
+  // same enemy — one instance, the strongest (PRTS 作战机制 "同名buff…只能表现出一个"), never m × m
+  const gn = 'chess_char_4_13_a', t0 = D(gn).talents[0].bb;
+  const g = makeBattle({ defs: { enemies: { enemy_dummy: dummy() } }, units: [{ chessId: gn, row: 10, col: 3 }, { chessId: gn, row: 11, col: 3 }], timeLimit: 60, hooks: [] });
+  g.step();
+  const both = g.b.allyUnits.filter((u) => u.def.id === gn);
+  assert.equal(both.length, 2, 'two 灵知 on the board');
+  const e = g.spawn('enemy_dummy', { pos: [10, 4] });
+  let seen = 0;
+  for (let i = 0; i < 120; i++) { // 4 s: chilled / frozen by both
+    g.step();
+    const fr = e.buffs.filter((b) => String(b.key).startsWith('gnosis:fragile'));
+    assert.ok(fr.length <= 1, `one 坚冰 instance (${fr.map((b) => b.key)})`);
+    if (!fr.length) continue;
+    seen++;
+    const want = e.s.flags.freeze ? t0.damage_scale_freeze : t0.damage_scale_cold;
+    approx(e.s.dmgTakenMul, fr[0].mods.dmgTakenMul, 1e-9, 'the only damage-taken modifier');
+    assert.ok(e.s.dmgTakenMul <= t0.damage_scale_freeze + 1e-9 && fr[0].mods.dmgTakenMul >= want - 1e-9, `never ${t0.damage_scale_cold}² / ${t0.damage_scale_freeze}² (${e.s.dmgTakenMul})`);
+  }
+  assert.ok(seen > 30, `坚冰 was up (${seen})`);
+  const lh = 'chess_char_4_14_a', bb = D(lh).skill.bb;
+  const h = makeBattle({ defs: { enemies: { enemy_dummy: dummy({ res: 50 }) } }, units: [{ chessId: lh, row: 10, col: 3 }, { chessId: lh, row: 11, col: 3 }], timeLimit: 60, hooks: [] });
+  h.step();
+  const two = h.b.allyUnits.filter((u) => u.def.id === lh);
+  assert.equal(two.length, 2);
+  const x = h.spawn('enemy_dummy', { pos: [10, 5] });
+  h.step();
+  for (const u of two) assert.ok(u.skill.activate('test', { free: true }), 'S2 cast');
+  assert.equal(x.buffs.filter((b) => String(b.key).startsWith('lionhd:res')).length, 1, 'one RES cut');
+  approx(x.s.res, 50 * (1 + bb.magic_resistance), 1e-9, 'RES −8 % once, not twice');
+  h.run(bb.duration + 0.1);
+  approx(x.s.res, 50, 1e-9, 'expired');
 });
 
 test('录武官 S2: healed allies regain 80 HP whenever damaged for 10 s; 学成于聚 SP +1 & ASPD +16 when an operator in range casts', () => {

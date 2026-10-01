@@ -97,7 +97,8 @@ test('g.unitStats follows the prep state: another item changes the numbers; prep
   assert.deepEqual(carrier.items.map((x) => x.id).sort(), [ARM, BLADE].sort());
   m.handle('p_0', { t: 'g.unitStats', seq: 2 });
   const after = h.lastTo('p_0', 'm.unitStats').units.find((x) => x.uid === carrier.uid);
-  assert.ok(Math.abs(after.atk - Math.round(after.base.atk * 1.4 * 1.3)) <= 1, `each item its own multiplier: ATK ${before.atk} → ${after.atk}`);
+  // equipment percentages are 直接乘算 — they add up (PRTS 盟约记录 / 游戏数据基础; DESIGN §20.10): +40 % and +30 % = +70 %
+  assert.ok(Math.abs(after.atk - Math.round(after.base.atk * (1 + 0.4 + 0.3))) <= 1, `the items' percentages add up: ATK ${before.atk} → ${after.atk}`);
   // outside the prep phases: WRONG_PHASE, nothing pushed
   const n = h.allTo('p_0', 'm.unitStats').length;
   assert.ok(h.drive(() => m.phase === PHASE.COMBAT));

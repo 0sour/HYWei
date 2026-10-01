@@ -507,6 +507,54 @@ test('Final Assault: an early boss b.result (forced at t≈0) does not end the p
   m.dispose();
 });
 
+test('Final Assault: a 999-layer kill faster than the budget — the \'cleared\' b.result whose report covers the pool waits for the budget, no takeover (QA 6b)', () => {
+  const { h, m, f } = faWithForger(9122);
+  const max = m.bossPool.maxHp;
+  h.sched.advance(500); // 1 game s on the field clock: the budget credits ≤ 20 % of the pool
+  const gt = m._fieldElapsed(f);
+  const by = { [f.players[0]]: max * 0.6, [f.players[1]]: max * 0.4 + 5 };
+  assert.deepEqual(m.handle('p_0', { t: 'b.progress', battleId: f.battleId, gt, killed: 0, total: 0, bossDmg: max + 5, by, leaks: 0 }), { ok: true });
+  const res = { reason: 'cleared', time: gt, killed: 0, total: 0, errors: 0,
+    perPlayer: Object.fromEntries(f.players.map((pid) => [pid, { killed: 0, total: 0, leaked: [], perfect: true, layerGains: {}, coins: 0, damageDealt: by[pid], bossDamage: by[pid], healingDone: 0, deaths: 0, unitsEnd: [], unitStats: [] }])) };
+  assert.equal(isBattleResult(res), true);
+  const rejected0 = m.verifyStats.rejected;
+  const takeovers0 = m.verifyStats.takeovers; // the muted client's earlier normal fields went to the server
+  assert.deepEqual(m.handle('p_0', { t: 'b.result', battleId: f.battleId, result: res }), { ok: true });
+  assert.ok(m.bossPool.hp > 0.7 * max, 'still only the budget is credited');
+  assert.equal(f.done, false, 'the field waits for the budget');
+  assert.equal(f.authority, 'p_0', 'no takeover');
+  assert.equal(f.mode, 'client');
+  assert.equal(m.verifyStats.rejected, rejected0, 'not counted as rejected');
+  assert.ok(!h.sent.some(([pid, x]) => pid === 'p_0' && x.t === 'b.end' && x.battleId === f.battleId), 'the sender is not told to stop');
+  assert.equal(m._finalEnding, null);
+  // a re-sent copy of the result changes nothing; the silence watchdog never hands the waiting field over
+  assert.deepEqual(m.handle('p_0', { t: 'b.result', battleId: f.battleId, result: res }), { ok: true });
+  h.drive(() => m._finalEnding != null || m.phase !== PHASE.FINAL_ASSAULT, { maxSteps: 2e5 });
+  assert.equal(m._finalEnding, 'cleared', 'the budget credited the report: the pool is empty → victory');
+  assert.equal(m.bossPool ? m.bossPool.hp : 0, 0);
+  assert.ok(m._fieldElapsed(f) <= 5 * (max + 5) / max + 1, 'within the budget\'s 5 game s');
+  assert.equal(f.done, true);
+  assert.equal(f.resultSource, 'client', 'the held client result completed the field');
+  assert.equal(m.verifyStats.takeovers, takeovers0);
+  assert.equal(m.verifyStats.rejected, rejected0);
+  for (const pid of f.players) assert.ok(Math.abs((f.bossBy[pid] || 0) - Math.min(by[pid], max)) <= max * 1e-9 + 5, `${pid} credited as reported (${f.bossBy[pid]} vs ${by[pid]})`);
+  m.dispose();
+});
+
+test('Final Assault: a \'cleared\' b.result whose report does NOT cover the pool is still handed over (the partner takes the field)', () => {
+  const { h, m, f } = faWithForger(9123);
+  const max = m.bossPool.maxHp;
+  h.sched.advance(500);
+  const res = { reason: 'cleared', time: 1, killed: 0, total: 0, errors: 0,
+    perPlayer: Object.fromEntries(f.players.map((pid) => [pid, { killed: 0, total: 0, leaked: [], perfect: true, layerGains: {}, coins: 0, damageDealt: 0, bossDamage: pid === 'p_0' ? max * 0.3 : 0, healingDone: 0, deaths: 0, unitsEnd: [], unitStats: [] }])) };
+  assert.deepEqual(m.handle('p_0', { t: 'b.result', battleId: f.battleId, result: res }), { ok: true });
+  assert.equal(f.heldResult, null);
+  assert.equal(f.authority, 'p_1', 'the partner\'s replica is promoted');
+  assert.equal(h.lastTo('p_0', 'b.end').reason, 'takeover');
+  assert.ok(m.verifyStats.rejected >= 1);
+  m.dispose();
+});
+
 test('Final Assault run on the server (nobody connected at its start): a human who reconnects gets b.pool with the field\'s own damage acknowledged', () => {
   const h = makeMatch({ mode: 'coop', difficulty: 'FUNNY', humans: 2, seed: 9110, fake: true, clientCombat: true, instant: false,
     script: (b) => (b.kind === 'boss' ? { bossDps: 3000 } : { duration: 2 }) }).start();

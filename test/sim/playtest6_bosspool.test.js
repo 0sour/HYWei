@@ -139,8 +139,11 @@ for (const bossId of BOSSES) {
     const pool = new SharedBossPool(max);
     const { b } = bossBattle(bossId, pool);
     const leader = b.enemies.find((e) => e.alive && e.isBoss);
-    const dealt = b.dealDamage(null, leader, { amount: 1e9, type: 'true', mul: (max - 0.4) / 1e9 });
-    assert.ok(dealt > max - 1, `${bossId}: the hit took the whole pool (${dealt} of ${max})`);
+    // the team already dealt all but 250000 (one hit of the whole pool would be cancelled by 限伤, BOSS_HIT_LIMIT 300000)
+    const rest = 250000;
+    pool.damage('p_1', max - rest);
+    const dealt = b.dealDamage(null, leader, { amount: 1e9, type: 'true', mul: (rest - 0.4) / 1e9 });
+    assert.ok(dealt > rest - 1, `${bossId}: the hit took the rest of the pool (${dealt} of ${rest})`);
     assert.equal(pool.hp, 0, 'not 0.4 HP: nobody would ever see it and no hit may be needed to finish it');
     for (let i = 0; i < 3 && !b.finished; i++) b.step();
     assert.equal(b.finished, true);

@@ -109,6 +109,8 @@ function inspire(battle, target, val, src, stat = 'atk') {
   battle.addBuff(target, { key, mods: stat === 'hp' ? { hpFlat: flat } : { atkFlat: flat }, duration: AURA_DUR, source: src, visible: true, data: { src: src.id, val } });
 }
 /** Reveal stealthed enemies on the given tiles. */
+/** RES cut mods for a blackboard magic_resistance value (battle.applyStrongest): |v| < 1 = ×(1 + v), else flat v. */
+const resCut = (v) => (Math.abs(v) < 1 ? { resMul: Math.max(0, 1 + v) } : { resFlat: v });
 const reveal = (battle, enemies) => { for (const e of enemies) if (e.s.flags.stealth) pulse(battle, e, 'aura:reveal', null, { flags: { reveal: true } }); };
 /**
  * Knock-back of 力度 `force` away from `from` (a radial push, Battle.push: the official 力度 − 重量 distance — PRTS 推与拉;
@@ -1077,7 +1079,8 @@ const kits = {
             for (const e of enemiesOnRange(battle, unit)) {
               const f = e.s.flags;
               const m = f.freeze ? num(t0.damage_scale_freeze, 1.5) : f.cold ? num(t0.damage_scale_cold, 1.25) : 0;
-              if (m) battle.addBuff(e, { key: `gnosis:fragile:${unit.id}`, mods: { dmgTakenMul: m }, duration: 0.15 });
+              // 同名效果取最高: one 坚冰 per enemy, the strongest — two 灵知 (a pair / 联防 partner's copy) never compound
+              if (m) battle.applyStrongest(e, 'gnosis:fragile', { duration: 0.15, value: m, mods: (v) => ({ dmgTakenMul: v }), source: unit });
             }
           });
         } },
@@ -1105,10 +1108,10 @@ const kits = {
         kind: (def.skill?.maxCharges ?? 1) > 1 ? 'charges' : 'instant',
         targeting: g ? { rangeGrid: g } : undefined,
         onStart({ battle, unit }) {
-          const debuff = Math.abs(mr) < 1 ? { resMul: Math.max(0, 1 + mr) } : { resFlat: mr };
           for (const e of targetsInRange(battle, unit)) {
             battle.dealDamage(unit, e, { amount: unit.s.atk * num(bb.atk_scale, 1.7), type: 'arts', isSkill: true, tags: ['skill', 'burst'] });
-            if (e.alive && mr) battle.addBuff(e, { key: `lionhd:res:${unit.id}`, mods: debuff, duration: num(bb.duration, 6), source: unit });
+            // 同名效果取最高: one RES cut per enemy (the strongest), never one per 莱恩哈特
+            if (e.alive && mr) battle.applyStrongest(e, 'lionhd:res', { duration: num(bb.duration, 6), value: mr, mods: resCut, source: unit });
           }
           battle.fx('explosion', { x: unit.x, y: unit.y, id: unit.id });
         },
@@ -1179,10 +1182,10 @@ const kits = {
       talentAtk(battle, unit);
       battle.addBuff(unit, { key: 'texas2:shower', duration: dur, mods: { atkPct: num(bb.atk) }, visible: true });
       const mr = num(bb.magic_resistance, 0);
-      const debuff = Math.abs(mr) < 1 ? { resMul: Math.max(0, 1 + mr) } : { resFlat: mr };
       for (const e of targetsInGrid(battle, unit, g)) {
         battle.dealDamage(unit, e, { amount: unit.s.atk * num(bb.atk_scale, 1.5), type: 'arts', isSkill: true, tags: ['skill', 'burst'] });
-        if (e.alive && mr) battle.addBuff(e, { key: `texas2:resDown:${unit.id}`, mods: debuff, duration: num(bb.debuff_duration, 8), source: unit });
+        // 同名效果取最高: one RES cut per enemy (the strongest), never one per 缄默德克萨斯
+        if (e.alive && mr) battle.applyStrongest(e, 'texas2:resDown', { duration: num(bb.debuff_duration, 8), value: mr, mods: resCut, source: unit });
       }
       battle.fx('swordStorm', { x: unit.x, y: unit.y, id: unit.id });
     };

@@ -15,7 +15,7 @@
    "Each player has one integer layer counter L per bond (23 counters). All start at 0 when the simulation starts, are never reset between rounds and are never reduced (no layer-loss effect exists in the data) [ASSUMED: never reduced].",
    "L is kept while the bond is inactive, but bond effects only apply while the bond is active (PRTS 盟约记录).",
    "Wording contract used by every source: \"使已激活的【X】层数+N\" -> add only if bond X is active at the moment of the trigger; \"（无需激活盟约）\" -> add even if X is inactive. \"自身所属盟约\" = every bond of that operator; \"自身已激活的盟约\" = only its bonds that are active.",
-   "No global layer cap. Caps are per source: max_add_count_per_battle (layers a single garrison instance may add in one battle), max_layer (per round, e.g. 安洁莉娜 12/round).",
+   "No layer cap in the data. Caps are per source: max_add_count_per_battle (layers a single garrison instance may add in one battle), max_layer (per round, e.g. 安洁莉娜 12/round). The official cap is in the client, not the data: AutoChessBattleConst.MAX_GARRISON_STACK = 999, AddBondCount stores min(L + n, 999) per bond (research 11 §1). Since 2026-10-01 (DESIGN §20.12) the remake stops each bond at 999 (shared/constants.js BOND_LAYER_CAP, layerGainRoom); the community agrees (巴哈姆特 12534 \"每把都能999层\", \"沒999層的盟約情況下\"; 12316 \"999謝\").",
    "Layers gained in battle persist after the battle and immediately affect formulas that read L [ASSUMED live update: recompute bond buffs whenever L changes; the reference game uses env_gbuff that reads current stacks].",
    "IN_BATTLE layer gains are disabled while fighting for a teammate in the 联防 (Unite) phase and in the leader/boss round (巴哈姆特 snA=12294; arknights.wiki.gg: \"Players cannot gain stacks via Combat-related Operator Attributes when assisting other players in the Unite Phase\").",
    "魔王 (garrison_59, emptyShip): whenever the operator on the tile in front of 魔王 raises layers through its own trait during battle, that raise gets +1 extra layer (per trigger).",
@@ -36,7 +36,7 @@
    "DIY (自选) chess slots chess_char_5_diy1/2 and chess_char_6_diy1/2 have bondIds [] and are filled with a 6-star operator the player owns (diyChessDict = TIER_6). Their bond is derived from the chosen operator's nationId/groupId/teamId matched against autoChessData.bondInfoDict[*].powerIdList (e.g. yan: yan,sui,lungmen,lee,lgd; victoria: victoria,glasgow; kjerag: kjerag,karlan; egir: egir,abyssal; siracusa: siracusa,chiave; kazimierz: kazimierz,pinus; sargon; laterano). No match -> constData.fallbackBondId = emptyShip (协防干员). (bwiki: operators from those nations get the nation alliance, \"others receive the 协防 designation\".)",
    "Prototype substitution: a NORMAL chess whose operator the player does not own is fielded as its backupCharId (预备干员 / 原型干员) but keeps the chess's bonds and traits (PRTS: \"烛煌（或对应的原型干员）\").",
    "Mode filter: 标准模拟 (mode_single_funny / mode_multi_funny) enables only 13 bonds (炎 萨尔贡 维多利亚 谢拉格 叙拉古 精准 迅捷 坚守 助力 远见 不屈 调和 协防干员); 拉特兰 阿戈尔 卡西米尔 灵巧 奥术 奇迹 投资人 突袭 独行 绝技 are inactive there. Training/险境/绝境/终极 enable all 23.",
-   "Stat math: attribute bonuses from 盟约, strategies and equipment are \"直接乘算\" - each is a separate multiplier on the operator's already-final stat, independent of the operator's own talents/skills (PRTS 盟约记录). E.g. 炎 +50% ATK and an item +30% ATK -> final = own_final_atk x 1.5 x 1.3.",
+   "Stat math: attribute bonuses from 盟约, strategies and equipment are \"直接乘算\" (PRTS 盟约记录 \"盟约效果，策略效果，装备效果提供的属性加成均为直接乘算，与自持有干员的属性加成独立\"). Corrected 2026-10-01 (DESIGN §20.10): 直接乘算 is PRTS's modifier class whose values are SUMMED with each other and with the skills' \"+X%\" (游戏数据基础: D_t = t1 + ... + tn, A = (A0 + D_p)(1 + D_t)); \"与自持有干员的属性加成独立\" = separate from the 自持有加成 table (an owned operator +5-10% ATK / DEF / max HP by its real promotion; not modelled). E.g. 炎 +50% ATK and an item +30% ATK -> final = base_atk x (1 + 0.5 + 0.3), not x 1.5 x 1.3 (the reading used until v2.5).",
    "Core bonds (bondType SEASON, isPower) = 炎 萨尔贡 维多利亚 谢拉格 拉特兰 阿戈尔 叙拉古 卡西米尔 (8). The other 15 are add-on (REGULAR). bondOrder: 调和 = 1 (listed first in UI), others 2.",
    "weight (10 for most, 0 for 投资人/调和/协防干员/绝技): weight used when an effect picks a random bond (e.g. SERVER_ADD_BOND_ACTIVATED_RANDOM, random bond chess) [ASSUMED meaning]."
   ],
@@ -5721,7 +5721,7 @@
     "tiers": [
      {
       "need": "2 distinct",
-      "effect": "When an 奥术 member deals magic damage, the target takes magic damage x(1.20 + 0.01*L) (i.e. +(20+L)%) for 3 s. One instance per (source unit, target); reapplying refreshes."
+      "effect": "When an 奥术 member deals magic damage, the target takes magic damage x(1.20 + 0.01*L) (i.e. +(20+L)%) for 3 s. ONE instance per target whatever applies it: the strongest value wins, a weaker one resumes if it outlasts it; reapplying refreshes (corrected 2026-10-01: PRTS 作战机制 同名buff默认只表现出一个; 巴哈姆特 12316 the two players of a pair field compete for it)."
      },
      {
       "need": "3 distinct",
@@ -5736,7 +5736,7 @@
     },
     "layerGain": "夕 +2 per operator gained; 阿罗玛 +2 per refresh (<=6); 溯光星源 +2 per 3 gold spent; 海霓 first kill +3; 获得时: 深靛 +2, 协律 +4 (hidden). 机变 \"莫斯提马的盟誓\" +10.",
     "assumed": [
-     "instances from different 奥术 sources stack multiplicatively"
+     "one instance per target, the strongest (the engine's default same-name rule; the two players of a pair field compete for it) — until v2.5 the remake kept one per player and they multiplied"
     ]
    },
    "members": [

@@ -2,8 +2,8 @@
 //
 // install(battle) ensures the enemy dispatch hooks (enemies.js) and attaches a boss kit to every spawned leader / part
 // listed in BOSS_KITS. Damage dealt TO a leader routes to the shared boss pool through the engine (tag 'boss' +
-// sharedBoss); parts that "传递伤害" push a share of the damage they take into the pool with battle.loseHp(leader, …)
-// credited to the attacker. Numbers come from the (template-overridden) talent / skill blackboards; the rest are named
+// sharedBoss); parts that "传递伤害" push the damage they take into the pool with a 无来源 battle.loseHp(leader, …)
+// credited to the attacker (PART_TRANSFER = 1, "等量"). Numbers come from the (template-overridden) talent / skill blackboards; the rest are named
 // constants ([ASSUMED] or PRTS-sourced). Boss HP rules ("<20 %", "≤50 %") read the leader's HP ratio, which the engine
 // syncs from the shared pool, so both mirrored copies switch phase together.
 //
@@ -17,18 +17,23 @@
 //     (skipped if the match already spawned a second copy, or opts.bossMirror === false).
 //
 // Leaders (see each kit for details):
-//   boss_1/8 假想敌：胄      random arts beam (range 8); 灭顶之灾 刺胄之弹 at the highest-ATK operator (8-hit flying shell,
-//                            3×3 stun + phys DoT on arrival); <20 %: damage ×0.5 + 2 shells; 死亡集群 drones — a drone
-//                            killed by an operator costs the leader 2 % max HP. boss_8 adds 斩胄之剑 / 破胄之锤.
-//   斩胄之剑 / 破胄之锤      hover invulnerable next to 胄, AoE attacks; dive at the lowest-ATK operator (3×3 stun + DoT);
-//                            15 hits during the dive shoot it down: grounded 20 s, damage ×1.3, PART_TRANSFER to 胄.
+//   boss_1/8 假想敌：胄      random arts beam (range 8); 灭顶之灾 one 刺胄之弹 at the highest-ATK operator in range (8-hit
+//                            flying shell, 3×3 stun + phys DoT on arrival); <20 %: damage ×0.5 (no extra shell: PRTS
+//                            能力修正); 死亡集群 drones — a drone that dies costs the leader 2 % of its max HP = the shared
+//                            pool's (DRONE_LINK_BASE, [ASSUMED] reading). boss_8 adds 斩胄之剑 / 破胄之锤.
+//   斩胄之剑 / 破胄之锤      初始模式: hover invulnerable next to 胄, AoE attacks (锤 150 % ATK). 出击模式: blink to the
+//                            level's blink route, fly at the lowest-ATK operator (3×3 stun + DoT); 15 hits shoot it
+//                            down (瘫痪: stun 10 s, ground unit, damage ×1.3). Either way a new 初始模式 copy with its HP
+//                            replaces it at home. Every damage it takes costs 胄 as much (PART_TRANSFER, 无来源, 等量) —
+//                            grounded per both texts, during the dive per the PRTS talent [ASSUMED].
 //   boss_2/9 假想敌：铳      unblockable; highest-DEF target in range; erosion; ASPD ramp (+80 × 5) on the same target
 //                            (floor 20); 最终之罚 charge at the highest-DEF ground unit (disabled by the h07_02 override).
 //                            boss_9: damage ×0.2 while springs live, 盲信之誓 links (100 phys/s on the lines), 末日布道 dash.
 //   碎铳之簧 a/b/c           arts barrier (absorbs arts after RES; phys ×0.1, counter phys + erosion) / element shield
 //                            (phys+arts ×0.1, broken by its own element burst; every (spCost+1)-th attack a bouncing erosion
 //                            shot) / 5-hit shield (every (spCost+1)-th attack a ten-hit combo); unblockable while shielded;
-//                            shield back 25 s after breaking; PART_TRANSFER of damage to 铳 and, split, to the other springs.
+//                            shield back 25 s after breaking; every damage taken costs 铳 as much (PART_TRANSFER, 无来源)
+//                            and, split, the other springs.
 //   boss_3/10 假想敌：管     summons 余音 (dark) every 40 s (20 s < 50 %); normal attacks strike dark 余音 (their pulse hurts
 //                            operators); 裂管之奏 3 strikes on every dark 余音 (AoE arts + apoptosis). boss_10 + 假想敌：弦
 //                            (invulnerable, gold 余音, 断弦之奏 AoE + flips them dark; leaves with 管).
@@ -63,8 +68,42 @@ import {
 // ---------------------------------------------------------------------------------------------------------------
 // constants
 
-/** Share of the damage a grounded 剑/锤 or a 碎铳之簧 passes to its leader ("以一定比例") [ASSUMED]. */
-export const PART_TRANSFER = 0.5;
+/**
+ * Share of the damage a 剑/锤 or a 碎铳之簧 takes that its leader loses: 1, 等量 — PRTS talents (“斩胄之剑” / “破胄之锤”
+ * "受到伤害时令假想敌：胄受到等量的无来源生命流失"; 碎铳之簧 (all three) "…令全场范围内仇恨值最高的1名假想敌：铳受到等量的无来源
+ * 生命流失"); the enemy data carries no ratio blackboard (the handbook's "以一定比例" is that 1). The loss is 无来源 (hooks see
+ * no source; the attacker keeps the credit — stats, the per-player pool tally) and follows EVERY damage taken: a
+ * 剑/锤 only takes damage outside its invulnerable 初始模式 (its 出击模式 dive and 【瘫痪】). The two official texts
+ * disagree on the dive: the PRTS talent says "受到伤害时" (any damage), the in-game handbook (data/enemies.json abilities,
+ * PRTS 能力) "被击落时受到伤害以一定比例传递" (only once shot down) — the dive hits passing on is [ASSUMED] (the talent
+ * text; ≤ 15 hits per dive). A loss passed on to a leader is one hit for 限伤 (sim/damage.js leaderHitCancelled, via
+ * Battle.loseHp). v2.5: 0.5 [ASSUMED], and a 剑/锤 passed damage on only while grounded (DESIGN §20.10, §20.13).
+ */
+export const PART_TRANSFER = 1;
+/** The 斩胄之剑 / 破胄之锤 share — the same PRTS 等量 as PART_TRANSFER (kept as a name for the blade kit and its tests). */
+export const BLADE_TRANSFER = PART_TRANSFER;
+/** 破胄之锤 normal attack: 150 % ATK (PRTS 天赋 "普通攻击对攻击范围内的所有我方单位造成攻击力150%的物理普通伤害"; 斩胄之剑 100 %). */
+const BLADE_ATK_SCALE = Object.freeze({ enemy_9015_acstmb: 1.5 });
+/**
+ * Level branches of each part (act1autochess_h08_01 / _s): 斩胄之剑 spawns on the start of `left_hand_origin` (3,12),
+ * 破胄之锤 on `right_hand_origin` (3,8). `<hand>_blink` = the preset route 掷剑 blinks to (its start; PRTS "将自身路径改为
+ * 关卡预设路径并闪现至路径起点"), `<hand>_origin` = the route the new 初始模式 copy is summoned on ("以关卡预设路径召唤").
+ */
+const BLADE_HAND = Object.freeze({ enemy_9014_acstma: 'left_hand', enemy_9015_acstmb: 'right_hand' });
+/**
+ * 死亡集群: a drone that dies (PRTS 能力修正 "该无人机单位死亡时", whoever kills it) costs 胄 `hp_ratio` (2 %) of "最大生命值"
+ * (PRTS 假想敌：胄 "该妖怪死亡时令假想敌：胄受到最大生命值2%的真实伤害"). WHICH max HP is not documented [ASSUMED reading]:
+ *   'pool' (default, = v2.5): the leader's max HP as the battle shows it — the shared pool (the engine syncs the unit's
+ *          HP to it). It is the same HP the "自身生命值低于20%" talent reads, and that one must read the pool (the
+ *          unit's data 600 000 is above the co-op 标准 pool 247 500 and above every solo pool, where a fixed 600 000
+ *          would never drop below 20 %). A drone = 2 % of the leader bar in every mode and difficulty (终极 72 000).
+ *   'unit': the in-battle unit's data max HP (600 000 / hidden 1 200 000, 不死) — 12 000 / 24 000 per drone at every
+ *          difficulty: 0.33 % of the 终极 bar but 19 % of the solo 标准 bar (61 875), so drones decide solo fights.
+ * Round 2 of the boss-HP review tried 'unit'; the review measured the solo regression, so the default is back to 'pool'.
+ * 限伤 (shared/constants.js BOSS_HIT_LIMIT): the loss is one hit through Battle.loseHp — it lands up to the largest pool
+ * today (boss_8 终极 7 200 000 → 144 000) and would be cancelled above a 14 999 950 pool (ceil(0.02 × pool) ≥ 300000).
+ */
+export const DRONE_LINK_BASE = 'pool';
 /** 卢西恩 / 不祥幻影 AoE radius (PRTS "半径2"). */
 const LUCIEN_AOE_RADIUS = 2;
 /** 余音 on-hit pulse radius (PRTS 1.6) and 合奏 radii per form (PRTS gold 0.8 / dark 1.6). */
@@ -157,6 +196,13 @@ function toGoal(b, x, y, motion = 'WALK') {
   let best = ends[0] ?? [Math.round(y), Math.round(x)], bd = Infinity;
   for (const p of ends) { const d = Math.hypot(p[0] - y, p[1] - x); if (d < bd) { bd = d; best = p; } }
   return { motion, start: [y, x], end: best, checkpoints: [] };
+}
+
+/** The extra route of a template branch's first spawn (or null). */
+function branchRoute(tpl, name) {
+  const br = tpl && tpl.branches && tpl.branches[name];
+  const s = Array.isArray(br) && Array.isArray(br[0]) ? br[0][0] : null;
+  return (s && tpl.extraRoutes && tpl.extraRoutes[s.routeIndex]) || null;
 }
 
 /** Spawn one phase of a template branch. Returns the spawned enemies. */
@@ -295,10 +341,10 @@ function segDist(px, py, ax, ay, bx, by) {
 function kitHelm(ab, e, b, tpl) {
   const s1 = ab.sk['1'], s2 = ab.sk['2'];
   const lowRatio = T(ab, '1.hp_ratio') ?? 0, lowScale = T(ab, '1.damage_scale') ?? 1;
-  const hidden = /_2$/.test(e.defId);
   const P = { low: false };
   const range = () => e.base.rangeRadius || 8;
-  const shellTargets = (b2) => opsOnly(hidden ? targetsNear(b2, e, range()) : allTargets(b2, e));
+  // 灭顶之灾 "触发索敌和普通攻击相同：选择攻击范围内攻击力最高的1名我方干员" (PRTS 技能, both copies)
+  const shellTargets = (b2) => opsOnly(targetsNear(b2, e, range()));
   return [
     {
       spawn(b2, e2, a, ab2) { ab2.atkType = 'arts'; },
@@ -307,22 +353,27 @@ function kitHelm(ab, e, b, tpl) {
       iv: 0.25,
       tick(b2, e2) {
         if (P.low || !(e2.hpRatio < lowRatio)) return;
-        P.low = true;                                     // <20 %: damage taken ×0.5, extra shell
+        P.low = true;                                     // <20 %: damage taken ×0.5 (no extra shell: see 灭顶之灾)
         b2.addBuff(e2, { key: 'boss:helmGuard', persist: true, visible: true, mods: { physTakenMul: lowScale, artsTakenMul: lowScale } }); // 物理与法术伤害降低
         b2.fx('phase', { x: e2.x, y: e2.y, id: e2.id, kind: 'helmLow' });
       },
     },
     s1 && {
       cd: s1.cd, icd: s1.icd, cond: (b2) => shellTargets(b2).length > 0,
-      fire(b2, e2) { // 【灭顶之灾】
-        const n = P.low ? 2 : 1;
-        const ts = shellTargets(b2).sort((p, q) => q.s.atk - p.s.atk || aggroCmp(p, q)).slice(0, n);
-        for (const t of ts) fireShell(b2, e2, t);
+      // 【灭顶之灾】 one shell, also below 20 %: the handbook's "额外发射<刺胄之弹>" is wrong in game (PRTS 能力修正 原因 6
+      // "描述与游戏实际表现不符合": "【灭顶之灾】不会额外发射") and no blackboard holds a second shell (skill 1 has none)
+      fire(b2, e2) {
+        const t = shellTargets(b2).sort((p, q) => q.s.atk - p.s.atk || aggroCmp(p, q))[0];
+        if (t) fireShell(b2, e2, t);
       },
     },
     s2 && {
       cd: s2.cd, icd: s2.icd,
-      fire(b2, e2) { // 【死亡集群】: drones; one killed by an operator costs the leader hp_ratio × max HP
+      // 【死亡集群】: a drone on the branch route; when it dies (PRTS 能力修正 "该无人机单位死亡时", whoever kills it) the leader
+      // loses hp_ratio × max HP. Drone HP: `summon.hp_ratio` (隐秘核心 only) scales it [ASSUMED: the summon's max HP]; the
+      // `max_hp` 0.5 both copies carry is not read [ASSUMED] — no source says what it does (PRTS 技能 lists the 2 % only,
+      // the 妖怪 page has no summon rule, the level gives the 妖怪 no override; as an attribute key it would be +50 %).
+      fire(b2, e2) {
         const hpMul = s2.bb['summon.hp_ratio'] > 0 ? s2.bb['summon.hp_ratio'] : null;
         const key = s2.bs.enemy_key ?? 'enemy_1005_yokai';
         const drones = branchSpawn(b2, tpl, s2.bs.branch_id ?? 'boss_summon_enemy', 0, {
@@ -333,14 +384,25 @@ function kitHelm(ab, e, b, tpl) {
         const ratio = s2.bb.hp_ratio ?? 0;
         for (const d of drones) attach(b2, d, [{
           death(c, b3) {
-            if (c.reason !== 'killed' || !c.killer || c.killer.side !== 'ally' || !(ratio > 0)) return;
+            if (c.reason !== 'killed' || !(ratio > 0)) return;                 // a leak is no death
             const boss = e2.alive ? e2 : b3.aliveEnemies().find((o) => o.isBoss && o.defId === e2.defId);
-            if (boss) { b3.loseHp(boss, boss.s.maxHp * ratio, { source: c.killer }); b3.fx('beam', { x: d.x, y: d.y, from: d.id, to: boss.id, kind: 'droneLink' }); }
+            const by = c.killer && c.killer.side === 'ally' ? c.killer : null;  // credited to the killing operator
+            if (boss) { b3.loseHp(boss, droneLinkBase(boss) * ratio, { source: by }); b3.fx('beam', { x: d.x, y: d.y, from: d.id, to: boss.id, kind: 'droneLink' }); }
           },
         }]);
       },
     },
   ];
+}
+
+/**
+ * Max HP the 死亡集群 drone link reads (DRONE_LINK_BASE): 'pool' = the leader's shown max HP (the shared pool), 'unit' =
+ * the unit's data max HP (template × spawn hpMul).
+ */
+export function droneLinkBase(boss, base = DRONE_LINK_BASE) {
+  if (base !== 'unit' || !boss.def || !(boss.def.maxHp > 0)) return boss.s.maxHp;
+  const m = boss.mods && Number(boss.mods.hpMul);
+  return boss.def.maxHp * (Number.isFinite(m) && m > 0 ? m : 1);
 }
 
 /** Launch a 刺胄之弹 from `boss` at `target`'s tile. */
@@ -368,54 +430,90 @@ function kitShell(ab, e) {
   }];
 }
 
+/**
+ * “斩胄之剑” / “破胄之锤” (PRTS 天赋 + 技能 掷剑 / 掷锤; numbers from skill 1's blackboard).
+ *   初始模式 ('hover'): 无敌 + 自缚 [ASSUMED: also untargetable, so operators spend no attacks on it]; AoE physical attack
+ *     on every ally in its range (锤 150 % ATK, BLADE_ATK_SCALE).
+ *   掷剑 (skill 1 cd / icd, an operator on the field) → 出击模式 ('dive'): no normal attack, vulnerable; blinks to the start
+ *     of its `<hand>_blink` route and flies at the tile of the lowest-ATK operator (无视无法选择).
+ *   Arriving (no 【瘫痪】): `stun` s stun + `dot_damage`/s for `dot_duration` s on the 3×3 around it, then it is replaced.
+ *   Once, after `max_hit_cnt` damage instances: 【瘫痪】 ('down') — `special_stun_duration` s, but it ends with its own
+ *     `stun` s stun ("该晕眩结束时也会结束【瘫痪】"): ground unit, damage taken ×`damage_scale`; when it ends, replaced.
+ *   Replaced: a new 初始模式 copy with its current HP is summoned on its `<hand>_origin` route (at home without a template),
+ *     then it is killed (强制击杀自身; a part: no kill count, no bounty). The copy is a new unit [ASSUMED: only its HP is
+ *     inherited] — its 掷剑 starts from the initial cooldown again, so the data's cooldown (80 s) never comes into play.
+ *   Every damage it takes is lost by 假想敌：胄 too (BLADE_TRANSFER = PART_TRANSFER 1, 无来源, credited to the attacker).
+ */
 function kitBlade(ab, e, b, tpl) {
   const s = ab.sk['1'];
   const bb = s ? s.bb : {};
+  const hand = BLADE_HAND[e.defId];
   const P = { state: 'hover', home: { x: e.x, y: e.y }, hits: 0, target: null };
   const leader = (b2) => nearestOf(b2, e, (o) => o.isBoss && /enemy_9013_acstmk/.test(o.defId));
   const hover = (b2, on) => {
     if (on) b2.addBuff(e, { key: 'boss:hover', persist: true, visible: true, flags: { invulnerable: true, untargetable: true } });
     else b2.removeBuff(e, 'boss:hover');
   };
+  const replace = (b2, e2) => { // 以关卡预设路径召唤一个继承自身生命值的初始模式的 copy，随后强制击杀自身
+    P.state = 'gone';
+    e2.motion = 'FLY';
+    const origin = hand ? branchRoute(tpl, `${hand}_origin`) : null;
+    const home = [P.home.y, P.home.x];
+    const n = b2.spawnEnemy(e2.defId, {
+      route: origin || { motion: 'FLY', start: home, end: home, steps: [{ t: 'wait', s: 99999 }] }, pos: origin ? undefined : home,
+      tag: e2.tag, countInTotal: false, mods: e2.mods, ownerPlayerId: e2.ownerId,
+    });
+    if (n) { n.hp = Math.min(n.s.maxHp, e2.hp); b2.fx('blink', { x: n.x, y: n.y, id: n.id, fx: e2.x, fy: e2.y }); }
+    b2.kill(e2, null);
+  };
+  const shotDown = (b2, e2) => { // 【瘫痪】
+    P.state = 'down';
+    e2.motion = 'WALK';                                              // 变为地面单位（不改变寻路方式）
+    const stun = bb.stun ?? 0;
+    b2.applyStatus(e2, 'stun', { duration: stun, source: null, force: true });
+    b2.addBuff(e2, { key: 'boss:downed', duration: Math.min(bb.special_stun_duration ?? stun, stun), visible: true,
+      mods: { dmgTakenMul: bb.damage_scale ?? 1 }, onExpire: () => { if (e2.alive && P.state === 'down') replace(b2, e2); } });
+    b2.fx('phase', { x: e2.x, y: e2.y, id: e2.id, kind: 'shotDown' });
+  };
   return [
     {
-      spawn(b2, e2) { hover(b2, true); b2.addBuff(e2, { key: 'boss:anchor', persist: true, flags: { noMove: true } }); },
+      spawn(b2, e2) {
+        hover(b2, true);
+        b2.addBuff(e2, { key: 'boss:anchor', persist: true, flags: { noMove: true, unblockable: true } }); // 自缚 (moved by hand) · 不可阻挡
+        if (BLADE_ATK_SCALE[e2.defId]) e2.profile.atkScale = BLADE_ATK_SCALE[e2.defId];
+      },
       before(c, b2, e2) { const l = targetsNear(b2, e2, e2.base.rangeRadius || 1.6, { ranged: false }); if (l.length) c.targets = l; }, // 范围物理伤害
       taken(c, b2, e2) {
-        if (P.state === 'dive' && ++P.hits >= (bb.max_hit_cnt ?? Infinity)) {
-          // shot down: ground unit, damage ×damage_scale, stunned special_stun_duration, then flies home
-          P.state = 'down';
-          e2.motion = 'WALK';
-          b2.addBuff(e2, { key: 'boss:downed', duration: bb.special_stun_duration ?? 0, visible: true, mods: { dmgTakenMul: bb.damage_scale ?? 1 },
-            onExpire: () => { if (e2.alive) { e2.motion = 'FLY'; P.state = 'return'; } } });
-          b2.applyStatus(e2, 'stun', { duration: bb.special_stun_duration ?? 0, source: null, force: true });
-          b2.fx('phase', { x: e2.x, y: e2.y, id: e2.id, kind: 'shotDown' });
-          return;
-        }
-        if (P.state === 'down' && c.source && c.source.side === 'ally' && c.amount > 0) {
+        if (c.amount > 0) { // 受到伤害时令假想敌：胄受到等量的无来源生命流失 (【瘫痪】; 出击模式 [ASSUMED], see PART_TRANSFER)
           const L = leader(b2);
-          if (L) b2.loseHp(L, c.amount * PART_TRANSFER, { source: c.source, from: c.dmg }); // 被击落时受到伤害以一定比例传递给假想敌：胄
+          const src = c.source || c.credit;                                    // a 无来源 burst still passes on (credited)
+          if (L) b2.loseHp(L, c.amount * BLADE_TRANSFER, { source: src && src.side === 'ally' ? src : null, from: c.dmg, sourceless: true });
         }
+        if (P.state === 'dive' && e2.alive && ++P.hits >= (bb.max_hit_cnt ?? Infinity)) shotDown(b2, e2); // 仅1次
       },
       tick(b2, e2, a, dt) {
-        const sp = e2.s.moveSpeed * MOVE_SCALE * dt;
-        if (P.state === 'dive') {
-          const t = P.target;
-          if (!stepToward(e2, t.c, t.r, sp)) return;
-          stunBlast(b2, e2, t.r, t.c, bb.stun ?? 0, bb.dot_damage ?? 0, bb.dot_duration ?? 0, 'bladeDive');
-          P.state = 'return';
-        } else if (P.state === 'return') {
-          if (stepToward(e2, P.home.x, P.home.y, sp)) { P.state = 'hover'; hover(b2, true); }
-        }
+        if (P.state !== 'dive' || !canCast(e2)) return;                         // a stunned blade does not fly on
+        const t = P.target;
+        if (!stepToward(e2, t.c, t.r, e2.s.moveSpeed * MOVE_SCALE * dt)) return;
+        // arrival: 3×3 stun + DoT (无来源: credited to 胄, as the shell's), then the 初始模式 copy takes over
+        stunBlast(b2, leader(b2) || e2, t.r, t.c, bb.stun ?? 0, bb.dot_damage ?? 0, bb.dot_duration ?? 0, 'bladeDive');
+        replace(b2, e2);
       },
     },
     s && {
-      cd: s.cd, icd: s.icd, cond: (b2) => P.state === 'hover' && opsOnly(allTargets(b2, e)).length > 0,
-      fire(b2, e2) { // fly at the lowest-ATK operator
-        const t = opsOnly(allTargets(b2, e2)).sort((p, q) => p.s.atk - q.s.atk || aggroCmp(p, q))[0];
+      cd: s.cd, icd: s.icd, cond: (b2) => P.state === 'hover' && opsOnly(allTargets(b2, e)).length > 0, // 存在至少1名可选我方干员
+      fire(b2, e2) { // 【掷剑】/【掷锤】 → 出击模式
+        const t = opsOnly(b2.allies()).sort((p, q) => p.s.atk - q.s.atk || aggroCmp(p, q))[0];
         if (!t) return;
         P.state = 'dive'; P.hits = 0; P.target = { r: t.tileR, c: t.tileC };
         hover(b2, false);
+        b2.addBuff(e2, { key: 'boss:sortie', persist: true, flags: { disarm: true } }); // 出击模式：不进行普通攻击
+        const blink = hand ? branchRoute(tpl, `${hand}_blink`) : null;
+        if (blink && Array.isArray(blink.start)) {
+          const from = { x: e2.x, y: e2.y };
+          e2.x = blink.start[1]; e2.y = blink.start[0];
+          b2.fx('blink', { x: e2.x, y: e2.y, id: e2.id, fx: from.x, fy: from.y });
+        }
         b2.fx('charge', { x: e2.x, y: e2.y, id: e2.id, tx: t.tileC, ty: t.tileR, kind: 'bladeDive' });
       },
     },
@@ -545,14 +643,16 @@ function kitSpring(ab, e) {
       },
       burst(c, b) { if (kind === 'element' && P.up) drop(b); },  // 自身元素损伤爆发时，护盾消失
       taken(c, b, e2) {
-        const src = c.source || c.credit;                                      // a 无来源 burst still passes on (credited)
-        if (!src || src.side !== 'ally' || !(c.amount > 0)) return;
+        if (!(c.amount > 0)) return;
         if (c.dmg.tags && c.dmg.tags.includes(SPRING_SHARE_TAG)) return;       // a share never passes on again
-        // 【盲信之誓】 受到伤害时以一定比例传递给假想敌：铳 (and, split, to the other springs — 隐秘核心 text)
+        const s0 = c.source || c.credit;                                       // a 无来源 burst still passes on (credited)
+        const src = s0 && s0.side === 'ally' ? s0 : null;
+        // 【盲信之誓】 受到伤害时令假想敌：铳受到等量的无来源生命流失 (PRTS); the even split to the other springs follows the
+        // 隐秘核心 handbook ("传递给<假想敌：铳>和场上其他<“碎铳之簧”>") — not in the PRTS talent, [ASSUMED] amount
         const g = gun(b);
-        if (g) b.loseHp(g, c.amount * PART_TRANSFER, { source: src, from: c.dmg });
+        if (g) b.loseHp(g, c.amount * PART_TRANSFER, { source: src, from: c.dmg, sourceless: true });
         const others = b.enemies.filter((o) => o.alive && o !== e2 && isSpring(o));
-        for (const o of others) b.loseHp(o, (c.amount * PART_TRANSFER) / others.length, { source: src, from: c.dmg, tags: [SPRING_SHARE_TAG] });
+        for (const o of others) b.loseHp(o, (c.amount * PART_TRANSFER) / others.length, { source: src, from: c.dmg, tags: [SPRING_SHARE_TAG], sourceless: true });
       },
       tick(b, e2, a, dt) {
         if (!P.up && P.downAt != null && b.time - P.downAt >= regen) raise(b);

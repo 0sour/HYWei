@@ -151,6 +151,21 @@ export function boardOrder(board) {
     .sort((a, b) => b.r - a.r || a.c - b.c);
 }
 
+/**
+ * Where a merge's elite stands (PRTS 卫戍协议/帮助 "若消耗已部署至作战区的干员，则发送至作战区对应位置"): of the board tiles
+ * the consumed copies stood on (`[{ key, dir }]`), the first in deployment order (top→bottom, left→right — the copy the
+ * battle deploys first; the right-hand boss half is mirrored on screen but deploys in the same board order) that
+ * `legal(r, c)` accepts for the elite, or null (⇒ the hand). [ASSUMED] the order: the official text names one position.
+ * public/js/ui/gameLogic.js mergeTarget mirrors it for the client.
+ * @param {Array<{ key: string, dir?: string }>} tiles
+ * @param {(r: number, c: number) => boolean} [legal]
+ * @returns {{ key: string, dir?: string, r: number, c: number } | null}
+ */
+export function mergeTile(tiles, legal = () => true) {
+  const sorted = (tiles || []).map((t) => { const [r, c] = parseKey(t.key); return { ...t, r, c }; }).sort((a, b) => b.r - a.r || a.c - b.c);
+  return sorted.find((t) => inField(t.r, t.c) && legal(t.r, t.c)) || null;
+}
+
 /** Index of the free slot to fill (right→left, config.economy.handFillOrder), or -1. */
 export function freeSlot(arr) {
   for (let i = arr.length - 1; i >= 0; i--) if (arr[i] == null) return i;

@@ -7,8 +7,8 @@
 // matches (stage, factions, bans, boss and lineups all vary with the seed), simulates the real wave of that round with
 // the real Battle and FULL content (kits, talents, bonds incl. layers, IN_BATTLE garrisons, items, bands, tokens) and
 // reports the leak distribution and clear time. Boss rounds (R14 / solo 标准 R9) and the Hidden Core (R15) run the
-// real Final Assault fields (pairs, `_s` template for a lone player, shared boss HP pool = bloodPoint (co-op; solo
-// ×0.25 [ASSUMED]) — GameData.bossPoolHp —, team LP, overtime drain) and report the pool damage by 150 s, the kill time and the team LP spent.
+// real Final Assault fields (pairs, `_s` template for a lone player, shared boss HP pool = bloodPoint (co-op; × alive / 4
+// only with config bossHpScale.aliveScaling; solo ×0.25 [ASSUMED]) — GameData.bossPoolHp —, team LP, overtime drain) and report the pool damage by 150 s, the kill time and the team LP spent.
 //
 // The competent board of round r (curves below, profile-scaled): shop level, deployed units, elites (精锐), equipment,
 // 2–3 active bonds built around a core bond (3 members early, 6 from R11 when the pool allows it) and the layers those
@@ -31,7 +31,8 @@
 //   --group N         boards per multi match (default 4; 1 = no 联防)
 //   --boss-samples N  sampled matches per boss / hidden round (default 8)
 //   --rehearsal N     layout variants a board rehearses (default 5 = every bot variant; 0 = heuristic planner only)
-//   --profile         curve multiplier for elites, items and layers (weak 0.6, competent 1, strong 1.4, or a number)
+//   --profile         curve multiplier for elites, items and layers (weak 0.6, competent 1, strong 1.4, or a number;
+//                     a bond's layers stop at BOND_LAYER_CAP, 999)
 //   --tuning off      ignore data/tuning.json (it only holds title rules now: no effect on the numbers)
 //   --legacy-time     read the combat limits as game seconds (the reading before the fix of docs/BALANCE.md §2.1)
 //   --boss-lp N       team LP per alive player entering the Final Assault (default 15)
@@ -54,7 +55,7 @@ import { positionClass } from '../server/match/board.js';
 import { pairPlayers, bossPoolHp, SharedBossPool } from '../server/match/finalAssault.js';
 import { planUnite, uniteBattleOpts, uniteSurvivors } from '../server/match/unite.js';
 import { createRng, deriveSeed } from '../server/sim/rng.js';
-import { GEO, PHASE } from '../shared/constants.js';
+import { GEO, PHASE, layerGainRoom } from '../shared/constants.js';
 import { TICK } from '../server/sim/constants.js';
 
 export const DIFFS = ['FUNNY', 'NORMAL', 'HARD', 'ABYSS'];
@@ -270,7 +271,7 @@ export function applyBoard(m, ps, plan, r, rng, { profile = 1 } = {}) {
   for (const [id, b] of Object.entries(planned)) {
     if (!b.active) continue;
     const base = id === plan.core ? curve('coreLayers', r) : curve('addonLayers', r);
-    const v = Math.round(base * profile * jit());
+    const v = layerGainRoom(0, Math.round(base * profile * jit())); // ≤ BOND_LAYER_CAP (999) for any --profile
     if (v > 0) ps.layers[id] = v;
   }
   ps.recompute();
@@ -376,8 +377,8 @@ export function runBoss({ data, mode, difficulty, round, seed, profile = 1, boss
     }
   }
   const alive = m.alivePlayers();
-  // the official pool (co-op = bloodPoint, no alive scaling) — finalAssault.bossPoolHp until the match adopts it
-  const pool = new SharedBossPool(typeof gd.bossPoolHp === 'function' ? gd.bossPoolHp(id) : bossPoolHp(gd, id, alive.length));
+  // the official pool (co-op = bloodPoint, × alive / 4 only with aliveScaling, DESIGN §20.10; solo ×0.25) — the match's own rule
+  const pool = new SharedBossPool(bossPoolHp(gd, id, alive.length));
   let teamLp = alive.reduce((s, p) => s + p.lp, 0);
   const teamLp0 = teamLp;
   let leakLp = 0;

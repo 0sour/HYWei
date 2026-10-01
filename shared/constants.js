@@ -64,6 +64,44 @@ export const PIECE_KIND = Object.freeze({ CHESS: 'chess', ITEM: 'item', TOKEN: '
  */
 export const SKILL_SUMMON_START_DEPLOY = true;
 
+/**
+ * Official per-bond layer cap (docs/research/11-limits-official.md §1): the client's
+ * `Torappu.Battle.AutoChessBattleConst.MAX_GARRISON_STACK = 999`, and its bond counter (`AddBondCount`) stores
+ * `min(L + n, 999)` — each bond stops at 999 on its own; the community reports bonds sitting at 999 while fed (巴哈姆特
+ * 12534 "每把都能999层", 12316 "999謝"; research 02 §layers). The only implementation of the cap (DESIGN §20.12). Every
+ * writer of a bond's layers goes through `layerGainRoom`: the prep-side gains (server/match/PlayerState.js addLayers —
+ * 特质, items, bands, 机变 cards, bonds), the settle of the in-battle gains (server/match/Match.js) and the live in-battle
+ * copy (server/sim/Battle.js addLayers, as the client's AddBondCount) — and the dev tools' direct writes (tools/matchrun.mjs
+ * --layers, tools/balance.mjs applyBoard); a gain at the cap adds 0 (no onLayers, no 'layer'
+ * event), and the client-result check (server/match/fields.js) bounds a reported gain by the room left. Milestones paid
+ * per N layers (远见, 奇迹, 维多利亚 …) stop with the count. 0 / Infinity = no cap.
+ */
+export const BOND_LAYER_CAP = 999;
+
+/**
+ * The layers a gain of `n` actually adds to a bond holding `before` under BOND_LAYER_CAP: min(n, cap − before), never
+ * negative (a count already at or over the cap gains 0 and is never lowered); 0 for a non-positive / non-finite `n`
+ * except +Infinity (= "the room left").
+ */
+export function layerGainRoom(before, n) {
+  if (!(n > 0)) return 0;
+  const cap = BOND_LAYER_CAP > 0 ? BOND_LAYER_CAP : Infinity;
+  const b = Number.isFinite(before) && before > 0 ? before : 0;
+  return Math.max(0, Math.min(n, cap - b));
+}
+
+/**
+ * Official boss-hit limit "限伤" (docs/research/11-limits-official.md §2): `AutoChessBattleConst.MAX_BATTLE_DAMAGE =
+ * 300000`. In a boss battle outside training — our battle kinds 'boss' (Final Assault) and 'hidden' (Hidden Core) — a
+ * single hit on a leader (`AutoChessBattleUtil.IsBossEnemy`: an enemyId of activity_table autoChessData.bossInfoDict
+ * = data/bosses.json `enemyKey`; in the sim the tag-'boss' units: those leaders and their mirrored copies, never parts,
+ * escorts or drones) whose `ceil(final damage)` ≥ this is CANCELLED: 0 damage, nothing credited to the shared pool
+ * (`AutoChessStepModeManager._OnBossEnemyTakeDamage` → `modifier.Cancel()`). It is not a clamp: a hit of 299999 lands.
+ * Checked in server/sim/damage.js (dealDamage after DEF / RES and every multiplier, before shields; Battle.loseHp).
+ * Minions, normal rounds and 联防 are unaffected. 0 / Infinity = off.
+ */
+export const BOSS_HIT_LIMIT = 300000;
+
 // Snapshot unit flag bits (DESIGN §8.2)
 export const UF = Object.freeze({
   BLOCKED: 1, STUNNED: 2, FROZEN: 4, STEALTH: 8, SKILL: 16, SHIELD: 32, INVULN: 64, COLD: 128, SLEEP: 256, FLYING: 512,

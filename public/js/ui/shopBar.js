@@ -19,7 +19,7 @@
 import { useEffect, useState } from '../../vendor/hooks.module.js';
 import { html, Icon, HexBadge, TierChip, Tooltip, MicroLabel } from './components.js';
 import { Img, BondGlyph, CoinGlyph, GIcon, RichText } from './gameComponents.js';
-import { priceTone, mergeProgress, shopBlockReason, chessLoadout } from './gameLogic.js';
+import { priceTone, mergeProgress, mergeTarget, shopBlockReason, chessLoadout } from './gameLogic.js';
 import { chessPortraitUrl, itemIconUrl, profIconUrl, uiUrl, skillIconUrl, skillRecordIconUrl, moduleTypeIconUrl } from './assetUrls.js';
 import { data } from '../data.js';
 
@@ -37,6 +37,16 @@ function PriceHex({ slot, free, poor = false }) {
 /** Data lookups for shopBlockReason (full-hand purchases that complete a merge stay allowed). */
 const LOOKUPS = { getChess: (id) => data.lookup('chess', id), getItem: (id) => data.lookup('items', id) };
 
+/**
+ * Where a merge-completing buy sends the elite (DESIGN §20.11), null when the card completes no merge: the 可晋升 tag's
+ * title, and a line of the detail card the first tap opens — a touch screen never shows a title (QA 6b).
+ */
+export function mergeHint(priv, chessId) {
+  const prog = mergeProgress(priv, chessId, LOOKUPS.getChess);
+  if (!(prog.copies > 0 && prog.copies + 1 >= prog.need)) return null;
+  return mergeTarget(priv, chessId, LOOKUPS.getChess) ? '精锐干员将出现在作战区原位置' : '精锐干员将进入整备区';
+}
+
 /** The armed (first-tapped) card's confirm strip: 确认购买 / 确认选择, or 无法购买 + why. */
 function ArmedTag({ reason, free }) {
   if (reason) return html`<span class="scard__confirm is-no" role="status"><b>无法购买</b><small>${reason}</small></span>`;
@@ -53,13 +63,14 @@ export function ChessCard({ slot, idx, priv, frozen = false, reason = null, free
   const m = data.get('assets');
   const tier = c?.tier ?? 1;
   const prog = mergeProgress(priv, slot.id, (id) => data.lookup('chess', id));
-  const willMerge = prog.copies + 1 >= prog.need && prog.copies > 0;
+  const hint = mergeHint(priv, slot.id);
+  const willMerge = !!hint;
   const bonds = Array.isArray(c?.bonds) ? c.bonds : [];
   const disabled = !!reason;
   const lo = c ? chessLoadout(c, priv?.loadout, LOOKUPS.getChess) : null;
-  const tap = () => { if (onTap) onTap(idx); else if (!disabled) onBuy(idx); else onDetail(slot.id); };
+  const tap = () => { if (onTap) onTap(idx); else if (!disabled) onBuy(idx); else onDetail(slot.id, 'chess', hint); };
   const card = html`<button type="button" class=${cx('scard', `scard--t${tier}`, frozen && 'is-frozen', disabled && 'is-disabled', willMerge && 'is-merge', armed && 'is-armed')}
-      onClick=${tap} onContextMenu=${(e) => { e.preventDefault(); onDetail(slot.id); }}
+      onClick=${tap} onContextMenu=${(e) => { e.preventDefault(); onDetail(slot.id, 'chess', hint); }}
       aria-label=${`${c?.name || '干员'}，价格 ${slot.price}${armed ? (disabled ? '，无法购买' : '，再次点击确认') : ''}`} aria-pressed=${onTap ? String(!!armed) : undefined}>
     <span class="scard__bg" aria-hidden="true"></span>
     <span class="scard__water" aria-hidden="true">${bonds[0] ? html`<${BondGlyph} bondId=${bonds[0]} />` : null}</span>
@@ -82,7 +93,7 @@ export function ChessCard({ slot, idx, priv, frozen = false, reason = null, free
         <span>${c?.subProfessionName || ''}</span>
       </span>
     </span>
-    ${willMerge ? html`<span class="scard__mergetag">可晋升</span>` : null}
+    ${willMerge ? html`<span class="scard__mergetag" title=${hint}>可晋升</span>` : null}
     ${frozen ? html`<span class="scard__ice" aria-hidden="true"><${Icon} name="snow" /></span>` : null}
     ${armed ? html`<${ArmedTag} reason=${reason} free=${free} />` : null}
   </button>`;
@@ -161,6 +172,20 @@ function LevelCard({ shop, reason, armed = false, onTap }) {
 export const armKey = (kind, idx, slot) => `${kind}:${idx}:${slot?.id ?? ''}`;
 
 /**
+ * The slot an armed key names (`c` / `i` shop slots, `r` reward slots), or null ('lv', nothing armed, a stale key).
+ * @param {string|null} key
+ * @param {any[]} slots the shop's slots
+ * @param {any[]|null} rewardSlots the shown reward offer's slots
+ */
+export function armedSlotOf(key, slots, rewardSlots = null) {
+  const m = typeof key === 'string' ? /^([cir]):(\d+):(.*)$/.exec(key) : null;
+  if (!m) return null;
+  const list = m[1] === 'r' ? rewardSlots : slots;
+  const s = Array.isArray(list) ? list[Number(m[2])] : null;
+  return s && !s.sold && s.id === m[3] ? s : null;
+}
+
+/**
  * Two-tap state of the bar (first tap arms, second confirms). Disarms on a tap outside the shop / detail panel, on
  * Escape, when the armed card changes or disappears, and when the bar stops being editable.
  * @param {{ editable: boolean, keys: Set<string> }} o the keys that are currently valid
@@ -210,12 +235,12 @@ function RewardCards({ offer, priv, editable, onPick, onDetail, onLater, armed, 
 /**
  * The bar.
  * @param {{ priv:any, editable:boolean, collapsed:boolean, onCollapse:(c:boolean)=>void,
- *   onBuy:(i:number)=>void, onLevel:Function, onRefresh:Function, onFreeze:Function, onDetail:(id:string, kind?:string)=>void,
+ *   onBuy:(i:number)=>void, onLevel:Function, onRefresh:Function, onFreeze:Function, onDetail:(id:string, kind?:string, hint?:string|null)=>void,
  *   onDetailClose?: () => void, onRefuse?: (reason: string) => void, barRef:any,
  *   reward?: any, onReward?: (idx:number)=>void, onRewardLater?: Function }} props
  */
 export function ShopBar({ priv, editable, collapsed, onCollapse, onBuy, onLevel, onRefresh, onFreeze, onDetail, onDetailClose, onRefuse, barRef,
-  reward = null, onReward, onRewardLater }) {
+  reward = null, onReward, onRewardLater, onArm = null }) {
   const shop = priv?.shop || {};
   const slots = Array.isArray(shop.slots) ? shop.slots : [];
   const chessSlots = slots.map((s, i) => ({ s, i })).filter(({ s }) => !s || s.kind !== 'item');
@@ -237,10 +262,16 @@ export function ShopBar({ priv, editable, collapsed, onCollapse, onBuy, onLevel,
     if (showReward) reward.slots.forEach((s, i) => { if (s && !s.sold) keys.add(armKey('r', i, s)); });
   }
   const [armed, setArmed] = useTwoTap({ editable, keys });
+  // the armed card's slot (game.js lights the tile a merge's elite will take — gameLogic.mergeTarget); kept before the
+  // collapsed tab's early return (hook order)
+  const armedSlot = armedSlotOf(armed, slots, showReward ? reward.slots : null);
+  const armedSig = armedSlot ? `${armedSlot.kind}:${armedSlot.id}` : '';
+  useEffect(() => { onArm?.(armedSlot ? { kind: armedSlot.kind === 'item' ? 'item' : 'chess', id: armedSlot.id } : null); }, [armedSig]);
+  useEffect(() => () => onArm?.(null), []);
   /** First tap arms + opens the detail; the second buys (or says why it can't). */
   const tapCard = (kind, idx, slot, detailKind, reason, buy) => {
     const key = armKey(kind, idx, slot);
-    if (armed !== key) { setArmed(key); onDetail(slot.id, detailKind); return; }
+    if (armed !== key) { setArmed(key); onDetail(slot.id, detailKind, detailKind === 'chess' ? mergeHint(priv, slot.id) : null); return; }
     if (reason) { onRefuse?.(reason); return; }
     setArmed(null);
     onDetailClose?.();

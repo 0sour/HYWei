@@ -44,6 +44,10 @@
 // User playtest #4: the detail card shows live stats (item 7) — in battle the local sim's unit (battle/runner.js
 // unitStats), in prep an own board unit's start-of-battle stats (g.unitStats → m.unitStats); 机变 cards take two taps
 // (item 2, ui/choiceOverlay.js).
+// Merges (user playtest #6 follow-up, PRTS 卫戍协议/帮助 "若消耗已部署至作战区的干员，则发送至作战区对应位置"): a shop /
+// reward card armed for a purchase that completes a merge lights, in gold, the board tile its elite will take (the
+// deployed copy that deploys first, gameLogic.mergeTarget — none when no copy is deployed: the elite goes to the hand);
+// the elite then appears there with the promotion cue (render/app.js setPrep → fx.promote).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
 import { PHASE, GEO } from '../../../shared/constants.js';
@@ -76,7 +80,7 @@ import {
   phaseMode, phaseBanner, isCombatPhase, showDeadPill, isBossPhase, placementContext, canPlace, boardTargets, dropIntent,
   snapHud, activeBubbles, shortcutFor, shortcutBlocked, closesOnFieldPress, phaseTotalSeconds, homeFieldId, ownFieldId, normalizeSp, sortedPlayers,
   countdownState, shopBlockReason, stageOverrides, effectiveStage, watchTarget, dropFailureReason,
-  previewEnemyKey, prepCamera, deployFieldOf, panelSide, panelSlots, bondPopupPlace, chessLoadout, unitLoadout,
+  previewEnemyKey, prepCamera, deployFieldOf, panelSide, panelSlots, bondPopupPlace, chessLoadout, unitLoadout, mergeTarget,
 } from '../ui/gameLogic.js';
 import { toast } from '../ui/toasts.js';
 import { BriefingScreen } from './briefing.js';
@@ -94,6 +98,8 @@ const cx = (...p) => p.flat().filter(Boolean).join(' ');
 const HUD_HZ_MS = 200;
 /** Range tiles of the selected unit (its own highlight group: the wheel's 'facing' group may be up at the same time). */
 const SEL_RANGE = Object.freeze({ group: 'selRange', color: 0xff9c33, fill: 0.3, line: 0.95 });
+/** The tile an armed merge-completing card's elite will take (its own group; gold like the promotion cue, render/fx.js). */
+const MERGE_HL = Object.freeze({ group: 'mergeTile', color: 0xffd45a, fill: 0.34, line: 1 });
 const STATE_EV = new Set(['spawn', 'die', 'deploy', 'status', 'skill']);
 
 /** Router for the in-match screens. */
@@ -192,6 +198,7 @@ function MatchScreen() {
   const [camKind, setCamKind] = useState('prep');        // kind of the last camera request (data-camera)
   const [replace, setReplace] = useState(null);          // equip-replace dialog: { request, resolve }
   const [pauseBusy, setPauseBusy] = useState(false);
+  const [armedCard, setArmedCard] = useState(null);     // the shop bar's armed card { kind, id } (merge tile cue)
   const cc = isClientCombat(pub);
   const battleState = useStore((s) => s.match.battle, shallowEqual); // local battle runner (client-side combat)
 
@@ -518,6 +525,14 @@ function MatchScreen() {
   // promotion (merge reward offered) and bond activation cues
   const hasOffer = !!priv?.shop?.rewardOffer;
   useEffect(() => { if (hasOffer) audio.sfx('merge'); }, [hasOffer]);
+  // a shop / reward card armed for a purchase that completes a merge lights the tile its elite will take (the deployed
+  // copy that deploys first — PRTS 卫戍协议/帮助 "若消耗已部署至作战区的干员，则发送至作战区对应位置", gameLogic.mergeTarget)
+  const mergeAt = armedCard?.kind === 'chess' && editable && showPrep ? mergeTarget(priv, armedCard.id, gd.chess) : null;
+  const mergeAtKey = mergeAt ? `${mergeAt.row},${mergeAt.col}` : '';
+  useEffect(() => {
+    if (!view) return;
+    try { view.highlightTiles(mergeAt ? [[mergeAt.row, mergeAt.col]] : [], MERGE_HL); } catch { /* cosmetic */ }
+  }, [view, mergeAtKey]);
   const activeBonds = (priv?.bonds || []).filter((b) => b && b.active).length;
   const prevActive = useRef(activeBonds);
   useEffect(() => {
@@ -842,6 +857,9 @@ function MatchScreen() {
   // panel anyway (css z-index), this keeps it visible too
   const ufTile = selEntry && editable && showPrep ? pieceTile(selEntry) : null;
   const ufGeo = useTileScreen(view, ufTile ? ufTile.row : null, ufTile ? ufTile.col : null);
+  // the gold tile of an armed merge card (mergeAt): the detail card the first tap opened docks away from it (QA 6b — at
+  // 1920×1080 the left card covered half of a target tile in the leftmost legal column)
+  const mergeGeo = useTileScreen(view, mergeAt ? mergeAt.row : null, mergeAt ? mergeAt.col : null);
   const retreatSel = useCallback(async () => {
     const L = live.current;
     const uid = L.sel?.uid;
@@ -1003,9 +1021,16 @@ function MatchScreen() {
     return { rem, vp };
   };
   const dSide = (() => {
-    if (!ufShown) return 'left';
-    const { rem, vp } = panelFrame();
-    return panelSide(underframeRect(ufGeo, rem), panelSlots(vp, rem, { shopOpen }));
+    if (ufShown) {
+      const { rem, vp } = panelFrame();
+      return panelSide(underframeRect(ufGeo, rem), panelSlots(vp, rem, { shopOpen }));
+    }
+    if (mergeGeo && resolved) {
+      const { rem, vp } = panelFrame();
+      const half = (mergeGeo.s > 0 ? mergeGeo.s : 64) * 1.05; // the tile diamond's box (underframeRect's)
+      return panelSide({ left: mergeGeo.x - half, right: mergeGeo.x + half, top: mergeGeo.y - half, bottom: mergeGeo.y + half }, panelSlots(vp, rem, { shopOpen }));
+    }
+    return 'left';
   })();
   // the bond popup: next to the card, never over the selected unit's underframe when a place is free (bondPopupPlace)
   const bpPlace = (() => {
@@ -1062,11 +1087,11 @@ function MatchScreen() {
       ${showShop ? html`<${ShopBar} priv=${priv} editable=${editable} collapsed=${collapsed} onCollapse=${setCollapsed}
         barRef=${barRef}
         onBuy=${buy} onLevel=${() => actions.levelUp()} onRefresh=${() => actions.refresh()} onFreeze=${() => actions.freeze()}
-        onDetail=${(id, kind) => setDetail({ kind: kind === 'item' ? 'item' : 'chess', id })}
+        onDetail=${(id, kind, hint) => setDetail({ kind: kind === 'item' ? 'item' : 'chess', id, hint: hint || null })}
         onDetailClose=${() => setDetail((d) => (d?.kind === 'chess' || d?.kind === 'item' ? null : d))}
         onRefuse=${(reason) => { toast(reason, 'warn'); audio.sfx('error', { volume: 0.5 }); }}
         reward=${phase === PHASE.PREP && !rewardMin ? priv?.shop?.rewardOffer || null : null}
-        onReward=${(i) => actions.reward(i)} onRewardLater=${() => setRewardMin(true)} />` : null}
+        onReward=${(i) => actions.reward(i)} onRewardLater=${() => setRewardMin(true)} onArm=${setArmedCard} />` : null}
 
       ${phase === PHASE.PREP && priv?.shop?.rewardOffer ? html`<${RewardOverlay} priv=${priv} minimized=${rewardMin || collapsed}
         onMinimize=${(m) => { setRewardMin(m); if (!m) setCollapsed(false); }} />` : null}

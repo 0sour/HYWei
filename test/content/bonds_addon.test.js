@@ -142,6 +142,47 @@ test('奥术: member arts damage → target arts taken ×(1.2+0.01·L) for 3 s; 
   checkInvariants(h2.b);
 });
 
+test('奥术 with two players on one field: one instance per target, the strongest wins (never multiplied); a weaker one resumes after it', () => {
+  // DESIGN §20.10: PRTS 作战机制 "同名buff的默认叠加策略buff只能表现出一个"; 巴哈姆特 12316 "共享型buff會跟對面搶 如果對面層數比你高
+  // 就不需要再特別激活直接吃他的奧術buff". v2.5 kept one instance per player: ×(1.3)·×(1.7) here.
+  const bb = bondBb('arcaneShip');
+  const caster = (id) => chessRec({ id, bonds: ['arcaneShip'], profession: 'CASTER', skill: null, rangeGrid: [[0, 0]] });
+  const defs = { chess: { a_1: caster('a_1'), a_2: caster('a_2'), a_x: op('a_x', []) }, enemies: DUMMY };
+  const h = makeBattle({
+    kind: 'boss', defs,
+    players: [
+      { playerId: 'p1', seat: 0, side: 'L', colOffset: 0, units: [{ uid: 1, kind: 'chess', chessId: 'a_1', row: 12, col: 3 }], bonds: { arcaneShip: bond(1, 10) } },
+      { playerId: 'p2', seat: 1, side: 'R', colOffset: 0, units: [{ uid: 2, kind: 'chess', chessId: 'a_2', row: 12, col: 3 }, { uid: 3, kind: 'chess', chessId: 'a_x', row: 11, col: 3 }], bonds: { arcaneShip: bond(1, 50) } },
+    ],
+    enemies: [{ key: 'enemy_addon_dummy', pos: [9, 9] }],
+  });
+  h.step(2);
+  const e = h.enemy('enemy_addon_dummy');
+  const u1 = h.b.allyUnits.find((u) => u.defId === 'a_1'), u2 = h.b.allyUnits.find((u) => u.defId === 'a_2');
+  const m1 = bb.base_damage_scale + bb.damage_scale_per_stack * 10, m2 = bb.base_damage_scale + bb.damage_scale_per_stack * 50;
+  h.b.dealDamage(u1, e, { amount: 100, type: 'arts' });
+  close(e.s.artsTakenMul, m1, 'p1 alone');
+  h.b.dealDamage(u2, e, { amount: 100, type: 'arts' });
+  close(e.s.artsTakenMul, m2, 'the stronger p2 instance takes over — not m1 × m2');
+  h.b.dealDamage(u1, e, { amount: 100, type: 'arts' });
+  close(e.s.artsTakenMul, m2, 'a weaker application never overrides it');
+  assert.equal(e.buffs.filter((b) => String(b.key).startsWith('bond:arcaneShip')).length, 1, 'one buff on the target');
+  // the partner's non-member arts damage benefits too (it is a debuff on the target)
+  const x = h.b.allyUnits.find((u) => u.defId === 'a_x');
+  const hp0 = e.hp;
+  h.b.dealDamage(x, e, { amount: 100, type: 'arts' });
+  close(hp0 - e.hp, 100 * m2, 'any arts damage on the target');
+  // p2 stops: its instance expires at 3 s, p1's later application (≈ 3 s too) resumes for the rest
+  h.run(1);
+  h.b.dealDamage(u1, e, { amount: 100, type: 'arts' });
+  close(e.s.artsTakenMul, m2, 'still the stronger one');
+  h.run(bb.weak_duration - 1 + 0.1);
+  close(e.s.artsTakenMul, m1, 'the stronger expired, the weaker (applied later) resumes');
+  h.run(1.1);
+  close(e.s.artsTakenMul, 1, 'both expired');
+  checkInvariants(h.b);
+});
+
 test('坚守: all operators HP ×(1.25+0.012·L); tier 2 redirect 40% to members, thorns + fragile, cooldown, no loops', () => {
   const bb = bondBb('steadShip');
   const defs = { chess: { d_1: op('d_1', ['steadShip']), d_2: op('d_2', ['steadShip']), d_n: op('d_n', []) }, enemies: DUMMY };
@@ -178,6 +219,30 @@ test('坚守: all operators HP ×(1.25+0.012·L); tier 2 redirect 40% to members
   h.b.dealDamage(null, d1, { amount: 50, type: 'true' });
   close(e.hp, e2, 'sourceless damage: no thorns');
   checkInvariants(h.b);
+});
+
+test('坚守 thorns: 无来源 (no attacker bonus, hooks see no source) but credited to the member — its stats and the shared-pool tally', async () => {
+  // DESIGN §20.10: v2.5 dealt them with no source at all, so no player's boss damage counted them (19 % of a co-op pool)
+  const { SharedBossPool } = await import('../../server/match/finalAssault.js');
+  const bb = bondBb('steadShip');
+  const defs = { chess: { d_1: op('d_1', ['steadShip']), d_2: op('d_2', ['steadShip']) }, enemies: DUMMY };
+  const pool = new SharedBossPool(1e6);
+  const h = makeBattle({ defs, kind: 'boss', sharedBoss: pool, units: [{ chessId: 'd_1', row: 10, col: 3 }, { chessId: 'd_2', row: 10, col: 5 }],
+    bonds: { steadShip: bond(2, 10) }, enemies: [{ key: 'enemy_addon_dummy', pos: [9, 9], tag: 'boss' }], hooks: ['damaged'], captureNoisy: true });
+  h.step(2);
+  const e = h.enemy('enemy_addon_dummy'), d1 = h.unit('d_1');
+  assert.ok(e.bossPool, 'the leader drains the pool');
+  h.b.addBuff(d1, { key: 'test:rage', mods: { dmgDealtMul: 2 } });
+  const p0 = pool.hp, dmg0 = d1.stats.dmg;
+  h.b.dealDamage(e, d1, { amount: 100, type: 'true' });
+  const thorn = bb.base_damage_value + bb.damage_value_per_stack * 10;
+  close(p0 - pool.hp, thorn, 'thorns hit the pool, the member\'s ×2 does not apply');
+  const ev = h.hooksOf('damaged').filter((c) => c.target === e);
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].source, null, '无来源: hooks see no source');
+  assert.equal(ev[0].credit, d1, 'credited to the member');
+  close(d1.stats.dmg - dmg0, thorn, 'member stats');
+  close(h.result().perPlayer.p1.bossDamage, thorn, 'its player\'s shared-pool tally');
 });
 
 test('坚守 tier 2: the redirected 40 % is the already-scaled damage — the attacker’s damage bonus is not applied twice', () => {

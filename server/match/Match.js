@@ -119,7 +119,7 @@
 //     human is left at all the match ends ('abandoned'); when nobody alive is left it ends as 'eliminated'.
 
 import { C2S, unitStatsEntry } from '../../shared/protocol.js';
-import { PHASE, ERR, EMOTES, EMOTE_COOLDOWN_MS, GEO, modeIdFor } from '../../shared/constants.js';
+import { PHASE, ERR, EMOTES, EMOTE_COOLDOWN_MS, GEO, modeIdFor, layerGainRoom } from '../../shared/constants.js';
 import { Battle } from '../sim/Battle.js';
 import { DataSource } from '../sim/simdata.js';
 import { createRng, deriveSeed } from '../sim/rng.js';
@@ -174,7 +174,8 @@ const BOSS_RESULT_GRACE_MS = 6000;
  * pool per BOSS_MIN_CLEAR_GS game seconds (20 % of the pool per game second; the balance model's fastest mean kills
  * take ≈ 18–20 s at ≈ 5 %/s per field, docs/BALANCE.md §3), the credited LP cost ≤ BOSS_LP_BURST + BOSS_LP_PER_GS per
  * game second (a leader's "扣除所有目标生命" comes after ≥ 200 s). Reports are cumulative: what exceeds the budget is
- * credited later as the budget grows (the boss clock re-applies the latest report), never lost.
+ * credited later as the budget grows (the boss clock re-applies the latest report), never lost — a 'cleared' b.result
+ * whose report covers the pool waits for it too (`heldResult`; 999-layer kills take 2–4 game s), it is not handed over.
  */
 const BOSS_MIN_CLEAR_GS = 5;
 const BOSS_LP_BURST = 10;
@@ -1909,8 +1910,9 @@ export class Match {
       progress: { gt: 0, killed: 0, total, leaks: 0, done: false }, lastProgressAt: this.sched.now(),
       bossAcked: 0, bossBy: {}, lpAcked: 0, lpCum: 0, deadlineTimer: null, doneTimer: null, waitTimer: null,
       // boss fields: the latest client reports (re-credited as the plausibility budget grows), the server run's
-      // CreditPool, humans demoted for an implausible result (never the authority of this field again)
-      bossReported: null, lpReported: 0, credit: null, demoted: new Set(),
+      // CreditPool, humans demoted for an implausible result (never the authority of this field again), a 'cleared'
+      // b.result waiting for the budget to credit the pool it emptied (`heldResult`, _onResult)
+      bossReported: null, lpReported: 0, credit: null, demoted: new Set(), heldResult: null,
     };
   }
 
@@ -2306,7 +2308,7 @@ export class Match {
   _onResult(ps, msg) {
     if (!this.clientCombat) return fail(ERR.WRONG_PHASE, 'server-run combat');
     const f = this._fieldByBattle(msg.battleId);
-    if (!f || f.done || f.mode !== 'client' || f.authority !== ps.playerId) return OK;
+    if (!f || f.done || f.heldResult || f.mode !== 'client' || f.authority !== ps.playerId) return OK;
     const bossLike = f.kind === 'boss' || f.kind === 'hidden';
     const v = validateClientResult(f.spec, msg.result, { gd: this.gd });
     if (!v.ok) {
@@ -2334,12 +2336,23 @@ export class Match {
       // the pair's fight (and, with every field done, end the Final Assault as a defeat). The field is handed to the
       // partner's replica or the server instead, and the sender never reports it again.
       if (!this._finalEnding && !(pool && pool.hp <= 0)) {
+        // 'cleared' while the budget still holds part of the client's cumulative report back: when that report covers
+        // what the pool holds, the client emptied the pool as it saw it, only faster than BOSS_MIN_CLEAR_GS lets the
+        // server credit (999-layer boards kill a 绝境 leader in 2–4 game s; official "boss一秒死", DESIGN §20.10). The
+        // result waits: the boss clock credits the report as the budget grows and the pool's end (_endFinal) completes
+        // the field with it — no takeover, nothing credited faster than the budget (a forged report gains nothing a
+        // b.progress could not already get). The 1 HP slack is the pool's dust floor (BOSS_POOL_MIN_HP).
+        const reported = Math.max(sum, f.bossReported ? f.bossReported.cum : 0);
+        if (result.reason === 'cleared' && pool && reported - f.bossAcked >= pool.hp - 1) {
+          f.heldResult = result;
+          return OK;
+        }
         this.verifyStats.rejected++;
         this.log.warn?.(`[match ${this.roomCode}] ${f.fieldId}: implausible boss result from ${ps.playerId} (${result.reason} while the pool holds ${pool ? Math.round(pool.hp) : '?'}) — handed over`);
         this._bossHandover(f, 'invalid', { demote: true });
         return OK;
       }
-      for (const pid of f.players) if (result.perPlayer[pid]) result.perPlayer[pid].bossDamage = Math.max(result.perPlayer[pid].bossDamage || 0, f.bossBy[pid] || 0);
+      this._bossResultDamage(f, result);
     } else {
       result = this._verifyResult(f, result);
     }
@@ -2348,6 +2361,11 @@ export class Match {
     this._fieldDone(f);
     if (bossLike) { this._checkFinalEnd(); this._broadcastPool(false); }
     return OK;
+  }
+
+  /** A boss field's accepted client result: each player's bossDamage is at least what the server credited them. */
+  _bossResultDamage(f, result) {
+    for (const pid of f.players) if (result.perPlayer[pid]) result.perPlayer[pid].bossDamage = Math.max(result.perPlayer[pid].bossDamage || 0, f.bossBy[pid] || 0);
   }
 
   /**
@@ -2555,7 +2573,7 @@ export class Match {
    * its partner (a replica already running) takes over, else the server.
    */
   _bossHandover(f, why, { demote = false } = {}) {
-    if (f.done || f.mode !== 'client') return;
+    if (f.done || f.mode !== 'client' || f.heldResult) return; // a held 'cleared' result is in: nothing left to run
     const prev = f.authority;
     if (demote && prev) f.demoted.add(prev);
     const next = this._authorityFor(f, prev);
@@ -2581,7 +2599,7 @@ export class Match {
         if (f.bossReported && f.bossReported.cum > f.bossAcked) this._creditBoss(f, f.bossReported.cum, f.bossReported.by);
         if (f.lpReported > f.lpAcked) this._creditLp(f, f.lpReported, true);
       }
-      if (f.cc && !f.done && f.mode === 'client' && now - f.lastProgressAt > BOSS_SILENCE_MS) {
+      if (f.cc && !f.done && f.mode === 'client' && !f.heldResult && now - f.lastProgressAt > BOSS_SILENCE_MS) {
         this.log.info?.(`[match ${this.roomCode}] ${f.fieldId}: no progress from ${f.authority} — handing the field over`);
         this._bossHandover(f, 'silent');
       }
@@ -2615,6 +2633,13 @@ export class Match {
         continue; // _fieldDone below (after every field was told)
       }
       for (const pid of this._humansShowing(f)) this.sendTo(pid, { t: 'b.end', battleId: f.battleId, fieldId: f.fieldId, reason });
+      if (f.heldResult) {
+        // its authority already reported 'cleared' (_onResult): that result completes the field
+        f.result = f.heldResult;
+        this._bossResultDamage(f, f.result);
+        f.resultSource = 'client';
+        continue; // _fieldDone below
+      }
       f.waitTimer = this.later(this.scaled(BOSS_RESULT_GRACE_MS), () => {
         f.waitTimer = null;
         if (f.done) return;
@@ -2623,7 +2648,7 @@ export class Match {
       });
     }
     if (this.pacer) { this.pacer.stop(); this.pacer = null; }
-    for (const f of this.fields) if (f.cc && !f.done && f.mode === 'server') this._fieldDone(f);
+    for (const f of this.fields) if (f.cc && !f.done && (f.mode === 'server' || f.heldResult)) this._fieldDone(f);
   }
 
   /** b.pool { hp, max, teamLp, acked } to everyone (≤ 4 Hz; `force` skips the dedupe, never the rate). */
@@ -2689,11 +2714,14 @@ export class Match {
       if (coins > 0) { ps.pendingFunds += coins; ps.stats.fundsGained += coins; }
       for (const b of ps.bounties) b.roundsLeft--;
       ps.bounties = ps.bounties.filter((b) => b.roundsLeft > 0);
-      // IN_BATTLE layer gains (normal battles only)
+      // IN_BATTLE layer gains (normal battles only), at most the room left under BOND_LAYER_CAP (999, as the battle's
+      // live copy: Battle.addLayers); a bond at the cap gains nothing and dispatches nothing
       for (const [bondId, n] of Object.entries(r.layerGains || {})) {
         if (!this.gd.bond(bondId) || !(n > 0)) continue;
         const before = ps.layers[bondId] || 0;
-        ps.layers[bondId] = before + Math.floor(n);
+        const add = layerGainRoom(before, Math.floor(n));
+        if (!(add > 0)) continue;
+        ps.layers[bondId] = before + add;
         this.dispatch(ps, 'onLayers', { bondId, from: before, to: ps.layers[bondId], reason: 'battle' });
       }
       this._charDamageTickers(ps, r);

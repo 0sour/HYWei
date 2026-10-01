@@ -13,8 +13,24 @@ kinds / counts and routes must follow the official game; research 08 §6–§7, 
   `k` copies, no kept fly placeholders; verified against all 429 official entry × round compositions and the official
   count distribution (同盟 险境 R3 ≤ 10 enemies, R13 ≈ 37 — the old generator averaged 28 / 81);
 * stats = the PRTS per-round `enemyScale` table only (`data/config.json`, 终极 ×1.15 speed from R3);
-* leader pool = `bloodPoint[difficulty]` (co-op; one pool for the split leaders, no alive-player factor — solo keeps
-  ×0.25, flagged [ASSUMED] in data);
+* leader pool = `bloodPoint[difficulty]` in co-op — one pool for every boss field, whatever the number of alive players
+  (config `bossHpScale.aliveScaling` would make it × alive / 4; off — the user chose the fixed pool, DESIGN §20.10); solo keeps ×0.25,
+  flagged [ASSUMED] in data;
+* leader parts and drones (DESIGN §20.10): a 剑 / 锤 / 碎铳之簧 passes every damage it takes to its leader 1:1 (PRTS "等量的
+  无来源生命流失"; until 2026-10-01 half, and a 剑 / 锤 only while grounded — the dive hits [ASSUMED], the handbook says
+  "被击落时"); a 胄 drone that dies (whoever kills it, DESIGN §20.13) costs 2 % of the leader's shown max HP = the pool (unchanged from v2.5; which "最大生命值" the
+  official client reads is [ASSUMED] — the review round tried the unit's data 600 000, which made drones 19–78 % of a solo
+  标准 fight, and went back, `bosses.js DRONE_LINK_BASE`);
+* same-named effects on an enemy: one instance, the strongest — 奥术 (the two players of a pair field compete for it;
+  until 2026-10-01 one per player, multiplied: ×30 arts damage taken on a leader at ~250 layers each), 灵知 坚冰,
+  莱恩哈特 / 缄默德克萨斯 RES cuts (until 2026-10-01 one per copy of the operator);
+* 坚守 thorns: 无来源 but credited to the member hit (until 2026-10-01 nobody's: up to 19 % of a co-op leader pool and
+  88 % of a solo one missing from the per-player boss damage; kill times unchanged);
+* bond layers stop at 999 per bond (`BOND_LAYER_CAP`, official: the client's `MAX_GARRISON_STACK`, §7 / research 11; until
+  2026-10-01 no cap, so per-layer bonuses kept growing past anything the official game reaches);
+* player-side "+X%" ATK / DEF / max HP of bonds, strategies, equipment, 机变 cards and per-layer 特质 = 直接乘算, summed
+  with each other and with skills (PRTS 盟约记录 / 游戏数据基础; DESIGN §20.10) — until 2026-10-01 each compounded, which
+  made every measurement below the 2026-10-01 note (§3) too strong for the player side (most in late rounds and leader fights);
 * bounties: no extra ×0.7 in solo (the 70 % base is already in `enemyScale`), spawned with the template's first normal
   action (research 08 §5);
 * routes = the official 4-direction flow field with crates at cost 1000 (research 08 §3), act1 m02 without crates.
@@ -104,7 +120,9 @@ the preview being read by a human in 90 s, and losing LP early (fewer rounds to 
 | Faction mixing | was: every round a ground entry + a FLY entry | **official: one entry per round from a 15-slot type schedule** |
 | `MOVE_SCALE` 0.5 | every level's `moveMultiplier` 0.5 (05 §2.2) | kept |
 | **Combat time limit unit** | `maxPlayTime` read as game seconds [ASSUMED] | **wrong — real seconds; fixed** (§2.1) |
-| Boss pool | bloodPoint DATA; co-op "敌方领袖的总生命值不变" | **co-op = bloodPoint, no alive scaling**; solo ×0.25 kept [ASSUMED]; the solo 标准 ×0.6 removed |
+| Boss pool | bloodPoint DATA = the current game data (activity_table act2autochess bossInfoDict; the local cache equals upstream ArknightsGameData master, checked 2026-10-01). PRTS 盟约记录's leader table is the older 11月18日 revision: it matches 常规 and most of 险境, but differs for 铳 险境 (450 000 vs 400 000) and 胄 / 铳 / 萨米 绝境 (1 600 000 / 870 000 / 1 800 000 vs 1 800 000 / 800 000 / 2 000 000), and has no 终极 column or 卢西恩 row; one pool for every field ("所有人将一起对敌方领袖造成伤害"); "敌方领袖的总生命值不变" = the mirrored copies of a pair field share it (notice 5114) | **co-op = bloodPoint whatever the alive count**; × alive / 4 is a config switch (`aliveScaling`, off: 巴哈姆特 12294 "聯機隊友…變少，最後boss血條也會變少" is one community note without a proportion, awaiting the user's recall); solo ×0.25 kept [ASSUMED]; the solo 标准 ×0.6 removed |
+| Leader parts / 胄 drones / same-named debuffs / 坚守 thorns | PRTS 碎铳之簧, “斩胄之剑”, “破胄之锤” "受到伤害时令…受到等量的无来源生命流失"; PRTS 假想敌：胄 "该妖怪死亡时令假想敌：胄受到最大生命值2%的真实伤害" (which max HP: [ASSUMED]); PRTS 作战机制 同名buff默认只表现出一个, 巴哈姆特 12316 "共享型buff會跟對面搶"; 坚守 "伤害来源受到(850+10×L)点法术伤害" | **parts 1:1 (was ½, 剑/锤 only grounded); drone 2 % of the pool (unchanged; the unit-HP reading was tried and reverted); 奥术 / 灵知 坚冰 / 莱恩哈特 & 缄默德克萨斯 RES cut: one instance per target (was one per player / copy); thorns credited to the member (was to nobody)** — 2026-10-01, DESIGN §20.10 |
+| Bonus stacking | was: each bond / strategy / item / 机变 / 特质 "+X%" its own ×(1 + x) (research 02 §2.1) | **official 直接乘算: summed with each other and with skill "+X%"** (PRTS 盟约记录 "…属性加成均为直接乘算", 游戏数据基础 D_t = Σtᵢ); 2026-10-01, DESIGN §20.10 |
 | Solo bounties ×0.7 | 上半 11/18 note = the global solo base | **removed** (already in enemyScale) |
 | Bounty spawn timing | was: the bounty units appended after the host action's own units | **official: inserted among them at floor((i+1)·len/(n+1)), then the list spread over the window** (client `_InsertSpActionToNormal` + `_CalculateActionPredelay`, decoded; `waves.js withBounties`) |
 | 联防 spawn timing | was: owner k at +min(0.5·k, 5) s, each owner's units over the whole window [ASSUMED] | **official (decoded `_CalculateActionPredelayConsiderUid`): owner k at +0.5·k s, unit step min(max(W/M, 0.05·W), 5 s), M = largest owner group** — a lone leaker's units now come 5 s apart instead of up to 40 s |
@@ -171,12 +189,111 @@ multipliers, their parts all of them): normal rounds unchanged, leader rounds an
 | 同盟 绝境 | pool 1.68M · win 88 % · 99 % · 32.6 s | pool 3.42M · win 88 % · 94 % · 100.9 s |
 | 同盟 终极 | pool 3.70M · win 88 % · 95 % · 41.9 s | pool 6.08M · win 75 % · 87 % · 92.6 s |
 
+**2026-10-01 — 假想敌：胄 audit** (content/bosses.js `kitHelm` / `kitBlade`, PRTS): one 刺胄之弹 below 20 % as well
+(能力修正), shells only at operators in range (boss_1 too), any drone death costs 2 %, 剑 / 锤 sorties per PRTS (【瘫痪】
+10 s instead of 20 s, 100 % of their damage passed to 胄 also during the dive instead of 50 % while grounded, a fresh copy
+after every sortie, so 掷 comes back after its initial 25 / 55 s instead of the 80 s cooldown; 锤 hits 150 % ATK).
+Same-seed `--boss-only` before → after: boss_1 unchanged (≤ 0.5 s); boss_8 独立 绝境 44.7 → 45.2 s, 独立 终极 win
+2/3 → 3/3, 同盟 绝境 23.3 → 23.7 s, 同盟 终极 72.0 → 64.2 s (n = 3–5 per cell). The leader columns above are from an
+earlier commit (a current run differs for every leader) and were not refreshed here.
+
 Reading: the early game is easy everywhere (official R1–R3 bring 3–10 enemies); leaks concentrate on the second-half
 specials (深池逐火 TIMES embers, stealth 隐形弩手组长 / 重弩突袭者, 疯狂的逐腐兽, 掠海漂移体) and 终极 R6–R11, where co-op
 boards still leak 3–6 and 联防 halves the LP cost. Solo leaders (bloodPoint × 0.25 [ASSUMED]) are the hard part of the
 solo modes; the solo pool factor is the one open number here (research 08 §8 #2).
 
 Reproduce: `node tools/balance.mjs --mode all --difficulty ALL --tuning off [--bots 5] [--json]`.
+
+**2026-10-01 — 直接乘算 stacking and the leader pool (DESIGN §20.10).** The tables above were measured while every bond /
+strategy / item "+X%" compounded. With the official summing, leader rounds of the same model (`--boss-only --boss-samples 8
+--rehearsal 0`, mean kill time in **game** seconds; 2× = real): 同盟 终极 35.6 → 59.7 (隐秘核心 104.9 → 143.9, win 100 → 88 %),
+同盟 绝境 25.1 → 37.0 (38.5 → 80.8), 同盟 险境 14.0 → 17.8, 独立 终极 91.1 → 128.5, 独立 绝境 42.0 → 73.7. Replaying the
+same R14 lineups of 4-AI 终极 matches (seeds 1–3, every leader; the fights dumped with the old code and replayed with
+both): median kill 175 → 247 real s at the bots' own layers (Σ 36–361 per player), 65 → 109 s at +100 layers per active
+bond, 37 → 61 s at +200, 25 → 40 s at +400; 绝境 97 → 106, 25 → 43, 16 → 28, 10.5 → 19.7 s. Bot matches (`matchrun`, 8
+seeds) pass fewer rounds: 同盟 险境 14.0 → 13.6, 绝境 12.0 → 11.4, 终极 10.1 → 9.9; 独立 险境 13.5 → 12.6 (wins 6 → 3 of 8),
+绝境 12.9 → 12.6, 终极 9.5 → 9.1.
+
+**2026-10-01 (review rounds) — 奥术 and the other same-named debuffs one instance, leader parts 1:1, fixed pool, 坚守
+thorns credited.** Replays of the R14 boards of 4-AI co-op matches (seeds 7–9 × boss_1…7 × 终极 / 绝境 = 21 fights per
+row, both pair fields on one pool, +L layers on every active bond; real seconds, ∞ = not killed in 200 s), v2.5 →
+直接乘算 → now — measured on the boss-HP workstream's boards, **before** the elite-to-board merge (DESIGN §20.11) changed
+what the bots build; the integrated build's numbers are in the 2026-10-02 table below:
+
+| mode | +L | Σ active layers / player | median kill | fastest | kills < 10 s | kills < 20 s |
+|---|---|---|---|---|---|---|
+| 终极 | 0 | 251 (210–404) | ∞ → ∞ → ∞ (8 → 6 → 6 kills) | 90.7 → 126.5 → 126.5 | 0 | 0 |
+| 终极 | 100 | 892 (793–1204) | 61.4 → 85.8 → 102.6 | 20.0 → 22.5 → 54.7 | 0 | 0 |
+| 终极 | 200 | 1532 (1343–2004) | 30.9 → 43.4 → 56.0 | 9.2 → 9.7 → 20.1 | 1 → 1 → 0 | 9 → 4 → 0 |
+| 终极 | 400 | 2813 (2443–3604) | 16.4 → 23.9 → 23.9 | 2.6 → 2.7 → 9.0 | 7 → 4 → 1 | 13 → 10 → 8 |
+| 绝境 | 0 | 257 (224–423) | 66.5 → 81.3 → 81.3 | 21.7 → 41.0 → 41.0 | 0 | 0 |
+| 绝境 | 100 | 900 (824–1277) | 16.0 → 23.5 → 23.5 | 10.8 → 11.7 → 11.7 | 0 | 13 → 8 → 8 |
+| 绝境 | 200 | 1543 (1424–2177) | 11.7 → 14.2 → 14.2 | 7.4 → 7.8 → 8.8 | 5 → 5 → 5 | 19 → 16 → 16 |
+| 绝境 | 400 | 2829 (2624–3977) | 8.4 → 9.2 → 9.2 | 2.1 → 2.0 → 2.7 | 16 → 12 → 12 | 21 |
+
+The 奥术 fix moves the fields where both players run 奥术 (终极 seed 7: leader arts damage taken ×40 → ×7.6 at +400, kills
+2.7 → 9.0 s; 9.7 → 20.1 s at +200). 胄's drones stay at 2 % of the pool (v2.5; 12–44 % of the pool damage at the bots'
+layers, 2–16 % at +200): the second review round's unit-HP reading (12 000 per drone) is reverted — it made a drone 19 %
+of a solo 标准 bar (solo 胄 replays, seeds 13 / 21 / 31: drones 10 → 78 % of the pool, kill 144 → 78 s); with the pool
+reading the solo fights are back at v2.5 (drones 4–30 %) and only 直接乘算 slows them (标准 none / +100 / +200: kill
+times = v2.5 or up to +4 s; 终极 / 绝境 +100: 16 → 25 s, 69 → 101 s, 90 → 135 s). 坚守 thorns now count for the member's
+player: on the second reviewer's 28 co-op boards the unattributed share of the leader damage drops from up to 27 % (58 %
+with each player's main bond at 999) to 0, a solo 标准 胄 fight's from 88 % to 0; kill times are unchanged. What still kills a 绝境 leader in
+3 s at Σ ≈ 3000 layers per player is official per-layer scaling without caps (炎 +0.9 %/layer ATK, 维多利亚 ×(1.25 +
+0.008 L), 精准 +1.2 %/layer, 坚守 thorns 850 + 10 L every 0.2 s) — the community reports the same in the official game
+(巴哈姆特 12522: 999 谢拉格 + 301 灵巧 + 122 炎 at R14 "boss一秒死"). Since 2026-10-01 a bond stops at 999 layers
+(`BOND_LAYER_CAP`, official: the client's `MAX_GARRISON_STACK`, research 11 §1 and §7 below — the game data has no such
+constant, and the community never names a count above 999: 巴哈姆特 12534 "每把都能999层", "沒999層的盟約情況下"; v2.5 kept
+growing). On the 42 boards of the table above it changes nothing up to
++400 (no bond passes 568); with each player's top bond at 1500 it holds that bond at 999: 终极 median 82.1 → 101 s
+(16–17 of 21 killed), fastest 19.9 → 31.4 s; 绝境 median 12.2 → 19.6 s, fastest 6.7 → 8.6 s (uncapped at 2500: 终极
+median 54.9 s, fastest 12.0 s; 绝境 8.2 s / 3.4 s). "限傷" (巴哈姆特 12316 "999謝絕對不要亮奧術…大初雪會被限傷
+打不出來") is the official boss-hit limit, not an overflow: the client cancels a single leader hit of ≥ 300000 in boss
+battles (`MAX_BATTLE_DAMAGE`, research 11 §2, `BOSS_HIT_LIMIT` — §7). An earlier reading of this note (an engine
+fixed-point overflow at 2³¹, not modelled) is superseded by that binary evidence. The largest damage instance on a
+leader in all the measurements here is 144 000 (a hidden 胄 drone at 终极; from an operator 141 323 at +400 layers;
+245 493 with an uncapped 2500-layer bond), below the line, so the limit leaves these numbers unchanged — for these
+profiles (up to +400 per bond, a top bond at 999); with two bonds or every bond at 999 it cancels hits and changes the
+kill times (the 2026-10-02 table below). Hidden Core (36 fights, boss_8–10, +30 / +100 at R14): hidden 铳 kills 5 → 3 → 5 of 12
+(pool dealt by 200 s 82 → 61 → 80 %; the springs' 1:1 transfer is 55–85 % of its damage); hidden 胄 10 → 6 → 9 of 12
+(drones median 16–33 % of the pool damage, v2.5 12–32 %; 剑 / 锤 transfer 10–11 → 22–25 %); hidden 管 12 → 11 → 11 of 12.
+
+**2026-10-02 — the integrated build (QA 6b, `cca11e6`: boss HP + elite to the board + official limits + the 胄 audit).**
+The R14 boards of real 4-AI co-op matches, seeds 7 / 8 / 9 / 12 × boss_1…7 (28 Final Assaults per row; Hidden Core
+boss_8–10, 12 per row), both pair fields on one pool, the same boards replayed on v2.5 → now. Real seconds (the QA tables
+are in game seconds: ÷ 2); "cancelled" = hits stopped by 限伤 on the integrated build. Profiles: own = the bots' layers
+(Σ ≈ 230 active per player), +L on every active bond (Σ ≈ 1500 / 2650–2960), top-2 = each player's two highest bonds at
+999 (Σ ≈ 2050), all = every active bond at 999 (Σ ≈ 6000–7000).
+
+| fight | profile | median kill | fastest | kills < 5 s | cancelled | biggest landed hit |
+|---|---|---|---|---|---|---|
+| 终极 最终攻势 | own | 206 → 258 | 88 → 114 | 0 → 0 | 0 | 72k → 72k |
+| 终极 最终攻势 | +200 | 24.5 → 42.1 | 8.2 → 18.9 | 0 → 0 | 0 | 180k → 72k |
+| 终极 最终攻势 | +400 | 11.3 → 16.8 | 3.7 → 9.2 | 2 → 0 | 0 | 402k → 114k |
+| 终极 最终攻势 | top-2 | 28.5 → 47.8 | 4.2 → 7.5 | 2 → 0 | 6 | 828k → 274k |
+| 终极 最终攻势 | all | 5.0 → 8.3 | 1.2 → 3.4 | 14 → 9 | 18 | 2.38M → 300k |
+| 绝境 最终攻势 | own | 79 → 99 | 19 → 32 | 0 → 0 | 0 | 44k → 36k |
+| 绝境 最终攻势 | +200 | 11.6 → 14.8 | 1.9 → 7.3 | 3 → 0 | 0 | 148k → 51k |
+| 绝境 最终攻势 | +400 | 6.1 → 8.6 | 0.8 → 3.6 | 7 → 1 | 0 | 347k → 108k |
+| 绝境 最终攻势 | top-2 | 9.7 → 10.0 | 1.1 → 2.6 | 9 → 7 | 7 | 398k → 267k |
+| 绝境 最终攻势 | all | 2.4 → 3.7 | 0.2 → 1.7 | 26 → 20 | 10 | 1.76M → 266k |
+| 终极 隐秘核心 | own | 345 → 352 | 138 → 167 | – | 0 | 144k drone |
+| 终极 隐秘核心 | +200 | 49 → 80 | 25 → 42 | – | 0 | 144k drone |
+| 终极 隐秘核心 | +400 | 18.6 → 27.3 | 10 → 20 | – | 0 | 144k drone |
+| 终极 隐秘核心 | all | 7.2 → 14.7 | 3.7 → 8.0 | – | 77 | – |
+| 绝境 隐秘核心 | +200 | 20 → 34 | – | – | 0 | – |
+| 绝境 隐秘核心 | +400 | 10 → 15 | – | – | 0 | – |
+| 绝境 隐秘核心 | all | 4.3 → 7.8 | 0.3 → 2.1 | – | 14 | – |
+
+Each player's top bond requested at 1500 (held at 999 now): 终极 median 53 → 95 s, 绝境 17.5 → 33 s. Same boards: now is
+1.2–2.1× slower in every row. On each version's own bot boards the medians moved only ×1.0–1.2 (终极 own 256 → 258 s,
++200 47 → 54 s; 绝境 own 81 → 99 s, +200 13 → 15 s; defeats at 终极 own 4 → 3 of 28, all boss_4 昆图斯), because the
+elite-to-board rule gives the bots slightly stronger R14 boards (终极 2.12 → 2.26 elites per player, 绝境 2.14 → 2.51;
+绝境 6.0 → 6.9 active bonds). Pool composition now: Final Assault drone link 3.7 % at own / 0.8 % at +400, the rest
+direct, 0 % unattributed; Hidden Core drones 20.7 % / 1.8 %, 剑 / 锤 and spring transfers 16.3 % / 21.1 %. What still
+kills in seconds at ≈ 2000+ layers per player is official uncapped per-layer scaling (谢拉格 vs cold ×11.34, 奥术 ×15.7,
+精准 +1208.8 % ATK at 999), which 限伤 bounds per hit only. Matchrun (co-op 4 AI, rounds passed v2.5 → now): 标准 14.00 →
+14.00, 险境 13.81 → 13.88, 绝境 12.41 → 12.06 (Final Assault wins 8 → 5 of 32), 终极 9.47 → 9.47.
 
 ---
 
@@ -228,3 +345,32 @@ previous pass (old generator), kept for history. \* the bot code of this pass (�
 * 坚若磐石 = least LP lost (`titles.comment_3 { stat: 'lpLost', rule: 'min' }` in tuning.json; results.js supports
   `rule: 'min'` among the players still alive).
 * 教鞭 / “神秘顾客” stay a random bounty, documented in docs/META.md §2.5.
+
+---
+
+## 7. Official limits: 999 layers per bond, 限伤 300000 (research 11, DESIGN §20.12)
+
+Two official caps, now in the sim and the match (`shared/constants.js BOND_LAYER_CAP` / `BOSS_HIT_LIMIT`, 0 / Infinity =
+off): a bond's layers stop at 999 (`MAX_GARRISON_STACK`); in the Final Assault / Hidden Core a single hit of ≥ 300000
+on a leader is cancelled (`MAX_BATTLE_DAMAGE`: 0 damage, nothing to the pool — not a clamp).
+
+- **Effect on the measurements above: none.** The competent board of §1.1 carries ≈ 150 core layers at R14, far below
+  999, and its biggest leader hits stay far under the line — probe of 2026-10-01 (`runBoss` with every leader hit
+  recorded, 2 seeds each): 同盟 终极 R14 competent max 37k (2481 hits), 同盟 终极 R15 strong (×1.4) max 72k (4669),
+  独立 终极 R14 strong max 28k (1201); no hit reached 200k, none was cancelled. §3 stays valid. The co-op replay
+  profiles of §3 with two bonds or every bond at 999 per player do reach the line (6–77 cancelled hits per row, the
+  2026-10-02 table).
+- **Where they bind**: the late boards the community describes — 999-layer 谢拉格 (×11.34 vs cold / frozen), 奥术
+  (×11.19 arts taken, a debuff a teammate's board also applies), 炎 (ATK ×10.22) — whose single hits run from 160k to
+  past 300k. There the limit makes the official co-op leaders as hard to kill as the user asked: a hit past the line
+  deals nothing, so extra multipliers can lower the damage, the reason players avoid lighting more damage bonds at 999
+  layers. Pools: 200k (卢西恩 FUNNY) … 7.6M (假想敌：管 hidden ABYSS) — in the easy modes one cancelled hit would have
+  been the whole pool.
+- Bots read the capped `ps.layers`; their boards never come near either line (§5), so their play is unchanged.
+- The tools stop at the cap too: `balance.mjs applyBoard` clamps the profile-scaled layer curves (a numeric
+  `--profile` above ≈ 4.9 would have pushed the 170-layer R15 core curve, +20 % jitter, past 999) and
+  `matchrun.mjs --layers N` adds at most the room left under 999, so `--check` stays clean on a boosted run.
+- **Pool size and the line**: a drone that dies (whoever kills it, DESIGN §20.13) costs 假想敌：胄 0.02 × the pool
+  max (【死亡集群】, boss_1 / boss_8; `bosses.js DRONE_LINK_BASE 'pool'`). Today that is at most 144000 (boss_8 ABYSS 7.2M) and lands; a pool above 14999950 would make every
+  drone kill a cancelled hit. Re-check this whenever the pool size changes (research 11 §6).
+

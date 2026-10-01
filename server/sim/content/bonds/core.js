@@ -1,20 +1,21 @@
 // server/sim/content/bonds/core.js — the 8 core bonds (核心盟约, research 02 §3.1–3.8), battle side + prep side.
 //
-//   炎 yanShip           members ATK ×(1 + base_atk + atk_per_stack·L); 6: one “炎佑” (its template ATK / max HP + 30 %
+//   炎 yanShip           members ATK +(base_atk + atk_per_stack·L); 6: one “炎佑” (its template ATK / max HP + 30 %
 //                        of the 炎 ATK / max HP sums at battle start — PRTS "增加…（最终加算）"); 9: two 炎佑, ATK ×atk,
 //                        damage taken ×(1 − damage_resistance)
+//   (every bond "+X%" ATK / max HP here is 直接乘算 — S.directMods, additive with the other percentages, PRTS 盟约记录)
 //   萨尔贡 sargonShip    member skill start → every member on the field gets an independent stack (ASPD +base_attack_speed
 //                        for base_time + time_per_stack·L s, ≤ max_buff_stack_cnt); 6: each stack also ATK +base_atk
-//                        (additive, one atkMul); 6 + band_narant: instead lends the caster's equipment (tier ≤
+//                        (additive, one 直接乘算 buff); 6 + band_narant: instead lends the caster's equipment (tier ≤
 //                        filter_item_level) to the 8 surrounding operators (items.js lendItemEffects)
 //   维多利亚 victoriaShip members carrying equipment deal ×(base_damage_scale + damage_scale_per_stack·L);
-//                        6: ATK +atk_normal_equip per item (+atk_golden_equip more per golden item);
+//                        6: ATK +atk_normal_equip per item (+atk_golden_equip more per golden item; 直接乘算);
 //                        prep: every `layer` layers → `count` item(s) from `pool` (bond_layer_added_reward_equip)
 //   谢拉格 kjeragShip    members deal ×base_damage_scale, vs cold / frozen enemies ×(base_ex_damage_scale +
 //                        ex_damage_scale_per_stack·L) instead; 6: cold wind (devices.js kjeragColdWind)
 //   拉特兰 lateranoShip  member ammo skills start with floor(ammo × (1 + base_ammo_percent + ammo_percent_per_stack·L));
 //                        6: every ammo used by a member → all members ATK +atk_per_consume (≤ max_atk_for_consume)
-//   阿戈尔 egirShip      members max HP ×(1 + base_max_hp + max_hp_per_stack·L); battle start devour (see devour());
+//   阿戈尔 egirShip      members max HP +(base_max_hp + max_hp_per_stack·L) (直接乘算); battle start devour (see devour());
 //                        5: the first max_free_respawn_cnt members knocked out for the first time redeploy at once (free)
 //   叙拉古 siracusaShip  every member deployment: ASPD +(base + per·L) for (base_duration + per·L) s; 6: 隐匿 for the same
 //                        time, and while hidden / end_duration s after, attacks proc (PRD, nominal `prob`) base_damage +
@@ -176,8 +177,8 @@ const ownTag = (dmg, tag) => !!dmg && Array.isArray(dmg.tags) && dmg.tags.includ
 function installYan(battle, pid, bb, members) {
   const L = () => S.bondLayers(battle, pid, 'yanShip');
   const apply = () => {
-    const mul = 1 + num(bb.base_atk) + num(bb.atk_per_stack) * L();
-    for (const u of members) S.passiveBuff(battle, u, 'bond:yan', { atkMul: mul });
+    const mods = S.directMods({ atk: num(bb.base_atk) + num(bb.atk_per_stack) * L() });
+    for (const u of members) S.passiveBuff(battle, u, 'bond:yan', mods);
   };
   apply();
   onLayers(battle, pid, 'yanShip', apply);
@@ -220,7 +221,7 @@ function installSargon(battle, pid, bb, members) {
     if (!atkStacks) return;
     let n = 0;
     for (const b of u.buffs) if (b.key === 'bond:sargon') n++;
-    if (n > 0 && u.alive) battle.addBuff(u, { key: 'bond:sargon:atk', mods: { atkMul: 1 + perAtk * n } });
+    if (n > 0 && u.alive) battle.addBuff(u, { key: 'bond:sargon:atk', mods: S.directMods({ atk: perAtk * n }) });
     else battle.removeBuff(u, 'bond:sargon:atk');
   };
   battle.on('skillStart', ({ unit }) => {
@@ -278,7 +279,7 @@ function installVictoria(battle, pid, bb, members) {
     if (!ids.length) continue;
     let add = 0;
     for (const id of ids) add += S.isGoldenId(id) ? golden : normal;
-    if (add > 0) S.passiveBuff(battle, u, 'bond:victoria:atk', { atkMul: 1 + add });
+    if (add > 0) S.passiveBuff(battle, u, 'bond:victoria:atk', S.directMods({ atk: add }));
   }
 }
 
@@ -320,7 +321,7 @@ function installLaterano(battle, pid, bb, members) {
     if (!memberSet.has(unit) || st.bonus >= cap) return;
     st.used++;
     st.bonus = Math.min(cap, st.used * per);
-    for (const m of members) S.passiveBuff(battle, m, 'bond:laterano:ammo', { atkMul: 1 + st.bonus });
+    for (const m of members) S.passiveBuff(battle, m, 'bond:laterano:ammo', S.directMods({ atk: st.bonus }));
   });
 }
 
@@ -391,8 +392,8 @@ function devour(battle, pid, bb, members) {
 
 function installEgir(battle, pid, bb, members) {
   const apply = () => {
-    const mul = 1 + num(bb.base_max_hp, 0) + num(bb.max_hp_per_stack, 0) * S.bondLayers(battle, pid, 'egirShip');
-    for (const u of members) S.passiveBuff(battle, u, 'bond:egir', { hpMul: mul });
+    const mods = S.directMods({ hp: num(bb.base_max_hp, 0) + num(bb.max_hp_per_stack, 0) * S.bondLayers(battle, pid, 'egirShip') });
+    for (const u of members) S.passiveBuff(battle, u, 'bond:egir', mods);
   };
   apply();
   onLayers(battle, pid, 'egirShip', apply);
@@ -464,7 +465,7 @@ function installKazimierz(battle, pid, bb, members) {
     const cap = num(bb.base_max_atk_when_born, 0) + num(bb.max_atk_when_born_per_stack, 0) * S.bondLayers(battle, pid, 'kazimierzShip');
     const bonus = Math.max(0, Math.min(cap, st.deploys * num(bb.atk_when_born, 0)));
     if (!(bonus > 0)) return;
-    for (const u of members) S.passiveBuff(battle, u, 'bond:kazimierz', { atkMul: 1 + bonus });
+    for (const u of members) S.passiveBuff(battle, u, 'bond:kazimierz', S.directMods({ atk: bonus }));
   };
   battle.on('deploy', ({ unit }) => {
     if (!S.isOp(unit) || unit.ownerId !== pid) return;

@@ -8,12 +8,14 @@
 //            copy, an elite ≤ goldenCopies; merges are immediate (never `mergeCount` normal copies of one chess, never
 //            two copies of a mergeable normal item); every token's owner chess is deployed
 //   board    tiles inside the own region and legal for the piece; no items on the board; chess count ≤ deploy cap
-//   bonds    ps.bonds equals a fresh computeBonds() (every mutation recomputed them)
+//            (where a merge's elite goes — a consumed deployed copy's tile, else the hand — needs the state before the
+//            merge: audit.js checks it per merge)
+//   bonds    ps.bonds equals a fresh computeBonds() (every mutation recomputed them); every bond's layers 0 … BOND_LAYER_CAP
 //   shop     slot count follows the rolled layout; ids known; banned chess never offered by the shop / rewards
 //   elim.    an eliminated player owns nothing (board, hand, temp, shop, offers, bounties, funds)
 //   match    phase known; teamLp / boss pool within range; combat fields match the alive players
 
-import { PHASE } from '../../shared/constants.js';
+import { PHASE, BOND_LAYER_CAP } from '../../shared/constants.js';
 import { FIELD, canPlace, positionClass, parseKey } from './board.js';
 import { computeBonds } from './bondsMeta.js';
 
@@ -52,6 +54,10 @@ export function collectViolations(m, { limit = 25 } = {}) {
     if (!(ps.shop.level >= 1 && ps.shop.level <= gd.maxShopLevel)) fail(`${id}: shop level ${ps.shop.level}`);
     if (!(ps.shop.upgradePrice >= 0)) fail(`${id}: upgradePrice ${ps.shop.upgradePrice}`);
     if (!Number.isInteger(ps.shop.freeRefreshes) || ps.shop.freeRefreshes < 0) fail(`${id}: freeRefreshes ${ps.shop.freeRefreshes}`);
+    // the official per-bond layer cap (shared/constants.js): no writer may pass it
+    for (const [b, v] of Object.entries(ps.layers || {})) {
+      if (!(Number.isFinite(v) && v >= 0 && (!(BOND_LAYER_CAP > 0) || v <= BOND_LAYER_CAP))) fail(`${id}: ${b} layers ${v}`);
+    }
 
     if (!ps.alive) {
       if (ps.board.size) fail(`${id}: eliminated but keeps ${ps.board.size} board pieces`);

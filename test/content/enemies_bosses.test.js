@@ -14,7 +14,7 @@ import * as bossesMod from '../../server/sim/content/bosses.js';
 const E = JSON.parse(fs.readFileSync(new URL('../../data/enemies.json', import.meta.url), 'utf8'));
 const W = JSON.parse(fs.readFileSync(new URL('../../data/waves.json', import.meta.url), 'utf8'));
 const { KITS, STATS_ONLY, EROSION, EROSION_BURST } = enemiesMod;
-const { BOSS_KITS, PART_TRANSFER } = bossesMod;
+const { BOSS_KITS, PART_TRANSFER, BLADE_TRANSFER, DRONE_LINK_BASE, droneLinkBase } = bossesMod;
 
 const BIG = [];
 for (let dr = -4; dr <= 4; dr++) for (let dc = -12; dc <= 12; dc++) BIG.push([dr, dc]);
@@ -1912,7 +1912,7 @@ test('template overrides of talents/skills are honoured (卢西恩 evade 0.2 in 
 const bossArena = (o = {}) => arena({ kind: 'boss', sharedBoss: pool(o.hp ?? 1e6), ...o });
 const setTpl = (id) => (b) => { b.opts.templateId = id; };
 
-test('假想敌：胄: arts ray on a random target in range; <20 % pool: damage taken ×0.5 and two 刺胄之弹', () => {
+test('假想敌：胄: arts ray on a random target in range; <20 % pool: damage taken ×0.5, still one 刺胄之弹 (PRTS 能力修正)', () => {
   const h = bossArena({ units: [{ chessId: 't_wall', row: 10, col: 6 }, { chessId: 't_wall2', row: 12, col: 4 }] });
   h.step();
   const e = put(h, 'enemy_9013_acstmk', [3, 10], { tag: 'boss' });
@@ -1925,7 +1925,8 @@ test('假想敌：胄: arts ray on a random target in range; <20 % pool: damage 
   approx(e.s.artsTakenMul, tb('enemy_9013_acstmk', '1.damage_scale'));
   assert.equal(e.s.trueTakenMul, 1);
   h.run(skb('enemy_9013_acstmk', '1').initCooldown - 9);
-  assert.equal(h.eventsOf('fx').filter((f) => f[1] === 'shell').length, 2);
+  assert.equal(h.eventsOf('fx').filter((f) => f[1] === 'shell').length, 1);
+  assert.equal(alive(h, 'enemy_9016_acstmr').length, 1);
 });
 
 test('假想敌：胄 + 刺胄之弹: the shell flies to the highest-ATK operator; on arrival 3×3 stun + physical DoT; 8 hits shoot it down', () => {
@@ -1954,64 +1955,189 @@ test('假想敌：胄 + 刺胄之弹: the shell flies to the highest-ATK operato
   assert.ok(!s2.alive);
 });
 
-test('假想敌：胄 死亡集群: drones from the branch; a drone killed by an operator costs the leader 2 % max HP', () => {
-  const h = bossArena({ hp: 675000, units: [{ chessId: 't_gun', row: 12, col: 3 }], setup: setTpl('act1autochess_h07_01') });
+test('假想敌：胄 死亡集群: drones from the branch; a drone that dies (whoever kills it) costs the leader 2 % max HP, a leak nothing', () => {
+  const h = bossArena({ hp: 675000, units: [{ chessId: 't_gun', row: 12, col: 3 }], kits: { t_gun: NOATK }, setup: setTpl('act1autochess_h07_01') });
   h.step();
-  put(h, 'enemy_9013_acstmk', [3, 10], { tag: 'boss' });
+  const boss = put(h, 'enemy_9013_acstmk', [3, 10], { tag: 'boss' });
   h.step();
+  const s2 = skb('enemy_9013_acstmk', '2');
+  const loss = 675000 * s2.bb.hp_ratio;
+  const d = alive(h, 'enemy_1005_yokai')[0];
+  assert.ok(d, 'drone summoned at once (icd 0)');
+  assert.equal(d.s.maxHp, E.enemy_1005_yokai.stats.maxHp, 'boss_1 drones: no summon.hp_ratio — data HP (max_hp is not read)');
+  let before = h.b.sharedBoss.hp;
+  h.b.kill(d, h.unit('t_gun'));
+  approx(before - h.b.sharedBoss.hp, loss);
+  const newest = () => alive(h, 'enemy_1005_yokai').sort((a, b) => b.id - a.id)[0];
+  h.run(s2.cooldown + 0.5);
+  const d2 = newest();
+  assert.ok(d2);
+  before = h.b.sharedBoss.hp;
+  h.b.kill(d2, null);                                                   // 无来源: "该无人机单位死亡时"
+  approx(before - h.b.sharedBoss.hp, loss);
+  h.run(s2.cooldown);
+  const d3 = newest();
+  assert.notEqual(d3, d2);
+  assert.ok(d3);
+  before = h.b.sharedBoss.hp;
+  h.b.leak(d3);
+  assert.equal(h.b.sharedBoss.hp, before, 'a leaked drone does not die');
+  approx(h.result().perPlayer.p1.bossDamage, loss, 1e-6, 'only the operator kill is credited');
+  assert.ok(boss.alive);
+});
+
+test('假想敌：胄 死亡集群: the 2 % reads the leader\'s shown max HP (the pool)', () => {
+  // PRTS "该妖怪死亡时令假想敌：胄受到最大生命值2%的真实伤害" — which max HP is [ASSUMED] (DESIGN §20.10): default 'pool' = the
+  // HP the battle shows (synced to the shared pool, the same HP the <20 % talent reads), so 2 % of the bar in every mode:
+  // 72 000 with the 终极 pool (3 600 000); the 'unit' reading (data 600 000 → 12 000) stays a switch
+  assert.equal(DRONE_LINK_BASE, 'pool');
+  const h = bossArena({ hp: 3600000, units: [{ chessId: 't_gun', row: 12, col: 3 }], setup: setTpl('act1autochess_h07_01') });
+  h.step();
+  const boss = put(h, 'enemy_9013_acstmk', [3, 10], { tag: 'boss' });
+  h.step();
+  assert.equal(boss.s.maxHp, 3600000, 'the unit shows the pool');
+  assert.equal(droneLinkBase(boss), 3600000, 'the link reads the shown max HP (the pool)');
+  assert.equal(droneLinkBase(boss, 'unit'), 600000, "the 'unit' switch reads the data max HP");
   const d = alive(h, 'enemy_1005_yokai')[0];
   assert.ok(d, 'drone summoned at once (icd 0)');
   const before = h.b.sharedBoss.hp;
   h.b.kill(d, h.unit('t_gun'));
-  approx(before - h.b.sharedBoss.hp, 675000 * skb('enemy_9013_acstmk', '2').bb.hp_ratio);
-  assert.ok(h.result().perPlayer.p1.bossDamage >= 675000 * 0.02 - 1e-6);
+  approx(before - h.b.sharedBoss.hp, 3600000 * skb('enemy_9013_acstmk', '2').bb.hp_ratio);
+  approx(before - h.b.sharedBoss.hp, 72000);
+  assert.ok(h.result().perPlayer.p1.bossDamage >= 72000 - 1e-6);
+  // a solo-sized pool (标准 247 500 × 0.25): still 2 % of the bar, never the 19 % a fixed 12 000 would take
+  const solo = bossArena({ hp: 61875, units: [{ chessId: 't_gun', row: 12, col: 3 }], setup: setTpl('act1autochess_h07_01') });
+  solo.step();
+  put(solo, 'enemy_9013_acstmk', [3, 10], { tag: 'boss' });
+  solo.step();
+  const d2 = alive(solo, 'enemy_1005_yokai')[0];
+  assert.ok(d2);
+  const b2 = solo.b.sharedBoss.hp;
+  solo.b.kill(d2, solo.unit('t_gun'));
+  approx(b2 - solo.b.sharedBoss.hp, 61875 * 0.02);
+  const hidden = bossArena({ hp: 7200000 });
+  hidden.step();
+  const hb = put(hidden, 'enemy_9013_acstmk_2', [3, 10], { tag: 'boss' });
+  hidden.step();
+  assert.equal(droneLinkBase(hb), 7200000, '隐秘核心 终极: 144 000 per drone');
+  assert.equal(droneLinkBase(hb, 'unit'), 1200000);
 });
 
-test('假想敌：胄 (隐秘核心): shells only at operators within its range', () => {
-  const hi = WALL('t_wall', { atk: 900 });
-  const h = bossArena({ units: [{ chessId: 't_wall', row: 10, col: 2 }, { chessId: 't_wall2', row: 12, col: 6 }], chess: { t_wall: hi } });
+test('假想敌：胄 (隐秘核心) 死亡集群: summon.hp_ratio scales the drone HP', () => {
+  const h = bossArena({ units: [{ chessId: 't_gun', row: 12, col: 3 }], setup: setTpl('act1autochess_h08_01') });
   h.step();
-  const e = put(h, 'enemy_9013_acstmk_2', [3, 12], { tag: 'boss' });
-  e.profile.noAttack = true;
-  h.run(skb('enemy_9013_acstmk_2', '1').initCooldown + 0.1);
-  const f = h.eventsOf('fx').find((x) => x[1] === 'shell');
-  assert.ok(f);
-  assert.equal(f[4].tx, h.unit('t_wall2').tileC, 'the high-ATK operator is out of range (col 2 vs 12, range 8)');
+  put(h, 'enemy_9013_acstmk_2', [3, 10], { tag: 'boss' }).profile.noAttack = true;
+  const s2 = skb('enemy_9013_acstmk_2', '2');
+  h.run(s2.initCooldown + 0.1);
+  const d = alive(h, 'enemy_1005_yokai')[0];
+  assert.ok(d);
+  approx(d.s.maxHp, E.enemy_1005_yokai.stats.maxHp * s2.bb['summon.hp_ratio']);
 });
 
-for (const key of ['enemy_9014_acstma', 'enemy_9015_acstmb']) {
-  test(`${nm(key)}: hovers invulnerable; dives at the lowest-ATK operator; ${skb(key, '1').bb.max_hit_cnt} hits shoot it down — then ×${skb(key, '1').bb.damage_scale} damage, ${PART_TRANSFER * 100} % passed to 胄`, () => {
-    const h = bossArena({ hp: 1e6, units: [{ chessId: 't_wall', row: 12, col: 3 }, { chessId: 't_gun', row: 9, col: 4 }], chess: { t_gun: chessRec({ id: 't_gun', profession: 'SNIPER', projectile: 'none', stats: { atk: 5000, maxHp: 1e7, blockCnt: 0 }, rangeGrid: BIG, skill: null }) }, kits: { t_gun: NOATK } });
+for (const key of ['enemy_9013_acstmk', 'enemy_9013_acstmk_2']) {
+  test(`${nm(key)}: shells only at operators within its range (PRTS 技能 "选择攻击范围内攻击力最高的1名我方干员")`, () => {
+    const hi = WALL('t_wall', { atk: 900 });
+    const h = bossArena({ units: [{ chessId: 't_wall', row: 10, col: 2 }, { chessId: 't_wall2', row: 12, col: 6 }], chess: { t_wall: hi } });
     h.step();
-    const boss = put(h, 'enemy_9013_acstmk_2', [3, 10], { tag: 'boss' });
-    boss.profile.noAttack = true;
-    const p = put(h, key, [3, 12], { tag: 'part' });
-    assert.ok(p.s.flags.invulnerable && p.s.flags.untargetable);
-    const s = skb(key, '1');
-    h.run(s.initCooldown + 0.1);
-    assert.ok(!p.s.flags.invulnerable, 'diving');
-    const g = h.unit('t_gun');
-    for (let i = 0; i < s.bb.max_hit_cnt; i++) h.b.dealDamage(g, p, { amount: 1, type: 'true' });
-    assert.equal(p.motion, 'WALK');
-    approx(p.s.dmgTakenMul, s.bb.damage_scale);
-    const before = h.b.sharedBoss.hp;
-    const dealt = h.b.dealDamage(g, p, { amount: 1000, type: 'true' });
-    approx(before - h.b.sharedBoss.hp, dealt * PART_TRANSFER);
-    h.run(s.bb.special_stun_duration + 60);
-    assert.equal(p.motion, 'FLY');
+    const e = put(h, key, [3, 12], { tag: 'boss' });
+    e.profile.noAttack = true;
+    h.run(skb(key, '1').initCooldown + 0.1);
+    const f = h.eventsOf('fx').find((x) => x[1] === 'shell');
+    assert.ok(f);
+    assert.equal(f[4].tx, h.unit('t_wall2').tileC, 'the high-ATK operator is out of range (col 2 vs 12, range 8)');
   });
 }
 
-test('“斩胄之剑” dive that lands: 3×3 stun + physical DoT at the lowest-ATK operator', () => {
-  const h = bossArena({ units: [{ chessId: 't_wall', row: 9, col: 11 }], hooks: ['statusApplied'] });
+const H08 = 'act1autochess_h08_01';
+const handRoute = (key, kind) => {
+  const t = W[H08];
+  const s = t.branches[`${key === 'enemy_9014_acstma' ? 'left' : 'right'}_hand_${kind}`][0][0];
+  return t.extraRoutes[s.routeIndex];
+};
+
+for (const key of ['enemy_9014_acstma', 'enemy_9015_acstmb']) {
+  const s = skb(key, '1');
+  test(`${nm(key)}: 初始模式 invulnerable; 掷 blinks to its preset route at the lowest-ATK operator, no normal attack; damage passes ${BLADE_TRANSFER * 100} % to 胄; ${s.bb.max_hit_cnt} hits → 【瘫痪】 (stun ${s.bb.stun} s, ground, ×${s.bb.damage_scale}), then a new 初始模式 copy with its HP replaces it`, () => {
+    const h = bossArena({ hp: 1e7, units: [{ chessId: 't_wall', row: 12, col: 3 }, { chessId: 't_gun', row: 9, col: 4 }], chess: { t_gun: chessRec({ id: 't_gun', profession: 'SNIPER', projectile: 'none', stats: { atk: 5000, maxHp: 1e7, blockCnt: 0 }, rangeGrid: BIG, skill: null }) }, kits: { t_gun: NOATK }, setup: setTpl(H08), hooks: ['statusApplied'] });
+    h.step();
+    const boss = put(h, 'enemy_9013_acstmk_2', [3, 10], { tag: 'boss' });
+    boss.profile.noAttack = true;
+    const origin = handRoute(key, 'origin'), blink = handRoute(key, 'blink');
+    const p = put(h, key, origin.start, { tag: 'part' });              // pinned: the dive never lands
+    assert.ok(p.s.flags.invulnerable && p.s.flags.untargetable && p.s.flags.unblockable);
+    h.run(s.initCooldown + 0.1);
+    assert.ok(!p.s.flags.invulnerable && !p.s.flags.untargetable, '出击模式');
+    assert.deepEqual([p.y, p.x], blink.start, 'blinked to the start of its blink route');
+    assert.ok(p.s.flags.disarm, '出击模式: no normal attack');
+    const g = h.unit('t_gun');
+    const seen = [];
+    h.b.on('damaged', (c) => { if (c.target === boss) seen.push(c); }, { priority: -1e9 });
+    let pool0 = h.b.sharedBoss.hp;
+    const d1 = h.b.dealDamage(g, p, { amount: 1000, type: 'true' });
+    approx(pool0 - h.b.sharedBoss.hp, d1 * BLADE_TRANSFER, 1e-6, 'passed on during the dive too');
+    for (let i = 1; i < s.bb.max_hit_cnt - 1; i++) h.b.dealDamage(g, p, { amount: 1, type: 'true' });
+    assert.equal(p.motion, 'FLY');
+    h.b.dealDamage(g, p, { amount: 1, type: 'true' });                 // the 15th
+    assert.equal(p.motion, 'WALK', 'a ground unit');
+    approx(p.s.dmgTakenMul, s.bb.damage_scale);
+    assert.ok(p.s.flags.stun);
+    approx(statuses(h, p.id, 'stun')[0].duration, s.bb.stun);
+    pool0 = h.b.sharedBoss.hp;
+    const d2 = h.b.dealDamage(g, p, { amount: 1000, type: 'true' });
+    approx(d2, 1000 * s.bb.damage_scale);
+    approx(pool0 - h.b.sharedBoss.hp, d2 * BLADE_TRANSFER);
+    approx(pool0 - h.b.sharedBoss.hp, 1000 * s.bb.damage_scale, 1e-6, '等量: all of the ×1.3 damage');
+    assert.ok(seen.length && seen.every((c) => c.source === null && c.credit === g), '无来源 (hooks see no source), credited to the attacker');
+    assert.ok(h.result().perPlayer.p1.bossDamage >= d1 + (s.bb.max_hit_cnt - 2) + 1 + d2 - 1e-6, 'the per-player pool tally');
+    const hp = p.hp, killed0 = h.b.killed;
+    h.run(s.bb.stun - 0.2);
+    assert.ok(p.alive && p.motion === 'WALK', 'still 瘫痪');
+    h.run(0.3);                                                       // the stun ends → 【瘫痪】 ends (not the 20 s)
+    assert.ok(!p.alive, 'the old one is killed');
+    const n = alive(h, key);
+    assert.equal(n.length, 1);
+    assert.notEqual(n[0].id, p.id);
+    assert.deepEqual([n[0].y, n[0].x], origin.start, 'summoned on its origin route');
+    approx(n[0].hp, hp, 1e-9, 'inherits the HP');
+    assert.ok(n[0].s.flags.invulnerable && n[0].motion === 'FLY' && n[0].tag === 'part');
+    assert.equal(h.b.killed, killed0, 'a part: not counted');
+    h.run(s.initCooldown - 0.2);
+    assert.ok(n[0].s.flags.invulnerable, 'a new unit: 掷 waits for its initial cooldown');
+    h.run(0.3);
+    assert.ok(!n[0].s.flags.invulnerable);
+  });
+}
+
+test('“斩胄之剑” dive that lands: 3×3 stun + physical DoT at the lowest-ATK operator, then a new copy with its HP at home', () => {
+  const h = bossArena({ units: [{ chessId: 't_wall', row: 12, col: 15 }, { chessId: 't_wall2', row: 12, col: 16 }, { chessId: 't_wall3', row: 9, col: 3 }], chess: { t_wall2: WALL('t_wall2', { atk: 50 }), t_wall3: WALL('t_wall3', { atk: 100 }) }, hooks: ['statusApplied'], setup: setTpl(H08) });
   h.step();
-  const p = put(h, 'enemy_9014_acstma', [3, 12], { tag: 'part', move: true });
+  const origin = handRoute('enemy_9014_acstma', 'origin');
+  const p = put(h, 'enemy_9014_acstma', origin.start, { tag: 'part', move: true });
   const s = skb('enemy_9014_acstma', '1');
-  h.runUntil(() => statuses(h, h.unit('t_wall').id, 'stun').length > 0, s.initCooldown + 30);
+  h.run(s.initCooldown + 0.1);
+  assert.ok(p.alive && !p.s.flags.invulnerable, 'flying from the blink start (5,16) to t_wall (5,15)');
+  p.hp -= 1000;
+  h.runUntil(() => statuses(h, h.unit('t_wall').id, 'stun').length > 0, 30);
   approx(statuses(h, h.unit('t_wall').id, 'stun')[0].duration, s.bb.stun);
+  assert.equal(statuses(h, h.unit('t_wall2').id, 'stun').length, 1, 'the 3×3 around the target');
+  assert.equal(statuses(h, h.unit('t_wall3').id, 'stun').length, 0);
   assert.ok(h.unit('t_wall').findBuff('boss:bladeDiveDot'));
-  h.run(20);
-  assert.ok(p.s.flags.invulnerable, 'back to hover');
+  assert.ok(!p.alive);
+  const n = alive(h, 'enemy_9014_acstma')[0];
+  assert.ok(n && n.id !== p.id && n.s.flags.invulnerable);
+  assert.deepEqual([n.y, n.x], origin.start);
+  approx(n.hp, n.s.maxHp - 1000);
+});
+
+test('“斩胄之剑” / “破胄之锤” 初始模式 attack: every ally in range, 锤 150 % ATK (PRTS 天赋)', () => {
+  for (const [key, scale] of [['enemy_9014_acstma', 1], ['enemy_9015_acstmb', 1.5]]) {
+    const h = bossArena({ units: [{ chessId: 't_wall', row: 10, col: 9 }, { chessId: 't_wall2', row: 10, col: 7 }] });
+    h.step();
+    put(h, key, [3, 8], { tag: 'part' });
+    h.run(1);
+    approx(h.unit('t_wall').stats.taken, E[key].stats.atk * scale, 1e-6, key);
+    approx(h.unit('t_wall2').stats.taken, E[key].stats.atk * scale, 1e-6, key);
+  }
 });
 
 test('假想敌：铳: unblockable, targets the highest DEF in range, ASPD ramps on the same target, erosion on hit', () => {
@@ -2124,7 +2250,9 @@ test('“碎铳之簧” 频次护盾 (9020): negates 5 hits, then comes back 25
   approx(w.stats.taken, n * sp.s.atk + 10 * sp.s.atk * sk.bb.atk_scale);
 });
 
-test('“碎铳之簧”: damage taken passes PART_TRANSFER to 假想敌：铳 and, split, to the other springs (never passed on twice)', () => {
+test('“碎铳之簧”: damage taken costs 假想敌：铳 as much (等量, 无来源) and, split, the other springs (never passed on twice)', () => {
+  // PRTS 碎铳之簧 "受到伤害时令全场范围内仇恨值最高的1名假想敌：铳受到等量的无来源生命流失" (DESIGN §20.10; v2.5: half)
+  assert.equal(PART_TRANSFER, 1);
   const h = bossArena({ units: [{ chessId: 't_gun', row: 12, col: 3 }], kits: { t_gun: NOATK } });
   h.step();
   const g = put(h, 'enemy_9017_achunt_2', [3, 18], { tag: 'boss' });
@@ -2132,12 +2260,16 @@ test('“碎铳之簧”: damage taken passes PART_TRANSFER to 假想敌：铳 a
   const [a, b, c] = ['enemy_9018_actrpa', 'enemy_9019_actrpb', 'enemy_9020_actrpc'].map((k, i) => put(h, k, [1 + i * 2, 4], { tag: 'part' }));
   for (const x of [a, b, c]) x.profile.noAttack = true;
   h.step();
+  const seen = [];
+  h.b.on('damaged', (x) => { if (x.target === g) seen.push(x); }, { priority: -1e9 });
   const pool0 = h.b.sharedBoss.hp, b0 = b.hp, c0 = c.hp;
   const dealt = h.b.dealDamage(h.unit('t_gun'), a, { amount: 1e5, type: 'true' });
   assert.ok(dealt > 0);
-  approx(pool0 - h.b.sharedBoss.hp, dealt * PART_TRANSFER);
-  approx(b0 - b.hp, (dealt * PART_TRANSFER) / 2);
-  approx(c0 - c.hp, (dealt * PART_TRANSFER) / 2);
+  approx(pool0 - h.b.sharedBoss.hp, dealt);
+  approx(b0 - b.hp, dealt / 2);
+  approx(c0 - c.hp, dealt / 2);
+  assert.ok(seen.length === 1 && seen[0].source === null && seen[0].credit === h.unit('t_gun'), '无来源, credited to the attacker');
+  assert.ok(h.result().perPlayer.p1.bossDamage >= dealt - 1e-6, 'the per-player pool tally');
 });
 
 test('假想敌：管: strikes dark 余音 (their pulse hurts operators); 裂管之奏 at 40 s; summons 余音 every 40 s', () => {

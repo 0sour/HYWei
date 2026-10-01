@@ -12,7 +12,9 @@
 //      (free levels always; the −1/round discount is waited for early), then keep buying / refreshing with what is
 //      left: merge progress (pairs → elites) > bond thresholds (focus core bond, add-ons 2/3) > role needs
 //      (blockers, anti-air when the wave flies, one or two healers) > tier; with a full board a buy must improve the
-//      best lineup. Items only when a deployed operator can carry them.
+//      best lineup. Items only when a deployed operator can carry them. A merge that consumes a deployed copy leaves
+//      the elite on that copy's tile (PRTS 卫戍协议/帮助, PlayerState._mergeChess): nothing here assumes it in the hand —
+//      steps 3–4 plan it like any owned unit (kept, moved or benched).
 //   3. lineup: the deployed set maximizes unit value + activated bond tiers (exact counting via computeBonds) +
 //      composition (chooseLineup: greedy seed + swap hill-climbing).
 //   4. placement (planLayout): the round's routes are traced over the own board from the enemy preview (ground

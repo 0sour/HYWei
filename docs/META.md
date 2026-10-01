@@ -35,9 +35,9 @@ server/match/
 LOBBY → INFO_CHECK (co-op 25 s; solo and single-human matches untimed; all humans confirmed ⇒ next) → BAND_DRAFT → BATTLE_CHECK (3 s)
 → for r = 1..lastRound (+ hidden):
      ROUND_START (2 s)  income + pending coins, upgrade price −1 (r > 1, floor 0), temp NOT wiped (what overflowed after
-                        the last prep's deadline — battle-result grants, a SETTLE merge's elite, returned equipment — is
-                        shown and usable in this prep, `PlayerState.tempDue`; reward offers earned after the last prep —
-                        a SETTLE merge — are kept for this prep),
+                        the last prep's deadline — battle-result grants, a SETTLE merge's elite with no copy deployed,
+                        returned equipment — is shown and usable in this prep, `PlayerState.tempDue`; reward offers
+                        earned after the last prep — a SETTLE merge — are kept for this prep),
                         shop reroll (frozen slots kept in place, then unfrozen), the round's wave generated (preview),
                         onRoundStart dispatch
      [SP_DRAFT]         r ∈ modes[m].spRounds (机变)
@@ -130,8 +130,9 @@ A `choice:<effectId>` registry handler overrides the default application (§2.4)
 * `g.autoplay { on }` ("AI 托管"): the bot plays the seat (drafts, buying, placement, ready) until turned off.
 * `onLeave` (quit / reconnect window expired): 中途退出 counts as elimination (research 00-INDEX §3, 01 §9, 06 §7 /
   §10.3): every copy the seat holds returns to the shared pool at once; the seat leaves the round loop and the Final
-  Assault pairing (re-planned when it quits before the boss fight; the boss pool has no alive-player factor, so it does
-  not change); its running normal battle is force-ended; a pending band pick
+  Assault pairing (re-planned when it quits before the boss fight; the boss pool stays bloodPoint — it would shrink to
+  × alive / 4 only with config `bossHpScale.aliveScaling`, off — the user chose the fixed pool, DESIGN §20.10); its
+  running normal battle is force-ended; a pending band pick
   becomes the default band and a 机变 turn passes on. Status `left`, LP 0, rounds passed = the rounds it had survived.
   When no human is left at all the match ends immediately (`reason: 'abandoned'`); when only eliminated spectators are
   left it ends as `'eliminated'`.
@@ -230,7 +231,7 @@ Every handler method is `(ctx, ev)`; `ev` is shared by all handlers of one dispa
 | `onRefresh` | manual refresh | `{ slots, free, price }` (slots mutable, or use `ctx.setShopSlot`) |
 | `onPrice` | every price query of a shop slot (views + buy) — must be **pure** | `{ slot, kind, id, price }` — write `ev.price` / `ctx.setPrice` / `ctx.modifyPrice` |
 | `onBuy` | after a purchase | `{ piece, slot, price, kind }` (`piece` = owned result, elite after a merge) |
-| `onMerge` | chess or item merge | `{ kind, piece, baseId|itemId, consumed:[uid] }` |
+| `onMerge` | chess or item merge | `{ kind, piece, baseId|itemId, consumed:[uid], area? }` — a chess merge's `area` is where its elite went: 'board' (a consumed copy's tile) \| 'hand' \| 'temp' |
 | `onLevelUp` | shop level up | `{ level, price }` |
 | `onSpend` | a payment's action is complete (buy / refresh / levelUp / reward / effect) | `{ amount, reason, total }` (`total` = funds spent this match) |
 | `onBattleStart` | a battle input is built (normal / unite / boss / hidden); also for the stats preview (`g.unitStats`, DESIGN §18.5) | `{ input: PlayerBattleInput, kind, round, spawns?, preview? }` — mutate/replace `ev.input`. With `ev.preview` true (no `ev.spawns`) a handler must NOT change match state or draw match rng: the preview only reads the input |
@@ -239,7 +240,7 @@ Every handler method is `(ctx, ev)`; `ev` is shared by all handlers of one dispa
 | `onEquip` | `g.equip` (item handler only) | `{ item, target, golden, consumed, keep, error }` — see §2.5 |
 | `onArt` | `g.art` (item handler only) | `{ item, row, col, targets:[pieces], error, used }` |
 | `onDestroy` | an item was destroyed (player / replaced) | `{ item, holder, reason }` |
-| `onLayers` | bond layers were added (prep or battle gains) | `{ bondId, from, to, reason }` (milestones: 维多利亚 25, 远见 10, 奇迹 100 …) |
+| `onLayers` | bond layers were added (prep or battle gains) | `{ bondId, from, to, reason }` (milestones: 维多利亚 25, 远见 10, 奇迹 100 …); `to` ≤ 999 (`BOND_LAYER_CAP`) — a gain at the cap dispatches nothing, so the milestones stop with the count |
 
 Dispatch order per player: `global` → `band` → `bond` (data order) → garrisons (board in deployment order, then hand)
 → equipped items → EffectRefs (insertion order). `onPrice` runs the priced chess's own 特质 first (购买价格为N sets the
@@ -287,7 +288,7 @@ Writes (all validated, never throw on bad input, never make funds / pools negati
 | helper | effect |
 |---|---|
 | `addFunds(n, reason?)` / `addPendingFunds(n)` / `spendFunds(n)` | funds now / at the next round start / pay (false when short) |
-| `addLayers(bondId, n, { requireActive })` | layer gain (`requireActive` = "使已激活的…"); returns layers added; fires onLayers |
+| `addLayers(bondId, n, { requireActive })` | layer gain (`requireActive` = "使已激活的…"); returns layers added — at most the room left under `BOND_LAYER_CAP` (999, shared/constants.js `layerGainRoom`; the battle gains merged at SETTLE too); fires onLayers unless it added 0 |
 | `grantChess(id, { toTemp, golden, requirePool=true, fromPool=true })` | acquire a chess (takes pool copies; with `requirePool` a pool chess with no copy left fails → `null`); merges; fires onGain |
 | `grantItem(id, { toTemp })` | acquire an item (merges with an identical normal item) |
 | `rollChess({ maxTier, tier, bond, filter })` / `rollItem({ pool, tier, maxTier })` | copy-weighted chess id from the shared pool / item id (choices.json pools) |
@@ -386,14 +387,23 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   Ready, during onPrepEnd, or outside PREP (COMBAT, 联防, SETTLE, ROUND_START, 机变) → the end of the NEXT prep, so it
   is shown and usable first; `setReady(false)` makes what arrived while ready due at the current prep. The round
   start never wipes temp (DESIGN §6.2).
-* **Merge**: 3 normal copies (风丸 2) anywhere (board/hand/temp) → elite to the hand (the incoming copy, then temp, hand,
-  board copies are consumed); equipment returns to the hand; summons of consumed copies are removed; a reward offer of 3
+* **Merge**: 3 normal copies (风丸 2) anywhere (board/hand/temp) → 1 elite (the incoming copy, then temp, hand, board
+  copies are consumed). Where it goes (PRTS 卫戍协议/帮助 "发送1名【精锐】状态的该干员至手牌区（若消耗已部署至作战区的干员，
+  则发送至作战区对应位置）", the user's playtest #6 follow-up): when a consumed copy stood on the board, onto that copy's
+  tile with its facing — of several, the one that deploys first (row desc, then col asc; `board.js mergeTile`,
+  [ASSUMED]); a deployed piece transformed into the completing copy (突变细胞, `transformChess`) counts with its own tile;
+  a tile the elite may not use (a stale terrain change) is skipped. It replaces a deployed copy, so the deploy count never
+  grows (no BOARD_FULL), and as a deployment its manually deployable summons join the hand (`grantTokensFor`, the
+  player's loadout). Otherwise the elite goes to the hand, overflowing into temp. Equipment returns to the hand (overflow
+  temp; with both full it stays on the elite, up to its 2 equip slots — any further item is destroyed); summons of
+  consumed copies are removed; a reward offer of 3
   **different** free chess of tier min(level+1, 6) (copy-weighted from the shared pool, already-drawn ones excluded; a
   short tier tops up from the tier below — user playtest #6 item 19; pick 1, expires at prep end; queued when several
-  merges happen). A merge
-  completed after the prep (SETTLE / Final Assault effects such as 突变细胞) keeps its offer for the next prep; its elite
-  goes to the hand like any merge's, overflowing into temp (kept through the next prep, see Hand) — it takes a freed
-  board tile of a consumed copy only when the hand and temp are both full (research 01 A1).
+  merges happen). The same rule holds for every way a merge completes — buy, reward pick, effect / band / choice grants
+  (`acquireChess`), transformations — and in every phase: a merge completed after the prep (SETTLE / Final Assault
+  effects such as 突变细胞) keeps its offer for the next prep; its elite takes the deployed copy's tile at once, or goes to
+  the hand / temp (kept through the next prep, see Hand). In a boss round's prep the tile is read on the player's half of
+  the boss field (board coordinates unchanged). `onMerge` carries `area` ('board' | 'hand' | 'temp').
 * **Board**: rows 9–12 × cols 2–10, legality from `stages[id].tiles` + devices (board.js); deploy cap 8 (+effects);
   summons don't use slots; board↔hand swaps always allowed. A terrain change (terrain 机变 cards such as 模拟战场演变·
   模式二 "阻隔工事变为射击台", content `setDeviceActive` / `setTileOverride`) is checked at the next `recompute()` (at the
@@ -412,6 +422,14 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   to the deploy limit, `grantTokensFor`). Battle side: SIM.md §1.1 token pieces.
 * **Bonds**: bondsMeta.js (BOARD distinct, BOARD_AND_DECK, 绝技 elites, 调和 +1, 独行 downward, 助力 upper tiers,
   变形同构体 grants). Σ activated layers for the hidden core = Σ layers of active bonds at the boss round's prep end.
+  **Layer cap** (research 11 §1; the client's `MAX_GARRISON_STACK` / `AddBondCount` = min(L + n, 999)): each bond's
+  layers stop at `BOND_LAYER_CAP` = 999 (shared/constants.js; 0 / Infinity = off). Every writer clamps with
+  `layerGainRoom` — `PlayerState.addLayers` (all prep-side gains: 特质, items, bands, 机变 cards, bonds; `ctx.addLayers`),
+  the SETTLE of the in-battle gains and the battle's own live copy (`Battle.addLayers`, SIM.md §6); a gain at the cap
+  adds 0 and dispatches no onLayers. The client-result check bounds a reported gain by the room left from the bond's
+  starting layers (`fields.js validateClientResult`, 'layer bound'); `invariants.js` flags a bond above the cap. The
+  bond strip, its popup, the effect text and the detail card show the server's capped count. The dev tools' direct
+  writes (`tools/matchrun.mjs --layers N`, `tools/balance.mjs applyBoard`) stop at the cap too.
 * **Waves**: waves.js header (stage/factions/boss per match, faction replacement per round with `k` copies, scaling by
   `enemyScale[r]` × the tuning layer §3.1, bounties, boss templates, 联防 routing). Bounties with battles left (every one
   that lasts more than one battle; an official multi-round card lasts two, §1.2) also spawn in the Final Assault /
@@ -422,13 +440,17 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   default 2). Read as game seconds the rounds' own spawn schedules would not fit (R2's last flyer spawns at 43 s of
   45 s, R3's at 62 s of 55 s); × 2 every limit ≈ last spawn + one flyer crossing. docs/BALANCE.md §2.1.
 * **SETTLE**: LP −min(counted leaks, 10) (after 联防: survivors attributed to their source, same cap); IN_BATTLE layer
-  gains applied; kill-bounty coins (paid by the Battle to the killer — a 联防 helper included) and perfect-bounty coins
+  gains applied, each bond up to `BOND_LAYER_CAP` (999, `layerGainRoom`, as `PlayerState.addLayers`); kill-bounty coins (paid by the Battle to the killer — a 联防 helper included) and perfect-bounty coins
   (own phase perfect) go to pending funds; bounty rounds decrement; LP ≤ 0 ⇒ eliminated (all copies back to the pool).
 * **Final Assault / Hidden Core**: finalAssault.js header. Boards are passed in board coordinates; the sim maps board
   rows 9–12 onto boss rows 2–5 (`BOSS_ROW_OFFSET` −7, matching every stage's boss rows) and mirrors the right side.
-  Pool (`finalAssault.js bossPoolHp`, research 08 §6 #7): co-op = `bloodPoint[difficulty]` as is — one pool shared by
-  every boss field, no alive-player factor ("敌方领袖的总生命值不变"); solo = × `bossHpScale.solo` (0.25 [ASSUMED]); leaders
-  are never scaled by `enemyScale`. The merged team LP loses leaks (`lpr`), the overtime drain
+  Pool (`finalAssault.js bossPoolHp` → `GameData.bossPoolShare`, DESIGN §20.10): one pool shared by every boss field
+  (official tip "最终攻势中，所有人将一起对敌方领袖造成伤害"); co-op = `bloodPoint[difficulty]` whatever the number of alive
+  players (notice 5114's "敌方领袖的总生命值不变" is about the mirrored copies of a pair field sharing the pool, not about that
+  number); `bossHpScale.aliveScaling` true (default false) would scale it × alive / `aliveFull` (4) — 巴哈姆特 12294
+  "聯機隊友(撤退/死掉)變少，最後boss血條也會變少" is one community note without a proportion, kept off until the user confirms
+  it (it would shorten the fight after eliminations, the opposite of the playtest report); solo = ×
+  `bossHpScale.solo` (0.25 = one player of four [ASSUMED]); leaders are never scaled by `enemyScale`. The merged team LP loses leaks (`lpr`), the overtime drain
   (`bossTurnHpReduceTime` 150 counts REAL seconds, like the boss level's 120 s maxPlayTime that runs out first — the
   battle goes on — so 1 LP per real second from 150 real s = 300 game s on the 2× field clock; `gd.bossOvertimeDue`)
   and leader "扣除目标生命" effects (the sim's `lpLoss` hook: boss_7 Doom, 斥退 …); after every change it is written back
@@ -438,9 +460,11 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   credited pool damage of one field ≤ the whole pool per `BOSS_MIN_CLEAR_GS` (5) game s (20 %/s; the balance model's
   fastest mean kills run ≈ 5 %/s per field), its LP cost ≤ 10 + 1 per game s; reports are cumulative, so what exceeds
   the budget is credited later (the boss clock re-applies the latest report), never lost. A boss field's `b.result` ends
-  it only when the pool is empty or after the match's `b.end`; any other (a 'forced' result at t = 0, 'cleared' while
-  the pool holds, a result failing validation) hands the field to the partner's replica or the server, and the sender is
-  never its authority again (`f.demoted`). Every boss field run by the server (takeover, or nobody connected at the
+  it only when the pool is empty or after the match's `b.end`; a 'cleared' result whose report covers what the pool
+  holds waits for the budget instead (`f.heldResult`: no takeover — 999-layer kills take 2–4 game s, DESIGN §20.14);
+  any other (a 'forced' result at t = 0, 'cleared' while the pool holds more than the report covers, a result failing
+  validation) hands the field to the partner's replica or the server, and the sender is never its authority again
+  (`f.demoted`). Every boss field run by the server (takeover, or nobody connected at the
   start) publishes its own damage as `b.pool.acked[fieldId]` (its CreditPool total), so the display replica of a
   reconnecting / watching human stays in sync.
   End and verdict (user playtest #6 item 5): the pool never holds less than 1 HP (`sim/constants.js BOSS_POOL_MIN_HP`:
@@ -450,6 +474,11 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   on until the overtime drain. The first end condition the server registers decides (`Match._finalEnding`): pool 0 →
   victory, team LP 0 → defeat (PRTS 卫戍协议：盟约 下半 "…使目标生命值扣除至0，则无视倒计时直接失败"); after a forced end
   no report (an in-flight `b.progress`, the final `b.result` with its rounded per-player damage) credits the pool.
+  **限伤** (research 11 §2; client `AutoChessStepModeManager._OnBossEnemyTakeDamage`): in both boss rounds a single hit
+  on a leader with ceil(damage) ≥ `BOSS_HIT_LIMIT` = 300000 (shared/constants.js; 0 / Infinity = off) is cancelled in the
+  sim (`sim/damage.js leaderHitCancelled`, SIM.md §4) — it deals 0 and nothing reaches the shared pool, the per-player
+  boss damage or the BOSS_HIT tickers; minions, parts, normal rounds and 联防 are unaffected. The server's own runs, the
+  browsers' runs and the server's verification share the rule, so digests agree.
 
 ### 3.1 Balance layer (data/tuning.json)
 `data/config.json` is generated and stays research-faithful. There is **no custom balance** any more (DESIGN §14
@@ -562,7 +591,8 @@ receiver only), plus CUSTOM texts (eliminations, 联防, hidden core).
   model, layout planner, rehearsal side-effect freedom, economy/bench regression).
   `node --test test/match/*.test.js`
 * `node tools/matchrun.mjs --mode coop --difficulty HARD --players 4 --seeds 20` — per-round balancing summary / aggregate
-  (`--check` audit, `--errors` per-source error table, `--lp N` / `--layers N` to reach late rounds, `--rehearsal N`).
+  (`--check` audit, `--errors` per-source error table, `--lp N` / `--layers N` to reach late rounds — the boost stops at
+  999 per bond —, `--rehearsal N`).
 * `node tools/balance.mjs --mode multi --difficulty NORMAL` — the competent-board difficulty model (docs/BALANCE.md):
   per round leaks / LP after 联防 / clear time of representative boards against the real waves, boss damage by 150 s
   and kill time; `--tuning off` (research numbers), `--legacy-time`, `--profile weak|strong`, `--bots N`, `--json`.
@@ -579,6 +609,9 @@ receiver only), plus CUSTOM texts (eliminations, 联防, hidden core).
 * Chess granted by effects need a free pool copy unless `requirePool: false` (then they hold 0 copies).
 * Boss-round `local` pack spawns (boss parts) all spawn; content scripts (bosses.js) decide their behaviour.
 * The Final Assault ends as a defeat when every field finished with the boss pool above 0 (boss escaped).
+* The 999 layer cap holds for every prep-side gain too (the client only shows the in-battle clamp; the scene server's
+  code is not in the client — research 11 §1.2). A 限伤-cancelled hit shows no number; a part's damage passed on to its
+  leader (Battle.loseHp) meets the limit like a hit (research 11 §2.3).
 * Combat limits are real seconds (× 2 in game seconds) — see §3; research 00-INDEX §8 #10 assumed game seconds.
 * Emotes faster than 1/s answer `RATE`.
 * 中途退出 = elimination at once (research); a quitter's operators already fighting in a shared field (联防, boss
@@ -588,5 +621,6 @@ receiver only), plus CUSTOM texts (eliminations, 联防, hidden core).
   §4) with HP 0, and redeploys after its full redeploy time: no timer carry (the official setup carries only hp / tech
   per operator), forced out before `battleStart` (its timer re-read after it, so 征召's −50 % applies; 征召's row check
   does not count it), no knock-out hooks (`kill`, 'killed' deaths) a second time.
-* A merge completed after the prep (SETTLE effects) keeps its reward offer for the next prep; its elite goes to the hand,
-  overflowing into temp like a prep merge's (temp pieces that arrive after the prep wait through the next prep).
+* A merge completed after the prep (SETTLE effects) keeps its reward offer for the next prep; its elite goes where a prep
+  merge's would — onto the tile of a consumed deployed copy (PRTS 卫戍协议/帮助 "若消耗已部署至作战区的干员，则发送至作战区
+  对应位置"), else to the hand, overflowing into temp (temp pieces that arrive after the prep wait through the next prep).

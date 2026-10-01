@@ -8,8 +8,9 @@
 // Numbers always come from the concrete record's buffs (support.buffsOf: `{ ...bb, ...bbStr }` per buff, looked up by
 // the buff's bbStr.key — the flattened `params` of data/items.json lose duplicate keys such as 蒸汽之心 attack_speed).
 //
-// Stat rule (research 02 §2.1, PRTS "直接乘算"; research 04 §2 assumed additive %): every equipment percentage is its own
-// multiplier on the final stat — atk/def/max_hp → atkMul/defMul/hpMul = 1 + x; attack_speed → aspd (additive);
+// Stat rule (PRTS 盟约记录 "装备效果提供的属性加成均为直接乘算"; 直接乘算 = summed with every other percentage, PRTS 游戏数据
+// 基础 — research 04 §2's additive reading; v2.5 had each item its own multiplier): atk/def/max_hp → support directMods
+// (atkPct/defPct/hpPct += x; constants.js DIRECT_BONUS_STACKING); attack_speed → aspd (additive);
 // magic_resistance → resFlat; respawn_time → redeployMul 1 + x; sp_recovery_per_sec → spRecoveryFlat;
 // magic_resist_penetrate → resIgnorePct; taunt_level → taunt. Two different items on one unit both apply, and a
 // normal + golden copy of the same item may coexist (different ids → different buff keys) and both apply.
@@ -33,7 +34,7 @@
 
 import {
   num, itemRecord, itemKeyOf, buffsOf, isOp, onField, unitBonds, isMember, bondActive, isGroundOp, frontTile,
-  alliesAround, passiveBuff, fxOn, battleStore, contentInfo, itemsOf,
+  alliesAround, passiveBuff, fxOn, battleStore, contentInfo, itemsOf, directMods,
 } from '../support/index.js';
 import { mitigate, hasHp } from '../../damage.js';
 
@@ -68,9 +69,8 @@ function statMods(p) {
   const m = {};
   let any = false;
   const set = (k, v) => { m[k] = v; any = true; };
-  if (num(p.atk)) set('atkMul', 1 + num(p.atk));
-  if (num(p.def)) set('defMul', 1 + num(p.def));
-  if (num(p.max_hp)) set('hpMul', Math.max(0.01, 1 + num(p.max_hp)));
+  // ATK / DEF / max HP "+X%" are 直接乘算 (support directMods: additive with every other percentage)
+  for (const [k, v] of Object.entries(directMods({ atk: num(p.atk), def: num(p.def), hp: num(p.max_hp) ? Math.max(-0.99, num(p.max_hp)) : 0 }))) set(k, v);
   if (num(p.attack_speed)) set('aspd', num(p.attack_speed));
   if (num(p.magic_resistance)) set('resFlat', num(p.magic_resistance));
   if (num(p.respawn_time)) set('redeployMul', Math.max(0, 1 + num(p.respawn_time)));
@@ -366,7 +366,7 @@ const BY_ITEM = {
       if (Math.hypot(c.target.x - u.x, c.target.y - u.y) >= r - 1e-6) c.dmg.mul *= sc;
     });
   },
-  // 炎国短刀: each skill activation +atk (≤ atk_buff_cnt stacks) — one multiplier 1 + atk × stacks
+  // 炎国短刀: each skill activation +atk (≤ atk_buff_cnt stacks) — one 直接乘算 bonus of atk × stacks
   chess_item_3_04_e(battle, u, rec, S) {
     const p = bp(rec, 'act1vautochess_equip_acarm024_global_buff');
     if (!p) return;
@@ -375,7 +375,7 @@ const BY_ITEM = {
     S.on('skillStart', (c) => {
       if (c.unit !== u || n >= cap || !chance(battle, num(p.prob, 1))) return;
       n++;
-      S.stat('stacks', { atkMul: 1 + num(p.atk) * n });
+      S.stat('stacks', directMods({ atk: num(p.atk) * n }));
     });
   },
   // 迅捷作战粮: on deploy SP += sp_each_person × (1 + other operators sharing a bond)
@@ -401,7 +401,7 @@ const BY_ITEM = {
   chess_item_3_06_e(battle, u, rec, S) {
     const p = bp(rec, 'act1autochess_equip_acarm049_global_buff');
     if (!p) return;
-    if (num(p.init_max_hp)) S.stat('hp', { hpMul: 1 + num(p.init_max_hp) });
+    if (num(p.init_max_hp)) S.stat('hp', directMods({ hp: num(p.init_max_hp) }));
     const ex = num(p.ex_max_hp);
     if (!ex) return;
     const key = S.key('front');
@@ -413,7 +413,7 @@ const BY_ITEM = {
         const here = initial ? a.homeR === fr && a.homeC === fc : onField(a) && a.tileR === fr && a.tileC === fc;
         if (here) { occupied = true; break; }
       }
-      if (!occupied) S.buff(u, { key, mods: { hpMul: 1 + ex }, refresh: 'replace' });
+      if (!occupied) S.buff(u, { key, mods: directMods({ hp: ex }), refresh: 'replace' });
       else battle.removeBuff(u, key);
     };
     S.on('deploy', (c) => { if (c.unit === u) check(!!c.initial); });
@@ -675,7 +675,7 @@ const BY_ITEM = {
       if (partner && carries(battle, u, partner) && c.skill && c.skill.isTimed) {
         combo = true;
         doomed = false;
-        S.buff(u, { key: comboKey, mods: { atkMul: 1 + num(p.atk) } });
+        S.buff(u, { key: comboKey, mods: directMods({ atk: num(p.atk) }) });
       }
     });
     S.on('skillEnd', (c) => {
@@ -715,7 +715,7 @@ const BY_ITEM = {
       const stealth = !!u.s.flags.stealth;
       if (stealth && st.bonus < max) {
         st.bonus = Math.min(max, st.bonus + per * TICKS);
-        S.buff(u, { key, mods: { atkMul: 1 + st.bonus }, refresh: 'replace' });
+        S.buff(u, { key, mods: directMods({ atk: st.bonus }), refresh: 'replace' });
       }
       if (st.wasStealth && !stealth && st.bonus > 0) st.armed = true;
       st.wasStealth = stealth;

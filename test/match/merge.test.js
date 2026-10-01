@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ERR, PHASE } from '../../shared/constants.js';
 import { DATA, makeMatch, give, giveItem, checkInvariants, chessOfTier, legalTileFor } from './harness.js';
+import { canPlace, positionClass } from '../../server/match/board.js';
 
 function prep(seed = 21, o = {}) {
   const h = makeMatch({ mode: 'solo', difficulty: 'NORMAL', seed, ...o }).start();
@@ -22,11 +23,12 @@ function stock(m, ps, id, slot = 0) {
   ps.shop.slots[slot] = { kind: 'chess', id, basePrice: m.gd.chessPrice(id), frozen: false, sold: false };
 }
 
-test('3 copies (board + hand + bought) merge into 1 elite in the hand; equipment returns; reward offer of tier level+1', () => {
+test('3 copies (board + hand + bought) merge into 1 elite on the board copy\'s tile; equipment returns; reward offer of tier level+1', () => {
   const { m, ps } = prep();
   const id = chessOfTier(1, (c) => c.position === 'MELEE').find((x) => m.pool.has(x));
   const cap = m.pool.cap(id);
   const a = give(m, ps, id, 'board', [9, 3]);
+  a.dir = 'UP';
   const b = give(m, ps, id);
   const it1 = giveItem(m, ps, 'chess_item_1_01_e_a');
   const it2 = giveItem(m, ps, 'chess_item_1_02_e_a');
@@ -35,9 +37,13 @@ test('3 copies (board + hand + bought) merge into 1 elite in the hand; equipment
   stock(m, ps, id);
   assert.deepEqual(m.handle('p_0', { t: 'g.buy', slot: 0 }), { ok: true });
   const golden = DATA.chess[id].goldenId;
-  assert.ok(!ps.board.has('9,3'), 'the board copy was consumed');
-  const elite = ps.hand.find((p) => p && p.id === golden);
-  assert.ok(elite, 'elite in the hand');
+  // PRTS 卫戍协议/帮助: "若消耗已部署至作战区的干员，则发送至作战区对应位置"
+  const elite = ps.board.get('9,3');
+  assert.ok(elite && elite.id === golden, 'the elite took the consumed board copy\'s tile');
+  assert.notEqual(elite.uid, a.uid, 'a new piece (the copy was destroyed)');
+  assert.equal(elite.dir, 'UP', 'with that copy\'s facing');
+  assert.ok(!ps.hand.some((p) => p && p.kind === 'chess'), 'no chess left in the hand');
+  assert.equal(ps.deployCount, 1, 'the deploy count is unchanged');
   assert.equal(elite.poolCopies, 3);
   assert.equal(m.pool.left(id), cap - 3);
   assert.equal(ps.countCopies(id), 0);
@@ -97,18 +103,44 @@ test('elites never merge; 风丸 merges with 2 copies; a full hand still buys th
   m.dispose();
 });
 
-test('merge from two board copies with a full hand overflows the elite into temp (blocks ready until resolved)', () => {
+test('merge from two board copies with a full hand: the elite takes the copy that deploys first (no overflow, one tile freed)', () => {
   const { m, ps } = prep(23);
   const ids = chessOfTier(1, (c) => c.position === 'MELEE').filter((c) => m.pool.has(c));
   const id = ids[0];
-  give(m, ps, id, 'board', [9, 3]);
-  give(m, ps, id, 'board', [9, 4]);
+  const a = give(m, ps, id, 'board', [9, 4]);
+  const b = give(m, ps, id, 'board', [9, 3]);
+  a.dir = 'LEFT';
+  b.dir = 'DOWN';
+  const others = chessOfTier(2).filter((c) => m.pool.has(c));
+  for (let i = 0; ps.hand.some((p) => p == null); i++) give(m, ps, others[i]);
+  stock(m, ps, id);
+  assert.equal(ps.deployCount, 2);
+  assert.deepEqual(m.handle('p_0', { t: 'g.buy', slot: 0 }), { ok: true });
+  // deploy order = row desc, then col asc: (9,3) before (9,4) — [ASSUMED] the copy the battle deploys first
+  const elite = ps.board.get('9,3');
+  assert.ok(elite && elite.id === DATA.chess[id].goldenId, 'the elite stands on (9,3)');
+  assert.equal(elite.dir, 'DOWN', 'with the facing of the copy that stood there');
+  assert.ok(!ps.board.has('9,4'), 'the other copy\'s tile is free');
+  assert.equal(ps.deployCount, 1, 'two deployed copies became one deployed elite');
+  assert.ok(ps.tempEmpty, 'nothing overflowed');
+  assert.equal(ps.hand.filter(Boolean).length, 10, 'the full hand is untouched');
+  assert.deepEqual(m.handle('p_0', { t: 'g.ready', ready: true }), { ok: true });
+  checkInvariants(m);
+  m.dispose();
+});
+
+test('merge whose copies are not deployed (temp) with a full hand overflows the elite into temp (blocks ready until resolved)', () => {
+  const { m, ps } = prep(23);
+  const ids = chessOfTier(1, (c) => c.position === 'MELEE').filter((c) => m.pool.has(c));
+  const id = ids[0];
+  give(m, ps, id, 'temp', 0);
+  give(m, ps, id, 'temp', 1);
   const others = chessOfTier(2).filter((c) => m.pool.has(c));
   for (let i = 0; ps.hand.some((p) => p == null); i++) give(m, ps, others[i]);
   stock(m, ps, id);
   assert.deepEqual(m.handle('p_0', { t: 'g.buy', slot: 0 }), { ok: true });
   assert.ok(ps.temp.some((p) => p && p.id === DATA.chess[id].goldenId), 'elite overflowed into temp');
-  assert.equal(ps.board.size, 0);
+  assert.equal(ps.board.size, 0, 'nothing was deployed');
   assert.deepEqual(m.handle('p_0', { t: 'g.ready', ready: true }), { error: ERR.TEMP_NOT_EMPTY });
   checkInvariants(m);
   m.dispose();
@@ -264,10 +296,12 @@ test('item merge with a full hand AND a full temp: the golden item takes the equ
   m.dispose();
 });
 
-test('a merge completed during SETTLE (突变细胞) keeps its reward offer for the next prep; with a full hand the elite waits in temp for that prep', () => {
+test('a merge completed during SETTLE (突变细胞) keeps its reward offer for the next prep; the elite takes a deployed copy\'s tile (the carrier\'s counts) or goes to the hand', () => {
   const X = 'chess_char_2_04_a';
   const fillers = Object.values(DATA.items).filter((i) => i.itemType === 'EQUIP' && !i.isGolden && !String(i.kind || '').startsWith('consume')).map((i) => i.itemId ?? i.id).filter(Boolean);
-  for (const onBoard of [false, true]) {
+  // where the carrier of 突变细胞 and the two copies of X are: hand/hand, board/hand, board/board
+  for (const [carrierAt, copiesAt] of [['hand', 'hand'], ['board', 'hand'], ['board', 'board']]) {
+    const label = `carrier ${carrierAt}, copies ${copiesAt}`;
     const h = makeMatch({ mode: 'coop', difficulty: 'NORMAL', humans: 1, bots: 1, seed: 3, fake: true }).start();
     const m = h.m;
     h.toPrep(1);
@@ -280,35 +314,40 @@ test('a merge completed during SETTLE (突变细胞) keeps its reward offer for 
     const saved = new Map();
     for (const [base, e] of m.pool.entries) if (e.tier === 2 && base !== X) { saved.set(base, e.left); e.left = 0; }
     const T = chessOfTier(1, (c) => !m.gd.placeableTokens(c.chessId).length).find((id) => m.pool.has(id));
-    const holder = give(m, ps, T, 'board', legalTileFor(m, ps, T));
+    const holder = carrierAt === 'board' ? give(m, ps, T, 'board', legalTileFor(m, ps, T)) : give(m, ps, T);
     holder.items.push(ps.newPiece('item', 'chess_item_5_08_e_a'));
-    const copies = onBoard ? [0, 1].map(() => give(m, ps, X, 'board', legalTileFor(m, ps, X))) : [give(m, ps, X), give(m, ps, X)];
-    const tiles = onBoard ? copies.map((p) => ps.find(p.uid).key) : [];
+    const copies = copiesAt === 'board' ? [0, 1].map(() => give(m, ps, X, 'board', legalTileFor(m, ps, X))) : [give(m, ps, X), give(m, ps, X)];
+    const deployedTiles = [holder, ...copies].map((p) => ps.find(p.uid)).filter((l) => l.area === 'board').map((l) => l.key);
+    const deployed0 = ps.deployCount;
     for (let i = 0; ps.hand.some((x) => x == null); i++) giveItem(m, ps, fillers[i]);
+    const fillers0 = ps.hand.filter((p) => p && p.kind === 'item').length;
     let atSettle = null;
     const settle = m.settle.bind(m);
     m.settle = (...a) => { const r = settle(...a); atSettle = { offers: ps.offers.map((o) => o.source), merges: ps.stats.merges }; return r; };
     h.toPrep(2);
     for (const [base, left] of saved) m.pool.entries.get(base).left = left;
-    assert.deepEqual(atSettle, { offers: ['merge'], merges: 1 }, `${onBoard ? 'board' : 'hand'} copies: the transform completed a merge in SETTLE`);
+    assert.deepEqual(atSettle, { offers: ['merge'], merges: 1 }, `${label}: the transform completed a merge in SETTLE`);
     const elite = ps.allChess().find((p) => p.id === m.gd.goldenIdOf(X));
     assert.ok(elite, 'the elite survived the round start');
     assert.deepEqual(ps.offers.map((o) => o.source), ['merge'], 'the promotion reward waits for this prep');
     assert.ok(ps.privateView().shop.rewardOffer, 'and is shown');
-    if (onBoard) {
-      // research 01 A1: the elite goes to the hand, never straight to a board tile — the full hand overflows it into
-      // temp, where it stays (not wiped at the round start) and blocks Ready until the player places it
-      assert.equal(ps.find(elite.uid).area, 'temp', 'full hand outside PREP: the elite overflowed into temp');
-      assert.ok(ps.privateView().temp.some((v) => v && v.uid === elite.uid), 'shown in the temp row');
-      assert.equal(ps.privateView().canReady, false);
-      assert.deepEqual(m.handle('p_0', { t: 'g.ready', ready: true }), { error: ERR.TEMP_NOT_EMPTY });
-      const [r, c] = tiles[0].split(',').map(Number);
-      assert.deepEqual(m.handle('p_0', { t: 'g.move', uid: elite.uid, to: { area: 'board', row: r, col: c } }), { ok: true }, 'placed on a freed tile');
-      assert.ok(ps.tempEmpty && ps.privateView().canReady);
+    const loc = ps.find(elite.uid);
+    if (deployedTiles.length) {
+      // PRTS 卫戍协议/帮助: a merge consuming a deployed copy sends the elite to that copy's tile — outside PREP too; the
+      // transformed carrier stood on the board, so its tile counts (when legal for the elite); of several, the first
+      // in deploy order (row desc, col asc)
+      const map = ps.deployMap();
+      const pos = positionClass(m.gd.chess(elite.id));
+      const legal = deployedTiles.map((k) => k.split(',').map(Number)).filter(([r, c]) => canPlace(map, pos, r, c)).sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+      assert.ok(legal.length, `${label}: a legal deployed tile exists`);
+      assert.equal(loc.area, 'board', `${label}: the elite stands on the board`);
+      assert.equal(loc.key, `${legal[0][0]},${legal[0][1]}`, `${label}: on the first deployed tile in deploy order`);
+      assert.ok(ps.deployCount <= deployed0, `${label}: the deploy count did not grow (${ps.deployCount} ≤ ${deployed0})`);
     } else {
-      assert.equal(ps.find(elite.uid).area, 'hand', 'the consumed hand copies freed the slots');
+      assert.equal(loc.area, 'hand', `${label}: the consumed hand pieces freed the slots`);
     }
-    assert.ok(ps.tempEmpty);
+    assert.equal(ps.hand.filter((p) => p && p.kind === 'item').length, fillers0, `${label}: the hand's equipment stays`);
+    assert.ok(ps.tempEmpty && ps.privateView().canReady, `${label}: nothing waits in temp`);
     checkInvariants(m);
     // it expires at the end of that prep like any other offer
     h.drive(() => m.phase === PHASE.COMBAT && m.round === 2);

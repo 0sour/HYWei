@@ -21,7 +21,9 @@
 //   act1autochess_gar_event_addition_cnt (魔王)  layerGain: a 'garrison' gain whose source stands on the tile in front
 //                       of 魔王 (range_id 1-1) — or was knocked out there this instant (幽灵鲨 "被击倒时"; engine ctx.tile)
 //                       — gets +extra_cnt per bond (the extra does not count toward the source's per-battle cap).
-//   stat traits         GAIN_BUFF (atkMul / hpMul), attr_common_global_buff (spRecoveryFlat), attrByBond,
+//   stat traits         GAIN_BUFF (battleRuneKey char_attribute_mul "攻击力和生命值+20%": a rune on the chess's base
+//                       attributes, so atkMul / hpMul), attr_common_global_buff (spRecoveryFlat; "+X%" ATK / HP would be
+//                       直接乘算), attrByBond ("每叠加N层…+X%": 直接乘算, support directMods),
 //                       respawnTimeByBond, attrByBond_add_onstart, ab_damageScaleByBond — layer readers use
 //                       floor(Σ layers of the listed ACTIVE bonds / divide_num) and are recomputed after every layer
 //                       gain (research 02 §5 [ASSUMED] only active bonds count).
@@ -340,8 +342,7 @@ const INSTALLERS = {
     for (const it of list) {
       const mods = {};
       if (S.num(it.bb.sp_recovery_per_sec, 0)) mods.spRecoveryFlat = S.num(it.bb.sp_recovery_per_sec);
-      if (S.num(it.bb.atk, 0)) mods.atkMul = 1 + S.num(it.bb.atk);
-      if (S.num(it.bb.max_hp, 0)) mods.hpMul = 1 + S.num(it.bb.max_hp);
+      Object.assign(mods, S.directMods({ atk: S.num(it.bb.atk, 0), hp: S.num(it.bb.max_hp, 0) }));
       if (S.num(it.bb.attack_speed, 0)) mods.aspd = S.num(it.bb.attack_speed);
       S.passiveBuff(battle, it.unit, `gar:${it.gid}`, mods);
     }
@@ -369,10 +370,8 @@ export function stepsOf(battle, it) {
 }
 
 function attrMods(bb, k) {
-  const m = {};
-  if (S.num(bb.atk, 0)) m.atkMul = 1 + S.num(bb.atk) * k;
-  if (S.num(bb.max_hp, 0)) m.hpMul = 1 + S.num(bb.max_hp) * k;
-  if (S.num(bb.def, 0)) m.defMul = 1 + S.num(bb.def) * k;
+  // "每叠加N层，本干员攻击力+X%": a 直接乘算 bonus like every other "+X%" of the 卫戍 systems (support directMods)
+  const m = S.directMods({ atk: S.num(bb.atk, 0) * k, hp: S.num(bb.max_hp, 0) * k, def: S.num(bb.def, 0) * k });
   if (S.num(bb.attack_speed, 0)) m.aspd = S.num(bb.attack_speed) * k;
   if (S.num(bb.hp_recovery_per_sec, 0)) m.hpRegen = S.num(bb.hp_recovery_per_sec) * k;
   if (S.num(bb.sp_recovery_per_sec, 0)) m.spRecoveryFlat = S.num(bb.sp_recovery_per_sec) * k;

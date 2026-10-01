@@ -458,7 +458,9 @@ export function priceTone(slot) {
 }
 
 /**
- * Owned copies of a base chess (normal pieces on board/hand/temp) — shop cards show merge progress.
+ * Owned copies of a base chess (normal pieces on board/hand/temp) — shop cards show merge progress. An elite card
+ * never merges (server PlayerState.completesChessMerge refuses isGolden), so it reports 0 copies: no pips, no 可晋升
+ * tag and no mergeTarget tile.
  * @param {any} priv
  * @param {string} chessId
  * @param {(id:string)=>any} [getChess]
@@ -468,10 +470,34 @@ export function mergeProgress(priv, chessId, getChess = () => null) {
   const c = getChess(chessId);
   const base = c?.baseId || chessId;
   const need = Number.isInteger(c?.upgradeNum) && c.upgradeNum > 0 ? c.upgradeNum : 3;
+  if (c?.isGolden) return { copies: 0, need };
   let copies = 0;
   const pieces = [...(Array.isArray(priv?.board) ? priv.board : []), ...(Array.isArray(priv?.hand) ? priv.hand : []), ...(Array.isArray(priv?.temp) ? priv.temp : [])];
   for (const p of pieces) if (p?.kind === 'chess' && !p.golden && (p.id === base || getChess(p.id)?.baseId === base) && !String(p.id).endsWith('_b')) copies += 1;
   return { copies, need };
+}
+
+/**
+ * Where the elite appears when gaining one more normal copy of `chessId` completes a merge now (PRTS 卫戍协议/帮助
+ * "若消耗已部署至作战区的干员，则发送至作战区对应位置"; mirror of server board.js mergeTile / PlayerState._mergeChess): the
+ * board tile of the deployed copy that deploys first (row desc, then col asc) — `{ row, col, dir }` — or null (no
+ * merge — an elite card never merges, see mergeProgress — or no copy is deployed: the elite goes to the hand). The
+ * copies stand on legal tiles, and the elite is the same operator, so the tile needs no legality check here.
+ * @param {any} priv
+ * @param {string} chessId
+ * @param {(id:string)=>any} [getChess]
+ * @returns {{ row: number, col: number, dir: string } | null}
+ */
+export function mergeTarget(priv, chessId, getChess = () => null) {
+  const { copies, need } = mergeProgress(priv, chessId, getChess);
+  if (!(copies > 0 && copies + 1 >= need)) return null;
+  const c = getChess(chessId);
+  const base = c?.baseId || chessId;
+  const board = (Array.isArray(priv?.board) ? priv.board : []).filter((p) => p?.kind === 'chess' && !p.golden && Number.isInteger(p.row) && Number.isInteger(p.col)
+    && !String(p.id).endsWith('_b') && (p.id === base || getChess(p.id)?.baseId === base));
+  if (!board.length) return null;
+  board.sort((a, b) => b.row - a.row || a.col - b.col);
+  return { row: board[0].row, col: board[0].col, dir: board[0].dir || 'RIGHT' };
 }
 
 /** Whether every hand slot is taken (the server refuses a purchase / reward that needs a slot: HAND_FULL). */

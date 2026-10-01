@@ -47,6 +47,7 @@ export async function startRealServer(opts = {}) {
     if (opts.fast.kit != null) env.SP_START_KIT = String(opts.fast.kit);
     if (opts.fast.chess?.length) env.SP_START_CHESS = opts.fast.chess.join(',');
     if (opts.fast.items?.length) env.SP_START_ITEMS = opts.fast.items.join(',');
+    if (opts.fast.shop?.length) env.SP_START_SHOP = opts.fast.shop.join(',');
     if (opts.fast.idleBots) env.SP_IDLE_BOTS = '1';
   }
   const child = spawn(process.execPath, [entry], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });

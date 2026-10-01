@@ -10,7 +10,8 @@
 //   --humans N  the first N seats are human seats on "AI 托管" (exercises the human views / m.private paths)
 //   --seeds N   run N consecutive seeds and print an aggregate (rounds survived, LP by round, outcomes)
 //   --lp N      override every player's starting LP (reach later rounds / the Final Assault while balancing)
-//   --layers N  at the boss round's prep, add N layers to every bond of every player (reach the Hidden Core)
+//   --layers N  at the boss round's prep, add N layers to every bond of every player (reach the Hidden Core); a raw
+//               write (no onLayers milestones) that stops at BOND_LAYER_CAP (999, shared/constants.js) like every gain
 //   --difficulty ALL  sweep all four difficulties
 //   --content   sim content mode (default full)
 //   --rehearsal N  layouts each bot rehearses per prep with the real sim (default: the Match default, 3; 0 = off,
@@ -35,6 +36,7 @@ import { VirtualScheduler } from '../server/match/scheduler.js';
 import { attachAudit } from '../server/match/audit.js';
 import { Battle } from '../server/sim/Battle.js';
 import { getData } from '../server/data.js';
+import { layerGainRoom } from '../shared/constants.js';
 
 const argv = process.argv.slice(2);
 const opt = {};
@@ -130,7 +132,7 @@ function runOne(seed, difficulty) {
       last = key;
       if (lpOverride && m.phase === 'PREP' && m.round === 1) for (const ps of m.players.values()) ps.lp = lpOverride;
       if (layerBoost && m.phase === 'PREP' && m.round === m.gd.bossRound) {
-        for (const ps of m.alivePlayers()) { for (const id of m.gd.bondIds) ps.layers[id] = (ps.layers[id] || 0) + layerBoost; ps.recompute(); }
+        for (const ps of m.alivePlayers()) { for (const id of m.gd.bondIds) { const before = ps.layers[id] || 0; ps.layers[id] = before + layerGainRoom(before, layerBoost); } ps.recompute(); }
       }
       if (m.phase === 'SETTLE' || ((m.phase === 'RESULT') && (m.round === m.gd.bossRound || m.round === m.gd.hiddenRound))) {
         const row = { round: m.round, unite: !!m.unitePlan, players: {} };

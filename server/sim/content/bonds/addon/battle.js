@@ -1,33 +1,39 @@
 // server/sim/content/bonds/addon/battle.js — battle side of the 15 add-on bonds (research 02 §3.9–§3.23).
 //
-// Every number comes from data/bonds.json (`env_gbuff_new` buff blackboards). Effects only apply to the owning
+// Every number comes from data/bonds.json (`env_gbuff_new` buff blackboards). ATK / DEF / max HP "+X%" are 直接乘算
+// (support directMods: additive with every other percentage, PRTS 盟约记录). Effects only apply to the owning
 // player's units (`unit.ownerId === playerId`): two players sharing a boss / 联防 field never buff each other.
 // Layer-dependent values read the LIVE layers (`battle.getPlayer(pid).bonds[id].layers`): an IN_BATTLE layer gain
 // (engine `layerGain` hook, which fires before the layers are written) schedules one deferred recompute per player.
 //
-//   精准 preciShip     members ATK ×(1 + base_atk + atk_per_stack·L); tier 2 (3 distinct): members + RANGED operators,
+//   精准 preciShip     members ATK +(base_atk + atk_per_stack·L); tier 2 (3 distinct): members + RANGED operators,
 //                      which also ignore power_def_penetrate DEF / power_magic_resist_penetrate RES (defIgnorePct / resIgnorePct)
 //   迅捷 swiftShip     member skill end → p = min(1, base_prob + prob_per_stack·L): +normal_sp SP; L ≥ power_bond_stack_cnt:
 //                      every operator's skill end rolls p again for +power_sp (members roll both, research [ASSUMED])
 //   灵巧 skillfulShip  aura: members + operators on their 4 (L ≥ 40: 8) adjacent tiles ASPD +(base + per·L), once per unit
-//   奥术 arcaneShip    member arts damage → target arts taken ×(base + per·L) for weak_duration s (one refreshing instance
-//                      per player); tier 2: ×power_weak_scale when the target is below hp_ratio at application
-//   坚守 steadShip     all operators max HP ×(1 + base + per·L); tier 2: 40 % of a non-member operator's damage is borne by
+//   奥术 arcaneShip    member arts damage → target arts taken ×(base + per·L) for weak_duration s; tier 2: ×power_weak_scale
+//                      when the target is below hp_ratio at application. ONE instance per target whatever applies it — the
+//                      two players of a pair field compete for it, the strongest wins (battle.applyStrongest, 同名效果取最高:
+//                      PRTS 作战机制 "同名buff的默认叠加策略buff只能表现出一个"; 巴哈姆特 12316 first-hand: "共享型buff會跟對面搶
+//                      如果對面層數比你高就不需要再特別激活直接吃他的奧術buff"). v2.5 kept one per player, so two players'
+//                      instances multiplied (×5.4 × ×5.6 on a leader at ~250 layers, DESIGN §20.10)
+//   坚守 steadShip     all operators max HP +(base + per·L); tier 2: 40 % of a non-member operator's damage is borne by
 //                      the members on the field (split evenly, sourceless true damage — already mitigated), members’ thorns
-//                      (base + per·L arts, sourceless, ≤ 1 per cd_duration per member) + 脆弱 ×damage_scale for weak[limit] s
-//   助力 deputShip     all operators DEF ×(1 + base + per·L), redeploy time ×(1 + respawn_time)
+//                      (base + per·L arts, sourceless but credited to the member hit, ≤ 1 per cd_duration per member)
+//                      + 脆弱 ×damage_scale for weak[limit] s
+//   助力 deputShip     all operators DEF +(base + per·L), redeploy time ×(1 + respawn_time)
 //   突袭 raidShip      member idle ≥ no_attack_duration s (or skill ready) with no enemy in range → "保留技力立即再部署"
 //                      next to the most advanced ground enemy: a real redeployment (retreat + free redeploy on the
 //                      landing tile, full HP, `deploy` fires — 部署时 traits such as 史尔特尔, 突袭手雷, 卡西米尔, 叙拉古)
-//                      with its SP / charges kept (engine redeploy tile + keepSp); ATK/HP ×(1 + base + per·L)
+//                      with its SP / charges kept (engine redeploy tile + keepSp); ATK/HP +(base + per·L)
 //                      until it leaves the field; later redeploys use its board tile again;
 //                      L ≥ power_bond_stack_cnt: every operator ASPD +power_attack_speed
 //   不屈 indomShip     ground operator knocked out → p = min(1, base + per·L) immediate free redeploy; tier 2: every
 //                      operator on the field +sp SP
 //   协防 emptyShip     all operators phys/arts taken ×(1 − damage_resistance); members dealt ×damage_scale_normal
 //                      (elite ×damage_scale_extra)
-//   独行 soloShip      the member(s) ATK ×(1 + atk), HP ×(1 + max_hp), +sp SP on every deploy
-//   绝技 suntShip      tier 1: elite operators ATK ×(1 + power_atk); tier 2: elites (and their summons) SP cost ×sp_ratio
+//   独行 soloShip      the member(s) ATK +atk, HP +max_hp, +sp SP on every deploy
+//   绝技 suntShip      tier 1: elite operators ATK +power_atk; tier 2: elites (and their summons) SP cost ×sp_ratio
 //   远见 / 奇迹 / 投资人 / 调和 have no battle effect (prep side, membership in support/index.js).
 //
 // Hooks registered only when a bond needs them. Priorities: `hit` −20 (坚守 redirect, after other modifiers had their
@@ -37,7 +43,7 @@ import { absoluteRangeKeys, canTargetEnemy } from '../../../targeting.js';
 import { localOrder, localBefore } from '../../../dir.js';
 import {
   num, bondRecord, buffParams, bondTier, bondLayers, isMember, isElite, isGroundOp, onField, playerOps, passiveBuff,
-  fxOn, N4, N8, bodyInKeys,
+  fxOn, N4, N8, bodyInKeys, directMods,
 } from '../../support/index.js';
 
 export const ID = Object.freeze({
@@ -55,6 +61,9 @@ const STEAD_CD = 'bond:steadShip:cd';
 const AURA_POLL = 0.25;
 const RAID_POLL = 0.25;
 const RAID_SEARCH = 2; // landing tiles within this Chebyshev distance of the target enemy
+
+/** 奥术 vulnerability mods for a multiplier (battle.applyStrongest). */
+const arcaneMods = (v) => ({ artsTakenMul: v });
 
 /** `env_gbuff_new` blackboard of a bond (numbers only). */
 export function bondBb(bondId) {
@@ -90,7 +99,7 @@ function applyPassives(battle, st) {
   if (t[ID.preci]) {
     const bb = st.bb[ID.preci];
     const wide = t[ID.preci] >= 2;
-    const mods = { atkMul: 1 + num(bb.base_atk) + num(bb.atk_per_stack) * L(battle, st, ID.preci) };
+    const mods = directMods({ atk: num(bb.base_atk) + num(bb.atk_per_stack) * L(battle, st, ID.preci) });
     if (wide) { mods.defIgnorePct = num(bb.power_def_penetrate); mods.resIgnorePct = num(bb.power_magic_resist_penetrate); }
     for (const u of st.ops) {
       if (st.members[ID.preci].has(u) || (wide && u.def?.position === 'RANGED')) passiveBuff(battle, u, KEY.preci, mods);
@@ -98,12 +107,12 @@ function applyPassives(battle, st) {
   }
   if (t[ID.stead]) {
     const bb = st.bb[ID.stead];
-    const mods = { hpMul: 1 + num(bb.base_max_hp) + num(bb.max_hp_per_stack) * L(battle, st, ID.stead) };
+    const mods = directMods({ hp: num(bb.base_max_hp) + num(bb.max_hp_per_stack) * L(battle, st, ID.stead) });
     for (const u of st.ops) passiveBuff(battle, u, KEY.stead, mods);
   }
   if (t[ID.deput]) {
     const bb = st.bb[ID.deput];
-    const mods = { defMul: 1 + num(bb.base_def) + num(bb.def_per_stack) * L(battle, st, ID.deput), redeployMul: Math.max(0, 1 + num(bb.respawn_time)) };
+    const mods = directMods({ def: num(bb.base_def) + num(bb.def_per_stack) * L(battle, st, ID.deput) }, { redeployMul: Math.max(0, 1 + num(bb.respawn_time)) });
     for (const u of st.ops) passiveBuff(battle, u, KEY.deput, mods);
   }
   if (t[ID.raid]) {
@@ -124,8 +133,8 @@ function applyPassives(battle, st) {
   if (t[ID.arcane]) {
     const bb = st.bb[ID.arcane];
     const m = num(bb.base_damage_scale, 1) + num(bb.damage_scale_per_stack) * L(battle, st, ID.arcane);
-    st.arcaneMods = { artsTakenMul: Math.max(0, m) };
-    st.arcaneLowMods = { artsTakenMul: Math.max(0, m * num(bb.power_weak_scale, 1)) };
+    st.arcaneMul = Math.max(0, m);
+    st.arcaneLowMul = Math.max(0, m * num(bb.power_weak_scale, 1));
   }
   if (t[ID.skillful]) {
     const bb = st.bb[ID.skillful];
@@ -137,10 +146,10 @@ function applyPassives(battle, st) {
 }
 
 function raidMods(bb, lv) {
-  const mods = {
-    atkMul: 1 + num(bb.base_atk) + num(bb.atk_per_stack) * lv,
-    hpMul: 1 + num(bb.base_max_hp) + num(bb.max_hp_per_stack) * lv,
-  };
+  const mods = directMods({
+    atk: num(bb.base_atk) + num(bb.atk_per_stack) * lv,
+    hp: num(bb.base_max_hp) + num(bb.max_hp_per_stack) * lv,
+  });
   const aspd = num(bb.base_attack_speed) + num(bb.attack_speed_per_stack) * lv;
   if (aspd) mods.aspd = aspd;
   return mods;
@@ -161,12 +170,12 @@ function applyStatic(battle, st) {
   }
   if (t[ID.solo]) {
     const bb = st.bb[ID.solo];
-    const mods = { atkMul: 1 + num(bb.atk), hpMul: 1 + num(bb.max_hp) };
+    const mods = directMods({ atk: num(bb.atk), hp: num(bb.max_hp) });
     for (const u of st.members[ID.solo]) passiveBuff(battle, u, KEY.solo, mods);
   }
   if (t[ID.sunt]) {
     const bb = st.bb[ID.sunt];
-    const mods = { atkMul: 1 + num(bb.power_atk) };
+    const mods = directMods({ atk: num(bb.power_atk) });
     for (const u of st.ops) {
       if (!isElite(u)) continue;
       passiveBuff(battle, u, KEY.sunt, mods);
@@ -438,9 +447,12 @@ export function install(battle) {
         t.mem[STEAD_CD] = battle.time;
         const src = c.source;
         if (!src || src.side !== 'enemy' || !src.alive) return;
-        const d = battle.makeDamage({ amount: num(bb.base_damage_value) + num(bb.damage_value_per_stack) * L(battle, st, ID.stead), type: 'arts', canDodge: false });
+        // "伤害来源受到(850+10×L)点法术伤害": 无来源 (no attacker multipliers, hooks see no source) but credited to the
+        // member hit — its player's stats and shared-pool tally count it, like an element burst (v2.5: no credit at all,
+        // up to 19 % of a co-op leader's pool and 88 % of a solo one went unattributed, DESIGN §20.10)
+        const d = battle.makeDamage({ amount: num(bb.base_damage_value) + num(bb.damage_value_per_stack) * L(battle, st, ID.stead), type: 'arts', canDodge: false, sourceless: true });
         d.steadThorn = true;
-        battle.dealDamage(null, src, d);
+        battle.dealDamage(t, src, d);
         if (src.alive) battle.applyStatus(src, 'fragile', { duration: num(bb['weak[limit]'], 5), value: num(bb.damage_scale, 1) - 1, source: t });
         return;
       }
@@ -451,17 +463,8 @@ export function install(battle) {
       if (!st || !st.tiers[ID.arcane] || !st.members[ID.arcane].has(src)) return;
       const bb = st.bb[ID.arcane];
       const low = st.tiers[ID.arcane] >= 2 && t.hpRatio < num(bb.hp_ratio);
-      const mods = low ? st.arcaneLowMods : st.arcaneMods;
-      const key = st.arcaneKey ?? (st.arcaneKey = `${KEY.arcane}:${st.pid}`);
-      const dur = num(bb.weak_duration, 3);
-      const b = t.findBuff(key);
-      if (b) {
-        b.timeLeft = dur;
-        b.duration = dur;
-        if (b.mods !== mods) { b.mods = mods; t.markDirty(); }
-      } else {
-        battle.addBuff(t, { key, duration: dur, mods });
-      }
+      // one 奥术 instance per target, the strongest (both players of a pair field included): see the header
+      battle.applyStrongest(t, KEY.arcane, { duration: num(bb.weak_duration, 3), value: low ? st.arcaneLowMul : st.arcaneMul, mods: arcaneMods, source: src });
     });
   }
 }

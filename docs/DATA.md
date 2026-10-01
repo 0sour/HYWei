@@ -66,7 +66,7 @@ Top level: `{ season, seasonName, modes, economy, lpCapPerRound, bossOvertimeAft
 | `spRounds` | `[3,9,11]` | rounds whose prep opens with a 机变 draft |
 | `combatTimeLimit[r]` | `{"1":45,…,"14":null}` | = `rounds[r].combatTimeLimit`: **real** seconds of the forced-2× battle (DESIGN §4) |
 | `enemyScale[r]` | `{"atk":1.1,"hp":1.2,"speed":1,"kAtk":1,"kHp":1}` | non-boss enemy multipliers (research 01 A3): `atk = atkBase·1.1^kAtk`, `hp = hpBase·1.2^kHp·extra`, `speed` 1.15 on ABYSS from R3. Apply to level-0 stats after special-enemy replacement, also to bounty/special enemies. **Leader HP pools excluded.** |
-| `bossHpScale` | multi `{"bloodPointKey":"bloodPointAbyss","coop":1,"aliveScaling":false,…}` · solo `{"bloodPointKey":"bloodPoint","solo":0.25,"soloAssumed":true,…}` | co-op pool = `bosses[id].bloodPoint[difficulty]` unscaled (split leaders share one pool, "敌方领袖的总生命值不变", no alive-player factor — research 08 §6 #7); solo = × `solo` [ASSUMED, flagged]. `GameData.bossPoolHp(bossId)` implements it |
+| `bossHpScale` | multi `{"bloodPointKey":"bloodPointAbyss","coop":1,"aliveScaling":false,"aliveFull":4,"aliveAssumed":true,…}` · solo `{"bloodPointKey":"bloodPoint","solo":0.25,"soloAssumed":true,…}` | one pool for every boss field: co-op = `bosses[id].bloodPoint[difficulty]` whatever the number of alive players; `aliveScaling: true` would scale it × alive / `aliveFull` (巴哈姆特 12294 "隊友變少，最後boss血條也會變少" — one community note, no proportion: off until confirmed, the proportion [ASSUMED, flagged `aliveAssumed`]); solo = × `solo` [ASSUMED, flagged]. `GameData.bossPoolHp(bossId, aliveCount)` / `bossPoolShare` implement it (DESIGN §20.10) |
 | `upgradePrices` | `[5,8,11,12,13]` | base price L1→2 … L5→6 (−1 per round start, floor 0, reset after upgrade) |
 | `maxShopLevel` | `6` | |
 | `shopSlots[level]` | `{"1":{"chess":3,"item":1},…}` | operator + item slots per shop level |
@@ -114,7 +114,7 @@ Top level: `{ season, seasonName, modes, economy, lpCapPerRound, bossOvertimeAft
 |---|---|---|
 | `lpCapPerRound` | `10` | max LP lost per player per normal round |
 | `bossOvertimeAfter`, `bossOvertimeDrainPerSec` | `150`, `1` | official `bossTurnHpReduceTime`: from 150 **real** s of a boss round the merged team LP loses 1 per whole real second (`gamedata.js bossOvertimeDue`; first point at 151 s) |
-| `bossHpScale` | `{"formula":"co-op: bloodPoint[difficulty] …","coop":1,"solo":0.25,"soloAssumed":true,"aliveScaling":false,…}` | global form of the mode rule |
+| `bossHpScale` | `{"formula":"co-op: bloodPoint[difficulty] — one pool for every field …","coop":1,"solo":0.25,"soloAssumed":true,"aliveScaling":false,"aliveFull":4,"aliveAssumed":true,…}` | global form of the mode rule |
 | `hiddenCore` | `{"single":350,"multi":1200,"minTeamLpExclusive":1,"difficulties":["NORMAL","HARD","ABYSS"],"checkedAfterRound":14}` | Σ activated layers must be **>** threshold and LP **>** 1 |
 | `dp` | `{"init":10,"perSec":1,"max":99}` | |
 | `unite` | `{"maxHelpers":2,"helperOrder":"unitsOnField>activeBond>undownedUnits; pair: unitsOnField>activeBond>activeLayers>undownedUnits, first = right field (PRTS 帮助)","layerGainsEnabled":false,"templates":{"1":"act1autochess_escaped_single","2":"act1autochess_escaped_multi"},…}` | 联防; `helperOrder` documents the rule `server/match/unite.js helperOrder` implements (research 08 §5; ties → seat) |
@@ -248,7 +248,7 @@ everything needed to resolve a unit for `(chessId, skillIndex, moduleId)` (`simd
 | `layerMilestones[]` | `[{"layer":25,"mode":"every","effect":"bond_layer_added_reward_equip"}]` | layer-based powers: `reach` (while L ≥ layer), `every` (each multiple), `first` (latched once) |
 | `desc`, `descRaw` | | bond panel text |
 | `effectId`, `effectName`, `effectDesc`, `effectDescRaw` | `"bondeffect_deput"`, …, `"所有干员防御力+{0:0%}（受层数影响）…"` | in-battle text with **positional** placeholders |
-| `effectDescParams[]` | `[{"index":0,"format":"0%","base":"base_def","perStack":"def_per_stack"}]` | `{i:fmt}` = `bb[base] + bb[perStack] × layers` |
+| `effectDescParams[]` | `[{"index":0,"format":"0%","base":"base_def","perStack":"def_per_stack"}]` | `{i:fmt}` = `bb[base] + bb[perStack] × layers` — layers never exceed 999 (the official `MAX_GARRISON_STACK`, not in any table: shared/constants.js `BOND_LAYER_CAP`, research 11) |
 | `bb`, `bbStr` | `{"base_def":0.15,"def_per_stack":0.012,"respawn_time":-0.3,"layer":2,"count":3,"more_layer":4}` | all buffs merged (first wins) |
 | `buffs[]` | `[{"key":"env_gbuff_new","bb":{…},"bbStr":{"key":"act1autochess_bond_eff_deput"}}, …]` | exact official buffs (e.g. 萨尔贡 has a second buff valid only with `band_narant`) |
 | `baseParams`, `perStackParams` | `["base_def"]`, `["def_per_stack"]` | official descParamBaseList / descParamPerStackList |
@@ -434,13 +434,13 @@ Glyph legend (`rows`):
 
 | Field | Example (`boss_5`) | Meaning |
 |---|---|---|
-| `bossId`, `enemyKey`, `handbookId`, `name`, `sortId` | `"boss_5"`, `"enemy_2016_csphtm"`, …, `"卢西恩，“猩红血钻”"`, `5` | |
+| `bossId`, `enemyKey`, `handbookId`, `name`, `sortId` | `"boss_5"`, `"enemy_2016_csphtm"`, …, `"卢西恩，“猩红血钻”"`, `5` | `enemyKey` = activity_table `autoChessData.bossInfoDict[*].enemyId`, the official `IsBossEnemy` list: the units 限伤 applies to (one hit ≥ 300000 in a boss battle deals 0; shared/constants.js `BOSS_HIT_LIMIT`, research 11 §2.3) — the wave templates tag exactly these keys `boss` |
 | `weight`, `hidden` | `10`, `false` | pick weight within its round |
-| `bloodPoint` | `{"FUNNY":200000,"NORMAL":390000,"HARD":780000,"ABYSS":3000000}` | shared leader HP pool per difficulty |
+| `bloodPoint` | `{"FUNNY":200000,"NORMAL":390000,"HARD":780000,"ABYSS":3000000}` | shared leader HP pool per difficulty: bossInfoDict `bloodPoint` / `bloodPointNormal` / `bloodPointHard` / `bloodPointAbyss` of the current data (PRTS 盟约记录's leader table is an older revision: 铳 险境, 胄 / 铳 / 萨米 绝境 differ, no 终极, no 卢西恩); no single hit of ≥ 300000 counts toward it (限伤, `BOSS_HIT_LIMIT`) |
 | `lpr` | `30` | LP cost if it leaks |
 | `templates[modeId]` | `{"round":14,"template":"act2autochess_h07_05"}` | |
 | `escortsByTemplate[templateId]` | `[{"key":"enemy_2009_csaudc","slot":null,"count":4},…]` | non-boss spawns (slot = still a placeholder) |
-| `parts[]` | `["enemy_9014_acstma","enemy_9015_acstmb"]` | boss parts (random local groups / unharmful) |
+| `parts[]` | `["enemy_9014_acstma","enemy_9015_acstmb"]` | boss parts (random local groups / unharmful); not leaders — 限伤 never applies to them |
 | `abilities[]` | handbook texts | |
 
 ## 14. `tokens.json` — `{ [tokenId]: Token }` (22)
@@ -503,8 +503,9 @@ Glyph legend (`rows`):
     requiresBondId/rangeGrid/flavor`, bond `spec`, E2 art availability (falls back to "char has an E2 phase").
 17. [ASSUMED] content (flagged in data): 机变 family schedule and server pools, the solo leader pool factor
     (`bossHpScale.solo` 0.25), title criteria, income cap 12, per-turn band-draft timer 30 s (`timers.bandTurn`, the
-    step's only countdown — user playtest #4), the shop-only item list (`SHOP_EXCLUDED_ITEMS`, from play). The special-enemy
-    generator, the co-op leader pool (`bloodPoint`, no alive-player scaling) and the 联防 timing are official.
+    step's only countdown — user playtest #4), the shop-only item list (`SHOP_EXCLUDED_ITEMS`, from play), the alive / 4
+    proportion of the optional co-op alive scaling (`bossHpScale.aliveAssumed`; `aliveScaling` off). The special-enemy
+    generator, the co-op leader pool (`bloodPoint`, one pool for every field) and the 联防 timing are official.
 18. **Module parts flagged `isToken`** (伺夜, 浊心斯卡蒂, 缪尔赛思, 耀骑士临光 golden) upgrade the summon only; they are
     applied to `tokens.json` variants, never to the operator's talents/trait.
 19. **Undefined enemy-database fields** (`m_defined:false`): a zero `m_value` means "never set" and falls back to the

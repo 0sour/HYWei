@@ -389,6 +389,43 @@ describe('render engine in headless Chrome', { skip }, () => {
     assert.deepEqual(r.battle, [['UP', true, 1], ['LEFT', true, -1], ['RIGHT', false, 1]]);
   });
 
+  test('a merge completed between two preps (band grant at ROUND_START, after a battle) still plays the promotion cue (QA 6b)', async () => {
+    const { page, problems } = await open('scene=prep&panel=0', 1600, 900);
+    await wait(1500);
+    const r = await page.evaluate(async () => {
+      const v = window.__demo.view, st = window.__demo.scene.state;
+      const rows = await (await fetch('/data/chess.json')).json();
+      const chess = rows.chess || rows;
+      const prev = JSON.parse(JSON.stringify(st));
+      const b0 = prev.board.find((p) => p.kind === 'chess' && chess[p.id] && !chess[p.id].isGolden && chess[p.id].goldenId);
+      if (!b0) return { skip: 'no normal chess on the demo board' };
+      // the other copy waits in the hand
+      const uids = [...prev.hand, ...prev.board, ...(prev.temp || [])].filter(Boolean).map((p) => p.uid);
+      const hu = Math.max(...uids) + 1;
+      prev.hand = [{ uid: hu, kind: 'chess', id: b0.id }, ...prev.hand.filter((p) => p && p.uid !== hu)].slice(0, 9);
+      v.setPrep(prev, { editable: true });
+      const n0 = v.debug.promotions.length;
+      // a battle rebuilds the scene; the merge's elite takes the deployed copy's tile at the next round start
+      v.enterBattle({ fieldId: 'x', kind: 'normal', units: [] });
+      const next = JSON.parse(JSON.stringify(prev));
+      next.hand = next.hand.filter((p) => p.uid !== hu);
+      const eu = hu + 1;
+      next.board = next.board.map((p) => (p.uid === b0.uid ? { uid: eu, kind: 'chess', id: chess[b0.id].goldenId, golden: true, row: b0.row, col: b0.col, dir: b0.dir } : p));
+      v.setPrep(next, { editable: true });
+      const p = v.debug.promotions.slice(n0);
+      // a plain round rebuild (no merge) cues nothing
+      v.enterBattle({ fieldId: 'y', kind: 'normal', units: [] });
+      v.setPrep(JSON.parse(JSON.stringify(next)), { editable: true });
+      return { p, after: v.debug.promotions.length - n0, row: b0.row, col: b0.col, eu };
+    });
+    await page.close();
+    assert.deepEqual(problems, []);
+    assert.equal(r.skip, undefined, 'the demo board has a normal operator');
+    assert.equal(r.p.length, 1, JSON.stringify(r.p));
+    assert.deepEqual([r.p[0].uid, r.p[0].area, r.p[0].row, r.p[0].col, r.p[0].copies], [r.eu, 'board', r.row, r.col, 2], 'the elite on the copy\'s tile, both copies');
+    assert.equal(r.after, 1, 'no cue for a rebuild without a merge');
+  });
+
   test('drops outside the stage report client coords; a refused drop tweens back home', async () => {
     const { page, problems } = await open('scene=prep&panel=0', 1600, 900);
     await wait(2000);
