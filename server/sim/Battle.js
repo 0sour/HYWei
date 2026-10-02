@@ -484,9 +484,11 @@ export class Battle {
 
   _timeout() {
     // Remaining non-boss enemies on the field count as leaked (DESIGN §5.5). Spawns that never happened before the
-    // limit are dropped: they are removed from `total` and reported in `result().unspawned` (not leaks).
+    // limit are dropped: they are removed from `total` and reported in `result().unspawned` (not leaks). A content-made
+    // neutral (`mem.noLeak`: 隐德来希's 心烛, which follows its original) is never a leak — it is in no spawn schedule, so
+    // a client result listing it would be rejected (fields.js validateClientResult 'leak key').
     for (const e of this.enemies) {
-      if (!e.alive || e.isBoss) continue;
+      if (!e.alive || e.isBoss || e.mem.noLeak) continue;
       this._recordLeak(e, true);
     }
     this.unspawned = [];
