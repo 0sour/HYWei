@@ -58,6 +58,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
 import { PHASE, GEO } from '../../../shared/constants.js';
+import { fxForm } from '../../../shared/protocol.js';
 import { html, Spinner, PhaseBanner, Icon, Button, MicroLabel, confirmDialog, useTicker } from '../ui/components.js';
 import { useGameData, GIcon } from '../ui/gameComponents.js';
 import { useFieldView } from '../ui/fieldHost.js';
@@ -109,6 +110,9 @@ const SEL_RANGE = Object.freeze({ group: 'selRange', color: 0xff9c33, fill: 0.3,
 /** The tile an armed merge-completing card's elite will take (its own group; gold like the promotion cue, render/fx.js). */
 const MERGE_HL = Object.freeze({ group: 'mergeTile', color: 0xffd45a, fill: 0.34, line: 1 });
 const STATE_EV = new Set(['spawn', 'die', 'deploy', 'status', 'skill']);
+/** Event tuples replayed when a field is entered late: the state-bearing kinds and the fx that change an enemy's model
+ *  form (shared/protocol.js fxForm — the field meta's UnitInfo `form` predates them). */
+const keepEarly = (e) => Array.isArray(e) && (STATE_EV.has(e[0]) || fxForm(e) !== undefined);
 
 /** Router for the in-match screens. */
 export function GameScreen() {
@@ -446,7 +450,7 @@ function MatchScreen() {
         if (typeof msg.fieldId !== 'string') return;
         const buf = evBufRef.current.get(msg.fieldId) || [];
         // only state-bearing tuples are replayed later (see the enter effect)
-        for (const e of msg.ev) if (Array.isArray(e) && STATE_EV.has(e[0])) buf.push(e);
+        for (const e of msg.ev) if (keepEarly(e)) buf.push(e);
         if (buf.length > 1500) buf.splice(0, buf.length - 1500);
         evBufRef.current.set(msg.fieldId, buf);
         if (evBufRef.current.size > 8) evBufRef.current.delete(evBufRef.current.keys().next().value);

@@ -61,10 +61,10 @@
 //   kind, tiles?, id?, form?} (delayed strikes, charges, 'reborn' with form 'reborn') · 'beam' {from, to, kind} ·
 //   'summon' {id, key} · 'ember' {id, hits, dur, form: 'husk'} · 'revive' {id, kind?, form: 'form2' | 'revived' | 'fly'}
 //   · 'stone' {id, dur, form: 'stone'} · 'blink' {id, fx, fy} · 'charge' {id, tx, ty} · 'expose' {id} · 'shieldBreak'
-//   {id} · 'liberate' {id} · 'phase' {id, kind, dur?} (form changes — crawl, translator_* — and barrier / charge states)
-//   · 'lpLoss' {value, reason} · 'steal' · 'ignite'. Forms go through setForm(): the unit keeps it (`e.form`, UnitInfo
-//   `form`) and the fx's `form` — a form 'phase' fx's `kind` — is the model's clip set from then on (render/app.js →
-//   UnitView.setForm, units.js FORMS).
+//   {id} · 'liberate' {id} · 'phase' {id, kind, dur?, form?} (form changes — crawl, translator_* — and barrier / charge
+//   states) · 'lpLoss' {value, reason} · 'steal' · 'ignite'. Forms go through setForm(): the unit keeps it (`e.form`,
+//   UnitInfo `form`) and the fx's `form` is the model's clip set from then on (render/app.js → UnitView.setForm, units.js
+//   FORMS); the client keeps every fx with a `form` through catch-ups and hidden tabs (shared/protocol.js fxForm).
 // Custom hook: 'lpLoss' {amount, reason, source} — leader "扣除目标生命" effects; also summed into result.lpLoss.
 
 import { TICK, MOVE_SCALE, ELEMENT } from '../constants.js';
@@ -472,13 +472,14 @@ export const isHitCount = (e) => !!e.findBuff(HIT_COUNT_KEY);
 /**
  * The enemy's model takes another form (render/units.js FORMS: a clip set of its skeleton): kept on the unit
  * (`e.form`, published by snapshot.js unitInfo — a view built mid-battle from fieldMeta(): a teammate's field watched
- * later, 联防 observers, a reconnect — starts in it) and announced by the fx `fxKind` (+ id, x, y, `params`): a 'phase'
- * fx carries the form as its `kind`, any other fx as `form`. Barrier / charge 'phase' kinds are no forms: they go
- * through b.fx directly.
+ * later, 联防 observers, a reconnect — starts in it) and announced by the fx `fxKind` (+ id, x, y, `params`) carrying it
+ * as `form` (a 'phase' fx also as its `kind`). The `form` key marks the fx as state (shared/protocol.js fxForm): the
+ * client never drops it, not in a catch-up frame nor while its tab is hidden. Barrier / charge 'phase' kinds are no
+ * forms: they go through b.fx directly, without `form`.
  */
 export function setForm(b, e, form, fxKind = 'phase', params = null) {
   e.form = form;
-  b.fx(fxKind, fxKind === 'phase' ? { ...params, x: e.x, y: e.y, id: e.id, kind: form } : { ...params, x: e.x, y: e.y, id: e.id, form });
+  b.fx(fxKind, fxKind === 'phase' ? { ...params, x: e.x, y: e.y, id: e.id, kind: form, form } : { ...params, x: e.x, y: e.y, id: e.id, form });
 }
 
 /** Leader "扣除目标生命" effects: recorded for the match (hook 'lpLoss' + result.lpLoss). */
@@ -2119,15 +2120,18 @@ function kitWolfLord(ab) {
  * still cancelled]; then the form's flat stat changes apply (move speed relative to the data's 1.0, attack interval
  * +N s, 重量等级 +N):
  *   寻仇者 (form B): melee only, physical; ATK +100 % while HP < 50 % (Mode_Fuchou_Anger.atk);
- *   特战术师 (form D): ranged only (the data's 2.4 radius), arts, 2 targets at once;
- *   幽灵 (form C): no stat change, unblockable, no attack (PRTS lists none; its model has no attack clip).
+ *   特战术师 (form D): ranged only (the data's 2.4 radius), arts, 2 targets at once — flyers included [ASSUMED: the
+ *     translator's text "仅进行远程攻击，同时攻击2个目标，造成法术伤害" names no exception; the standalone PRTS 特战术师's talent
+ *     "不会攻击飞行单位" may carry over — then `canTarget: (u) => !u.isFlying` in finish()];
+ *   幽灵 (form C): no stat change, unblockable, no attack (PRTS 转译基底·α "幽灵形态 无属性变化；无法被阻挡" — no attack line,
+ *     unlike the armed forms — and the linked PRTS 幽灵 天赋 "不进行普通攻击，无法被阻挡", 攻击方式 不攻击).
  * The armed forms attack through the engine's enemy attack (ai.js enemyAttack, `profile.dmgType`), so attack clips,
  * projectiles and the attack hooks are the normal ones. Before its change ends it cannot be killed at all (damage is
  * cancelled; an HP loss stops at 1 HP) — user report after 0.1.0 (#5): its model never changed (no FORMS clip set), so
  * it died on the manifest's die clip, the 寻仇者's B_Die, from its first-form look; and the v2.5 kit let damage through,
  * so some lineups killed it before either counter reached 4. fx 'phase' {id, kind: translator_fuchou | _shushi | _youling} starts the model's 2 s
  * change clip (render/units.js FORMS). Form letters: B / C / D follow the talents' order Fuchou / Youling / Shushi — C,
- * the only clip set without an attack, is the non-attacking 幽灵.
+ * the only clip set without an attack, is the non-attacking 幽灵 (skills ChangeToB / C / D).
  */
 function kitTranslator(ab, e) {
   const t = (k) => T(ab, k) ?? 0;

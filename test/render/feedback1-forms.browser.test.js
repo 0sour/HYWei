@@ -7,7 +7,10 @@
 //      Idle_2 (blocked, so its blocker beats it) and dies on Die_2 — it used to stay an untargetable ember forever;
 //   a view built mid-battle — the real `view.enterBattle(b.fieldMeta())` after a silent catch-up, as for a teammate's
 //      field watched later, 联防 observers or a reconnect — starts in the current forms (UnitInfo `form` → render/app.js
-//      renderInfo): it used to draw the warrior / the A model again (the look of report #5) and 掠海漂移体 hovering.
+//      renderInfo): it used to draw the warrior / the A model again (the look of report #5) and 掠海漂移体 hovering;
+//   the real client runner (battle/runner.js createBattleRunner) feeding the view the way screens/game.js does, with
+//      janky 0.7 s frames (every frame a catch-up) across the change of a 转译基底·α that walks into 百炼嘉维尔's block:
+//      the view turns 幽灵 (C_*) — the catch-up filter used to drop the form fx, so it stayed on A_Move and died on B_Die.
 //
 // Opt-in (starts Chrome): RENDER_E2E=1 node --test test/render/feedback1-forms.browser.test.js
 // Chrome path: $CHROME_PATH or the macOS default. Screenshots → test/e2e/out/feedback1-*.png.
@@ -121,6 +124,49 @@ async function lateViewInPage(page, port, s, atSecs, setupSrc) {
   }, s, atSecs, setupSrc);
 }
 
+/**
+ * The real client runner in the page (fake socket / store, its default sim loader and clock) feeds the demo's view like
+ * screens/game.js (field → enterBattle, snap → pushSnapshot, ev → pushEvents); its animation frames come every `jankMs`
+ * real ms for `secs` real s. Returns samples { t, simForm, form, clip, spine, alive } of the 转译基底·α's view and the
+ * runner's catch-up count.
+ */
+async function runnerInPage(page, port, s, jankMs, secs) {
+  await page.goto(`http://127.0.0.1:${port}/dev/render-demo.html?scene=normal-m01&paused=1&panel=0`);
+  await page.waitForFunction('window.__demo && (window.__demo.ready || window.__demo.error)', { timeout: 30000 });
+  return page.evaluate(async (spec, jankMs, secs) => {
+    const { createBattleRunner } = await import('/js/battle/runner.js');
+    const { data } = await import('/js/data.js');
+    const v = window.__demo.view;
+    v.setStage(data.lookup('stages', spec.stageId));
+    const handlers = new Map();
+    const net = {
+      on(t, fn) { if (!handlers.has(t)) handlers.set(t, new Set()); handlers.get(t).add(fn); return () => handlers.get(t).delete(fn); },
+      send() { return true; }, request() { return Promise.resolve({ t: 'ok' }); },
+    };
+    const queue = [];
+    const runner = createBattleRunner({ net, store: { patch() {} }, doc: { hidden: false, addEventListener() {} }, raf: (fn) => { queue.push(fn); return queue.length; }, caf() {} });
+    runner.on('field', (f) => { v.enterBattle(f); v.setCamera('normal', { rect: f.rect, side: 'L', instant: true }); v.setLocalFeed({ on: true, speed: f.speed }); });
+    runner.on('snap', (x) => v.pushSnapshot(x));
+    runner.on('ev', (m) => v.pushEvents(m));
+    for (const fn of handlers.get('b.start') || []) fn({ t: 'b.start', battleId: spec.battleId, fieldId: spec.fieldId, kind: 'normal', spec, authoritative: false, watch: true, speed: 2, elapsed: 0 });
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    for (let i = 0; i < 100 && !runner._entries.size; i++) await sleep(50);
+    const e = [...runner._entries.values()][0];
+    const out = [];
+    const end = performance.now() + secs * 1000;
+    while (performance.now() < end) {
+      await sleep(jankMs);
+      for (const fn of queue.splice(0)) fn(performance.now());
+      const tr = e.battle.units.find((u) => u.defId === 'enemy_10081_mpplai');
+      const view = tr && v.debug.views.get(tr.id);
+      if (tr) out.push({ t: +e.battle.time.toFixed(2), simForm: tr.form, form: view?.form ?? null, clip: view?.actor?.current ?? null, spine: !!view?.spineReady, alive: tr.alive });
+    }
+    const catchups = runner.stats().catchups;
+    runner.dispose();
+    return { out, catchups };
+  }, s, jankMs, secs);
+}
+
 describe('player reports after 0.1.0: the models follow the knock-out forms (headless Chrome, real sim)', { skip }, () => {
   let srv, browser;
   before(async () => {
@@ -159,7 +205,7 @@ describe('player reports after 0.1.0: the models follow the knock-out forms (hea
       assert.equal(state.after, state.hp, 'the 4 hits took no HP');
       const pre = out.filter((x) => x.spine && x.t < state.hit);
       assert.ok(pre.length > 0 && pre.every((x) => /^A_/.test(x.clip)), `first form: A_* (${[...new Set(pre.map((x) => x.clip))]})`);
-      const change = out.filter((x) => x.t > state.hit + LAG && x.t < state.hit + 1.8);
+      const change = out.filter((x) => x.t > state.hit + 2 * LAG && x.t < state.hit + 1.8);   // (a loaded machine: the view lags more)
       assert.ok(change.length > 0 && change.every((x) => x.clip === 'A_Die_B' && x.alive), `the change clip (${[...new Set(change.map((x) => x.clip))]})`);
       const form = out.filter((x) => x.t > state.hit + 2 + LAG && x.t < state.kill);
       assert.ok(form.length > 0 && form.every((x) => /^B_/.test(x.clip) && x.form === 'translator_fuchou'), `寻仇者 clips (${[...new Set(form.map((x) => x.clip))]})`);
@@ -220,6 +266,23 @@ describe('player reports after 0.1.0: the models follow the knock-out forms (hea
       assert.match(got.youling.clip, /^C_/, `幽灵 (${got.youling.clip})`);
       assert.match(got.ember.clip, /^(Idle|Move)_2$/, `the ember (${got.ember.clip})`);
       assert.match(got.drift.clip, /_02$/, `crawling (${got.drift.clip})`);
+      assert.deepEqual(problems, []);
+    } finally {
+      await p.close();
+    }
+  });
+  test('the real client runner with janky frames (every frame a catch-up): 转译基底·α blocked by 百炼嘉维尔 turns 幽灵 in the view (C_*), never back to A_Move / B_Die', async () => {
+    const { p, problems } = await page();
+    try {
+      const { out, catchups } = await runnerInPage(p, srv.port, spec('enemy_10081_mpplai', 'runner', 9, 7), 700, 9);
+      await p.screenshot({ path: path.join(OUT, 'feedback1-runner.png') });
+      assert.ok(catchups >= 5, `catch-up frames (${catchups})`);
+      const changed = out.find((x) => x.simForm === 'translator_youling');
+      assert.ok(changed, `the sim's 转译基底·α turned 幽灵 (${JSON.stringify(out.slice(-3))})`);
+      const after = out.filter((x) => x.spine && x.t > changed.t + 2 + LAG);
+      assert.ok(after.length > 0, 'samples after the change');
+      assert.ok(after.every((x) => x.form === 'translator_youling' && /^C_/.test(x.clip)), `幽灵's clips (${[...new Set(after.map((x) => `${x.form}:${x.clip}`))]})`);
+      assert.ok(!out.some((x) => x.spine && /^B_/.test(x.clip)), 'never the 寻仇者\'s clips (B_Die was the look of report #5)');
       assert.deepEqual(problems, []);
     } finally {
       await p.close();

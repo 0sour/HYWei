@@ -109,7 +109,8 @@ export const EL_BAR = Object.freeze({ icon: 0.15, min: 8, max: 15, enemy: 0.8, g
  * - 转译基底·α (user report after 0.1.0, #5): its 2 s change clip A_Die_B / _C / _D, then 寻仇者 B_*, 幽灵 C_* (no attack
  *   clip: it never attacks) or 特战术师 D_* — its manifest roles are the original form's A_Idle / A_Move;
  * - 深池逐火战士 / 精锐战士 / 护卫 (#8): knocked out → 'Die' (the 1 s 重生), the 余烬 on Idle_2 / Move_2 and its death on
- *   Die_2; standing up again → 'Revive', then the warrior's manifest clips;
+ *   Die_2 (also while 'Revive' plays: the ember can still be beaten); standing up again → 'Revive', then the warrior's
+ *   manifest clips;
  * - 假想敌：再生: knocked out → A_Die, the 傀儡 on B_Idle / B_Move / B_Die; back → B_Revive, then the A_* manifest clips;
  *   (both: the stand-up clip (`end`) is timed from the 'ember' fx's `dur` to end as the husk stands up — the 'revive'
  *   fx then only lands in the manifest clips);
@@ -393,11 +394,11 @@ export class UnitView {
   }
 
   /**
-   * The unit changed mode (sim fx 'phase' { id, kind } or another fx's `form`; `fx` = that fx's extra): the mode's clip
+   * The unit changed mode (the `form` of a sim fx — shared/protocol.js fxForm; `fx` = that fx's extra): the mode's clip
    * set (FORMS) after its change clip, and its closing clip (`end`, landing in the `next` form's clips) timed to end
-   * `fx.dur` game s later; null goes back
-   * to the manifest clips; a kind this skeleton has no clip set for (an arts barrier, a broken charge …) changes
-   * nothing. Kept for a model built later.
+   * `fx.dur` game s later — the unit is still in this mode while it plays (an ember can be beaten in its last second),
+   * so this mode's death clip stays until the next mode's fx; null goes back to the manifest clips; a kind this skeleton
+   * has no clip set for (an arts barrier, a broken charge …) changes nothing. Kept for a model built later.
    */
   setForm(kind, fx = null) {
     const k = typeof kind === 'string' ? kind : null;
@@ -409,7 +410,8 @@ export class UnitView {
     const f = this._formSpec();
     if (!this.actor) return;
     const dur = fx && Number(fx.dur);
-    const next = f && f.next ? FORMS[this.info.spine || this.info.defId]?.[f.next]?.roles || null : null;
+    let next = f && f.next ? FORMS[this.info.spine || this.info.defId]?.[f.next]?.roles || null : null;
+    if (next && typeof f.roles.die === 'string') next = { ...next, die: f.roles.die };
     if (f) this.actor.setForm(f.roles, f.change || null, f.end && dur > 0 ? { clip: f.end, in: dur, roles: next } : null);
     else if (had) this.actor.setForm(null);
   }

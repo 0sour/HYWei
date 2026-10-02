@@ -245,9 +245,12 @@ still standing after `Revive[Trigger].interval` s stands up again with full HP),
 instance or a block starts a 2 s change). Each form change goes through `setForm(b, e, form, fxKind, params)`: the
 unit keeps it (`e.form`, published as UnitInfo `form`, so a view built mid-battle from `fieldMeta()` — a watched
 teammate's field, 联防 observers, a reconnect — starts in it: `render/app.js renderInfo` hands it to the view) and the
-fx announces it: the `kind` of a form 'phase' fx
-(crawl, translator_*), else the `form` of the 'ember' ('husk'), 'revive' ('revived' / 'form2' / 'fly'), 'telegraph'
-('reborn') or 'stone' ('stone') fx — render/units.js FORMS. Barrier / charge 'phase' kinds are no forms.
+fx announces it as its `form`: a 'phase' fx (crawl, translator_* — also its `kind`), 'ember' ('husk'), 'revive'
+('revived' / 'form2' / 'fly'), 'telegraph' ('reborn') or 'stone' ('stone') — render/units.js FORMS. Barrier / charge
+'phase' kinds carry no `form` and are no forms. A form is state, not decoration (b.snap tuples carry none): the client
+keeps every fx with a `form` (`shared/protocol.js fxForm`) where it drops other events — the runner's catch-up frames
+and its hidden-tab backlog (`battle/runner.js keepsState`), the game screen's events buffered before a field is entered
+(`screens/game.js`); dropping them was report #5's look again after a stall or a background tab.
 
 **Ownership** (`enemy.ownerId`, used for `killed/total` and leak attribution): `ownerPlayerId` if given, else the
 player whose half contains the spawn tile (cols ≥ 11 = right half / player with colOffset 8 or side R). A leak is
@@ -978,7 +981,8 @@ Unknown subprofessions fall back to the profession default (test `professions.te
   renderer flies it back to the thrower at `BOOMERANG_RETURN_SPEED`; an enemy's `profile.shot` may name another kind,
   e.g. `mortar` for 帝国炮火先兆者, which the renderer does not draw — its fx `bombardShell` is the shell), `['dmg', tgt, amount, type]` (`phys|arts|true|burn|neural|necrosis|apoptosis`),
   `['heal', tgt, amount]`, `['skill', id, 1|0]`, `['die', id, reason]`, `['leak', id]`, `['status', id, key, 1|0]`,
-  `['fx', kind, x, y, extra]` (`hitCap` `{ id, n }`: a leader's hit cancelled by 限伤 — the renderer draws nothing),
+  `['fx', kind, x, y, extra]` (`hitCap` `{ id, n }`: a leader's hit cancelled by 限伤 — the renderer draws nothing;
+  `extra.form` = the enemy's model form from then on, `content/enemies.js setForm` / `shared/protocol.js fxForm`),
   `['layer', playerId, bondId, n]` (n = the layers actually added, capped at 999), `['bounty', playerId, coins]`.
 - `UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?, form?, skillIndex? }` (`skillIndex`: an ally's equipped skill, DESIGN §16; `form`: an enemy's current model form — `content/enemies.js setForm` — so a view built mid-battle from `fieldMeta()` starts on that clip set)
   (`dir` = the unit direction, allies meaningful, enemies 'RIGHT'; `facing` = its horizontal sign for sprite flipping)

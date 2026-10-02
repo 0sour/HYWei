@@ -21,8 +21,10 @@
 //                                               operators on the field under a redeploy ring and `elem` draws the
 //                                               element gauges (user playtest #4 items 8 / 9, render/units.js); a
 //                                               'die' with reason FORCED_EXIT (an operator entering 联防 knocked out,
-//                                               user playtest #5 item 2) goes straight to the held pose, no burst
-//   view.setLocalFeed({ on, speed })            frames come from the local sim every frame (client-side combat):
+//                                               user playtest #5 item 2) goes straight to the held pose, no burst; an
+//                                               fx with a `form` (shared/protocol.js fxForm) switches the enemy's
+//                                               model to that clip set (render/units.js FORMS)
+//   view.setLocalFeed({ on, speed })          frames come from the local sim every frame (client-side combat):
 //                                               ~2-frame buffer at the battle's game speed
 //   view.highlightTiles(tiles, style)           [[r,c]] | [{row,col}]; style 'legal'|'illegal'|'range'|'rangeStand'|
 //                                               'hover'|'target'|{color,fill,line,group}; highlightTiles(null) clears all
@@ -89,6 +91,7 @@
 // `data` is the client data store (public/js/data.js: lookup(file, id)) or plain { chess, tokens, items, enemies } maps.
 
 import { GEO, ANIM, UF } from '../../../shared/constants.js';
+import { fxForm } from '../../../shared/protocol.js';
 import { Camera, presetCamera, lerpCamera, easeInOutCubic, pickTile, normRect } from './projection.js';
 import { SnapshotBuffer, frameTime } from './interp.js';
 import { TileField } from './tiles.js';
@@ -1430,24 +1433,25 @@ export async function createFieldView(host, options = {}) {
         break;
       }
       case 'status': { const v = views.get(e[1]); if (v) v.onStatus?.(e[2], !!e[3]); break; }
-      case 'fx':
+      case 'fx': {
         if (e[4] && typeof e[4] === 'object' && e[4].consumed && e[4].id != null) {
           consumedIds.add(e[4].id);
           if (consumedIds.size > 200) consumedIds.delete(consumedIds.values().next().value);
         }
-        // an enemy's mode change (掠海漂移体 → 爬行模式, user playtest #5 item 1; 转译基底's forms, a 逐火 ember and its
-        // revival, the leaders' 重生 — user report after 0.1.0): a 'phase' kind, or the `form` any other fx carries,
-        // switches the view's clip set (UnitView.setForm, a kind without a clip set of that skeleton changes nothing);
-        // the info keeps it for a view built later
-        const ex4 = e[4] && typeof e[4] === 'object' && e[4].id != null ? e[4] : null;
-        const form = !ex4 ? undefined : e[1] === 'phase' ? ex4.kind : 'form' in ex4 ? ex4.form : undefined;
+        // an enemy's mode change — the `form` of a sim setForm fx (shared/protocol.js fxForm: 掠海漂移体 → 爬行模式, user
+        // playtest #5 item 1; 转译基底's forms, a 逐火 ember and its revival, the leaders' 重生, 守墓石像 — user report after
+        // 0.1.0) — switches the view's clip set (UnitView.setForm; a kind without a clip set of that skeleton changes
+        // nothing); the info keeps it for a view built later. The client runner never drops these fx (catch-up frames,
+        // hidden-tab backlog), nor does the game screen's pre-entry buffer.
+        const form = fxForm(e);
         if (form !== undefined) {
-          const inf = infos.get(ex4.id);
-          if (inf && (typeof form !== 'string' || FORMS[inf.spine || inf.defId]?.[form])) inf.form = typeof form === 'string' ? form : null;
-          views.get(ex4.id)?.setForm?.(form, ex4);
+          const inf = infos.get(e[4].id);
+          if (inf && (form === null || FORMS[inf.spine || inf.defId]?.[form])) inf.form = form;
+          views.get(e[4].id)?.setForm?.(form, e[4]);
         }
         fx.simFx(e[1], Number(e[2]), Number(e[3]), e[4]);
         break;
+      }
       case 'layer': {
         const bondId = e[2], n = Number(e[3]) || 0;
         if (!(n > 0) || typeof bondId !== 'string') break;

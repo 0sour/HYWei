@@ -223,6 +223,25 @@ describe('逐火 embers and the 再生 puppet (user report after 0.1.0, #8)', ()
     assert.equal(clip(v), 'A_Move');
   });
 
+  test('beaten in its last second (the stand-up clip already playing, still a husk in the sim): the ember dies on Die_2, 再生\'s 傀儡 on B_Die — the warrior\'s / A_* death clip only after the revive fx', async () => {
+    for (const [id, end, die, die0] of [['enemy_1288_duskls', 'Revive', 'Die_2', 'Die'], ['enemy_9010_acpupp', 'B_Revive', 'B_Die', 'A_Die']]) {
+      const anims = assets.enemies[id].spine.animations;
+      const v = await enemy(id);
+      v.setForm('husk', { dur: 4 });
+      frames(v, Math.round((4 - anims[end]) * 60) + 6);
+      assert.equal(clip(v), end, `${id}: the closing clip plays`);
+      v.die();
+      assert.equal(clip(v), die, `${id}: the husk's death clip (review of WD)`);
+      const w = await enemy(id);
+      w.setForm('husk', { dur: 4 });
+      frames(w, 4 * 60 + 6);
+      w.setForm('revived');
+      frames(w, 6);
+      w.die();
+      assert.equal(clip(w), die0, `${id}: stood up, it dies on its first form's clip`);
+    }
+  });
+
   test('a view built mid-husk (UnitInfo form, no timing) shows the husk; the revival lands in the manifest clips', async () => {
     const v = await enemy('enemy_1288_duskls', { form: 'husk' });
     v.sync(sample(UF.STEALTH, ANIM.MOVE), 1);
@@ -348,7 +367,7 @@ test('render/app.js renderInfo keeps UnitInfo `form` (it used to drop it: views 
   assert.equal(renderInfo({ kind: 'enemy' }), null, 'no id: no info');
 });
 
-test('render/app.js hands the sim\'s fx \'phase\' kind — or the `form` of any fx, with the fx — to the view and keeps the mode on the unit info', () => {
+test('render/app.js hands the `form` of a sim fx (shared/protocol.js fxForm) with the fx to the view and keeps the mode on the unit info', () => {
   const src = readFileSync(path.join(ROOT, 'public/js/render/app.js'), 'utf8');
-  assert.match(src, /e\[1\] === 'phase' \? ex4\.kind : 'form' in ex4 \? ex4\.form[\s\S]{0,200}inf\.form = [\s\S]{0,120}setForm\?\.\(form, ex4\)/);
+  assert.match(src, /const form = fxForm\(e\);[\s\S]{0,200}inf\.form = form[\s\S]{0,120}setForm\?\.\(form, e\[4\]\)/);
 });

@@ -13,6 +13,11 @@
 //     and b.result (compactResult) at the end; applies b.pool (LocalBossPool.sync) and b.end (forceEnd / takeover),
 //   * keeps an authoritative battle running while the tab is hidden (a 250 ms interval pump; browsers throttle it to
 //     ~1 Hz, the bounded fast-forward absorbs that); the server deadline + takeover cover anything worse.
+// A frame that fast-forwards (catch-up) passes on only the state-bearing events (keepsState: spawns, deaths, deploys,
+// statuses, skills, leaks and the fx that change an enemy's model form — shared/protocol.js fxForm); while the tab is
+// hidden the battle on screen keeps the same events (≤ HELD_MAX, else the view re-enters from the field meta) and the
+// first frame back delivers them, so the view still knows every unit and every enemy's current form (player report #5
+// after 0.1.0: a 转译基底·α that changed form during a stall or in a background tab died in its first-form model).
 // Display replicas (a teammate's field after the own battle, 联防 observers, the partner of a boss pair) run the same
 // spec fast-forwarded to the server's clock (`elapsed`) and never report.
 // A b.result lost with the socket (the request failed DISCONNECTED / OFFLINE, or timed out twice) is kept and sent
@@ -53,7 +58,7 @@
 
 import { net as appNet } from '../net.js';
 import { store as appStore } from '../store.js';
-import { unitStatsEntry } from '../../../shared/protocol.js';
+import { unitStatsEntry, fxForm } from '../../../shared/protocol.js';
 
 const TICK = 1 / 30;
 /** Fast-forward budget per frame (ticks) when far behind. */
@@ -62,6 +67,13 @@ export const CATCHUP_TICKS = 240;
 const PREPARE_SLICE = 600;
 const MAX_ENTRIES = 4;
 const STATE_EV = new Set(['spawn', 'die', 'deploy', 'status', 'skill', 'leak']);
+/**
+ * The b.ev tuples a catch-up frame or the hidden-tab backlog keeps: the state-bearing kinds, and every fx that sets an
+ * enemy's model form (shared/protocol.js fxForm — dropped, the view kept the old model: player report #5 after 0.1.0).
+ */
+export const keepsState = (x) => Array.isArray(x) && (STATE_EV.has(x[0]) || fxForm(x) !== undefined);
+/** Hidden-tab backlog cap (tuples) of the battle on screen; beyond it the view re-enters from the field meta. */
+export const HELD_MAX = 3000;
 /** Data files the simulation reads (DataSource + content/support gameData()). */
 export const SIM_DATA_FILES = Object.freeze(['chess', 'enemies', 'tokens', 'stages', 'waves', 'bonds', 'items', 'garrisons', 'bands', 'effects']);
 
@@ -304,14 +316,31 @@ export function createBattleRunner(deps) {
   }
 
   function emitFrame(e, catchingUp) {
+    // the hidden-tab backlog overflowed: the view starts again from the field meta (UnitInfo carries every unit's form)
+    if (e.stale) { show(e); return; }
     let ev = [];
     try { ev = e.battle.drainEvents() || []; } catch { ev = []; }
     const gt = Number(e.battle.time) || 0;
-    if (ev.length) {
-      const list = catchingUp ? ev.filter((x) => Array.isArray(x) && STATE_EV.has(x[0])) : ev;
+    const held = e.held;
+    if (held.length) e.held = [];
+    if (ev.length || held.length) {
+      const list = held.concat(catchingUp ? ev.filter(keepsState) : ev);
       if (list.length) emit('ev', { t: 'b.ev', fieldId: e.fieldId, gt, ev: list });
     }
     try { emit('snap', frameOf(e)); } catch (err) { console.warn('[runner] snapshot failed', err); }
+  }
+
+  /**
+   * Events of a step that is not rendered (hidden tab): the battle on screen keeps its state-bearing ones for the next
+   * rendered frame (keepsState, ≤ HELD_MAX — beyond that it is re-entered from the field meta); any other battle starts
+   * from its field meta when shown (show()), so its events go.
+   */
+  function hold(e) {
+    let ev = [];
+    try { ev = e.battle.drainEvents() || []; } catch { ev = []; }
+    if (e !== cur || e.stale) return;
+    for (const x of ev) if (keepsState(x)) e.held.push(x);
+    if (e.held.length > HELD_MAX) { e.held = []; e.stale = true; }
   }
 
   function progress(e, force = false) {
@@ -420,7 +449,7 @@ export function createBattleRunner(deps) {
     const dt = stepEntry(e, n);
     if (dt > stats.maxFrameMs) stats.maxFrameMs = dt;
     if (render) emitFrame(e, catchingUp);
-    else { try { e.battle.drainEvents(); } catch { /* ignore */ } }
+    else hold(e);
     noteLeaks(e);
     progress(e);
     if (e.battle.finished) finished(e);
@@ -456,6 +485,8 @@ export function createBattleRunner(deps) {
   /** Put an entry on screen: field meta into the store (the game screen enters it), then its current frame. */
   function show(e) {
     cur = e;
+    e.held = [];
+    e.stale = false;
     let meta = null;
     try { meta = e.battle.fieldMeta(); } catch { meta = { units: [] }; }
     const field = {
@@ -538,6 +569,9 @@ export function createBattleRunner(deps) {
       leaks: 0, leakMark: '', left: null,
       // live bond layers grown in this battle { [playerId]: { [bondId]: n } } and their total gain (noteLayers)
       live: null, layerSum: 0,
+      // state-bearing events of the steps run while the tab was hidden (hold(); delivered by the next rendered frame),
+      // and whether that backlog overflowed (the next frame re-enters the view from the field meta)
+      held: [], stale: false,
     };
     if (lastPool && battle.sharedBoss && typeof battle.sharedBoss.sync === 'function') {
       battle.sharedBoss.sync(lastPool.hp, lastPool.acked ? lastPool.acked[e.fieldId] : undefined);

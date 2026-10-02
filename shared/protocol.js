@@ -326,3 +326,17 @@ export const EV = Object.freeze({
   SPAWN: 'spawn', ATK: 'atk', DMG: 'dmg', HEAL: 'heal', SKILL: 'skill', DIE: 'die', LEAK: 'leak',
   STATUS: 'status', FX: 'fx', LAYER: 'layer', BOUNTY: 'bounty', DEPLOY: 'deploy',
 });
+
+/**
+ * The model form a `b.ev` 'fx' tuple ['fx', kind, x, y, extra] puts its unit in: `extra.form` (sim content/enemies.js
+ * setForm — 转译基底·α's forms, a 逐火 余烬 and its revival, a leader's 重生, 守墓石像's modes, 掠海漂移体's crawl; a string is
+ * that clip set, null the base one), undefined for any other tuple. A form is state, not decoration: a view that misses
+ * the fx keeps drawing the old model (player report #5 after 0.1.0), so the client's catch-up frames, its hidden-tab
+ * backlog (battle/runner.js) and the events buffered before a field is entered (screens/game.js) keep these tuples.
+ */
+export function fxForm(ev) {
+  if (!Array.isArray(ev) || ev[0] !== EV.FX) return undefined;
+  const x = ev[4];
+  if (!x || typeof x !== 'object' || x.id == null || !Object.hasOwn(x, 'form')) return undefined;
+  return typeof x.form === 'string' ? x.form : null;
+}
