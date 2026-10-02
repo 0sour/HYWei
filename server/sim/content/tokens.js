@@ -730,7 +730,9 @@ function applyManifoldCopy(battle, unit, target, scale) {
   const p = unit.profile;
   if (p) {
     p.attack = ranged ? 'ranged' : 'melee';
-    p.projectile = ranged ? (tp.projectile && tp.projectile !== 'none' && tp.projectile !== 'orb' ? tp.projectile : 'bolt') : 'none';
+    // the talent's list of copied attributes (生命上限 … 伤害类型) names no attack shape: a 阵法术师 / 轰击术师's instant
+    // 'beam' (rangeAoe: every enemy in range) becomes a plain single-target bolt, like a healer's orb
+    p.projectile = ranged ? (tp.projectile && tp.projectile !== 'none' && tp.projectile !== 'orb' && tp.projectile !== 'beam' ? tp.projectile : 'bolt') : 'none';
     p.canHitFly = ranged ? true : !!tp.canHitFly;
     // 初始伤害类型（不攻击、治疗类型则不继承）
     if (!(tp.dmgType === 'heal' || tp.dmgType === 'none' || tp.noAttack || tp.noAttackUnlessSkill)) p.dmgType = tp.dmgType;

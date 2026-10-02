@@ -199,14 +199,6 @@ describe('shots', () => {
     }
   });
 
-  test("an arts blastcaster's bomb explodes purple", () => {
-    const a = unit(1, 3, 10, { info: { defId: 'char_blast' } }), b = unit(2, 6, 10, { isEnemy: true });
-    const { fx } = makeFx({ views: [a, b] });
-    fx.ctx.subProfOf = (id) => (id === 'char_blast' ? 'blastcaster' : null);
-    fx.attack(a, b, 'bomb');
-    assert.equal(fx.projs[0].glow, 0xb36bff);
-  });
-
   test('chain / beam kinds are beams, melee shots are no projectile', () => {
     const a = unit(1, 3, 10), b = unit(2, 5, 10, { isEnemy: true });
     const { fx } = makeFx({ views: [a, b] });

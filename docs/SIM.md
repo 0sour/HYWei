@@ -971,25 +971,28 @@ PRTS 选择器, is not in the data): "地面敌人" / "不可对空" ⇒ `!e.isF
 沙之碑, 迷迭香的战术装备's stun, 纸偶). A melee skill whose attacks PRTS marks "可对空" sets `targeting.canHitFly` (玛恩纳
 S3 未照耀的荣光 — its CUSTOM_RANGE trigger also counts flyers). A stun / freeze / sleep from any of them drops a hovering 掠海漂移体 for good. Ranged attacks fly as projectiles
 (`constants.js PROJECTILE_SPEEDS`: arrow 14, bolt 11, bomb/lob 8, orb 10, drone 16, enemy 10 tiles/s; boomerang 15 out,
-3.75 back = `BOOMERANG_RETURN_SPEED`, PRTS 跃跃; droneBomb 5 = 暴鸰's bomb, the official projectile_bombd); melee/`none` hits are instant. Kit-settable profile flags beyond the
+3.75 back = `BOOMERANG_RETURN_SPEED`, PRTS 跃跃; droneBomb 5 = 暴鸰's bomb, the official projectile_bombd); melee/`none` hits are
+instant, and so are `'beam'` hits (a 锁定攻击范围 AoE without a projectile — `rangeAoe` profiles: "在攻击前摇结束时选取范围内的全体目标，同时造成伤害", PRTS 作战机制). Kit-settable profile flags beyond the
 table: `hitSleep` (targets and damages sleeping enemies — "可以攻击沉睡的敌人"), `onEachHit(b, u, victim, hctx)`, `dmgMul`,
 `afterHit`, `afterAttack`, `canAttack`, `hitsFn`, `priority`, `blockFly`, `noHeal`, `boomerang` (the projectile stays
-`'boomerang'` whatever the data's generic ranged projectile says) (see the header of professions.js).
+`'boomerang'` whatever the data's generic ranged projectile says), `rangeAoe` (applied after every override: sets
+`allInRange` and, on a ranged profile, the instant `'beam'`) (see the header of professions.js).
 
 | sub | behaviour |
 |---|---|
 | fastshot | FLY first; module `atk_scale` vs FLY |
 | closerange, underminer, primcaster, corecaster, ritualist, summoner, counsellor, pioneer, fearless, fighter, protector, guardian, primprotector, executor, duelist | plain profile (numbers from data; skills/talents via kits). underminer module: weaken 10 % ATK 2 s on hit |
 | longrange | lowest DEF first |
-| aoesniper / splashcaster / blastcaster | splash 1.1 tiles at full damage |
-| bombarder | ground-only splash 1.0 + aftershock(s) at 50 % ATK (bb append_atk_scale / times) |
+| aoesniper / splashcaster | splash 1.1 tiles around the struck target at full damage (PRTS 溅射半径一览: 扩散术师 1.1; Arknights Terra Wiki, Splash Caster). [OPEN] the same table gives 炮手 1.0 (none in the pool) and 格雷伊 1.0 |
+| blastcaster | `rangeAoe`: every selectable enemy on its line at once, the same damage near and far, instant (`'beam'`) — "超远距离的群体法术伤害" is the whole line, not a splash (primary: PRTS 作战机制 §AOE伤害判定 names 伊芙利特's 炎爆 a 锁定攻击范围 AoE, and 炎爆 is her next-attack skill "下次攻击造成…" (PRTS 伊芙利特 S2), so a 轰击术师 normal attack; secondary: Terra Wiki, Blast Caster; supporting: PRTS 溅射半径一览 documents no splash radius for it; community report E3). A stealthed enemy is not struck unless it is revealed or blocked (a 锁定范围 AoE cannot hit a 隐匿 unit, PRTS 作战机制) |
+| bombarder | ground-only splash 1.0 + aftershock(s) at 50 % ATK (bb append_atk_scale / times). [OPEN] PRTS 溅射半径一览 gives 投掷手 0.9 |
 | hunter | 8 bullets (bb value), ×1.2 ATK (bb atk_scale), reloads 1/s after 1 s without attacking; can't attack when empty |
 | loopshooter | 回环射手 (user playtest #3): every attack throws a boomerang (`ai.js throwBoomerang`, projectile `'boomerang'`) out to the target at 15 tiles/s — it hits on arrival — and back to the thrower's current position at 3.75 tiles/s without damage (PRTS 跃跃 "投射物飞行速度15，返回时飞行速度3.75"); attacks only while holding it (every boomerang thrown caught — "必须回收全部回旋投掷物才可以进行下一次攻击", `unit.trait.boomerangsOut`) and with the attack cooldown ready, so the real interval is the longer of the two; a target dead mid-flight is not hit (it still flies to the last position and back); knocked out / withdrawn ⇒ lost, a redeployed thrower holds a fresh one; 跃跃 S2's extra boomerangs share the one flight (cnt hits) |
 | reaperrange | hits every enemy in range; ×1.5 (bb atk_scale) on the trait front grid (or its own line ahead) — both along its direction |
-| chain | chain N (trait text/bb max_target) with −15 % per jump (bb chain.atk_scale), 1.8-tile jumps, sluggish on each hit |
+| chain | chain N (trait text/bb max_target) with −15 % per jump (bb chain.atk_scale), 1.8-tile jumps, sluggish on each hit. [OPEN] PRTS 溅射半径一览 gives 链术师 1.7 |
 | funnel | drone damage 20 % → +15 %/hit on the same target → 110 % (bb init/delta/max) |
 | mystic | stores up to 3 (bb times) attacks while idle, fires them all at once |
-| phalanx | no attack & DEF +200 %, RES +20 (bb) while the skill is off; attacks with 1.1 splash while on |
+| phalanx | no attack & DEF +200 %, RES +20 (bb) while the skill is off; while on, `rangeAoe`: each attack strikes every selectable enemy on its range at once (blocked enemies included; a stealthed one only when revealed or blocked), the same damage near and far, instant (`'beam'`) — "群体法术伤害" (secondary: Terra Wiki, Phalanx Caster: "attacks hit all enemies within their range"; supporting: PRTS 林 S3 备注 "单次普攻最多触发1次效果" — one normal attack can kill several — the same 锁定攻击范围 shape as the 轰击术师, and PRTS 溅射半径一览 documents no splash radius for it (it omits the 撼地者 too, so this is not proof); no primary source states a target cap; community report E3: it used to be one bolt + a 1.1 splash). 卡涅利安's charged S1 keeps the skill-off trait, 不攻击 included (kit `canAttack`, PRTS 备注) |
 | physician | heal the lowest HP% injured ally in range (a skill `targeting.maxTargets` widens any heal profile) |
 | ringhealer | heal 3 allies |
 | chainhealer | heal bounces 3× (−25 %, bb chain.*) within 2.5 tiles |

@@ -165,7 +165,11 @@ test('B5: hovering enemies are 失衡免疫 while they hover, dragged once groun
   h.step();
   assert.ok(!e.isFlying && !e.s.flags.noDisplace, '晕眩模式: on the ground');
   const at = { x: e.x, y: e.y };
-  assert.ok(h.runUntil(() => h.hooksOf('damaged').some((c) => c.source === u && c.target === e), 8));
+  // (her attacks are instant since the 阵法术师 strike every enemy in range at once — feedback E3: the first one may land
+  // before the stun, while it still hovers; the next one, on the ground, drags it)
+  const hitsOn = () => h.hooksOf('damaged').filter((c) => c.source === u && c.target === e).length;
+  const n0 = hitsOn();
+  assert.ok(h.runUntil(() => hitsOn() > n0, 8));
   approx(Math.hypot(e.x - at.x, e.y - at.y), Math.min(PUSH_TILES[0], Math.hypot(at.x - 3, at.y - 10) - PULL_STOP_RADIUS), 1e-6, 'dragged');
   // 掠海漂移体 爬行模式: no 失衡免疫, but weight 4 — 小力 − 4 = −4 → no movement (the table), 大力 (3) − 4 = −1 → 0.44
   const s = mintVs(SYUFO, pos).h;
