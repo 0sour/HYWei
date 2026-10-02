@@ -147,6 +147,12 @@ import { botPrepBeginSteps, botPrepEndSteps, botPickBand, botPickCard } from './
 const BOT_REHEARSAL_DEFAULT = 3;
 /** Wall-clock ms of bot layout rehearsal per scheduler callback (real time; virtual time runs it in one go). */
 const BOT_SLICE_MS = 8;
+/**
+ * Ticker priority of the remake's match-flow notices (隐秘核心已解锁, 联防阶段, a player out or gone): the official lines
+ * (research 06 §9.2) go BOSS_HIT 30 > CHAR_DAMAGE 20 > SHOP_LEVEL 11 > GOLDEN_CHAR 2 > CHAR_GIFT 1; ours sit under the
+ * leader-damage lines [ASSUMED].
+ */
+export const FLOW_TICKER_PRIORITY = 25;
 const GAME_TYPES = new Set(Object.keys(C2S).filter((t) => Object.hasOwn(C2S, t) && (t.startsWith('g.') || t.startsWith('b.'))));
 const env = (k) => (typeof process !== 'undefined' && process.env ? process.env[k] : undefined);
 /** Default combat mode: client-side unless SP_COMBAT=server. */
@@ -506,7 +512,7 @@ export class Match {
     }
     ps.lp = 0;
     ps.eliminate(passedRound);
-    this.tickerText(`${ps.name}博士中途退出了模拟`);
+    this.tickerText(`${ps.name}博士中途退出了模拟`, FLOW_TICKER_PRIORITY);
     if (this.bossWaves && (phase === PHASE.ROUND_START || phase === PHASE.SP_DRAFT || phase === PHASE.PREP)) {
       // before the boss fight: pair the players left again (the prep preview shows the new partner / template); a
       // player moved to the other half re-checks its board there at once (recompute → deployMap, marks it private)
@@ -690,9 +696,13 @@ export class Match {
     else this.broadcast(msg);
   }
 
-  tickerText(text) {
+  /**
+   * A ticker line of the remake's own (type CUSTOM). `priority`: the match-flow notices (隐秘核心已解锁, 联防阶段, a player out
+   * or gone) take FLOW_TICKER_PRIORITY so the strip does not hold them behind shop-level lines; other lines 0.
+   */
+  tickerText(text, priority = 0) {
     if (!text) return;
-    this.broadcast({ t: 'm.ticker', text: String(text).slice(0, 200), id: null, type: 'CUSTOM', priority: 0, playerId: null });
+    this.broadcast({ t: 'm.ticker', text: String(text).slice(0, 200), id: null, type: 'CUSTOM', priority: Number(priority) || 0, playerId: null });
   }
 
   markPublic() { this._pubDirty = true; }
@@ -1845,7 +1855,7 @@ export class Match {
     this.deadline = this.sched.instant ? 0 : this.sched.now() + Math.round((limit / this.gameSpeed) * 1000);
     this._defaultWatch();
     this.markPublic();
-    this.tickerText(`联防阶段：${plan.helpers.map((p) => p.name).join('、')} 迎战突破防线的敌人`);
+    this.tickerText(`联防阶段：${plan.helpers.map((p) => p.name).join('、')} 迎战突破防线的敌人`, FLOW_TICKER_PRIORITY);
     this._uniteLeftKey = null;
     this.runner = new FieldRunner(this, this.fields, {
       onTick: (runner) => this._uniteTick(runner),
@@ -2265,7 +2275,7 @@ export class Match {
       this._sendStart(ps.playerId, f, { watch: !f.players.includes(ps.playerId) });
     }
     this.markPublic();
-    this.tickerText(`联防阶段：${plan.helpers.map((p) => p.name).join('、')} 迎战突破防线的敌人`);
+    this.tickerText(`联防阶段：${plan.helpers.map((p) => p.name).join('、')} 迎战突破防线的敌人`, FLOW_TICKER_PRIORITY);
   }
 
   _finishUniteClient() {
@@ -2746,7 +2756,7 @@ export class Match {
         ps.lp = 0;
         ps.eliminate(this.round);
         this.toast(ps, 'error', '你的目标生命值耗尽，已被淘汰');
-        this.tickerText(`${ps.name}博士的目标生命值已耗尽`);
+        this.tickerText(`${ps.name}博士的目标生命值已耗尽`, FLOW_TICKER_PRIORITY);
       }
     }
     this.fields = [];
@@ -3013,7 +3023,7 @@ export class Match {
         if (eligible) {
           this.hiddenReached = true;
           this.bossPool = null;
-          this.tickerText('隐秘核心已解锁');
+          this.tickerText('隐秘核心已解锁', FLOW_TICKER_PRIORITY);
           this.startRound(this.gd.hiddenRound);
         } else {
           this.finish({ victory, reason: victory ? 'victory' : 'defeat' });

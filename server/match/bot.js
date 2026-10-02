@@ -1742,8 +1742,9 @@ function resolveTemp(m, ps) {
         if (j >= 0) tryDo(() => ps.move(p.uid, { area: 'hand', idx: j }));
       }
     } else if (p.kind === 'item') {
-      // 突变细胞 comes back after every transformation (昆图斯's strategy item): make room in the hand rather than lose it
-      if (isMutationCell(m.gd, p.id) && makeHandRoom(m, ps)) {
+      // 突变细胞 comes back after every transformation (昆图斯's strategy item), and a human's item under AI 托管 is theirs:
+      // make room in the hand (sell a bench operator) rather than lose it — only a hand of nothing but items still drops it
+      if ((isMutationCell(m.gd, p.id) || ps.autoplay) && makeHandRoom(m, ps)) {
         const j = freeSlot(ps.hand);
         if (j >= 0 && tryDo(() => ps.move(p.uid, { area: 'hand', idx: j }))) continue;
       }

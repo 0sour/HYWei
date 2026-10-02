@@ -1,5 +1,6 @@
 // Broadcast ticker (m.ticker): a strip under the top bar; each line slides in from the right, stays
-// TICKER_MS and leaves; queued lines play in order (only the newest QUEUE_MAX are kept).
+// TICKER_MS and leaves; queued lines play by their broadcast priority, first in first out among equals (QUEUE_MAX kept;
+// enqueueTickerLines).
 // A leader-damage line (BOSS_HIT "{0}博士对敌方领袖造成的伤害超过X%!") is news about the leader in play: it is dropped,
 // queued or on screen, once the round it came in is over — the queue can lag a line by up to QUEUE_MAX × TICKER_MS, and
 // a Final Assault line must never play over the Hidden Core's fresh leader (player report after 0.1.0: "隐藏boss还没打
@@ -18,7 +19,7 @@ const TICKER_MS = 5200;
 const QUEUE_MAX = 4;
 
 /**
- * @typedef {{ id: number, text: string, at?: number, type?: string|null, playerId?: string|null, round?: number|null }} TickerLine
+ * @typedef {{ id: number, text: string, at?: number, type?: string|null, playerId?: string|null, round?: number|null, priority?: number }} TickerLine
  */
 
 /**
@@ -43,9 +44,16 @@ export function tickerSupersedes(line, old) {
     && line.playerId != null && line.playerId === old.playerId && line.round === old.round;
 }
 
+/** A line's broadcast priority (activity_table autoChessData.broadcastList `priority`, sent with m.ticker; none = 0). */
+const prio = (t) => (t && typeof t.priority === 'number' && Number.isFinite(t.priority) ? t.priority : 0);
+
 /**
  * Takes `fresh` lines in: a line that supersedes the one on screen replaces it there, one that supersedes a queued line
- * takes that line's place at the back of the queue; the rest queue behind (only the newest `max` are kept).
+ * replaces that line; every other line queues by priority — research 06 §9.2 "The highest priority wins": BOSS_HIT 30 >
+ * CHAR_DAMAGE 20 > SHOP_LEVEL 11 > GOLDEN_CHAR 2 > CHAR_GIFT 1, the remake's own notices between (server Match
+ * FLOW_TICKER_PRIORITY) or 0 — behind the queued lines of its priority or higher (first in, first out among equals). The
+ * line on screen is never cut short. Past `max` queued lines the lowest priority's oldest goes. Until 0.1.1 the queue
+ * was first in, first out, so shop-level and promotion lines held a leader-damage line until its round was over.
  * @param {TickerLine[]} queue
  * @param {TickerLine|null} cur the line on screen
  * @param {TickerLine[]} fresh
@@ -58,9 +66,16 @@ export function enqueueTickerLines(queue, cur, fresh, max = QUEUE_MAX) {
     if (!t) continue;
     if (c && tickerSupersedes(t, c)) { c = t; continue; }
     q = q.filter((o) => !tickerSupersedes(t, o));
-    q.push(t);
+    let at = q.length;
+    while (at > 0 && prio(q[at - 1]) < prio(t)) at--;
+    q.splice(at, 0, t);
   }
-  return { queue: q.slice(-max), cur: c };
+  while (q.length > max) {
+    let low = 0;
+    for (let i = 1; i < q.length; i++) if (prio(q[i]) < prio(q[low])) low = i;
+    q.splice(low, 1);
+  }
+  return { queue: q, cur: c };
 }
 
 /**

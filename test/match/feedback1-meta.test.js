@@ -334,6 +334,21 @@ test('#4 the transformation completes a merge on the board: the cell is returned
   m.dispose();
 });
 
+test('#10 AI 托管 never destroys a human\'s item to clear temp: a bench operator is sold for its slot instead', () => {
+  const s = setup({ seed: 34 });
+  const { m, ps } = s;
+  ps.autoplay = true;                                  // a human seat under AI 托管 (ps.isBot stays false)
+  const elites = [1, 2, 3, 4, 5, 6].flatMap((t) => plainOf(m, t)).map((id) => m.gd.goldenIdOf(id)).filter((g) => g && m.pool.left(m.gd.baseIdOf(g)) >= m.gd.goldenCopies);
+  while (ps.hand.some((x) => x == null)) give(m, ps, elites.shift(), 'hand');
+  const item = Object.values(DATA.items).find((it) => it && it.id !== CELL && !it.isGolden && it.price > 0 && /_e_a$/.test(it.id));
+  giveItem(m, ps, item.id, 'temp');
+  botPrepEnd(m, ps);
+  assert.equal(ownedItems(ps, item.id).length, 1, `${item.name}: kept (it used to be destroyed when the hand was full)`);
+  assert.ok(ps.tempEmpty, 'temp resolved');
+  checkInvariants(m);
+  m.dispose();
+});
+
 test('#4 a bot never destroys the cell: left in temp with a full hand and nobody to inject, it gets a hand slot', () => {
   const s = setup({ seed: 33 });
   const { m, ps } = s;

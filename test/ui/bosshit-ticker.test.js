@@ -147,10 +147,41 @@ test('timeline: a Final Assault burst shows its top milestone before the round e
   assert.equal(shown.find((s) => s.text === '隐秘核心已解锁').at, 5.5, 'the Hidden Core\'s unlock line shows as its round starts');
 });
 
+test('lines queue by broadcast priority (research 06 §9.2 "The highest priority wins"), first in first out among equals; the lowest priority\'s oldest goes past QUEUE_MAX', () => {
+  const P = { BOSS_HIT: 30, CHAR_DAMAGE: 20, SHOP_LEVEL: 11, GOLDEN_CHAR: 2, CHAR_GIFT: 1, CUSTOM: 0 };
+  const pl = (type, text, priority = P[type]) => ({ type, round: 14, text, priority });
+  const shop1 = pl('SHOP_LEVEL', 's1'), gold = pl('GOLDEN_CHAR', 'g'), shop2 = pl('SHOP_LEVEL', 's2');
+  const boss = { ...hit('A', 20, 14), priority: 30 }, dmg = pl('CHAR_DAMAGE', 'd'), flow = pl('CUSTOM', '隐秘核心已解锁', 25);
+  let r = enqueueTickerLines([], pl('CUSTOM', 'on screen'), [shop1, gold, shop2]);
+  assert.deepEqual(texts(r.queue), ['s1', 's2', 'g']);
+  r = enqueueTickerLines(r.queue, r.cur, [boss]);
+  assert.equal(r.cur.text, 'on screen', 'the line on screen is never cut short');
+  assert.deepEqual(texts(r.queue), [boss.text, 's1', 's2', 'g'], 'the leader-damage line jumps the queue');
+  r = enqueueTickerLines(r.queue, r.cur, [dmg, flow]);
+  assert.deepEqual(texts(r.queue), [boss.text, '隐秘核心已解锁', 'd', 's2'], 'flow notice under the leader line, then operator damage; past QUEUE_MAX the promotion line, then the older shop line go');
+  // the superseding rule still holds under priorities
+  r = enqueueTickerLines(r.queue, r.cur, [{ ...hit('A', 50, 14), priority: 30 }]);
+  assert.deepEqual(texts(r.queue).slice(0, 2), ['A博士对敌方领袖造成的伤害超过50%!', '隐秘核心已解锁']);
+  assert.equal(r.queue.filter((t) => t.type === 'BOSS_HIT').length, 1);
+});
+
+test('timeline with priorities: shop-level and promotion lines of the boss prep no longer hold the Final Assault\'s milestones until the round ends', () => {
+  const pr = (o, priority) => ({ ...o, priority });
+  const shown = playStrip([
+    { at: 0, round: 14, lines: [pr(line('SHOP_LEVEL', null, 'B6'), 11), pr(line('SHOP_LEVEL', null, 'C6'), 11), pr(line('GOLDEN_CHAR', null, 'Bgold'), 2), pr(line('SHOP_LEVEL', null, 'D6'), 11)] },
+    { at: 1, round: 14, lines: [pr(hit('A', 20), 30)] },
+    { at: 4, round: 14, lines: [pr(hit('A', 50), 30)] },
+    { at: 12, round: 15, lines: [pr(line('CUSTOM', null, '隐秘核心已解锁'), 25)] },
+  ], 40);
+  const r14 = shown.filter((s) => s.round === 14).map((s) => s.text);
+  assert.deepEqual(r14, ['B6', 'A博士对敌方领袖造成的伤害超过50%!', 'C6'], `the milestone plays second (${r14.join(' | ')})`);
+  assert.equal(shown.find((s) => s.text === '隐秘核心已解锁').round, 15);
+});
+
 test('main.js stamps every ticker line with its type, player and round; the strip is built on the helpers', () => {
   const main = readFileSync(new URL('../../public/js/main.js', import.meta.url), 'utf8');
   const handler = main.slice(main.indexOf("net.on('m.ticker'"), main.indexOf("net.on('m.emote'"));
-  assert.match(handler, /type, playerId, round:\s*s\.match\?\.public\?\.round/, 'the m.ticker handler keeps type, player and round');
+  assert.match(handler, /type, playerId, round:\s*s\.match\?\.public\?\.round \?\? null, priority/, 'the m.ticker handler keeps type, player, round and priority');
   const strip = readFileSync(new URL('../../public/js/ui/ticker.js', import.meta.url), 'utf8');
   const comp = strip.slice(strip.indexOf('export function Ticker('));
   assert.match(comp, /useStore\(\(s\) => s\.match\?\.public\?\.round/, 'the strip follows m.public.round');

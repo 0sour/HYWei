@@ -207,7 +207,9 @@ lineup when a bench single exists), 拟态物质 on a pair, 博士投影 (both q
 normal operator, 突变细胞 on the least valuable normal operator below 6阶 (deployed or benched — never an elite, never one
 of a merge pair, never one already carrying a cell; it comes back after every transformation, and a cell left in temp
 gets a hand slot made for it, `makeHandRoom` — on a bot's own seat by destroying the cheapest other hand item if no
-chess can be sold, never a human's item under AI 托管), 身份牌 / 通讯机 / 寻呼模块 on a focus member; 画卷 copies the most
+chess can be sold, never a human's item under AI 托管 — on such a seat any item left in temp with a full hand gets a
+hand slot the same way, a bench operator sold for it; only a hand of nothing but items still drops it, as the temp
+deadline would), 身份牌 / 通讯机 / 寻呼模块 on a focus member; 画卷 copies the most
 valuable deployed operator; 教鞭 / “神秘顾客” are used after a perfect battle and otherwise kept in the hand — a bot drops
 a kept one only when it needs the hand slot (“神秘顾客” then pays its fund), a human's seat under AI 托管 never. 机变: a
 bounty card is scored by its expected payout minus its expected leaks × the value of an LP (2 + 20 / LP), the kill
@@ -671,7 +673,12 @@ current leader per player, each threshold once per boss round: the player's dama
 the result's 领袖伤害, adds both up; the browser's strip, which plays its queue 5.2 s per line, drops a BOSS_HIT line
 once the round it came in is over, and a player's newer BOSS_HIT line of the round replaces their older one, queued or
 on screen — public/js/ui/ticker.js `tickerLineLive`, `tickerSupersedes`), CHAR_GIFT (to the receiver only), plus
-CUSTOM texts (eliminations, 联防, hidden core).
+CUSTOM texts (eliminations, 联防, hidden core — the match-flow notices at `FLOW_TICKER_PRIORITY` 25 [ASSUMED], content
+`ticker()` lines at 0). The strip queues by `priority`, highest first and first in first out among equals (research 06
+§9.2 "The highest priority wins": BOSS_HIT 30 > CHAR_DAMAGE 20 > SHOP_LEVEL 11 > GOLDEN_CHAR 2 > CHAR_GIFT 1;
+`enqueueTickerLines`); the line on screen is never cut short, and past 4 queued lines the lowest priority's oldest goes.
+Until 0.1.1 the queue was first in, first out: the boss prep's shop-level lines held a Final Assault milestone until its
+round was over. The official 1 s `broadcastBeginDelay` is not modelled.
 
 ---
 
