@@ -595,7 +595,8 @@ result may only name the unit types its lineup can field, fields.js validateClie
 current leader per player, each threshold once per boss round: the player's damage to that round's shared pool,
 `SharedBossPool.byPlayer`, over its size — the Final Assault and the Hidden Core count apart, while `stats.bossDamage`,
 the result's 领袖伤害, adds both up; the browser's strip, which plays its queue 5.2 s per line, drops a BOSS_HIT line
-once the round it came in is over — public/js/ui/ticker.js `tickerLineLive`), CHAR_GIFT (to the receiver only), plus
+once the round it came in is over, and a player's newer BOSS_HIT line of the round replaces their older one, queued or
+on screen — public/js/ui/ticker.js `tickerLineLive`, `tickerSupersedes`), CHAR_GIFT (to the receiver only), plus
 CUSTOM texts (eliminations, 联防, hidden core).
 
 ---

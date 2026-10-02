@@ -3,7 +3,10 @@
 // A leader-damage line (BOSS_HIT "{0}博士对敌方领袖造成的伤害超过X%!") is news about the leader in play: it is dropped,
 // queued or on screen, once the round it came in is over — the queue can lag a line by up to QUEUE_MAX × TICKER_MS, and
 // a Final Assault line must never play over the Hidden Core's fresh leader (player report after 0.1.0: "隐藏boss还没打
-// 就出了造成50%伤害播报"). Lines carry `type` and `round` from main.js (the m.ticker handler).
+// 就出了造成50%伤害播报"). A player's newer BOSS_HIT line of the same round supersedes their older one, queued or on
+// screen (it names a higher threshold: the server announces each player's thresholds once each, rising), so a burst
+// finish shows its highest milestone before the round ends. Lines carry `type`, `playerId` and `round` from main.js
+// (the m.ticker handler). The queue rules are the pure helpers below (test/ui/bosshit-ticker.test.js).
 
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { html } from './components.js';
@@ -15,14 +18,72 @@ const TICKER_MS = 5200;
 const QUEUE_MAX = 4;
 
 /**
+ * @typedef {{ id: number, text: string, at?: number, type?: string|null, playerId?: string|null, round?: number|null }} TickerLine
+ */
+
+/**
  * Whether a ticker line may still play in `round` (m.public.round): every line except a BOSS_HIT line from another
  * round (the Final Assault's lines once the Hidden Core's round started). Lines without a round always play.
- * @param {{ type?: string|null, round?: number|null }|null} line
+ * @param {TickerLine|null} line
  * @param {number|null} round
  */
 export function tickerLineLive(line, round) {
   if (!line || line.type !== 'BOSS_HIT') return true;
   return line.round == null || round == null || line.round === round;
+}
+
+/**
+ * Whether `line` makes `old` redundant: both BOSS_HIT lines of the same (known) player from the same round. The newer one
+ * names the higher threshold.
+ * @param {TickerLine|null} line
+ * @param {TickerLine|null} old
+ */
+export function tickerSupersedes(line, old) {
+  return !!line && !!old && line.type === 'BOSS_HIT' && old.type === 'BOSS_HIT'
+    && line.playerId != null && line.playerId === old.playerId && line.round === old.round;
+}
+
+/**
+ * Takes `fresh` lines in: a line that supersedes the one on screen replaces it there, one that supersedes a queued line
+ * takes that line's place at the back of the queue; the rest queue behind (only the newest `max` are kept).
+ * @param {TickerLine[]} queue
+ * @param {TickerLine|null} cur the line on screen
+ * @param {TickerLine[]} fresh
+ * @returns {{ queue: TickerLine[], cur: TickerLine|null }} `cur` is a fresh line when it replaced the one on screen
+ */
+export function enqueueTickerLines(queue, cur, fresh, max = QUEUE_MAX) {
+  let q = [...queue];
+  let c = cur;
+  for (const t of fresh) {
+    if (!t) continue;
+    if (c && tickerSupersedes(t, c)) { c = t; continue; }
+    q = q.filter((o) => !tickerSupersedes(t, o));
+    q.push(t);
+  }
+  return { queue: q.slice(-max), cur: c };
+}
+
+/**
+ * A round change: BOSS_HIT lines from another round leave the queue, and the line on screen goes if it is one.
+ * @param {TickerLine[]} queue
+ * @param {TickerLine|null} cur
+ * @param {number|null} round
+ */
+export function pruneTickerLines(queue, cur, round) {
+  return { queue: queue.filter((t) => tickerLineLive(t, round)), dropCur: !!cur && !tickerLineLive(cur, round) };
+}
+
+/**
+ * The next line to show in `round` and the queue after it (stale BOSS_HIT lines are skipped).
+ * @param {TickerLine[]} queue
+ * @param {number|null} round
+ * @returns {{ line: TickerLine|null, queue: TickerLine[] }}
+ */
+export function nextTickerLine(queue, round) {
+  const q = [...queue];
+  let line = q.shift() || null;
+  while (line && !tickerLineLive(line, round)) line = q.shift() || null;
+  return { line, queue: q };
 }
 
 /** Ticker strip bound to store.ticker. */
@@ -46,27 +107,34 @@ export function Ticker() {
     const fresh = list.filter((t) => t && t.id > seen.current && Date.now() - t.at < 30000);
     if (!fresh.length) return;
     seen.current = fresh[fresh.length - 1].id;
-    queue.current = [...queue.current, ...fresh].slice(-QUEUE_MAX);
-    if (!cur) next();
+    const r = enqueueTickerLines(queue.current, cur, fresh);
+    queue.current = r.queue;
+    if (r.cur !== cur) show(r.cur); // a player's newer leader-damage line replaces their older one on screen
+    else if (!cur) next();
   }, [items]);
 
   // a new round: the last round's leader-damage lines leave the queue and the strip
   useEffect(() => {
-    queue.current = queue.current.filter((t) => tickerLineLive(t, round));
-    if (cur && !tickerLineLive(cur, round)) next();
+    const r = pruneTickerLines(queue.current, cur, round);
+    queue.current = r.queue;
+    if (r.dropCur) next();
   }, [round]);
 
   useEffect(() => () => clearTimeout(timer.current), []);
 
-  function next() {
-    let it = queue.current.shift() || null;
-    while (it && !tickerLineLive(it, roundRef.current)) it = queue.current.shift() || null;
+  function show(it) {
     setCur(it);
     clearTimeout(timer.current);
     if (it) {
       audio.sfx('broadcast', { volume: 0.5 });
       timer.current = setTimeout(next, TICKER_MS);
     }
+  }
+
+  function next() {
+    const r = nextTickerLine(queue.current, roundRef.current);
+    queue.current = r.queue;
+    show(r.line);
   }
 
   if (!cur) return null;

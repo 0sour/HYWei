@@ -62,8 +62,9 @@ function assertTruthful(hits, phase, players) {
   return inPhase;
 }
 
-test('C1 (solo 险境, server-run fields): the Hidden Core\'s first hit announces nothing — the Final Assault\'s damage is not damage to the hidden leader', () => {
-  // the reported case: a Final Assault pool (盐风主教昆图斯, 险境) larger than half the hidden leader's (假想敌：铳)
+test('C1 (solo 绝境, server-run fields): the Hidden Core\'s first hit announces nothing — the Final Assault\'s damage is not damage to the hidden leader', () => {
+  // the reported case: a Final Assault pool larger than half the hidden leader's — solo 绝境 (HARD): 盐风主教昆图斯 525000,
+  // 75 % of 假想敌：铳's 700000, so the old share announced 超过50% at the hidden leader's first hit
   const { m, end, hits } = toHiddenCore({ mode: 'solo', difficulty: 'HARD', bossId: 'boss_4', hiddenBossId: 'boss_9', hiddenDps: 0.01 });
   assert.equal(end.hiddenReached, true);
   const fa = assertTruthful(hits, PHASE.FINAL_ASSAULT, ['p_0']);
