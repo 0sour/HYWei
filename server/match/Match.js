@@ -812,7 +812,12 @@ export class Match {
         shopLevel: ps.shop.level,
         boardCount: ps.deployCount,
         ready: this.phase === PHASE.INFO_CHECK ? ps.infoReady : ps.ready,
-        bonds: bondList(this.gd, ps.bonds).filter((b) => b.count > 0 || b.active),
+        // the strip of a teammate watching this player (DESIGN §20.15): every bond with members, layers or an active tier
+        // (= the player's own m.private list without thresholds / countsHand — the client reads those from bonds.json),
+        // this round's in-battle gains included once the COMBAT phase ended (PlayerState.bondsView); [] once eliminated —
+        // nobody can watch an eliminated player (g.watch refuses them, they have no field) and the result screen reads
+        // m.result's own bonds, so their layers would only cost every m.public bytes for the rest of the match
+        bonds: ps.alive ? bondList(this.gd, ps.bondsView()) : [],
         fieldId: this.fieldOf(ps),
         status: this.statusOf(ps),
         autoplay: ps.autoplay,
@@ -1804,6 +1809,10 @@ export class Match {
       for (const pid of f.players) {
         const pp = res.perPlayer && res.perPlayer[pid];
         this.lastResults.set(pid, pp || { killed: 0, total: 0, leaked: [], perfect: true, layerGains: {}, coins: 0, damageDealt: 0, unitsEnd: [], unitStats: [] });
+        // the views show the layers the battle reached until settle() makes them persistent (DESIGN §20.15)
+        const ps = this.players.get(pid);
+        const gains = pp && pp.layerGains && typeof pp.layerGains === 'object' ? pp.layerGains : null;
+        if (ps && gains && Object.keys(gains).length) { ps.pendingLayerGains = { ...gains }; ps.dirty(); }
       }
     }
     for (const f of this.fields) f.live = false;
@@ -2685,6 +2694,8 @@ export class Match {
     this.phase = PHASE.SETTLE;
     this.runner = null;
     this._stopClientCombat();
+    // the pending in-battle gains the views showed become persistent below (alive players) or lapse (DESIGN §20.15)
+    for (const ps of this.order) if (ps.pendingLayerGains) { ps.pendingLayerGains = null; ps.dirty(); }
     const cap = this.gd.lpCapPerRound;
     // a 联防 battle that could not run at all (synthetic result) must not wipe the leakers' losses: charge their own leaks
     const uniteRan = !!(plan && uniteResult && !uniteResult.synthetic);

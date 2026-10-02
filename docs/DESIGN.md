@@ -820,7 +820,7 @@ Nineteen reports after playing v2.4 (#1–#3 from a friend of the user). Where e
 Eight workstreams were merged into `playtest6` (WH → WG → WD → WC → WB → WA → WF → WE); the reviews' last rounds and the cross-workstream notes were applied on top: a stocked skill summon deploys as soon as its owner is back (§20.1), the AUTO DP skills 焰尾 S1 / 凛御银灰 S1 fire on full SP (§20.2), 锏 S3's slashes give 无敌 and 晕眩 / 冻结免疫 (§20.3), the `AUTO_OP_COOLDOWN` comment and the SKILL_RANGE count (13 skills / 26 records) were corrected. The user then answered the open questions (2026-10-01); the answers are **settled decisions**, recorded in their sections and in §20.9, each with the one-line change that flips it: the placed skill summons deploy once at the battle start and 凯瑟琳's device stays a hand card (§20.1), every blocker hits what it blocks (§20.3), 萨卡兹枯朽战车 follows the re-research — ranged enemies reach an operator by its 0.25 collider (§20.4) — and multi-round bounties last two battles (§20.6). Normative lines rewritten with it: §2 (`fear.js`), §3 (the enemies' reach), §5.2 (ASPD floor 20), §5.3 (`camou`, `fear`, `noHeal`, `isolated`), §5.4 (push / pull / ally-selection helpers), §5.5 (initial deployment, blocking, operator attacks, healers, enemy AI, end), §5.6 (skill triggers, the operation cooldown), §6.1 / §6.2 (the Final Assault verdict, summon stacks, summons in the hand, the promotion reward), §7 (bounty draft, 教鞭), §8.2 / §8.3 (`uniteLeft`, `descRaw`, `counterText`, the `elem` fill, the stealth bit), §9 (gauge row, model scale), §10 (机变 card, the card tap), §14 (`left`, the pool floor, the verdict, `uniteLeft`); superseded or revised: §17.5 (the 联防 count), §18.3 (the gauge look), §18.6 #11 (skill summons), §19.2 (the melee-only blocked-first rule; 灰毫 S2), §19.5 (the gauge look).
 
 
-**Follow-up (`playtest6b`, 2026-10-02).** Four more workstreams were merged into `playtest6b` in this order: the elite-to-board rule (§20.11), the 假想敌：胄 kit audit (§20.13), the Final Assault leader HP report (§20.10) and the official limits read from the client binary (§20.12). Reports: co-op 终极 / 绝境 leaders died within seconds although the official leader never dies that fast with such layers (§20.10); "官方就是合成精锐时，如果消耗了场上的干员，精锐会出现在场上那个位置" (§20.11, user-confirmed). The boss-HP and the limits workstreams both capped bond layers at 999 — one implementation remains (`shared/constants.js BOND_LAYER_CAP` / `layerGainRoom`, used by every writer), and the boss-HP workstream's reading of 限伤 as an engine fixed-point overflow "not modelled" is superseded by the binary evidence (`MAX_BATTLE_DAMAGE` 300000, the hit is cancelled). Normative lines rewritten with it: §2 (`promote.js`), §5.1 (`layerGains` capped), §5.2 (直接乘算 in `Σpct`), §5.3 (same-named debuffs), §5.4 (`addLayers`, `loseHp`), §5.5 (限伤 between the multipliers and the shields), §6.2 (where a merge's elite goes), §6.3 (the layer cap), §7 (leader parts, drones), §8.2 (`hitCap`), §9 (the promotion cue), §14 (the layer bound of client results); §20.9 records the decisions. Two QA verifiers then checked the integrated build; their residual issues are handled in §20.14.
+**Follow-up (`playtest6b`, 2026-10-02).** Four more workstreams were merged into `playtest6b` in this order: the elite-to-board rule (§20.11), the 假想敌：胄 kit audit (§20.13), the Final Assault leader HP report (§20.10) and the official limits read from the client binary (§20.12). Reports: co-op 终极 / 绝境 leaders died within seconds although the official leader never dies that fast with such layers (§20.10); "官方就是合成精锐时，如果消耗了场上的干员，精锐会出现在场上那个位置" (§20.11, user-confirmed). The boss-HP and the limits workstreams both capped bond layers at 999 — one implementation remains (`shared/constants.js BOND_LAYER_CAP` / `layerGainRoom`, used by every writer), and the boss-HP workstream's reading of 限伤 as an engine fixed-point overflow "not modelled" is superseded by the binary evidence (`MAX_BATTLE_DAMAGE` 300000, the hit is cancelled). Normative lines rewritten with it: §2 (`promote.js`), §5.1 (`layerGains` capped), §5.2 (直接乘算 in `Σpct`), §5.3 (same-named debuffs), §5.4 (`addLayers`, `loseHp`), §5.5 (限伤 between the multipliers and the shields), §6.2 (where a merge's elite goes), §6.3 (the layer cap), §7 (leader parts, drones), §8.2 (`hitCap`), §9 (the promotion cue), §14 (the layer bound of client results); §20.9 records the decisions. Two QA verifiers then checked the integrated build; their residual issues are handled in §20.14. A later report after v2.5.1 — the bond strip should follow the watched teammate in every watch situation — → §20.15.
 
 ### 20.1 Summons placed by hand (#1, #2) — `tools/build-data.mjs`, `match/gamedata.js placeableTokens`, `PlayerState`, `match/bot.js`, `sim/Battle.js`, `content/tokens.js`, kits tier2/3/4, `ui/detailPanel.js`, `shared/constants.js SKILL_SUMMON_START_DEPLOY`
 
@@ -1015,3 +1015,83 @@ Two QA verifiers ran the integrated `playtest6b` (real 4-AI and 2-human co-op ma
 - **Not changed — per-source talent debuffs [ASSUMED].** Some talents key their debuff with the source unit (`etlchi:dot:<id>`, `ines:atkSteal:<id>`, `ines:sentry:<id>`, and similar slows / DoTs in other kits), so two copies of one operator (a pair field where both players own it) each apply theirs. PRTS 作战机制 says only that same-named buffs show one instance under the *default* overlap strategy; whether these talents use it across copies is not in the data the project has, and the effect on leader kill times is small (an arts DoT, an ATK steal, a slow). The rule stays applied to the debuffs that move leader kills (奥术, 灵知 坚冰, the RES cuts — §20.10).
 - **Not changed — temp items behind a full hand.** With the hand full, items overflowing into the 临时整备区 (row 8) stand behind the bench row's operator models and are hard to see; the row's red frame, the 「临时整备区 N 件道具待处理」 notice and the refused Ready still show them. A layout change of the temp row is left for a later pass.
 - Tests: `test/match/clientCombat.test.js` (the held result; a 'cleared' result not covering the pool is still handed over), `test/render/playtest6-promote.test.js`, opt-in `RENDER_E2E=1 node --test test/render/browser.test.js` (a merge between two preps is cued), `test/ui/playtest6-elite.test.js` (the detail hint), opt-in `SP_E2E=1 node --test test/ui/playtest6-elite.e2e.test.js` (the hint in the real detail card).
+
+### 20.15 The bond strip follows the watched player (user report after playtest #6, 2026-10-02) — `ui/watchBonds.js`, `ui/bondStrip.js`, `ui/combatHud.js`, `screens/game.js` (`watchWho`, `bondOpen`), `battle/runner.js bondLayers / ownerOps`, `battle/observe.js resumedWatch`, `match/bondsMeta.js bondsWithGains`, `PlayerState.pendingLayerGains / bondsView`, `Match.publicView / _finishCombat / settle`
+
+User: 「观看队友时（不仅是休整时候，还有自己战斗结束时，联防时，最终boss战）盟约栏应该变成当前队友的盟约以及他的层数」.
+
+**Before this change:**
+- Only 前往查看 of a teammate's normal field switched the strip, and it showed the start-of-round layers.
+- An eliminated player's auto-observed field, the 联防 field and the Final Assault pair field kept the viewer's own bonds.
+- A teammate's popup listed the viewer's pieces as its members.
+
+**Whose bonds** (`watchBonds.screenFieldId` / `bondOwnerId` / `screenStrip`): the player whose field or half the camera shows.
+
+The field on screen is, in order of preference:
+- the watched field (`g.watch`);
+- else the battle the view shows. Under client-side combat this is the runner's battle on screen, which is also an eliminated player's auto-observed field; under server-run combat it is the field the view entered;
+- else home.
+
+In SETTLE it is the field the last battle left on screen. In prep without watching, it is the own board.
+
+- **The own board / own battle** → your bonds (`m.private bonds`).
+- **A normal field `'n:<pid>'`** → its owner's bonds (`m.public players[].bonds`). This covers:
+  - a teammate's board in prep (前往查看). Research 09 §3.1: "their board, read-only, including their pen and bonds". Official clients receive every board's bonds (`ChangePositionDn.boardStatus.updatedBonds`);
+  - a teammate's battle watched after the own one;
+  - the field an eliminated player auto-observes;
+  - a field picked in the legacy view switcher.
+- **A shared field** (联防 `'u'`, boss / hidden `'b1'` / `'b2'`) **[ASSUMED — no source shows the strip there]**:
+  1. If the ‹ › pill points at a half that a player holds → that player. The pill's "你自己" means yours; "👁 name" means theirs.
+  2. Else (全景, an empty half "无人在家", or no pill), if you fight on that field → yours.
+  3. Else (you are not on the field: a 联防 leaker, an eliminated spectator) → never your own. The strip shows the teammate you picked with 前往查看 if they are on that field, else the field's first listed player (helper 1 / the pair's first seat).
+
+  Basis: official observing targets a player (`ObserveUp { obIndex }`, `DeadAutoObDn { obIndex }`, `m_leftBattleObIdx / m_rightBattleObIdx`), and the official non-helper pill reads "‹ 👁 helper# ›" (research 09 §3.1).
+- **The picked teammate:** the game screen remembers `watchWho = { fieldId, playerId }` when a team row is tapped (`requestWatch(fid, playerId)`). The `g.watch` request still names only the field. `watchWho` counts only while that field is the watched one (`watchedPlayer`). It is cleared by 返回战场, the own row and a phase change, and restored if the server refuses the watch.
+- **Camera:** picking a teammate on a two-half shared field moves the camera to their half (`playerLayer`), once per pick and per field entered. The ‹ › pill is also offered on a shared field watched with 前往查看, so the pill and the strip tag always name the same player.
+  - On such a field the ‹ › pill replaces the observing pill and carries 返回战场 (absent for an eliminated player).
+  - On a normal field the observing pill "👁 name" takes the strip owner's name.
+  - The default camera on entering a field is still 全景.
+- **返回战场 without an own field** (client-side combat: a 联防 leaker, an eliminated player): no `g.watch` is sent, because it would be refused with `BAD_TARGET 'no such field'` (an error toast). The screen keeps the field it shows, and the strip falls back to the rules above.
+- **A reload / reconnect while watching** a teammate's battle after the own one (client-side combat): the server already resends the watched field (`Match._resendBattle`, `b.start watch: true`). But a fresh screen starts with no watched field, so before this the HUD showed 「作战结束，等待队友完成作战」 with no observing pill and no 返回战场, and the own row did nothing.
+  - The screen now adopts that field as the watched one, once per battle (`observe.resumedWatch`, decided at the first sight of its battleId).
+  - It does so only for a teammate's normal battle in COMBAT, shown to a living player who watches nothing.
+  - A battle first seen while a watch is already set is only marked as seen. So a 返回战场 tapped while the own `b.start` is still on its way never brings the teammate back.
+  - A loading battle waits until it runs (its state carries no `watch` yet).
+  - 联防 leakers and eliminated spectators keep their own rules.
+
+**Labelling:**
+- A teammate's strip leads with an amber "👁 name" pill (the observing pill's spelling) and gets amber disc rings, `aria-label` "name 的盟约" and `data-owner`; slots carry `data-bond`.
+- The pill is horizontal at every width, with a pixel floor: 10 px on desktop and tablet, 9 px below 768 CSS px (1rem is clamped at 40 px there).
+- An empty teammate strip reads "name 尚未激活盟约".
+
+**Detail card chips and the popup (whose bond a popup shows):**
+- A unit card's bond chips use the bonds of `watchBonds.detailBondOwner`:
+  - a unit on the field → its owner, when that owner is a known player (yours or a teammate's: a shared field shows both halves' units, whoever the strip follows);
+  - your own piece (board / bench) → yours;
+  - a bond-member card opened from a popup → that popup's player;
+  - anything else (shop / reward / drawer cards, a unit without a known owner) → the strip's player.
+- A bond popup carries the player it was opened for: `bondOpen = { id, ownerId, from: 'strip' | 'detail' }` (`toggleBond`). From the strip, that is the strip's player; from a chip, it is the same player the chips show. The same bond of the same player closes it.
+- `popupView` builds the popup from that player, never simply from the strip:
+  - the entry with the live layers (as the strip and the chips show it);
+  - "👁 name 的盟约" for a teammate;
+  - the member list: your pieces, or that teammate's operators on the field on screen (`ownerBoard`: the prep scouting board's or a server-run battle field's units). Under client-side combat it also uses the battle on screen's operators (`battleRunner.ownerOps(ownerId, fieldId)`), because the field meta the runner publishes is taken before they deploy.
+  - Their hand is never sent, so a teammate's member counts as owned only when it is on the field.
+- The strip marks a disc as open only for a popup of its own player.
+- A popup opened from the strip closes when the strip changes hands: another teammate, a ‹ › half, or back to your own. A popup opened from a chip stays open, labelled with its own player.
+
+**Layers:**
+- **In battle:** the battle runner reports `state().bondLayers = { [playerId]: { [bondId]: n } }`. These are absolute live counts of every bond that grew in a battle it simulates (the own battle, a teammate's display replica), capped at `BOND_LAYER_CAP` (999). They are published when one grows and kept through the round.
+- The client lays them over the view's counts with `withLiveLayers`: the higher value wins (a count only grows) and never shows above 999. They apply in the battle phases and SETTLE only.
+- 联防 and boss battles disable gains, so they report none.
+- **After COMBAT** (`_finishCombat`): until SETTLE, both `m.private bonds` and `m.public players[].bonds` add the finished normal battle's IN_BATTLE gains (`PlayerState.pendingLayerGains` = the result's `layerGains`; `bondsMeta.bondsWithGains`: floored, at most up to the cap, like `settle()`). The strip of a player, and of a teammate watching him in the 联防, therefore keeps the layers his battle reached.
+- This is views only: `ps.bonds` / `ps.layers` are untouched. SETTLE clears the pending gains as it adds them (once), and the next round start clears them too.
+
+**Data:**
+- `m.public players[].bonds = ps.alive ? bondList(gd, ps.bondsView()) : []`: every bond with members, layers or an active tier. It is the same list and order as the player's own `m.private bonds`, minus `thresholds` / `countsHand` (the client reads those from bonds.json).
+- An eliminated player's list is `[]`, for these reasons:
+  - nobody can watch them: `g.watch` refuses them and they have no field;
+  - the result screen reads `m.result`'s own bonds;
+  - their remaining layers would otherwise cost every `m.public` for the rest of the match.
+- Measured in a 4-AI NORMAL harness match (seed 11, round 13, 3 players eliminated): `players[].bonds` is 771 B, against 2424 B without this rule. The review measured 705 B on v2.5.1; the difference is the living player's layers-only entries, which the strip needs.
+- There is no new message and no new field. `m.public` stays throttled and deduplicated, so the extra traffic is the living players' layers-only entries plus one change at the end of COMBAT.
+- Nothing is exposed that scouting (research 09 §3.1) or watching the battle does not already show.

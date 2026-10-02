@@ -232,6 +232,9 @@
 .bpop__disc.is-active .bglyph img { filter: brightness(0) opacity(.85); }
 .bpop__titles { display: flex; flex-direction: column; gap: .02rem; min-width: 0; }
 .bpop__name { font-size: .32rem; font-weight: 900; letter-spacing: .08em; }
+.bpop__owner { display: inline-flex; align-items: center; gap: .06rem; font-size: .14rem; color: var(--amber); }
+.bpop__owner b { color: #fff; font-weight: 700; max-width: 2.4rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bpop.is-other .bpop__disc { box-shadow: 0 0 0 1px rgba(246, 163, 41, .55); }
 .bpop__facts { display: flex; gap: .16rem; font-size: .15rem; color: var(--text-lo); }
 .bpop__facts b { color: #fff; font-size: .18rem; }
 .bpop__facts small { font-size: .12rem; }

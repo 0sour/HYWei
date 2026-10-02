@@ -48,6 +48,13 @@
 // reward card armed for a purchase that completes a merge lights, in gold, the board tile its elite will take (the
 // deployed copy that deploys first, gameLogic.mergeTarget — none when no copy is deployed: the elite goes to the hand);
 // the elite then appears there with the promotion cue (render/app.js setPrep → fx.promote).
+// The bond strip, its popup and a unit card's bond chips follow the player on screen (DESIGN §20.15, ui/watchBonds.js):
+// a scouted / watched / auto-observed teammate's field → that teammate's bonds (m.public players[].bonds, tagged
+// "👁 name"); 联防 / 最终攻势 → the player on the ‹ › half (全景: yours when you fight there, else the teammate picked
+// with 前往查看 — `watchWho` — or the field's first player, never the viewer's own); in battle with the live layers of
+// the battle on screen (battle/runner.js state().bondLayers). Picking a teammate on such a field (a 联防 leaker, an
+// eliminated spectator) frames their half and keeps the ‹ › pill (with 返回战场); an open bond popup closes when the
+// strip changes hands.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
 import { PHASE, GEO } from '../../../shared/constants.js';
@@ -89,7 +96,8 @@ import { ResultScreen } from './result.js';
 import { net } from '../net.js';
 import { store, useStore, shallowEqual, serverNow, emptyMatch } from '../store.js';
 import { battleRunner } from '../battle/runner.js';
-import { isClientCombat, observeTarget, teammateProgress, cameraLayers, layerCamera, sidesOf } from '../battle/observe.js';
+import { isClientCombat, observeTarget, teammateProgress, cameraLayers, layerCamera, sidesOf, resumedWatch } from '../battle/observe.js';
+import { screenStrip, playerBonds, playerLayer, detailBondOwner, toggleBond, popupView } from '../ui/watchBonds.js';
 import { data, localAsset } from '../data.js';
 import { audio } from '../audio.js';
 import { useDocClass, FullscreenButton } from '../ui/device.js';
@@ -176,8 +184,9 @@ function MatchScreen() {
   const { view, kind: viewKind } = useFieldView(hostRef);
 
   const [watching, setWatching] = useState(null);        // fieldId the player chose to watch (null = home)
+  const [watchWho, setWatchWho] = useState(null);        // { fieldId, playerId }: the teammate picked with 前往查看
   const [drawer, setDrawer] = useState(null);            // 'enemies' | 'info' | null
-  const [bondOpen, setBondOpen] = useState(null);
+  const [bondOpen, setBondOpen] = useState(null);        // { id, ownerId, from }: the bond popup and whose bond it shows
   const [detail, setDetail] = useState(null);            // detail target
   const [collapsed, setCollapsed] = useState(false);
   const [rewardMin, setRewardMin] = useState(false);
@@ -249,7 +258,7 @@ function MatchScreen() {
     priv, stage: gd.stage(pub?.stageId), editable, field: deployField,
     getChess: gd.chess, getToken: gd.token, getItem: gd.item, getEffect: gd.effect,
   }), [priv, pub?.stageId, editable, gd.ready, deployField]);
-  live.current = { pub, priv, field, editable, placeCtx, watching, home, myId, detail, drawer, bondOpen, emoteOpen, settingsOpen, exitOpen, drag, facing, sel, pen, collapsedNow: collapsed, localDone: false, canPause: false, paused };
+  live.current = { pub, priv, field, editable, placeCtx, watching, watchWho, home, myId, detail, drawer, bondOpen, emoteOpen, settingsOpen, exitOpen, drag, facing, sel, pen, collapsedNow: collapsed, localDone: false, canPause: false, paused };
 
   // ---- camera: every request goes through setCam, which remembers it for the pen's way back -----------------------
   // the own prep board: the normal board, or — in the prep of a boss round — the player's half of the boss field
@@ -470,6 +479,23 @@ function MatchScreen() {
     setCam(kind, layerCamera(field, layer, sidesOf(field)[myId] || 'L'));
   }, [layer]);
 
+  // 前往查看 of a teammate on a two-half shared field (a 联防 leaker / an eliminated spectator tapping a helper or a pair
+  // player): the camera goes to that player's half, so the ‹ › pill reads "👁 name" like the strip's tag (DESIGN §20.15;
+  // official observing targets a player, research 09 §3.1). Once per pick and per field entered (entering resets 全景).
+  const whoAppliedRef = useRef({ who: null, field: null });
+  useEffect(() => {
+    const who = watchWho;
+    if (!view || !who || !field || field.fieldId !== who.fieldId || !field.local || !isCombatPhase(phase)) return;
+    const A = whoAppliedRef.current;
+    if (A.who === who && A.field === field) return;
+    whoAppliedRef.current = { who, field };
+    const k = playerLayer(field, pub, myId, who.playerId);
+    if (!k) return;
+    setLayer(k);
+    // the camera directly too: when the layer state already equals k the [layer] effect would not run
+    setCam(field.kind === 'hidden' ? 'boss' : field.kind, layerCamera(field, k, sidesOf(field)[myId] || 'L'));
+  }, [view, watchWho, field, phase]);
+
   // graceful degradation: without WebGL / the render engine the DOM view takes over — say so once per match
   useEffect(() => {
     if (viewKind !== 'fallback') return;
@@ -496,6 +522,7 @@ function MatchScreen() {
     else if (phase === PHASE.HIDDEN_CORE) audio.sfx('bossRoundSecret');
     else if (phase === PHASE.SP_DRAFT) audio.sfx('draft');
     setWatching(null); // the server resets every watcher to its own field on phase changes
+    setWatchWho(null);
     // the pen is a 休整期 view: leaving prep returns the camera (the next setCam would, too)
     if (phase !== PHASE.PREP && penRef.current.on) togglePenRef.current(false);
     // a battle unit's panel (live HP of a unit of the fight that just ended) never outlives its battle
@@ -505,6 +532,16 @@ function MatchScreen() {
     if (phase !== PHASE.PREP) setRewardMin(false);
     setSpBusy(null);
   }, [phaseKey]);
+
+  // a reload / reconnect while watching a teammate's battle after the own one (client-side combat): the server resends
+  // the watched field, the fresh screen adopts it as watched once per battle — the observing pill, 返回战场 and the own
+  // row work again, and the bond strip's "👁 name" matches the HUD (battle/observe.js resumedWatch)
+  const seenBattleRef = useRef(null);
+  useEffect(() => {
+    const r = resumedWatch(battleState, { pub, myId, alive, watching, seen: seenBattleRef.current });
+    seenBattleRef.current = r.seen;
+    if (r.fieldId) setWatching(r.fieldId);
+  }, [battleState?.battleId, battleState?.loading, !!pub]);
 
   // timer ticks (≤ 10 s) while the player still has something to do
   const cd = countdownState(pub?.deadline, serverNow(), total);
@@ -576,19 +613,34 @@ function MatchScreen() {
 
   // The watched field only changes once the server accepted g.watch: a refused target (an eliminated teammate, the
   // other pair's boss field) must not move the eye icon / switcher label away from what is actually on screen.
-  const requestWatch = useCallback(async (fid) => {
+  // `playerId`: the teammate picked (a team row) — a shared field shows two players, the strip follows the picked one
+  // (DESIGN §20.15); null for a field picked as such (the legacy switcher).
+  const requestWatch = useCallback(async (fid, playerId = null) => {
     const prev = live.current.watching;
+    const prevWho = live.current.watchWho;
+    const who = playerId ? { fieldId: fid, playerId } : null;
     setWatching(fid);
+    setWatchWho(who);
     const ok = await actions.watch(fid);
-    if (!ok) setWatching((w) => (w === fid ? prev : w));
+    if (!ok) {
+      setWatching((w) => (w === fid ? prev : w));
+      setWatchWho((w) => (w === who ? prevWho : w));
+    }
     return ok;
   }, []);
 
   /** Back to the own field (返回战场 / the own row). */
   const backHome = useCallback(() => {
     const L = live.current;
-    if (L.watching && L.watching !== L.home) actions.watch(isCombatPhase(L.pub?.phase) ? L.home : ownFieldId(L.myId));
+    if (L.watching && L.watching !== L.home) {
+      const target = isCombatPhase(L.pub?.phase) ? L.home : ownFieldId(L.myId);
+      // client-side combat without an own field to go back to (a 联防 leaker, an eliminated player): the screen keeps
+      // the field it shows — g.watch of a field that does not exist would only be refused (an error toast)
+      const exists = !isClientCombat(L.pub) || !isCombatPhase(L.pub?.phase) || (Array.isArray(L.pub?.fields) && L.pub.fields.some((f) => f && f.fieldId === target));
+      if (exists) actions.watch(target);
+    }
     setWatching(null);
+    setWatchWho(null);
   }, []);
 
   const watchPlayer = useCallback((p) => {
@@ -598,18 +650,19 @@ function MatchScreen() {
       const t = observeTarget(p, L.pub, L.myId, { observing, ownDone: L.localDone });
       if (t.back) { backHome(); return; }
       if (t.reason) { toast(t.reason, 'warn'); audio.sfx('error', { volume: 0.5 }); return; }
-      if (t.fieldId) requestWatch(t.fieldId);
+      if (t.fieldId) requestWatch(t.fieldId, p.playerId);
       return;
     }
     const self = p.playerId === L.myId;
     if (self) {
       if (L.watching && L.watching !== L.home) actions.watch(isCombatPhase(L.pub?.phase) ? L.home : ownFieldId(L.myId));
       setWatching(null);
+      setWatchWho(null);
       return;
     }
     const t = watchTarget(p, L.pub, L.myId);
     if (t.reason) { toast(t.reason, 'warn'); audio.sfx('error', { volume: 0.5 }); return; }
-    requestWatch(t.fieldId);
+    requestWatch(t.fieldId, p.playerId);
   }, []);
 
   const watchField = useCallback((fid) => { requestWatch(fid); }, []);
@@ -993,14 +1046,40 @@ function MatchScreen() {
   // client-side combat: observing a teammate's battle (research 09 §3.1) and the 联防 / 最终攻势 camera halves
   // (an eliminated player auto-observes a teammate's normal field — research 09 "keep-watching" — without asking)
   const watchedFid = watchingOther ? watching : (cc && combat && !alive && battleState && battleState.watch && battleState.kind === 'normal' ? battleState.fieldId : null);
-  const observingName = cc && combat && watchedFid ? (players.find((p) => p.fieldId === watchedFid || ownFieldId(p.playerId) === watchedFid)?.name || '队友') : null;
-  const layers = cc && combat && field && field.local && !watchingOther ? cameraLayers(field, pub, myId) : [];
+  // the ‹ › pill: on the 联防 / 最终攻势 field on screen — also one watched with 前往查看 (a leaker, an eliminated spectator)
+  const layers = cc && combat && field && field.local && (!watchingOther || field.fieldId === watching) ? cameraLayers(field, pub, myId) : [];
   const progress = cc && phase === PHASE.COMBAT ? teammateProgress(pub, myId) : null;
-  // watching a teammate's normal field: the strip shows their bonds (m.public players[].bonds)
+  // the bond strip follows the player on screen (DESIGN §20.15, ui/watchBonds.js): a teammate's board / battle (前往查看,
+  // an eliminated player's auto-observed field) → their bonds; a 联防 / 最终攻势 field → the player on the ‹ › half (全景:
+  // yours when you fight there, else the teammate picked with 前往查看 / the field's first player); in battle with the
+  // live layers of the battle on screen (the runner's bondLayers)
+  const settleMode = mode === 'settle';
+  const strip = screenStrip({
+    pub, priv, myId, combat, settle: settleMode, watchingOther, watching, home,
+    battleFieldId: cc ? (battleState?.fieldId || null) : (combat || settleMode ? lastFieldRef.current : null),
+    field, layers, layer, who: watchWho, bondLayers: battleState?.bondLayers || null,
+  });
+  const stripFid = strip.fieldId;
+  const liveLayers = (combat || settleMode) && battleState?.bondLayers ? battleState.bondLayers : null;
+  // the observing pill names the player whose bonds the strip shows (the same teammate as the strip's "👁 name" tag)
+  const observingName = cc && combat && watchedFid ? (!strip.self && stripFid === watchedFid ? strip.name : (players.find((p) => p.fieldId === watchedFid || ownFieldId(p.playerId) === watchedFid)?.name || '队友')) : null;
   const watchedP = watchingOther ? (players.find((p) => p.playerId !== myId && (watching === ownFieldId(p.playerId) || (watching === p.fieldId && String(watching).startsWith('n:')))) || null) : null;
   const watchedName = watchingOther ? (watchedP?.name || players.find((p) => watching === p.fieldId)?.name || '队友') : null;
-  const stripBonds = watchedP ? (watchedP.bonds || []) : (priv?.bonds || meP?.bonds || []);
-  const bondEntry = bondOpen ? stripBonds.find((b) => b.bondId === bondOpen) : null;
+  const stripBonds = strip.bonds;
+  // a popup opened from the strip closes when the strip changes hands (another teammate scouted / a ‹ › half / back to
+  // the own bonds); one opened from a card's chip keeps its unit owner (it carries its own player either way)
+  const stripOwnerRef = useRef(strip.ownerId);
+  useEffect(() => {
+    if (stripOwnerRef.current === strip.ownerId) return;
+    stripOwnerRef.current = strip.ownerId;
+    setBondOpen((b) => (b && b.from === 'strip' ? null : b));
+  }, [strip.ownerId]);
+  // the popup shows the player it was opened for (ui/watchBonds.js popupView): their entry + live layers, their name,
+  // and as members your pieces or their operators on the field on screen — under client-side combat the battle's own
+  // (the runner's field meta is taken before they deploy); their hand is never sent
+  const popOps = cc && battleRunner && field?.local && bondOpen && bondOpen.ownerId !== myId ? battleRunner.ownerOps(bondOpen.ownerId, field.fieldId) : null;
+  const bondPop = popupView({ open: bondOpen, pub, priv, myId, field, units: popOps, live: liveLayers });
+  const openBond = (id, ownerId, from) => { setBondOpen((b) => toggleBond(b, id, ownerId, from)); audio.sfx('click', { volume: 0.4 }); };
   const watchingNow = combat ? (watching || field?.fieldId || home) : watching;
   const shopOpen = showShop && !collapsed;
   const ufShown = !!(selEntry && editable && !facing && !drag && showPrep && ufGeo);
@@ -1051,6 +1130,11 @@ function MatchScreen() {
     }
     return priv?.loadout ?? null; // own pieces, shop / reward / bond-member cards
   })();
+  // the card's bond chips — and the popup a chip opens: a battle / scouted unit's OWNER's bonds (yours, or that
+  // teammate's — m.public + live layers), your own piece's yours, a popup member card the popup's player; shop / reward
+  // cards read the strip's (ui/watchBonds.js detailBondOwner)
+  const detailOwner = detailBondOwner(detailTarget, { pub, myId, stripOwnerId: strip.ownerId });
+  const detailBonds = detailOwner === strip.ownerId ? stripBonds : playerBonds({ pub, priv, myId, ownerId: detailOwner, live: liveLayers });
 
   return html`<div class=${cx('screen', 'gm', `gm--${mode}`, drag && 'is-dragging', collapsed && 'is-collapsed', sp && 'has-sp', pen && 'is-pen', readyWhy && 'has-readywhy')}
       data-camera=${pen ? 'pen' : camKind}>
@@ -1069,8 +1153,8 @@ function MatchScreen() {
         live=${liveLpNow} />
 
       <div class="gm__bonds">
-        <${BondStrip} bonds=${stripBonds} layersDisabled=${layersDisabled} openId=${bondOpen} owner=${watchedP ? watchedP.name : null}
-          onOpen=${(id) => { setBondOpen((b) => (b === id ? null : id)); audio.sfx('click', { volume: 0.4 }); }} />
+        <${BondStrip} bonds=${stripBonds} layersDisabled=${layersDisabled} openId=${bondPop && bondPop.ownerId === strip.ownerId ? bondPop.bondId : null}
+          owner=${strip.name} onOpen=${(id) => openBond(id, strip.ownerId, 'strip')} />
       </div>
 
       <${TeamPanel} pub=${pub} myId=${myId} watching=${watchingNow} bubbles=${bubbles} onWatch=${watchPlayer} cap=${gd.config?.lpCapPerRound ?? 10} uniteLocal=${uniteLocal}
@@ -1114,13 +1198,13 @@ function MatchScreen() {
       ${drawer ? html`<${EnemyDrawer} tab=${drawer} onTab=${setDrawer} pub=${pub} priv=${priv} onClose=${() => setDrawer(null)}
         onEnemy=${(k, n) => setDetail({ kind: 'enemy', id: k, count: n })} onChess=${(id) => setDetail({ kind: 'chess', id })} />` : null}
 
-      ${bondOpen ? html`<${BondPopup} bondId=${bondOpen} entry=${bondEntry} priv=${priv} banned=${pub?.bannedChess || []}
+      ${bondPop ? html`<${BondPopup} bondId=${bondPop.bondId} entry=${bondPop.entry} priv=${bondPop.priv} banned=${pub?.bannedChess || []} owner=${bondPop.name}
         place=${bpPlace} over=${!!resolved && bpPlace === dSide}
-        onClose=${() => setBondOpen(null)} onMember=${(id) => setDetail({ kind: 'chess', id })} />` : null}
+        onClose=${() => setBondOpen(null)} onMember=${(id) => setDetail({ kind: 'chess', id, owner: bondPop.ownerId })} />` : null}
 
       ${resolved ? html`<${DetailPanel} detail=${resolved} snapHp=${snapHp} onClose=${() => { setDetail(null); setSel(null); }}
-        bonds=${stripBonds} loadout=${detailLoadout} side=${dSide} shopOpen=${shopOpen} live=${liveStats}
-        onBond=${(id) => { setBondOpen((b) => (b === id ? null : id)); audio.sfx('click', { volume: 0.4 }); }} />` : null}
+        bonds=${detailBonds} loadout=${detailLoadout} side=${dSide} shopOpen=${shopOpen} live=${liveStats}
+        onBond=${(id) => openBond(id, detailOwner, 'detail')} />` : null}
 
       ${selEntry && editable && !facing && !drag && showPrep ? html`<${Underframe} key=${sel.uid} view=${view} uid=${sel.uid}
         row=${pieceTile(selEntry)?.row} col=${pieceTile(selEntry)?.col} actions=${underframeActions(placeCtx, sel.uid)} busy=${selBusy}

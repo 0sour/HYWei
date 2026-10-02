@@ -1,9 +1,10 @@
 // Observing rules of the client (public/js/battle/observe.js, research 09 §3.1 / §6.3) — the mirror of the server's
 // Match._watchClient: prep boards, no observing while the own normal battle runs, a teammate's field once it is over,
-// the other pair's boss field hidden, eliminated players free; the 联防 / 最终攻势 camera halves and their captions.
+// the other pair's boss field hidden, eliminated players free; the 联防 / 最终攻势 camera halves and their captions;
+// a reloaded screen that watched a teammate's battle takes the watch back (resumedWatch).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { observeTarget, teammateProgress, cameraLayers, layerCamera, isClientCombat } from '../../public/js/battle/observe.js';
+import { observeTarget, teammateProgress, cameraLayers, layerCamera, isClientCombat, resumedWatch } from '../../public/js/battle/observe.js';
 
 const P = (id, seat, extra = {}) => ({ playerId: id, seat, name: id.toUpperCase(), alive: true, ...extra });
 const pubOf = (phase, fields, players) => ({ phase, combatMode: 'client', fields, players });
@@ -42,4 +43,37 @@ test('cameraLayers: ‹ LEFT / 全景 / RIGHT › with "你自己" / name / "无
   assert.deepEqual(cameraLayers({ kind: 'boss', players: ['a'], sides: { a: 'L' } }, pub, 'a'), [], 'a solo boss field has no halves');
   assert.deepEqual(layerCamera(unite, 'R', 'R'), { rect: unite.rect, side: 'R', half: true });
   assert.deepEqual(layerCamera(unite, 'ALL', 'R'), { rect: unite.rect, side: 'R' });
+});
+
+test('resumedWatch: a reload while watching a teammate\'s battle adopts the resent field once per battle (review, DESIGN §20.15)', () => {
+  const players = [P('a', 0), P('b', 1), P('c', 2)];
+  const pub = pubOf('COMBAT', [
+    { fieldId: 'n:a', kind: 'normal', players: ['a'], live: false },
+    { fieldId: 'n:b', kind: 'normal', players: ['b'], live: true },
+  ], players);
+  const watched = { battleId: 'r3-n:b', fieldId: 'n:b', kind: 'normal', watch: true, done: false };
+  const own = { battleId: 'r3-n:a', fieldId: 'n:a', kind: 'normal', watch: false, done: true };
+  const o = { pub, myId: 'a', alive: true, watching: null, seen: null };
+  // the reload: the server resends b's battle (b.start watch: true) to a screen at home
+  assert.deepEqual(resumedWatch(watched, o), { seen: 'r3-n:b', fieldId: 'n:b' });
+  // once per battle: after 返回战场 (watching null again) the same battle, still shown until the own b.start, stays put
+  assert.deepEqual(resumedWatch(watched, { ...o, seen: 'r3-n:b' }), { seen: 'r3-n:b', fieldId: null });
+  // first seen while watching (a 前往查看 under way): marked, never adopted later
+  assert.deepEqual(resumedWatch(watched, { ...o, watching: 'n:b' }), { seen: 'r3-n:b', fieldId: null });
+  // loading (no `watch` in that state yet): undecided while watching nothing, marked when already watching
+  const loading = { loading: true, battleId: 'r3-n:b', fieldId: 'n:b', kind: 'normal' };
+  assert.deepEqual(resumedWatch(loading, o), { seen: null, fieldId: null });
+  assert.deepEqual(resumedWatch(loading, { ...o, watching: 'n:b' }), { seen: 'r3-n:b', fieldId: null });
+  // the own battle, no battle, no m.public yet (undecided)
+  assert.deepEqual(resumedWatch(own, o), { seen: 'r3-n:a', fieldId: null });
+  assert.deepEqual(resumedWatch({ ...watched, fieldId: 'n:a' }, o), { seen: 'r3-n:b', fieldId: null }, 'a field listing the viewer');
+  assert.deepEqual(resumedWatch(null, o), { seen: null, fieldId: null });
+  assert.deepEqual(resumedWatch(watched, { ...o, pub: null }), { seen: null, fieldId: null });
+  // other rules keep theirs: an eliminated player's auto-observe, 联防 / boss fields, other phases, server-run combat
+  assert.deepEqual(resumedWatch(watched, { ...o, alive: false }), { seen: 'r3-n:b', fieldId: null });
+  const unite = pubOf('UNITE', [{ fieldId: 'u', kind: 'unite', players: ['b', 'c'], live: true }], players);
+  assert.deepEqual(resumedWatch({ battleId: 'r3-u', fieldId: 'u', kind: 'unite', watch: true }, { ...o, pub: unite }), { seen: 'r3-u', fieldId: null }, 'a 联防 leaker');
+  assert.deepEqual(resumedWatch(watched, { ...o, pub: { ...pub, phase: 'UNITE' } }), { seen: 'r3-n:b', fieldId: null });
+  assert.deepEqual(resumedWatch(watched, { ...o, pub: { ...pub, combatMode: 'server' } }), { seen: 'r3-n:b', fieldId: null });
+  assert.deepEqual(resumedWatch({ ...watched, fieldId: 'n:x' }, o), { seen: 'r3-n:b', fieldId: null }, 'a field not listed');
 });

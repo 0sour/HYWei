@@ -3,7 +3,9 @@
 //   Client-side combat (`client` prop, DESIGN §14 — the official behaviour):
 //     * own normal battle over: "⌛ 作战结束，等待队友完成作战" with each teammate's live progress (kills / total, ✓);
 //     * observing a teammate (team row → 前往查看): "👁 name" + 返回战场;
-//     * 联防 / 最终攻势: the ‹ › pill switches the camera LEFT half / 全景 / RIGHT half ("你自己" / name / "全景");
+//     * 联防 / 最终攻势: the ‹ › pill switches the camera LEFT half / 全景 / RIGHT half ("你自己" / name / "全景"); it
+//       replaces the observing pill on such a field watched with 前往查看 (a 联防 leaker, an eliminated spectator — the
+//       official non-helper pill "‹ 👁 helper# ›"), with 返回战场 beside the arrows (DESIGN §20.15);
 //     * there is NO view switcher during normal combat.
 //   Server-run combat (legacy streaming mode): the ‹ 自己 › switcher cycling the live fields of m.public.fields.
 
@@ -64,22 +66,25 @@ function ClientHud({ hud, myDone, spectating, client }) {
     if (n !== idx) client.onLayer(layers[n].key);
   };
   const observing = client.observing;
+  const halves = layers.length > 0;
   return html`<div class="chud">
     <${DpCounter} dp=${hud?.dp} />
     <div class="chud__bottom">
       ${myDone && !observing ? html`<div class="chud__msg chud__wait" role="status"><${Icon} name="hourglass" /><span>作战结束，等待队友完成作战</span></div>
         <${ProgressList} list=${client.progress} />` : null}
       ${spectating && !observing ? html`<div class="chud__msg chud__msg--dead" role="status"><${Icon} name="close" /><span>你已被淘汰，可点击队友头像前往查看</span></div>` : null}
-      ${observing ? html`<div class="vswitch chud__observe is-single" role="status">
+      ${observing && !halves ? html`<div class="vswitch chud__observe is-single" role="status">
         <span class="vswitch__label"><${GIcon} name="eye" /><span>${observing.name}</span></span>
         ${client.onBack ? html`<button type="button" class="btn btn--secondary btn--sm chud__back" onClick=${() => client.onBack()}>
           <span class="btn__label">返回战场</span></button>` : null}
       </div>` : null}
-      ${!observing && layers.length ? html`<div class="vswitch chud__layers">
+      ${halves ? html`<div class=${cx('vswitch', 'chud__layers', observing && 'is-observing')}>
         <button type="button" class="vswitch__arrow" disabled=${idx <= 0} aria-label="左侧战场" onClick=${() => step(-1)}><${Icon} name="chevronLeft" /></button>
         <span class="vswitch__label">
           ${cur && cur.watch ? html`<${GIcon} name="eye" />` : null}<span>${cur ? cur.label : '全景'}</span></span>
         <button type="button" class="vswitch__arrow" disabled=${idx >= layers.length - 1} aria-label="右侧战场" onClick=${() => step(1)}><${Icon} name="chevronRight" /></button>
+        ${observing && client.onBack ? html`<button type="button" class="btn btn--secondary btn--sm chud__back" onClick=${() => client.onBack()}>
+          <span class="btn__label">返回战场</span></button>` : null}
       </div>` : null}
     </div>
   </div>`;

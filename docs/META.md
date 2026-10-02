@@ -47,7 +47,8 @@ LOBBY → INFO_CHECK (co-op 25 s; solo and single-human matches untimed; all hum
                         (band_cannot keeps them), boss round: Σ activated layers recorded for the hidden-core check
      COMBAT             one Battle per alive player (FieldRunner, 2× game speed; limit = 2 × maxPlayTime game s, §3)
      UNITE              co-op, ≥ 1 leaker and ≥ 1 perfect player (§4)
-     SETTLE (3 s)       LP, coins, layers, bounties, eliminations, onBattleResult
+     SETTLE (3 s)       LP, coins, layers (the views showed them since the end of COMBAT, §5), bounties, eliminations,
+                        onBattleResult
    boss round  → FINAL_ASSAULT (instead of COMBAT/UNITE/SETTLE)   hidden round → HIDDEN_CORE
 → RESULT (m.result to every human, then onEnd once)
 ```
@@ -149,7 +150,18 @@ fields' `startAt` / `lastProgressAt` and the boss start by the paused time and r
 Client-side combat (the default, DESIGN §14 Spectating; `Match._watchClient`): `g.watch` answers with the field's
 `b.start` (a display replica fast-forwarded to the field clock); an alive player may not watch another normal field
 while its own normal battle runs (`WRONG_PHASE 'own battle running'`) nor the other pair's boss field (`BAD_TARGET 'other
-group hidden'`); eliminated players watch anything. The rest of this section is the legacy server-run mode
+group hidden'`); eliminated players watch anything. Whatever is watched, the viewer's bond strip shows the bonds of the
+player on screen from that player's `m.public players[].bonds` (§5) plus the replica's live layers (DESIGN §20.15) — no
+extra message. On a shared field (联防 / a pair's boss field) the client remembers the teammate picked with 前往查看
+(the `g.watch` request still names the field) and frames that player's half; a viewer who does not fight on the field
+never gets its own strip there. A detail card's bond chips — and the popup a chip opens — follow the unit's owner
+(the popup carries the player it was opened for); a teammate's popup lists as members their operators in the battle on
+screen (the runner's `ownerOps`, its field meta predating their deploy). A client-side 返回战场 without an own field to return to (a 联防 leaker, an eliminated
+player) sends no `g.watch` (it would be refused with `BAD_TARGET 'no such field'`). A reload / reconnect while watching a
+teammate's battle after the own one gets the watched field again (`_resendBattle`, `b.start watch: true`); the fresh
+screen adopts it as the watched field once per battle (`battle/observe.js resumedWatch`: a living player's teammate
+normal battle in COMBAT, first seen while watching nothing), so the observing pill, 返回战场 and the own row work again.
+The rest of this section is the legacy server-run mode
 (`SP_COMBAT=server`):
 `g.watch { fieldId }`: any live field during COMBAT / 联防; while no battle field is up (PREP, drafts, SETTLE)
 `'n:<pid>'` returns a one-shot board view — during a battle phase an `'n:<pid>'` id must name a live field
@@ -534,7 +546,11 @@ leaker's own capsule / row (`ui/hud.js uniteRemaining`) and the leakers' team ro
 drawn set; `disabledBonds` = drawn ∪ the mode's static list), `hiddenBossId`, `bossRound`, `hiddenRound`, `spRound`,
 `combatMode` (`'client'` | `'server'`), `fields[].progress { killed, total, done }` (teammates' progress UI), `paused`
 (solo pause, §1.3a),
-`players[].autoplay`, `players[].uniteLeft` (UNITE, leakers only: their enemies still standing, uncapped — §4), and per phase: `draft { order, turn, picks, skipsLeft, turnDeadline, turnSeconds, untimed }` (BAND_DRAFT),
+`players[].autoplay`, `players[].uniteLeft` (UNITE, leakers only: their enemies still standing, uncapped — §4),
+`players[].bonds` = `ps.alive ? bondList(gd, ps.bondsView()) : []` — every bond with members, layers or an active tier, the same list
+and order as the player's own `m.private bonds` minus `thresholds` / `countsHand` (the client reads those from
+bonds.json): a teammate watching the player shows it in the bond strip (DESIGN §20.15); `[]` once the player is
+eliminated (nobody can watch them; the result screen reads `m.result`'s own bonds), and per phase: `draft { order, turn, picks, skipsLeft, turnDeadline, turnSeconds, untimed }` (BAND_DRAFT),
 `sp { family, name, desc, eventId, cards:[{ idx, kind:'bounty'|'item'|'tactic', id, name, desc, tier, descRaw?, coin?,
 payout?, rounds?, enemyKey?, count?, price?, team?, tacticKind? }], order, turn, picks:{pid: idx}, taken:{idx: pid}, untimed }`
 (SP_DRAFT), `teamLp` / `bossHp {hp,max}` (Final Assault on), `overtimeAt` (最终攻势 / 隐秘核心: ms epoch when the
@@ -544,6 +560,13 @@ PREP ready/acting · COMBAT/boss combat/done · UNITE helping/done · others don
 
 `m.private` = DESIGN §8.3 exactly (sent per player whenever it changed). `nextEnemies` = the current round's wave
 (+ the player's bounty enemies, tag `bounty`; boss rounds: the player's boss field, tag `boss`, + its bounties).
+
+Bond layers in the views (DESIGN §20.15): from the end of COMBAT (`_finishCombat`, every normal result in) until SETTLE,
+`m.private bonds` and `m.public players[].bonds` add the finished battle's IN_BATTLE gains (`PlayerState.pendingLayerGains`
+= the result's `layerGains`; `bondsMeta.bondsWithGains`: floored, at most up to `BOND_LAYER_CAP`, like the settlement), so
+the strip keeps the layers the battle reached through the COMBAT_END pause and the 联防. Views only: `ps.bonds` /
+`ps.layers` (rules, the 联防 spec, `activatedLayers`) are untouched; SETTLE clears the pending gains as it adds them to
+`ps.layers` (once); the next round start clears them too.
 
 `m.field` = `{ fieldId, kind, rect, stageId, units, live }`; during prep `g.watch 'n:<pid>'` returns a one-shot board
 view with `prep: true` (scouting a teammate).

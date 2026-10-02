@@ -26,6 +26,10 @@
 // own field's min(lpCapPerRound, n) as the LP about to be lost (ui/hud.js liveLp). A 联防 field keeps each leaker's
 // enemies still standing (/sim/spec.js uniteLeft; user playtest #6 item 7) as state().uniteLeft { [playerId]: n },
 // published whenever it changes (it falls as the helpers kill them), and its authority reports it as b.progress `left`.
+// Live bond layers (DESIGN §20.15): every battle simulated here keeps the bonds whose layers grew in it (IN_BATTLE gains,
+// Battle.addLayers — normal battles only) as absolute counts per player, published as state().bondLayers
+// { [playerId]: { [bondId]: n } } (every battle of the round: the own one, the teammates' replicas) whenever one grows;
+// the bond strip of the player on screen — the own one, or a watched teammate's — shows them live (ui/watchBonds.js).
 //
 // The sim (≈ 0.2–1 ms per tick) runs on the main thread: one battle at a time is stepped for display (plus an
 // authoritative one if it is not the one on screen). stats() exposes the measured cost.
@@ -33,7 +37,7 @@
 //   import { battleRunner } from './battle/runner.js'     (browser singleton wired to net.js + store.js; null in Node)
 //   battleRunner.on('snap' | 'ev' | 'field' | 'state', fn) → off
 //   battleRunner.state()  → { battleId, fieldId, kind, authoritative, watch, done, own, members, loading, paused, leaks,
-//                              uniteLeft } | null
+//                              uniteLeft, bondLayers } | null
 //   battleRunner.stats()  → { ticks, stepMs, avgTickMs, maxFrameMs, catchups, errors, battles }
 //   battleRunner.unitStats(unitId, fieldId?) → the live stats of a unit of the battle on screen (shared/protocol.js
 //                           unitStatsEntry: current HP, effective max HP / ATK / DEF / RES / interval / block / move
@@ -41,6 +45,8 @@
 //                           playtest #4 item 7). Read-only: it takes the stats the sim computed last (`unit._s`) and
 //                           never makes the unit recompute them, so looking never changes the battle's floats.
 //   battleRunner.unitIdOf(uid, ownerId, fieldId?) → the id of an own board piece's unit in that battle | null
+//   battleRunner.ownerOps(ownerId, fieldId?) → [{ kind: 'op', ownerId, defId }] that player's operators in the battle on
+//                           screen (a teammate's bond popup: the members in play, DESIGN §20.15) | []
 //
 // createBattleRunner(deps) builds an instance with injectable net / store / clock / frame scheduler / sim loader
 // (test/match/runner.test.js drives it under Node).
@@ -147,7 +153,7 @@ export function createBattleRunner(deps) {
   let lastPool = null;
   /** solo pause: the runner clock's instant when m.public.paused turned true (null while running) */
   let pausedAt = null;
-  /** a normal field's leak count changed since the last publishState() */
+  /** a normal field's leak count (or a battle's bond layers) changed since the last publishState() */
   let leaksDirty = false;
   const stats = { ticks: 0, stepMs: 0, maxFrameMs: 0, catchups: 0, errors: 0, battles: 0, frames: 0 };
 
@@ -171,6 +177,19 @@ export function createBattleRunner(deps) {
   }
 
   /**
+   * Live bond layers of every battle simulated here (DESIGN §20.15): { [playerId]: { [bondId]: n } } — only the bonds
+   * whose layers grew in this round's battle, as absolute counts (the battle's live copy, ≤ BOND_LAYER_CAP).
+   */
+  function layerMap() {
+    const out = {};
+    for (const e of entries.values()) {
+      if (!e.live) continue;
+      for (const [pid, m] of Object.entries(e.live)) out[pid] = { ...(out[pid] || {}), ...m };
+    }
+    return out;
+  }
+
+  /**
    * The 联防 field on screen (never an older round's kept entry, nor while a new battle is being prepared): each
    * leaker's enemies still standing { [playerId]: n } (absent = none left), else null.
    */
@@ -181,11 +200,11 @@ export function createBattleRunner(deps) {
 
   function state() {
     const e = cur;
-    if (!e) return loading ? { loading: true, battleId: loading.battleId, fieldId: loading.fieldId, kind: loading.kind, leaks: leakMap(), uniteLeft: uniteLeftMap() } : null;
+    if (!e) return loading ? { loading: true, battleId: loading.battleId, fieldId: loading.fieldId, kind: loading.kind, leaks: leakMap(), uniteLeft: uniteLeftMap(), bondLayers: layerMap() } : null;
     return {
       battleId: e.battleId, fieldId: e.fieldId, kind: e.kind, authoritative: e.authoritative, watch: e.watch,
       done: e.done, own: e.own, members: e.members.slice(), loading: !!loading, speed: e.speed, paused: pausedAt != null,
-      leaks: leakMap(), uniteLeft: uniteLeftMap(),
+      leaks: leakMap(), uniteLeft: uniteLeftMap(), bondLayers: layerMap(),
     };
   }
 
@@ -203,6 +222,7 @@ export function createBattleRunner(deps) {
    * changed them.
    */
   function noteLeaks(e) {
+    noteLayers(e);
     if (e.kind === 'unite') { noteUniteLeft(e); return; }
     if (e.kind !== 'normal') return;
     const b = e.battle;
@@ -224,7 +244,37 @@ export function createBattleRunner(deps) {
     if (JSON.stringify(left) !== JSON.stringify(e.left)) { e.left = left; leaksDirty = true; }
   }
 
-  /** Publish the state when a leak count changed since the last publish. */
+  /**
+   * Re-read an entry's live bond layers (DESIGN §20.15): per player of its spec, the bonds whose layers in the battle's
+   * live copy (Battle.addLayers, clamped at BOND_LAYER_CAP like the client's AddBondCount) exceed the spec's start
+   * count. Nothing to do when the battle disables gains (联防, boss rounds).
+   */
+  function noteLayers(e) {
+    const b = e.battle;
+    if (!b || (b.flags && b.flags.layerGainsEnabled === false) || typeof b.getPlayer !== 'function') return;
+    let sum = 0;
+    let live = null;
+    for (const sp of Array.isArray(e.spec.players) ? e.spec.players : []) {
+      const ps = sp && sp.playerId != null ? b.getPlayer(sp.playerId) : null;
+      if (!ps || !ps.bonds || typeof ps.bonds !== 'object') continue;
+      const start = sp.bonds && typeof sp.bonds === 'object' ? sp.bonds : {};
+      for (const id of Object.keys(ps.bonds)) {
+        const n = Number(ps.bonds[id] && ps.bonds[id].layers) || 0;
+        const from = Number(start[id] && start[id].layers) || 0;
+        if (!(n > from)) continue;
+        sum += n - from;
+        if (!live) live = {};
+        if (!live[sp.playerId]) live[sp.playerId] = {};
+        live[sp.playerId][id] = n;
+      }
+    }
+    if (sum === e.layerSum) return;
+    e.layerSum = sum;
+    e.live = live;
+    leaksDirty = true;
+  }
+
+  /** Publish the state when a leak count (or a battle's bond layers) changed since the last publish. */
   function flushLeaks() { if (leaksDirty) publishState(); }
 
   /** Target tick of an entry on its clock. */
@@ -486,6 +536,8 @@ export function createBattleRunner(deps) {
       // counted leaks so far (normal fields; noteLeaks) and the Battle state they were counted at; 联防 fields: each
       // leaker's enemies still standing (noteUniteLeft)
       leaks: 0, leakMark: '', left: null,
+      // live bond layers grown in this battle { [playerId]: { [bondId]: n } } and their total gain (noteLayers)
+      live: null, layerSum: 0,
     };
     if (lastPool && battle.sharedBoss && typeof battle.sharedBoss.sync === 'function') {
       battle.sharedBoss.sync(lastPool.hp, lastPool.acked ? lastPool.acked[e.fieldId] : undefined);
@@ -621,6 +673,20 @@ export function createBattleRunner(deps) {
       const list = Array.isArray(e.battle.allyUnits) ? e.battle.allyUnits : [];
       const u = list.find((x) => x && x.uid === uid && x.ownerId === ownerId);
       return u && Number.isInteger(u.id) ? u.id : null;
+    },
+    /**
+     * The operators `ownerId` fields in the battle on screen — their board in that battle, waiting to deploy, deployed
+     * or knocked out (the field meta published by show() is taken before they deploy) — as UnitInfo-like
+     * { kind: 'op', ownerId, defId }: a teammate's bond popup lists them as the members in play (ui/watchBonds.js
+     * ownerBoard). [] when no such battle is on screen.
+     * @param {string} ownerId @param {string|null} [fieldId]
+     */
+    ownerOps(ownerId, fieldId = null) {
+      const e = cur;
+      if (!e || typeof ownerId !== 'string' || !ownerId || (fieldId != null && e.fieldId !== fieldId)) return [];
+      const list = Array.isArray(e.battle.allyUnits) ? e.battle.allyUnits : [];
+      return list.filter((u) => u && u.kind === 'op' && u.ownerId === ownerId && typeof u.defId === 'string')
+        .map((u) => ({ kind: 'op', ownerId, defId: u.defId }));
     },
     /** Re-show the current battle (the game screen remounted). */
     reshow() { if (cur) show(cur); },

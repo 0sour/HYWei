@@ -58,7 +58,7 @@ import { ERR, GEO, PHASE, layerGainRoom } from '../../shared/constants.js';
 import { checkLoadout, resolveLoadout } from '../../shared/protocol.js';
 import { FIELD, tileKey, parseKey, inField, canPlace, positionClass, boardOrder, freeSlot, pieceDir, parseDir, mergeTile } from './board.js';
 import { offsetTile } from '../sim/dir.js';
-import { computeBonds, bondList, bondSnapshot, activatedLayers } from './bondsMeta.js';
+import { computeBonds, bondList, bondSnapshot, activatedLayers, bondsWithGains } from './bondsMeta.js';
 import { itemKey } from './gamedata.js';
 import { bountyText } from './choices.js';
 
@@ -112,6 +112,11 @@ export class PlayerState {
     this.layers = {};
     /** computed bond states */
     this.bonds = {};
+    /**
+     * this round's IN_BATTLE layer gains of the finished normal battle ({ [bondId]: n }, Match._finishCombat) until
+     * settle() makes them persistent — the views add them (bondsView, DESIGN §20.15); null otherwise
+     */
+    this.pendingLayerGains = null;
     /** optional per-bond count bonus written by effects */
     this.bondCountBonus = {};
     /** EffectRef list: { id, key, name, desc, iconKind, iconId, counter?, battle, params, data } */
@@ -1301,6 +1306,7 @@ export class PlayerState {
 
   startRound(r) {
     this.round = { refreshes: 0, buys: 0, sells: 0, spent: 0, gainedChess: 0, arts: 0 };
+    this.pendingLayerGains = null; // settled (or lapsed) at the last SETTLE
     if (r > 1) this.shop.upgradePrice = Math.max(0, this.shop.upgradePrice - 1);
     // onIncome handlers may rewrite ev.income / ev.pending (e.g. 老鲤 withholds R1–R2 income until R3)
     const ev = { round: r, income: this.gd.income(r), pending: this.pendingFunds };
@@ -1365,6 +1371,12 @@ export class PlayerState {
   }
 
   activatedLayers() { return activatedLayers(this.bonds); }
+
+  /**
+   * The bond states the views show (m.private bonds, m.public players[].bonds): the computed states plus the pending
+   * in-battle gains of this round's finished normal battle (bondsMeta.bondsWithGains). Never used by rules.
+   */
+  bondsView() { return bondsWithGains(this.bonds, this.pendingLayerGains); }
 
   // =================================================================================================
   // battle input
@@ -1476,7 +1488,7 @@ export class PlayerState {
       board,
       deployCap: this.deployCap,
       deployCount: this.deployCount,
-      bonds: bondList(this.gd, this.bonds, { full: true }),
+      bonds: bondList(this.gd, this.bondsView(), { full: true }),
       effects: this.effectsView(),
       nextEnemies: this.m.nextEnemiesFor(this),
       // DESIGN §16: the effective operator loadout ({ [baseChessId]: { skill, module } }; chess not listed use defaults)

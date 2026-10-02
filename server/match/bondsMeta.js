@@ -17,6 +17,8 @@
 // `tier` = number of thresholds reached (downward: 1 when active); `active = tier ≥ 1`.
 // Layers (`ps.layers[bondId]`) persist the whole match; they are reported for every bond but only matter while active.
 
+import { layerGainRoom } from '../../shared/constants.js';
+
 export const HARMONY_BOND = 'maniShip';
 export const DEPUTY_BOND = 'deputShip';
 
@@ -162,6 +164,29 @@ export function bondList(gd, bonds, { full = false } = {}) {
   }
   list.sort((a, b) => (b.active - a.active) || (b.layers - a.layers) || ((order.get(a.bondId) ?? 99) - (order.get(b.bondId) ?? 99)));
   return list;
+}
+
+/**
+ * The bond states the views show (m.private / m.public players[].bonds, DESIGN §20.15): `bonds` with this round's
+ * IN_BATTLE gains of a finished normal battle (`gains` = the result's layerGains, PlayerState.pendingLayerGains, set
+ * when the COMBAT phase ends) added the way settle() will add them — at most up to BOND_LAYER_CAP — so the strip of a
+ * player (and of a teammate watching him) keeps the layers his battle reached through the 联防 until the settlement
+ * makes them persistent. `bonds` itself when there is nothing to add; the persistent state is never touched.
+ * @param {ReturnType<typeof computeBonds>} bonds
+ * @param {Record<string, number>|null|undefined} gains
+ */
+export function bondsWithGains(bonds, gains) {
+  if (!gains || typeof gains !== 'object') return bonds;
+  let out = null;
+  for (const [id, n] of Object.entries(gains)) {
+    const b = bonds && bonds[id];
+    if (!b) continue;
+    const add = layerGainRoom(b.layers, Math.floor(Number(n) || 0));
+    if (!(add > 0)) continue;
+    if (!out) out = { ...bonds };
+    out[id] = { ...b, layers: (b.layers || 0) + add };
+  }
+  return out || bonds;
 }
 
 /** Snapshot for PlayerBattleInput.bonds: { [bondId]: { count, active, tier, layers } } (plain copy). */

@@ -394,7 +394,7 @@ test('user playtest #6 (DESIGN §20): summons, skill triggers, blocking, push fo
   const sub = (a, b) => DESIGN.slice(DESIGN.indexOf(`### ${a}`), DESIGN.indexOf(`### ${b}`));
   const S20 = sec(20);
   assert.match(DESIGN, /## 20\. User playtest #6 \(v2\.5\)/);
-  for (let i = 1; i <= 13; i++) assert.match(S20, new RegExp(`### 20\\.${i} `), `§20.${i}`);
+  for (let i = 1; i <= 15; i++) assert.match(S20, new RegExp(`### 20\\.${i} `), `§20.${i}`);
   const intro = S20.slice(0, S20.indexOf('### 20.1'));
   for (let i = 1; i <= 19; i++) assert.match(intro, new RegExp(`#${i} `), `the intro maps report #${i}`);
   const s55 = DESIGN.slice(DESIGN.indexOf('### 5.5'), DESIGN.indexOf('### 5.6'));
