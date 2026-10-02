@@ -270,7 +270,11 @@ function hammerAcquire(battle, rt, u) {
       if (t && t.side === 'enemy' && t.alive && chance(battle, pr)) battle.applyStatus(t, 'tremble', { duration: num(p.disarmed_duration, 2), source: u });
     }
   });
-  // 坚固: first lethal hit per battle ⇒ HP never below 1 for undeadable_duration × m s
+  // 坚固: first lethal hit per battle ⇒ HP never below 1 for undeadable_duration × m s. Per battle [ASSUMED]: the text
+  // only says 首次 (M3茧甲 says 一场战斗, 拉特兰桥夹 每次部署); the hammer state lives on the unit, which a redeploy
+  // reuses, so a carrier knocked out after its lock comes back without one. Per deployment would reset
+  // undyingUsed / undyingUntil on the carrier's own non-initial 'deploy'. Any lethal HP loss sets it off, an ally's (the
+  // 阿戈尔 battle-start devour, "造成5000点物理伤害") or the carrier's own (源石溶剂) included.
   S.on('fatal', (c) => {
     if (c.unit !== u || c.prevented) return;
     if (battle.time < hs.undyingUntil) { c.prevented = true; return; }

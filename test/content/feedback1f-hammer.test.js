@@ -1,11 +1,12 @@
 // Player report F1 after 0.1.0 (2026-10-03): "维多利亚坚固锤子的锁血没生效" — 坚固维式重锤 (chess_item_3_09_e_a / _b):
 // "首次受到致命伤害时生命值不低于1，持续8秒" (activity_table act2autochess eff_acarm043 / eff_acgarm043, blackboard
 // undeadable_duration 8; PRTS 卫戍协议：盟约 下半/PRTS盟约记录 备注 "持有不死" — 异常效果 不死 UNDEADABLE "重设常规生命值时不会
-// 使其低于1"). The lock itself works for every kind of lethal damage (pinned here on synthetic and real operators); what
-// failed was the order against M3茧甲: with the 茧甲 equipped before the hammer, its revive ran first at the same priority
-// and the first lethal hit showed no lock. PRTS (same page, M3茧甲 / 埃芒加德 / 阿戈尔 备注): "“复活”的实现方式为：受益者因移动
-// 之外的原因退场时下次部署的再部署时间和费用归零" — a revive acts on a knock-out (退场), which a 不死 prevents, so the lock always
-// comes first (items/battle.js PRIO_RESPAWN).
+// 使其低于1"). The lock itself works for every kind of lethal damage (pinned here on synthetic and real operators). One
+// ordering fault is fixed: with M3茧甲 equipped before the hammer, its revive ran first at the same priority and the first
+// lethal hit showed no lock. PRTS (same page, M3茧甲 / 埃芒加德 / 阿戈尔 备注): "“复活”的实现方式为：受益者因移动之外的原因退场时
+// 下次部署的再部署时间和费用归零" — a revive acts on a knock-out (退场), which a 不死 prevents, so the lock always comes first
+// (items/battle.js PRIO_RESPAWN). Pinned too, as the ways a lock can look missing: one lock per battle [ASSUMED] (a
+// redeployed carrier has none) and the 阿戈尔 battle-start devour spending it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBattle, chessRec, enemyRec } from '../helpers/battleHarness.js';
@@ -82,6 +83,10 @@ test('F1 坚固维式重锤: the carrier\'s own 源石溶剂 drain cannot finish
   assert.equal(c.u.alive, false, 'the first tick after the 8 s knocks it out');
 });
 
+// [ASSUMED] scope, an open question for the user: the official text says only 首次 (no 一场战斗 / 每次部署), and a
+// carrier knocked out after its lock comes back without one — the likeliest reading of "锁血没生效" (forced-hammer bot
+// matches, 3 绝境 + 4 困难: 27 of 382 carrier knock-outs came in a later deployment with the lock spent). Per deployment
+// would flip the third assertion below.
 test('F1 坚固维式重锤: one lock per battle (a redeploy does not re-arm it [ASSUMED]); a new battle re-arms it', () => {
   const c = carrier([HAMMER]);
   const hit = () => c.h.b.dealDamage(c.e, c.u, { amount: 1e7, type: 'true', canDodge: false });
@@ -97,6 +102,29 @@ test('F1 坚固维式重锤: one lock per battle (a redeploy does not re-arm it 
   const next = carrier([HAMMER]);
   next.h.b.dealDamage(next.e, next.u, { amount: 1e7, type: 'true', canDodge: false });
   assert.ok(next.u.alive && next.u.hp >= 1, 'the next battle locks again');
+});
+
+// The other way a lock is gone before the enemies hit: the 阿戈尔 battle-start devour ("吞噬身前一格干员对其造成5000点物理
+// 伤害") is a lethal hit on the fodder, so a hammer carrier in front of an 阿戈尔 survives it at 1 HP and spends its one
+// lock at t = 0 (in forced-hammer 绝境 bot matches 10 of 179 locks went this way). Kept: the text calls it damage and
+// 异常效果 不死 holds any HP reset at 1 [ASSUMED that the official engine does the same].
+test('F1 坚固维式重锤 in front of an 阿戈尔: the battle-start devour spends the lock (fodder kept at 1 HP for 8 s)', () => {
+  const g = (id) => chessRec({ id, bonds: ['egirShip'], profession: 'WARRIOR', skill: null, stats: { atk: 1000, maxHp: 10000, def: 0, blockCnt: 2 } });
+  const h = makeBattle({
+    defs: { chess: { g1_a: g('g1_a'), g2_a: g('g2_a'), g3_a: g('g3_a'), t_op: op('t_op') }, enemies: { e_d: enemyRec({ key: 'e_d', hp: 1e7, speed: 0 }) } },
+    units: [{ chessId: 'g1_a', row: 10, col: 3 }, { chessId: 't_op', row: 10, col: 4, items: [HAMMER] }, { chessId: 'g2_a', row: 12, col: 3 }, { chessId: 'g3_a', row: 12, col: 5 }],
+    bonds: { egirShip: { count: 3, active: true, tier: 1, layers: 0 } },
+    enemies: [{ key: 'e_d', pos: [9, 9] }], timeLimit: 999, autoFinish: false,
+  });
+  const u = h.unit('t_op');
+  const log = fxLog(h, u);
+  h.step(1);
+  assert.ok(u.alive && u.hp >= 1 && u.hp < 2, 'devoured (5000 > 2000 HP) but held at 1 HP');
+  assert.deepEqual(log.filter((x) => x[0] === 'undying').map((x) => [x[1], x[2]]), [[0, 'item:hammer']], 'the lock fired at t = 0');
+  const e = h.b.enemies.find((x) => x.alive);
+  h.run(8.2);
+  h.b.dealDamage(e, u, { amount: 1e7, type: 'true', canDodge: false });
+  assert.equal(u.alive, false, 'the first enemy kill after the window finds no lock left');
 });
 
 test('F1 坚固维式重锤 + M3茧甲: the lock comes before the revive whatever the equip order (PRTS: a revive acts on 退场)', () => {
