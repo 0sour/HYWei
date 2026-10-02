@@ -113,6 +113,32 @@ test('烛煌 S3 "攻击变为群体攻击" = one target + a 1.7 splash (PRTS 备
   for (const list of b.byAttack.values()) assert.equal(list.length, 1, 'one enemy per attack (the old group attack hit both)');
 });
 
+test('烛煌 S3: every landed bolt shows its 1.7 splash (fx \'splash\' r 1.7 at the main target) — the last one too', () => {
+  // review of round 2: the splash drew no ring (fx.js rings by subProfession, 本源术师 is not one) — it looked single-target
+  const h = blazeArena([{ key: 'enemy_cast', pos: [11, 3] }, { key: 'enemy_main', pos: [10, 7] }]);
+  const u = h.unit(BLAZE);
+  h.step();
+  u.skill.gainSp(1000);
+  assert.ok(h.runUntil(() => u.skill.active, 5));
+  const fx = () => h.eventsOf('fx').filter((e) => e[1] === 'splash' && e[4]?.src === u.id);
+  const hits = () => h.hooksOf('damaged').filter((c) => c.source === u && c.dmg.isAttack && c.dmg.isSkill && !c.dmg.isSplash);
+  const m0 = fx().length, h0 = hits().length;
+  u.skill.ammoLeft = 3;
+  assert.ok(h.runUntil(() => !u.skill.active, 10));
+  h.run(1.5);                                                    // the last bolt lands after end('ammo')
+  const got = fx().slice(m0), main = hits().slice(h0);
+  assert.ok(main.length >= 3, `S3 hits (${main.length})`);
+  assert.equal(got.length, main.length, 'one splash per landed S3 bolt');
+  for (const e of got) {
+    assert.equal(e[4].r, 1.7);
+    assert.equal(e[4].element, 'burn');
+    assert.ok(main.some((c) => Math.hypot(c.target.x - e[2], c.target.y - e[3]) < 1e-6), 'at the main target');
+  }
+  h.run(3);
+  assert.equal(fx().length - m0, got.length, 'normal attacks after the skill draw none');
+  done(h);
+});
+
 test('烛煌 S3: the +60 % ATK elemental damage hits every enemy of the attack in a 灼燃损伤 burst — the splashed ones too', () => {
   const h = blazeArena([{ key: 'enemy_cast', pos: [11, 3] }, { key: 'enemy_main', pos: [10, 7] }, { key: 'enemy_out', pos: [10, 8] }]);
   const u = h.unit(BLAZE);
@@ -155,6 +181,34 @@ test('烛煌 S3: the burst bonus is dealt BEFORE the attack\'s damage (PRTS 备�
     pairs++;
   }
   assert.ok(pairs >= 2, `bonus → hit pairs (${pairs})`);
+  done(h);
+});
+
+test('烛煌 S3: the LAST bolt still deals the burst bonus — it lands after end(\'ammo\'), from what she fired with', () => {
+  // her bolts are projectiles: the skill ends when the last bullet is fired, the damage lands later (review of round 2)
+  const h = blazeArena([{ key: 'enemy_cast', pos: [11, 3] }, { key: 'enemy_main', pos: [10, 7] }]);
+  const u = h.unit(BLAZE);
+  h.step();
+  u.skill.gainSp(1000);
+  assert.ok(h.runUntil(() => u.skill.active, 5));
+  for (const k of ['enemy_cast', 'enemy_main']) h.b.applyStatus(h.enemy(k), 'burnBurst', { duration: 30 }); // whichever she aims at
+  u.skill.ammoLeft = 1;
+  const mark = h.hooksOf('damaged').length;
+  assert.ok(h.runUntil(() => !u.skill.active, 5), 'the last bullet ends the skill');
+  const fired = h.hooksOf('damaged').length;
+  assert.ok(h.runUntil(() => h.hooksOf('damaged').slice(fired).some((c) => c.source === u && c.dmg.isAttack && c.dmg.isSkill), 5),
+    'the last bolt lands after the skill ended');
+  const isBonus = (c) => (c.dmg.tags || []).includes('blazeBurn');
+  const ev = h.hooksOf('damaged').slice(mark).filter((c) => c.source === u && (isBonus(c) || (c.dmg.isAttack && c.dmg.isSkill)));
+  const hitAt = ev.findLastIndex((c) => c.dmg.isAttack);
+  assert.ok(hitAt > 0 && isBonus(ev[hitAt - 1]) && ev[hitAt - 1].target === ev[hitAt].target, 'the last bolt\'s bonus comes first');
+  assert.equal(ev.filter(isBonus).length, ev.filter((c) => c.dmg.isAttack).length, 'one bonus per S3 hit on the bursting enemy');
+  assert.equal(u.skill.active, false);
+  // the next (normal) attacks after the skill never carry it
+  h.run(4);
+  const after = h.hooksOf('damaged').slice(mark).filter((c) => c.source === u);
+  assert.ok(after.some((c) => c.dmg.isAttack && !c.dmg.isSkill), 'normal attacks follow');
+  assert.equal(after.filter(isBonus).length, after.filter((c) => c.dmg.isAttack && c.dmg.isSkill).length, 'no bonus on a normal attack');
   done(h);
 });
 
@@ -263,8 +317,10 @@ test('audit: every selectable attack-range change attacks with the official grid
       h.step();
       const tag = `${c.chessId} S${s.index + 1} ${s.name} ${mid ?? 'default'}`;
       assert.equal(u.s.baseRangeExtend, permExt, `${tag}: permanent 攻击距离`);
-      const grid = s.rangeGrid && !ext ? s.rangeGrid : attackRangeGrid(rec);
-      const want = keysOf(grid, u, (NO_EXTEND.has(s.skillId) ? 0 : permExt) + ext);
+      // a skill grid takes the 攻击距离 unless it ignores it; the record's attack range already carries it (attackRangeGrid)
+      const own = !!(s.rangeGrid && !ext);
+      const grid = own ? s.rangeGrid : attackRangeGrid(rec);
+      const want = keysOf(grid, u, own ? (NO_EXTEND.has(s.skillId) ? 0 : permExt) : ext);
       if (permExt) extended++;
       if (s.skillType !== 'PASSIVE' && !/被动效果：攻击范围扩大/.test(s.desc)) {
         assert.ok(u.skill.activate('test', { free: true }), `${tag}: cast`);

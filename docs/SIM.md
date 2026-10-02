@@ -299,9 +299,10 @@ Guarantees content can rely on (pinned by `test/sim/robustness.test.js`):
 horizontal sign ±1 for sprites only), hp, alive, deployed, removed, hidden, base {…}, buffs[],
 rangeKeys / rangeKeySet (current range, absolute tile keys `r × 21 + c`), baseRangeKeys (initial range, §7.1),
 liveRangeGrid (the 攻击范围 the detail card shows, through `shared/protocol.js unitStatsEntry` `range`: the relative grid
-behind rangeKeys — a running skill's range, rangeExtend grown on (`targeting.js extendedGrid`; the grid itself when
-nothing extends it), no extra keys — or the unit's own range while a skill's grid only selects targets,
-`targeting.showOwnRange`),
+behind rangeKeys — a running skill's range, rangeExtend grown on (`extendedGrid`, shared/loadoutRecord.js, re-exported
+by targeting.js; the grid itself when nothing extends it), no extra keys — or the unit's own range while a skill's grid
+only selects targets, `targeting.showOwnRange`; at deployment it equals the record's `attackRangeGrid`, the range the
+board overlay / deploy wheel preview),
 extraRangeKeys (content extra targets, `battle.setExtraRange`), blocking[] (allies), blockedBy (enemies), motion
 ('WALK'|'FLY' enemies), profile, skill (SkillRuntime), kit, items (itemIds), lpr/mods/tag/bounty/sourcePlayerId (enemies),
 stats {dmg,kills,heal,taken,attacks}, mem {} and trait {} (free scratch space), persist {redeployMul, …}.`

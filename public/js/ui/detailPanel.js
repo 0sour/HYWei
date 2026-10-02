@@ -61,8 +61,9 @@ export function rangeGridStyle(box) {
 
 /**
  * The grid the card's 攻击范围 shows: the live entry's `range` (shared/protocol.js unitStatsEntry — what the unit attacks
- * with now: a running skill's range, rangeExtend included), else the loadout record's attack range (an elite's module
- * grid, shared/loadoutRecord.js attackRangeGrid), else the record's own.
+ * with now: a running skill's range, rangeExtend included), else the loadout record's attack range at deployment
+ * (shared/loadoutRecord.js attackRangeGrid: an elite's module grid, a passive range skill, the 特性's 攻击距离 — the same
+ * tiles as the board overlay and the deploy wheel), else the record's own.
  * @param {any} live unitStatsEntry (+ src) or null @param {any} rec loadout-resolved record @param {any} chess
  * @returns {number[][]|null}
  */

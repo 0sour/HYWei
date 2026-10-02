@@ -565,7 +565,7 @@ const KITS = {
   // after 0.1.0), +attack@atk_scale ATK elemental damage to every enemy of the attack in a burn burst (main and splash),
   // dealt BEFORE the attack's own damage ("于攻击造成伤害前判定元素爆发并造成元素伤害": a 'hit' hook — so a hit that kills
   // or starts the burst keeps / does not get it); loses 3 % max HP/s; any burn burst on the field refills ammo_recover
-  // bullets, never above the skill's ammo ("补充后的弹药数量无法超过上限").
+  // bullets, never above the skill's ammo ("补充后的弹药数量无法超过上限"). Each landed bolt shows its splash (fx 'splash' r 1.7).
   // T1 熔点引爆: burn burst anywhere → 350 % ATK elemental damage to it + heal 12 % max HP. T2 绝处重燃: downed instead of
   // dying (6000 shield, no attack, no heal, 3 %/s regen) → revives at full HP and stuns nearby enemies.
   // Module (elite): ×damage_scale vs enemies in an element burst.
@@ -631,7 +631,14 @@ const KITS = {
         kind: 'ammo', ammo: num(bb['attack@trigger_time'], 18),
         mods: mods({ atkPct: num(bb.atk), batPct: batPct(bb.base_attack_time, chess) }),
         targeting: skillGrid(chess, def) ? { rangeGrid: skillGrid(chess, def) } : undefined,
-        attack: { splashRadius: BLAZE_S3_SPLASH },
+        attack: {
+          splashRadius: BLAZE_S3_SPLASH,
+          // the fire of each landed bolt (the screen rings splash attacks by sub-profession; 本源术师 is not one): once
+          // per attack at the main target / its spot — from the profile it was fired with, so the last bolt too
+          onHit({ battle, unit, target, x, y }) {
+            battle.fx('splash', { x, y, ...(target && target.alive ? { id: target.id } : {}), src: unit.id, r: BLAZE_S3_SPLASH, element: 'burn' });
+          },
+        },
         onStart({ unit }) { unit.mem.blazeAcc = 0; },
         onTick({ battle, unit, dt }) {
           if (!(lose > 0)) return;
@@ -682,10 +689,12 @@ const KITS = {
         burstSpUp(battle, unit, 'blaze2:module', num(tm.sp_recovery_per_sec));
         if (sid === 'skchr_blaze2_2') whileOn(battle, unit, AURA_IV, () => burnTiles(battle, unit));
         if (sid && sid !== 'skchr_blaze2_3') return;
-        // S3: each hit of her skill attack (main and splash) on an enemy in a burn burst deals the bonus first (PRTS 备注)
+        // S3: each hit of her skill attack (main and splash) on an enemy in a burn burst deals the bonus first (PRTS 备注).
+        // Gated on the attack's own isSkill (captured when the bolt was fired), not on the live skill: her bolts land after
+        // the last bullet's end('ammo') / an early end (downed), and those still carry it. Only S3 runs here (sid gate).
         battle.on('hit', (c) => {
-          const d = c.dmg, t = c.target, sk = unit.skill;
-          if (c.source !== unit || !d.isAttack || !d.isSkill || d.cancel || !sk?.active || sk.kind !== 'ammo') return;
+          const d = c.dmg, t = c.target;
+          if (c.source !== unit || !d.isAttack || !d.isSkill || d.cancel) return;
           if (t.side === 'enemy' && t.alive && t.findBuff('burnBurst')) elementHit(battle, unit, t, unit.s.atk * num(bb['attack@atk_scale']), 'blazeBurn', 'burn');
         }, { owner: unit });
         const maxAmmo = num(bb['attack@trigger_time'], 18);

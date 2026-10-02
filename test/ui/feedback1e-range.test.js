@@ -142,3 +142,51 @@ test('rangeGridStyle: the attack ranges of the records keep the .14rem cells; on
   assert.ok(!plain({ cols: 7, rows: 1 }) && !plain({ cols: 1, rows: 8 }));
   assert.match(rangeGridStyle({ cols: 3, rows: 9 }), /calc\(\(7 \* \.14rem \+ 12px\) \/ 9\)/, 'a tall grid fits the 7 rows');
 });
+
+test('prep: the record\'s attack range (card without a live entry, board overlay, deploy wheel) = the unit\'s range at deployment — every loadout', async () => {
+  // review of round 2: the prep card drew the live entry (信仰搅拌机 SPT-Y "攻击距离+1", 引星棘刺 S3 "被动效果：攻击范围扩大")
+  // while the board overlay and the deploy wheel of the same unit drew the record's grid without them
+  const { getDefaultSource } = await import('../../server/sim/simdata.js');
+  const { resolveRecordLoadout, loadoutRecord, attackRangeGrid, traitRangeExtend } = await import('../../shared/loadoutRecord.js');
+  const { previewGrid } = await import('../../public/js/ui/facing.js');
+  const C = getDefaultSource().raw.chess;
+  const key = (g) => (g || []).map(([r, c]) => `${r},${c}`).sort().join(' ');
+  let runs = 0;
+  const wider = new Set();
+  for (const c of Object.values(C)) {
+    if (!(c.visible || (c.isGolden && C[c.baseId]?.visible))) continue;
+    const skills = (c.skills || []).length ? c.skills.map((s) => s.index) : [null];
+    const mods = [null, ...(Array.isArray(c.modules) && c.modules.length ? ['none', ...c.modules.map((m) => m.uniEquipId)] : [])];
+    for (const si of skills) for (const mid of mods) {
+      const lo = { ...(si != null ? { skillIndex: si } : {}), ...(mid ? { moduleId: mid } : {}) };
+      const rec = loadoutRecord(c, resolveRecordLoadout(c, lo));
+      const h = makeBattle({ units: [{ chessId: c.chessId, row: 10, col: 5, dir: 'RIGHT', ...lo }], autoFinish: false, timeLimit: 5 });
+      h.step();
+      const u = h.unit(c.chessId);
+      const live = key(unitStatsEntry(u, u._s).range);
+      const tag = `${c.chessId} ${c.name} S${si == null ? '-' : si + 1} ${mid ?? 'default'}`;
+      assert.equal(key(attackRangeGrid(rec)), live, `${tag}: record range = range at deployment`);
+      const wheel = previewGrid({ getChess: (id) => C[id] || null, chessRecord: (r) => loadoutRecord(r, resolveRecordLoadout(r, lo)) }, { kind: 'chess', id: c.chessId });
+      assert.equal(key(wheel), live, `${tag}: overlay / wheel = range at deployment`);
+      if (traitRangeExtend(rec) || /被动效果：攻击范围扩大/.test(rec.skill?.desc ?? '')) { assert.notEqual(live, key(rec.rangeGrid), tag); wider.add(c.name); }
+      runs++;
+    }
+  }
+  assert.ok(runs > 1000, `loadouts (${runs})`);
+  assert.deepEqual([...wider].sort(), ['信仰搅拌机', '引星棘刺'].sort(), 'the permanent 攻击距离 (SPT-Y) and the passive range skill (S3) of the mode');
+  // 空弦 ISW-A "在集成战略中，…攻击距离+1": none in this mode
+  const arch = C.chess_char_3_21_b;
+  const isw = loadoutRecord(arch, resolveRecordLoadout(arch, { moduleId: 'uniequip_004_archet' }));
+  assert.equal(isw.trait.bb.ability_range_forward_extend, 1);
+  assert.equal(traitRangeExtend(isw), 0);
+  assert.equal(key(attackRangeGrid(isw)), key(arch.rangeGrid));
+  // the two by hand: SPT-Y 2-2 + 1 (every skill — S3's 3-13 replaces it only while it runs); 引星棘刺 S3 3-9
+  const rmx = C.chess_char_4_01_b;
+  for (const skillIndex of [0, 1, 2]) {
+    assert.equal(attackRangeGrid(loadoutRecord(rmx, resolveRecordLoadout(rmx, { skillIndex, moduleId: 'uniequip_003_rmixer' }))).length, rmx.rangeGrid.length + 1);
+    assert.equal(key(attackRangeGrid(loadoutRecord(rmx, resolveRecordLoadout(rmx, { skillIndex, moduleId: 'uniequip_002_rmixer' })))), key(rmx.rangeGrid));
+  }
+  const thorn = C.chess_char_5_15_a;
+  assert.equal(key(attackRangeGrid(loadoutRecord(thorn, resolveRecordLoadout(thorn, { skillIndex: 2 })))), key(thorn.skills[2].rangeGrid));
+  assert.equal(key(attackRangeGrid(loadoutRecord(thorn, resolveRecordLoadout(thorn, { skillIndex: 0 })))), key(thorn.rangeGrid));
+});
