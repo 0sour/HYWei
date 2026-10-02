@@ -1,8 +1,10 @@
 // Spine model pipeline: download skel/atlas/page PNGs, fetch extra atlas pages,
 // normalize atlases (size:/pma:), parse skeletons and resolve animation roles.
-// Produces the per-model `spine` entries of data/assets.json.
+// Produces the per-model `spine` entries of data/assets.json. Enemy models that
+// no dump carries may come from the local client instead (findLocalEnemyModels:
+// tools/local-extract/extract.py ENEMY_SPINES → public/assets/local/spine/enemy/).
 
-import { readFile, writeFile, stat, rename, mkdir, unlink } from 'node:fs/promises';
+import { readFile, readdir, writeFile, stat, rename, mkdir, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { assetUrl, safeName, urlDir } from './sources.mjs';
 import { kindOf, pngSize } from './formats.mjs';
@@ -11,6 +13,33 @@ import { parseSkel } from './skel.mjs';
 import { resolveRoles } from './anim-roles.mjs';
 
 async function fileStat(p) { try { const s = await stat(p); return s.isFile() ? s : null; } catch { return null; } }
+
+/** Where tools/local-extract/extract.py writes enemy Spine models, under public/assets. */
+export const LOCAL_ENEMY_SPINE_DIR = 'local/spine/enemy/';
+
+/**
+ * Enemy Spine models extracted from the local client (tools/local-extract/extract.py ENEMY_SPINES): every
+ * `local/spine/enemy/<enemyId>/` holding a skeleton, the atlas of the same stem and at least one page PNG.
+ * @param {string} root absolute public/assets directory
+ * @returns {Promise<Record<string, { dir: string, skel: string, atlas: string, pngs: string[] }>>} paths relative to root
+ */
+export async function findLocalEnemyModels(root) {
+  const out = {};
+  let ids = [];
+  try { ids = (await readdir(join(root, LOCAL_ENEMY_SPINE_DIR), { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name); } catch { return out; }
+  for (const id of ids.sort()) {
+    if (!/^enemy_\d+_[a-z0-9_]+$/i.test(id)) continue;
+    const dir = `${LOCAL_ENEMY_SPINE_DIR}${id}/`;
+    let files = [];
+    try { files = (await readdir(join(root, dir))).sort(); } catch { continue; }
+    const skel = files.find((f) => f.endsWith('.skel'));
+    const stem = skel ? skel.slice(0, -'.skel'.length) : null;
+    const pngs = files.filter((f) => f.endsWith('.png'));
+    if (!stem || !files.includes(`${stem}.atlas`) || !pngs.length) continue;
+    out[id] = { dir, skel: dir + skel, atlas: `${dir}${stem}.atlas`, pngs: pngs.map((f) => dir + f) };
+  }
+  return out;
+}
 
 /**
  * @typedef {{ skel: string, atlas: string, textures: string[], pma: boolean, anims: any,
@@ -32,12 +61,14 @@ export async function processModels(models, { root, dl, cachePath, download = tr
   const problems = [];
   const list = [...models.values()];
   if (download) {
+    // local-client models (`local`: findLocalEnemyModels) are on disk already: nothing to download
+    const remote = list.filter((m) => !m.local);
     const jobs = [];
-    for (const m of list) jobs.push(m.skel, m.atlas, ...m.pngs);
+    for (const m of remote) jobs.push(m.skel, m.atlas, ...m.pngs);
     await dl.run(jobs, 'spine');
     // Atlases may reference more pages than the index lists.
     const extra = [];
-    for (const m of list) {
+    for (const m of remote) {
       const text = await readFile(join(root, m.atlas.rel), 'utf8').catch(() => null);
       if (!text) continue;
       for (const page of atlasInfo(text).pages) {

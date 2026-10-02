@@ -20,7 +20,10 @@ import { RAW, joinUrl, safeName, urlBase, urlDir } from './sources.mjs';
 import { kindOf } from './formats.mjs';
 import { pickUnitSfx, UI_SFX, BATTLE_SFX, resolveSpec } from './audio.mjs';
 
-/** Enemies with no Spine anywhere: render them with another enemy's model (research 07 §5.6). */
+/**
+ * Enemies whose Spine no community dump carries: render them with another enemy's model (research 07 §5.6) — unless
+ * their own official model was extracted from the local client (`localEnemyModels`, tools/local-extract ENEMY_SPINES).
+ */
 export const ENEMY_SPINE_ALIAS = Object.freeze({
   enemy_1305_mhslim: 'enemy_1007_slime',
   enemy_1305_mhslim_2: 'enemy_1007_slime',
@@ -200,9 +203,13 @@ export function collectEnemyIds({ assets07, enemies05, maps05, ops03 }) {
  * @param {string[]} [p.extraEnemyIds] more enemy ids that can spawn (e.g. keys of data/enemies.json)
  * @param {string[]} [p.extraTokenIds] more token ids (e.g. token_* keys of data/tokens.json)
  * @param {Record<string,string>} [p.extraHandbook] enemyId → handbook/model id (e.g. from data/bosses.json)
+ * @param {Record<string,{dir:string, skel:string, atlas:string, pngs:string[]}>} [p.localEnemyModels] enemy models
+ *   extracted from the local client, on disk under public/assets (spine.mjs findLocalEnemyModels): an enemy without an
+ *   upstream model takes its own local one before any alias (user feedback after 0.1.0, D3: 灼热源石虫 / 炽焰源石虫
+ *   were drawn as the plain 源石虫)
  * @returns {{ template: any, models: Map<string, any>, notes: string[] }}
  */
-export function buildPlan({ assets07, ops03, enemies05, maps05, audio, modelsData, extraEnemyIds = [], extraTokenIds = [], extraHandbook = {} }) {
+export function buildPlan({ assets07, ops03, enemies05, maps05, audio, modelsData, extraEnemyIds = [], extraTokenIds = [], extraHandbook = {}, localEnemyModels = {} }) {
   const notes = [];
   /** @type {Map<string, any>} */
   const models = new Map();
@@ -332,6 +339,16 @@ export function buildPlan({ assets07, ops03, enemies05, maps05, audio, modelsDat
       pngs: [mk(png, rec07?.png)],
     });
   };
+  // an official model extracted from the local client (no URL: the files are on disk already)
+  const localModel = (eid) => {
+    const l = localEnemyModels?.[eid];
+    if (!l || typeof l.skel !== 'string' || typeof l.atlas !== 'string' || !Array.isArray(l.pngs) || !l.pngs.length) return null;
+    return addModel(`enemy:${eid}`, {
+      kind: 'enemy', dir: l.dir, pma: true, skillIndices: [0], baseUrl: null, local: true,
+      skel: alt(l.skel, []), atlas: { ...alt(l.atlas, []), mutable: true }, pngs: l.pngs.map((p) => alt(p, [])),
+    });
+  };
+  const ownModel = (eid) => arkModel(eid) || localModel(eid);
   const baseIdOf = (eid) => { const m = /^(enemy_\d+_[a-z0-9]+?)_\d+$/i.exec(eid); return m ? m[1] : null; };
   const enemyIdSet = new Set(collectEnemyIds({ assets07, enemies05, maps05, ops03 }));
   for (const id of extraEnemyIds) if (typeof id === 'string' && /^enemy_\d+_[a-z0-9_]+$/i.test(id)) enemyIdSet.add(id);
@@ -345,8 +362,9 @@ export function buildPlan({ assets07, ops03, enemies05, maps05, audio, modelsDat
     const iconAlts = [alt(`enemy/icon/${id}.png`, `${RAW.yuanyan}enemy/${id}.png`, bytesOf(icon07, `${RAW.yuanyan}enemy/${id}.png`))];
     for (const other of [handbookOf.get(id), baseIdOf(id)]) if (other) iconAlts.push(alt(`enemy/icon/${id}.png`, `${RAW.yuanyan}enemy/${other}.png`));
     e.icon = leaf(iconAlts);
-    // Spine: own model, else alias chain (research 07 §5.6).
-    let spine = arkModel(id);
+    // Spine: own model (upstream, else extracted from the local client), else alias chain (research 07 §5.6).
+    let spine = ownModel(id);
+    if (spine && localEnemyModels?.[id] && models.get(spine.model)?.local) notes.push(`${id}: Spine from the local client`);
     if (!spine) {
       const seen = new Set([id]);
       const queue = [ENEMY_SPINE_ALIAS[id], baseIdOf(id), handbookOf.get(id)].filter(Boolean);
@@ -354,7 +372,7 @@ export function buildPlan({ assets07, ops03, enemies05, maps05, audio, modelsDat
         const cand = queue.shift();
         if (seen.has(cand)) continue;
         seen.add(cand);
-        spine = arkModel(cand);
+        spine = ownModel(cand);
         if (spine) e.spineAliasOf = cand;
         else queue.push(...[ENEMY_SPINE_ALIAS[cand], baseIdOf(cand), handbookOf.get(cand)].filter(Boolean));
       }

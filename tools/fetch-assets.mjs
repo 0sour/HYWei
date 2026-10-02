@@ -5,6 +5,10 @@
 //   public/fonts/**    Bender / Novecento (.otf/.ttf + .woff2) and fonts.css
 //   data/assets.json   manifest used by the client (schema: docs/ASSETS.md)
 //
+// Enemy models no dump carries are taken from the local client when
+// tools/local-extract/extract.py has extracted them (public/assets/local/spine/
+// enemy/<id>/, ASSETS.md "Enemy aliases"); otherwise another enemy's model.
+//
 // Idempotent: existing files with the right size are skipped, so re-running is
 // cheap. Downloads use ~16 parallel connections, 3 retries per source and a
 // jsDelivr mirror fallback. Spine atlases get `size:` (and `pma: true` for
@@ -21,7 +25,7 @@ import { Downloader } from './assets/downloader.mjs';
 import { loadIndexes } from './assets/cache.mjs';
 import { indexAudio } from './assets/audio.mjs';
 import { buildPlan } from './assets/plan.mjs';
-import { processModels } from './assets/spine.mjs';
+import { processModels, findLocalEnemyModels } from './assets/spine.mjs';
 import { collectLeaves, downloadLeaves, resolveTemplate, totalBytes, contentHash, MANIFEST_VERSION } from './assets/manifest.mjs';
 import { fontJobs, buildFonts } from './assets/fonts.mjs';
 import { skelParserAvailable } from './assets/skel.mjs';
@@ -162,6 +166,7 @@ async function main() {
     extraEnemyIds: Object.keys(dataEnemies || {}),
     extraTokenIds: Object.keys(dataTokens || {}),
     extraHandbook,
+    localEnemyModels: await findLocalEnemyModels(ASSETS),
   });
   const leaves = collectLeaves(plan.template);
   log(`[plan] ${leaves.length} files + ${plan.models.size} Spine models ` +
@@ -214,8 +219,9 @@ async function main() {
   };
   await writeJsonAtomic(MANIFEST, manifest);
 
-  // Orphans: files on disk that the manifest does not reference (e.g. after a mapping change).
-  const orphans = (await listFiles(ASSETS)).filter((r) => !resolved.files.has(r));
+  // Orphans: files on disk that the manifest does not reference (e.g. after a mapping change). public/assets/local/**
+  // belongs to tools/local-extract (data/local-assets.json) and is never an orphan: --prune used to delete it.
+  const orphans = (await listFiles(ASSETS)).filter((r) => !resolved.files.has(r) && !r.startsWith('local/'));
   if (opts.prune) for (const r of orphans) { try { await unlink(join(ASSETS, r)); } catch { /* ignore */ } }
 
   const charIds = Object.keys(assets07.operators || {});
