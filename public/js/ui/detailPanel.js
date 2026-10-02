@@ -1,7 +1,8 @@
 // Detail panel (click / right-click a piece, shop card, bond member, battle unit or previewed enemy):
 // operators — portrait, name, tier, elite, class/subclass and, right under them in the header's right column (no
 // scrolling, user playtest #2 item 9), the unit's bonds (阵营 / 盟约: icon, name, member count / next threshold,
-// reached tier, active state — tap one for its popup); right under the header the operator's own effect (特质 —
+// reached tier, active state — tap one for its popup; a bond the mode never activates reads 本局禁用, gameLogic
+// modeOffBonds); right under the header the operator's own effect (特质 —
 // garrison: type chip (its official type icon + eventTypeDesc such as 整备能力, garrisonTypeIconKey) + description,
 // compact, visible without scrolling: user playtest #3 items 8 / 9), the class trait (特性), stats + range mini-map, skill (the one chosen in the loadout, DESIGN §16: icon, SP
 // info, rich description, 已调配 when not the default), elite module (模组: official type icon from the local-client
@@ -21,7 +22,7 @@
 
 import { html, Icon, TierChip, MicroLabel, Button, confirmDialog, useTicker } from './components.js';
 import { Img, RichText, UnitThumb, BondGlyph, GIcon } from './gameComponents.js';
-import { attackInterval, rangeGridBox, fmtNum, tileKey, chessLoadout, nextThreshold, bondTier } from './gameLogic.js';
+import { attackInterval, rangeGridBox, fmtNum, tileKey, chessLoadout, nextThreshold, bondTier, briefingBondTip } from './gameLogic.js';
 import { chessPortraitUrl, skillIconUrl, skillRecordIconUrl, profIconUrl, subProfIconUrl, itemIconUrl, enemyIconUrl, tokenAvatarUrl, factionIconUrl, uiUrl, moduleTypeIconUrl } from './assetUrls.js';
 import { data } from '../data.js';
 import { attackRangeGrid } from '../../../shared/loadoutRecord.js';
@@ -129,32 +130,42 @@ function ItemRow({ itemId }) {
 
 /**
  * The unit's bonds right under the header: icon, name, the player's member count / next threshold, reached tier.
- * @param {{ bondIds: string[], bonds?: any[], onBond?: (bondId: string) => void }} props
+ * @param {{ bondIds: string[], bonds?: any[], onBond?: (bondId: string) => void, off?: Set<string>|null }} props — off: the
+ *   bonds the mode never activates (gameLogic modeOffBonds): 本局禁用 instead of the count
  */
-export function BondChips({ bondIds, bonds = [], onBond = null }) {
+export function BondChips({ bondIds, bonds = [], onBond = null, off = null }) {
   const ids = Array.isArray(bondIds) ? bondIds.filter((b) => typeof b === 'string') : [];
   if (!ids.length) return null;
   const mine = new Map((Array.isArray(bonds) ? bonds : []).filter((b) => b && typeof b.bondId === 'string').map((b) => [b.bondId, b]));
   return html`<div class="dbonds dbonds--top" role="list" aria-label="所属盟约">
     ${ids.map((id) => {
       const rec = data.lookup('bonds', id);
+      // a bond this mode never activates (gameLogic modeOffBonds): 本局禁用, no count or tier pips
+      const isOff = !!(off && typeof off.has === 'function' && off.has(id));
       const e = mine.get(id) || null;
       const th = Array.isArray(e?.thresholds) && e.thresholds.length ? e.thresholds : Array.isArray(rec?.thresholds) ? rec.thresholds : [];
       const count = Number.isFinite(e?.count) ? e.count : 0;
-      const tier = Number.isFinite(e?.tier) ? e.tier : bondTier(count, th, rec?.maxCount ?? null);
-      const active = e ? !!e.active : tier > 0;
+      const tier = isOff ? 0 : Number.isFinite(e?.tier) ? e.tier : bondTier(count, th, rec?.maxCount ?? null);
+      const active = !isOff && (e ? !!e.active : tier > 0);
       const next = nextThreshold(count, th);
       const cap = next ?? th[th.length - 1] ?? null;
-      const label = `${rec?.name || id}：在场 ${count}${cap != null ? `/${cap}` : ''}${active ? `，已激活 ${tier} 阶` : '，未激活'}`;
-      const body = html`
+      const label = isOff ? briefingBondTip(rec?.name || id, 'off')
+        : `${rec?.name || id}：在场 ${count}${cap != null ? `/${cap}` : ''}${active ? `，已激活 ${tier} 阶` : '，未激活'}`;
+      const body = isOff
+        ? html`
+        <${BondGlyph} bondId=${id} class="dbond__icon" />
+        <span class="dbond__name">${rec?.name || id}</span>
+        <span class="dbond__off">本局禁用</span>`
+        : html`
         <${BondGlyph} bondId=${id} class="dbond__icon" />
         <span class="dbond__name">${rec?.name || id}</span>
         <span class=${cx('dbond__count', 'num', next == null && count > 0 && 'is-max')}>${count}${cap != null ? html`<small>/${cap}</small>` : null}</span>
         ${th.length ? html`<span class="dbond__tiers" aria-hidden="true">${th.map((_, i) => html`<i key=${i} class=${i < tier ? 'on' : ''}></i>`)}</span>` : null}`;
+      const cls = cx('dbond', active && 'is-active', isOff && 'is-off', rec?.isCore && 'is-core');
       return onBond
-        ? html`<button key=${id} type="button" role="listitem" class=${cx('dbond', active && 'is-active', rec?.isCore && 'is-core')} title=${label} aria-label=${label}
+        ? html`<button key=${id} type="button" role="listitem" class=${cls} title=${label} aria-label=${label}
             data-bond=${id} onClick=${() => onBond(id)}>${body}</button>`
-        : html`<span key=${id} role="listitem" class=${cx('dbond', active && 'is-active', rec?.isCore && 'is-core')} title=${label} data-bond=${id}>${body}</span>`;
+        : html`<span key=${id} role="listitem" class=${cls} title=${label} data-bond=${id}>${body}</span>`;
     })}
   </div>`;
 }
@@ -204,7 +215,7 @@ function GarrisonBlock({ garrison, m }) {
   </section>`;
 }
 
-export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bonds, loadout, onBond, live = null, hint = null }) {
+export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bonds, offBonds = null, loadout, onBond, live = null, hint = null }) {
   const m = data.get('assets');
   const hp = hpOf(live, snapHp);
   const lo = chessLoadout(chess, loadout, (id) => data.lookup('chess', id));
@@ -244,7 +255,7 @@ export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bond
           <span class="dhead__pos">${c.position === 'MELEE' ? '近战位' : '远程位'}</span>
         </div>
         ${hp ? html`<div class="dhp"><i style=${`width:${Math.max(0, Math.min(100, (hp.hp / Math.max(1, hp.max)) * 100))}%`}></i><span class="num">${fmtNum(hp.hp)} / ${fmtNum(hp.max)}</span></div>` : null}
-        <${BondChips} bondIds=${c.bonds} bonds=${bonds} onBond=${onBond} />
+        <${BondChips} bondIds=${c.bonds} bonds=${bonds} off=${offBonds} onBond=${onBond} />
       </div>
     </div>`;
   blocks.garrison = garrison ? html`<${GarrisonBlock} key="garrison" garrison=${garrison} m=${m} />` : null;
@@ -493,14 +504,15 @@ export function resolveDetail(target, pieces) {
 /**
  * The panel.
  * @param {{ detail:any, editable:boolean, snapHp?:{hp:number,max:number}|null, onClose:Function, onSell:(piece:any)=>void, onDestroy:(piece:any)=>void,
- *   bonds?: any[], loadout?: any, onBond?: (bondId:string)=>void, side?: 'left'|'right', shopOpen?: boolean }} props
- *   bonds: the owner's m.private.bonds (counts / tiers of the bond chips); loadout: m.private.loadout (DESIGN §16) for
+ *   bonds?: any[], offBonds?: Set<string>|null, loadout?: any, onBond?: (bondId:string)=>void, side?: 'left'|'right', shopOpen?: boolean }} props
+ *   bonds: the owner's m.private.bonds (counts / tiers of the bond chips); offBonds: the bonds this mode never activates
+ *   (gameLogic modeOffBonds — their chips read 本局禁用); loadout: m.private.loadout (DESIGN §16) for
  *   the player's own operators and shop cards; a teammate's unit gets its owner's choice (gameLogic unitLoadout); null
  *   = the defaults
  *   live: the unit's live stats (unitStatsEntry + src 'battle' | 'prep') — an object, or a getter the panel re-reads 4×
  *   a second (the battle's own sim, battle/runner.js unitStats); null ⇒ the record's numbers
  */
-export function DetailPanel({ detail, editable, snapHp, onClose, onSell, onDestroy, bonds = [], loadout = null, onBond = null, side = 'left', shopOpen = false, live = null }) {
+export function DetailPanel({ detail, editable, snapHp, onClose, onSell, onDestroy, bonds = [], offBonds = null, loadout = null, onBond = null, side = 'left', shopOpen = false, live = null }) {
   const getter = typeof live === 'function' ? live : null;
   useTicker(detail && getter ? 250 : 0);
   if (!detail) return null;
@@ -523,7 +535,7 @@ export function DetailPanel({ detail, editable, snapHp, onClose, onSell, onDestr
     <button type="button" class="dpanel__close" aria-label="关闭" onClick=${onClose}><${Icon} name="close" /></button>
     <div class="dpanel__scroll">
       ${detail.type === 'chess' ? html`<${ChessDetail} chess=${detail.chess} piece=${detail.piece} snapHp=${snapHp} editable=${editable} onSell=${sellIt}
-        bonds=${bonds} loadout=${loadout} onBond=${onBond} live=${liveNow} hint=${detail.hint || null} />` : null}
+        bonds=${bonds} offBonds=${offBonds} loadout=${loadout} onBond=${onBond} live=${liveNow} hint=${detail.hint || null} />` : null}
       ${detail.type === 'item' ? html`<${ItemDetail} item=${detail.item} piece=${detail.piece} editable=${editable} onDestroy=${destroyIt} />` : null}
       ${detail.type === 'enemy' ? html`<${EnemyDetail} enemy=${detail.enemy} snapHp=${snapHp} count=${detail.count} live=${liveNow} />` : null}
       ${detail.type === 'token' ? html`<${TokenDetail} token=${detail.token} piece=${detail.piece} ownerId=${detail.ownerId ?? null} snapHp=${snapHp} live=${liveNow} />` : null}
