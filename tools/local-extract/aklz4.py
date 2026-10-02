@@ -1,4 +1,8 @@
 # LZ4AK decompressor for Arknights bundles (algorithm from isHarryh/Ark-Unpacker, BSD-3, via MooncellWiki/UnityPy)
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2022, Harry Huang (isHarryh/Ark-Unpacker). Unlike the rest of this project (GPL-3.0-or-later), this
+# file is distributed under the BSD 3-Clause License of Ark-Unpacker: tools/local-extract/LICENSE-Ark-Unpacker.txt
+# (UnityPy, which it plugs into, is MIT; see THIRD-PARTY-NOTICES.md).
 import lz4.block
 from UnityPy.helpers import CompressionHelper
 from UnityPy.enums.BundleFile import CompressionFlags

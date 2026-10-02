@@ -194,7 +194,7 @@ async function main() {
   const port = await probePort(opts.port, opts.host);
   if (port.state === 'ours') {
     const h = port.health;
-    row('ok', `端口 ${opts.port}`, `服务器正在运行：运行 ${h.uptimeSec}s · 房间 ${h.rooms ?? '?'} · 对局 ${h.matches ?? '?'} · 连接 ${h.sockets ?? '?'}`);
+    row('ok', `端口 ${opts.port}`, `服务器正在运行${h.app ? `（v${h.app}）` : ''}：运行 ${h.uptimeSec}s · 房间 ${h.rooms ?? '?'} · 对局 ${h.matches ?? '?'} · 连接 ${h.sockets ?? '?'}`);
   } else if (port.state === 'free') row('ok', `端口 ${opts.port}`, '空闲（服务器未运行；npm start 启动）');
   else if (port.state === 'denied') row('err', `端口 ${opts.port}`, '没有权限监听（Linux 上 < 1024 的端口需要 root）→ 换一个 PORT');
   else row('err', `端口 ${opts.port}`, `被其他程序占用（${port.code}）→ 关闭它或换端口：${IS_WIN ? '$env:PORT=3001; npm start' : 'PORT=3001 npm start'}`);

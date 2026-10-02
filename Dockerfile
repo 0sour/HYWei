@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 # 卫戍协议：盟约 · production image (server + static client). Docs: docs/DEPLOY.md「Docker」.
 #
-# Game art/audio is © Hypergryph and never part of the repository. Two ways to get it into a container:
+# Code: GPL-3.0-or-later (LICENSE). Game art/audio is © Hypergryph / Yostar, not covered by the GPL, non-commercial use
+# only (NOTICE.md), and never part of the repository. Two ways to get it into a container:
 #   A) download it while building (~250 MB, needs internet during the build):
 #        docker build -t stronghold-protocol --build-arg FETCH_ASSETS=1 .
 #   B) build without it and mount the host's copy (prepared with `node tools/setup.mjs` on the host):

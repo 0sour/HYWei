@@ -4,6 +4,8 @@ This is the **single source of truth** for every implementer. Research lives in 
 
 Language: all player-facing text is **Simplified Chinese** (names/descriptions come from official data). Code, comments and identifiers are English.
 
+Versions: the first public release is **0.1.0** (`package.json`, `shared/constants.js APP_VERSION`) — the state described by this document, §20.15 included. The labels v1 / v2 / v2.1–v2.5.2 in §0, §14–§20 and in the BALANCE / SIM comparisons name the design generations and the private playtest builds that came before it; they are kept as history.
+
 ---
 
 ## 0. Product scope (v1)
@@ -112,6 +114,8 @@ tools/
 test/                      node:test suites; test/e2e/ browser + bot tests
 docs/                      DESIGN.md (this), DATA.md, SIM.md, META.md, ASSETS.md, BALANCE.md, DEPLOY.md, PLAYING.md, research/
                            (the wire protocol is normative in shared/protocol.js itself)
+LICENSE                    GPL-3.0-or-later (the project's code); NOTICE.md: scope, non-commercial game assets, the Spine
+                           Runtimes linking permission; THIRD-PARTY-NOTICES.md: libraries, fonts, data sources
 ```
 
 Ownership rule for parallel agents: **only edit files assigned to you**; if you need a change in someone else's file, write it in your final report instead (the integrator applies it). Shared files (`shared/*`, `docs/DESIGN.md`) are owned by the architect.
@@ -951,6 +955,8 @@ Official since the follow-up — read from the client binary (research 11, §20.
 
 Settled by the user ("保持固定血量"): the co-op leader pool does not shrink when players are eliminated — `config bossHpScale.aliveScaling` is **false** (pool = bloodPoint whatever the number of alive players; one community note, 巴哈姆特 12294, said otherwise) (§20.10); flip: `aliveScaling: true` (× alive / 4).
 
+Settled by the user (2026-10-02, after v2.5.2: "共享阵地按你说的规则就行"): on a shared field (联防, Final Assault / Hidden Core) the bond strip follows the player of the half the ‹ › pill points at; on 全景 or an empty half it shows your own bonds when you fight there, else the teammate picked with 前往查看 or the field's first player — never your own (§20.15); rule: `public/js/ui/watchBonds.js bondOwnerId`.
+
 Still [ASSUMED] (each in its section): the class rows covering every MANUAL skill (§20.2); skill-summon redeploys free and never while the owner is away (§20.1); the 1-HP pool floor and the server-order verdict (§20.5); a short promotion tier topping up from below and “神秘顾客” keeping the band bounties (§20.6); the 弹道 column for unclassified pushes and the other displacement details (§20.3); 枯朽战车's skill firing on its blocker at 100 % and content enemy skills keeping a point radius (§20.4); the gauge's refill colour and placement (§20.8); the 机变 card's phone sizes (§20.7); the elite's tile among several deployed copies (the first in deploy order), a transformed carrier's tile and the elite's fresh summon stack (§20.11); "strongest" rather than "latest" for same-named debuffs, which "最大生命值" the 胄 drone link reads (the pool), the 剑 / 锤 dive hits passing on, the springs' split and the solo pool × 0.25 (§20.10); the scene server clamping prep gains like the client, a cancelled hit showing nothing, a passed-on loss being one hit and the order blocks → 限伤 → HP shields (§20.12); 胄's unread `max_hp` 0.5, the untargetable 初始模式 and a replacement copy inheriting only the HP (§20.13); talent debuffs keyed per source unit (two copies of one operator each apply theirs, §20.14).
 
 ### 20.10 Final Assault leader HP and damage (user report after playtest #6, 2026-10-01) — `server/sim/constants.js DIRECT_BONUS_STACKING`, `content/support directMods`, `sim/Battle.js applyStrongest / loseHp sourceless`, content bonds / bands / items / choices / garrisons / kits tier4, `content/bosses.js PART_TRANSFER / DRONE_LINK_BASE`, `match/gamedata.js bossPoolHp / bossPoolShare`, `match/finalAssault.js`, `data/config.json bossHpScale`
@@ -1040,7 +1046,7 @@ In SETTLE it is the field the last battle left on screen. In prep without watchi
   - a teammate's battle watched after the own one;
   - the field an eliminated player auto-observes;
   - a field picked in the legacy view switcher.
-- **A shared field** (联防 `'u'`, boss / hidden `'b1'` / `'b2'`) **[ASSUMED — no source shows the strip there]**:
+- **A shared field** (联防 `'u'`, boss / hidden `'b1'` / `'b2'`) — **settled by the user** (2026-10-02: "共享阵地按你说的规则就行"; no official source shows the strip there):
   1. If the ‹ › pill points at a half that a player holds → that player. The pill's "你自己" means yours; "👁 name" means theirs.
   2. Else (全景, an empty half "无人在家", or no pill), if you fight on that field → yours.
   3. Else (you are not on the field: a 联防 leaker, an eliminated spectator) → never your own. The strip shows the teammate you picked with 前往查看 if they are on that field, else the field's first listed player (helper 1 / the pair's first seat).

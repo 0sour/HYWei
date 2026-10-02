@@ -13,7 +13,7 @@
 //     compressed once and cached in memory); strong ETag + Last-Modified with 304s; Cache-Control
 //     (html & code/data: no-cache + revalidate; public/assets|fonts|vendor: 1 day; any `?v=` URL: immutable);
 //     single byte-range requests (206/416, used by <audio>); traversal & dotfile protection; 404 page.
-//   * GET /healthz → JSON status (rooms, matches, sessions, sockets).
+//   * GET /healthz → JSON status (protocol `version`, release `app`, rooms, matches, sessions, sockets).
 //   * WebSocket (ws) at /ws, maxPayload 64 KB → server/net.js Network → server/lobby.js Lobby.
 //   * Env: PORT (default 3000), HOST (default 0.0.0.0), TRUST_PROXY ('auto' default: honour CF-Connecting-IP /
 //     X-Real-IP / X-Forwarded-For only from loopback/private peers such as a local cloudflared; '1' always; '0' never).
@@ -38,7 +38,7 @@ import { WebSocketServer } from 'ws';
 import { Network, SessionRegistry, NET_DEFAULTS } from './net.js';
 import { Lobby } from './lobby.js';
 import { getData, loadData } from './data.js';
-import { PROTOCOL_VERSION } from '../shared/constants.js';
+import { PROTOCOL_VERSION, APP_VERSION } from '../shared/constants.js';
 
 /** Repository root. */
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -540,7 +540,7 @@ export async function startServer(opts = {}) {
     }
     if (parts.rawPath === '/healthz') {
       sendJson(req, res, 200, {
-        ok: true, version: PROTOCOL_VERSION, uptimeSec: Math.round((Date.now() - startedAt) / 1000),
+        ok: true, version: PROTOCOL_VERSION, app: APP_VERSION, uptimeSec: Math.round((Date.now() - startedAt) / 1000),
         sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
       });
       return;
@@ -639,7 +639,7 @@ async function main() {
     else console.error('[boot] failed to start', e);
     process.exit(1);
   }
-  console.log('\n  卫戍协议：盟约 · Stronghold Protocol: Covenant');
+  console.log(`\n  卫戍协议：盟约 · Stronghold Protocol: Covenant v${APP_VERSION}`);
   console.log(`  Local:   ${srv.url}`);
   if (srv.host === '0.0.0.0' || srv.host === '::') {
     for (const u of lanUrls(srv.port)) console.log(`  LAN:     ${u}`);
