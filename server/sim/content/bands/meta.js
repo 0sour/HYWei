@@ -20,7 +20,8 @@
 //   up_shop_add_special_goods {count,choice,pool}      凯瑟琳   every level-up: pick 1 of `count` items of pool (free)
 //   coin_carry_over {capital,interest,max}             坎诺特   leftover ≥ capital at round start → +min(max, ⌊left/capital⌋×interest) income
 //   round_start_all_player_change_enemy_2              鸭爵     global: every alive player's battle from `round` (own + teammates;
-//                                                                normal, Final Assault, Hidden Core): 0–2 enemies → enemylist
+//                                                                normal, Final Assault, Hidden Core — on the player's half of a
+//                                                                pair field): 0–2 ground enemies → enemylist
 //   round_start_activate_char_chess_effect_in_board    铃兰     round start: 获得时 traits of the right-most (then bottom-most) board op with one
 //   first_sell_char_chess_exchange_char_chess_in_shop  巫恋     first sale of a normal op per round: swapped with a random shop chess (no funds)
 //   round_start_gain_char_chess_in_shop_every_n_round  松桐     round % n = 0: a random shop chess for free (its slot empties)
@@ -29,6 +30,7 @@
 //   preparation_start_add_special_goods_every_n_round  娜仁图亚 round % n = 0: pick choice_cnt of refresh_cnt items of pool (free)
 // "进入休整期时" / "回合开始时" = onRoundStart (research 01 §5 step 6).
 
+import { GEO } from '../../../../shared/constants.js';
 import { buffsOf, num, bandRecord, gameData } from '../support/index.js';
 import { metaBonds } from '../support/meta.js';
 import * as garrisons from '../garrisons.js';
@@ -354,37 +356,56 @@ K.preparation_start_add_special_goods_every_n_round = (ps) => ({
 // player or a teammate: from round `round`, in the normal battle, the Final Assault and the Hidden Core (PRTS 卫戍协议：盟约
 // 下半/PRTS盟约记录 鸭爵 备注 "每回合将有0~2名敌人被替换为上述敌人之一…且在最终回合和隐秘核心回合中仍然生效"; the 联防 phase
 // replaces nothing: its enemies are leaks, which keep their bounty). min..max (0–2, uniform [ASSUMED]) of the player's
-// ground enemies from the `minweight`–`maxweight` share of the wave (time order) [ASSUMED reading of the two weights]
-// — any wave enemy but the leader, its parts, bounties, earlier swaps and uncounted units: normal or elite, as the
-// Final Assault's escorts are all elites; flyers stay [ASSUMED: the four are ground units and a FLY action's route is
-// a FLY route] — become a random enemylist enemy (the act2 `_2` versions) at the replaced unit's time and route, worth
-// DUCK_COINS to its killer (bounty, also in 联防). A boss field's two players edit the field's one list in turn, so each
-// gets its own 0–2. The originals never exist, so none of their death / kill / leak effects happen. Reaching the
-// protection point costs 1 LP ("但进入保护目标点将减少1点目标生命值": the enemies' data lpr, tools/build-data.mjs).
+// ground enemies from the `minweight`–`maxweight` share of the player's enemies (time order) [ASSUMED reading of the two
+// weights] — any wave enemy but the leader, its parts, bounties, earlier swaps and uncounted units. Elites are eligible
+// too [ASSUMED: the text names no rank; one rule for every battle; about two thirds of the leader rounds' escorts in that
+// share are elites, so a NORMAL-only rule would leave most Final Assault halves without a candidate — ≈ 80 % instead of
+// ≈ 36 % of the R14 pair-field halves over 40 seeds]. Flyers are never swapped [ASSUMED: the four are ground units and a
+// FLY action's route is a FLY route]. A swapped unit becomes a random enemylist enemy (the act2 `_2` versions) at the
+// replaced unit's time and route, worth DUCK_COINS to its killer (bounty, also in 联防). A pair boss field has one spawn
+// list that its two players' handlers edit in turn; each player's 0–2 come from the enemies whose route ends on that
+// player's half (`ev.side` + `ev.routes`, the half rule of the field's bounties, server/match/waves.js routeByMotion), the
+// share taken over that half [ASSUMED: "你和队友遭遇的敌人" — the enemies heading for the player's own protection point;
+// each official client simulates its own battle, docs/research/08 appendix A]. The originals never exist, so none of
+// their death / kill / leak effects happen. Reaching the protection point costs 1 LP ("但进入保护目标点将减少1点目标生命值":
+// the enemies' data lpr, tools/build-data.mjs).
 
 export const DUCK_BAND = 'band_ducklord';
 /** "击倒这些敌人者获得1资金奖励" (the blackboard's `count` is 1 too). */
 export const DUCK_COINS = 1;
 /** Battle kinds the swap applies to (PRTS: the Final Assault and the Hidden Core too). */
 const DUCK_KINDS = new Set(['normal', 'boss', 'hidden']);
+/** Boss-field column between the left ('L') and the right ('R') player's half (the goals are at cols 2–3 / 17). */
+const BOSS_MID_COL = (GEO.BOSS_RECT.c0 + GEO.BOSS_RECT.c1) / 2;
 
 function duckParams() {
   for (const b of buffsOf(bandRecord(DUCK_BAND))) if (b.key === 'round_start_all_player_change_enemy_2') return b.p;
   return null;
 }
 
-/** Rewrite `spawns` in place (exported for tests). Returns the replaced spawn specs. */
-export function duckReplace(ctx, spawns, p, ownerPlayerId) {
+/**
+ * Rewrite `spawns` in place (exported for tests). Returns the replaced spawn specs. `side` ('L' | 'R', a pair boss
+ * field) limits the swap to the spawns whose route (`routes[routeIndex]`) ends on that half of the field.
+ */
+export function duckReplace(ctx, spawns, p, ownerPlayerId, { routes = null, side = null } = {}) {
   const gd = ctx.gd;
   const ducks = list(p.enemylist).filter((k) => gd.enemy(k));
   if (!ducks.length || !Array.isArray(spawns)) return [];
   const lo = Math.max(0, int(p.min, 0)), hi = Math.max(lo, int(p.max, lo));
   const want = lo + ctx.rng.int(hi - lo + 1);
   if (want <= 0) return [];
-  // one entry per enemy (split multi-count specs), in spawn-time order
+  const half = side === 'L' || side === 'R';
+  const onHalf = (s) => {
+    if (!half) return true;
+    const r = Array.isArray(routes) ? routes[s.routeIndex] : null;
+    const c = r && Array.isArray(r.end) ? Number(r.end[1]) : NaN;
+    return side === 'R' ? c > BOSS_MID_COL : c < BOSS_MID_COL;
+  };
+  // one entry per enemy of the player (split multi-count specs), in spawn-time order
   const flat = [];
   for (let i = 0; i < spawns.length; i++) {
     const s = spawns[i];
+    if (!s || !onHalf(s)) continue;
     const cnt = Math.max(1, int(s.count, 1));
     for (let k = 0; k < cnt; k++) flat.push({ i, k, t: num(s.time, 0) + k * num(s.interval, 0) });
   }
@@ -439,7 +460,7 @@ const duckGlobal = {
     if (!p || ctx.round < int(p.round, 1)) return;
     const held = ctx.bandId() === DUCK_BAND || ctx.teammates().some((t) => t.bandId() === DUCK_BAND);
     if (!held) return;
-    duckReplace(ctx, ev.spawns, p, ctx.playerId);
+    duckReplace(ctx, ev.spawns, p, ctx.playerId, { routes: ev.routes, side: ev.side });
   },
 };
 

@@ -11,7 +11,6 @@ import { PHASE } from '../../shared/constants.js';
 import { DATA, makeMatch, give, legalTileFor } from './harness.js';
 import { FakeBattle } from './fakeBattle.js';
 import { Battle } from '../../server/sim/Battle.js';
-import { buildBossWave } from '../../server/match/waves.js';
 
 const BAND = 'band_ducklord';
 const PARAMS = DATA.bands[BAND].buffs.find((b) => b.key === 'round_start_all_player_change_enemy_2');
@@ -149,31 +148,43 @@ test('#7 the swap still happens in the Final Assault (escorts, never the leader 
   assert.ok(lpChecked);
 });
 
-test('#7 the Hidden Core and pair boss fields: each player of the field gets 0–2 swaps among the escorts', () => {
-  const h = makeMatch({ mode: 'coop', difficulty: 'HARD', humans: 2, seed: 7201, fake: true }).start();
-  const m = h.m;
-  h.toPrep(1);
-  h.ps('p_0').bandId = BAND;
-  h.ps('p_1').bandId = 'band_bldsk';
-  const seen = { boss: 0, hidden: 0 };
-  for (const [kind, round] of [['boss', m.gd.bossRound], ['hidden', m.gd.hiddenRound]]) {
-    for (let k = 0; k < 40; k++) {
-      m.round = round;
-      const wave = buildBossWave(m.gd, m.rngWaves, m.factions, round, { bossId: kind === 'hidden' ? m.hiddenBossId : m.bossId, solo: false });
-      const spawns = wave.spawns.map((s) => ({ ...s, mods: s.mods ? { ...s.mods } : undefined }));
-      const before = spawns.reduce((n, s) => n + (s.count || 1), 0);
-      for (const [j, ps] of [h.ps('p_0'), h.ps('p_1')].entries()) {
-        const ev = { input: ps.battleInput({ side: j ? 'R' : 'L', colOffset: j ? 8 : 0 }), kind, round, spawns };
-        m.dispatch(ps, 'onBattleStart', ev);
+test('#7 pair fields of the Final Assault and the Hidden Core (real match path): each player\'s 0–2 swaps land on their own half', () => {
+  const seen = { boss: { L: 0, R: 0 }, hidden: { L: 0, R: 0 } };
+  const done = () => Object.values(seen).every((k) => k.L > 0 && k.R > 0);
+  for (let seed = 1; seed <= 8 && !done(); seed++) {
+    // 2 humans + 2 bots → two pair fields; the bosses fall at once; Σ layers > 1200 opens the Hidden Core
+    const h = makeMatch({ mode: 'coop', difficulty: 'NORMAL', humans: 2, bots: 2, seed: 7200 + seed, fake: true, script: (b) => (b.kind === 'boss' || b.kind === 'hidden' ? { bossDps: 1e9 } : {}) }).start();
+    const m = h.m;
+    h.drive(() => m.phase === PHASE.PREP && m.round === m.gd.bossRound, { band: BAND });
+    assert.equal(m.round, m.gd.bossRound);
+    assert.ok([...m.players.values()].some((p) => p.bandId === BAND), 'someone holds 鸭爵');
+    for (const p of m.players.values()) { p.bondCountBonus.yanShip = 3; p.layers.yanShip = 601; p.recompute(); }
+    for (const [kind, phase] of [['boss', PHASE.FINAL_ASSAULT], ['hidden', PHASE.HIDDEN_CORE]]) {
+      h.drive(() => m.phase === phase, { band: BAND });
+      assert.equal(m.phase, phase, `${kind} reached`);
+      const fields = FakeBattle.instances.filter((b) => b.kind === kind);
+      assert.equal(fields.length, 2, `${kind}: two pair fields`);
+      for (const f of fields) {
+        assert.equal(f.players.length, 2);
+        const wave = m.bossWaves.find((w) => w.players.join() === f.players.join()).wave;
+        const sum = (list) => list.reduce((n, sp) => n + (sp.count || 1), 0);
+        assert.equal(sum(f.opts.spawns.filter((sp) => sp.tag !== 'bounty')), sum(wave.spawns), `${kind}: same enemy count`);
+        assert.ok(f.opts.spawns.some((sp) => sp.tag === 'boss'), 'the leader stays');
+        const ducks = f.opts.spawns.filter((sp) => DUCKS.includes(sp.enemyKey));
+        for (const d of ducks) {
+          assert.equal(d.tag, 'duck');
+          const j = f.players.indexOf(d.bounty.ownerPlayerId);
+          assert.ok(j >= 0, 'owned by a player of the field');
+          assert.equal(d.bounty.coins, 1);
+          // its route heads for the owner's protection point (goals at cols 2–3 left / 17 right)
+          const end = f.opts.routes[d.routeIndex].end[1];
+          assert.ok(j === 0 ? end < 10 : end > 10, `${kind}: ${d.bounty.ownerPlayerId}'s swap on route ${d.routeIndex} ends at col ${end}`);
+          seen[kind][j === 0 ? 'L' : 'R']++;
+        }
+        for (const pid of f.players) assert.ok(ducks.filter((d) => d.bounty.ownerPlayerId === pid).length <= PARAMS.bb.max, `${kind}: ≤ 2 for ${pid}`);
       }
-      const ducks = spawns.filter((s) => DUCKS.includes(s.enemyKey));
-      assert.ok(ducks.length <= 2 * PARAMS.bb.max, `${kind}: ${ducks.length}`);
-      assert.equal(spawns.reduce((n, s) => n + (s.count || 1), 0), before, 'same enemy count');
-      assert.ok(spawns.filter((s) => s.tag === 'boss').length >= 1);
-      for (const d of ducks) assert.ok(['p_0', 'p_1'].includes(d.bounty.ownerPlayerId));
-      seen[kind] += ducks.length;
     }
+    m.dispose();
   }
-  assert.ok(seen.boss > 0 && seen.hidden > 0, JSON.stringify(seen));
-  m.dispose();
+  assert.ok(done(), `swaps on both halves of both leader rounds: ${JSON.stringify(seen)}`);
 });

@@ -376,6 +376,16 @@ test('鸭爵 “神秘顾客”: from R5, 0–2 ground enemies in the last 40 % 
   const out = duckReplace(ctx, spawns, { ...p.bb, ...p.bbStr }, 'p_0');
   assert.equal(out.length, 2);
   assert.equal(spawns.reduce((n, sp) => n + (sp.count || 1), 0), 10);
+  // a pair boss field (`side` + `routes`): only the enemies heading for the player's half (route end left / right of
+  // the middle column), the 60–99 % share taken over that half — here the left half's enemies all come first
+  const routes = [{ motion: 'WALK', end: [1, 3] }, { motion: 'WALK', end: [1, 17] }];
+  for (const [side, route, times] of [['L', 0, [6, 7]], ['R', 1, [16, 17]], [null, 1, [12, 13]]]) {
+    const field = Array.from({ length: 20 }, (_, i) => ({ time: i, enemyKey: normalKey, routeIndex: i < 10 ? 0 : 1, count: 1 }));
+    const got = duckReplace(ctx, field, { ...p.bb, ...p.bbStr }, 'p_0', { routes, side });
+    assert.deepEqual(got.map((d) => d.time), times, `side ${side}`);
+    for (const d of got) assert.equal(d.routeIndex, route);
+    assert.equal(field.length, 20);
+  }
   cover('band_ducklord');
 });
 

@@ -2825,7 +2825,8 @@ export class Match {
       const inputs = g.map((ps, j) => {
         const input = ps.battleInput({ side: j === 0 ? 'L' : 'R', colOffset: j === 0 ? 0 : 8 });
         input.lpForBoss = this.teamLp;
-        const ev = { input, kind: hidden ? 'hidden' : 'boss', round: this.round, spawns };
+        // `side` + `routes`: the player's half of a pair field (spawn-list edits for one player, e.g. 鸭爵's swap)
+        const ev = { input, kind: hidden ? 'hidden' : 'boss', round: this.round, spawns, routes: wave.routes, side: g.length > 1 ? (j === 0 ? 'L' : 'R') : null };
         this.dispatch(ps, 'onBattleStart', ev);
         return ev.input && typeof ev.input === 'object' ? ev.input : input;
       });
