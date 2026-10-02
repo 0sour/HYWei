@@ -10,6 +10,8 @@
 //   - the skills keep their reach: 薄绿 (阵法术师 "攻击时可对空"), 锏 S3 ("※可对空"), the 钩索师 … still hit the drones.
 //   - 刺胄之弹 / “斩胄之剑” / “破胄之锤” are also 失衡免疫 (PRTS 天赋 "{{特殊机制|静态刚体}}，…失衡免疫…").
 //   - 喷气人's 飞行模式 (PRTS 喷气人 "近地悬浮，不可阻挡，失衡免疫，移动速度+50%，不进行攻击") hovers like the two 近地悬浮 enemies.
+//   - 守墓石像 turns into a flyer at run time (data WALK, no 静态刚体): its statue ("无法被阻挡，自缚，失衡免疫，免疫浮空") and its
+//     flight ("变为飞行单位，失衡免疫") are 失衡免疫 (PRTS 守墓石像 / 愤怒的守墓石像 天赋).
 // Unchanged: ground enemies keep the 力度 − 重量 tables (DESIGN §20.3); the hovering 吉兆飞鳞 / 掠海漂移体 are 失衡免疫 while they
 // hover and displaceable once grounded (no 静态刚体 on their pages). [ASSUMED] the 0.1 s 失衡硬直 of a 静态刚体 is not modelled.
 
@@ -354,7 +356,7 @@ test('B5: 刺胄之弹 / 斩胄之剑 / 破胄之锤 are 静态刚体 + 失衡�
   }
 });
 
-test('喷气人 飞行模式 = 近地悬浮 + 不可阻挡 + 失衡免疫 (PRTS 喷气人): an air unit nothing moves; on the ground again afterwards', REAL, () => {
+test('喷气人 飞行模式 = 近地悬浮 + 不可阻挡 + 失衡免疫 (PRTS 喷气人): an air unit nothing moves; then 1.333 s unblockable on the ground', REAL, () => {
   const ds = getDefaultSource();
   const s = ds.rawEnemy(BALLOON).skills.find((k) => k.prefabKey === 'TakeOff');
   const wall = chessRec({ id: 't_wall', profession: 'TANK', stats: { atk: 0, maxHp: 1e7, blockCnt: 3 }, rangeGrid: [[0, 0]], skill: null });
@@ -363,15 +365,65 @@ test('喷气人 飞行模式 = 近地悬浮 + 不可阻挡 + 失衡免疫 (PRTS 
     units: [{ chessId: 't_wall', row: 9, col: 5 }], autoFinish: false, timeLimit: 60,
   });
   h.step();
-  const e = h.spawn(BALLOON, { pos: [9, 5], routeIndex: 0, mods: { speedMul: 0, atkMul: 0 } });
+  // nearly still (speed × 1e-3), so it stays on the wall's tile while the speed ratios stay measurable
+  const e = h.spawn(BALLOON, { pos: [9, 5], routeIndex: 0, mods: { speedMul: 1e-3, atkMul: 0 } });
+  const speed = () => e.s.moveSpeed / e.base.moveSpeed;
+  const fly = 1 + s.bb['balloon_s[fly].move_speed'];
   assert.ok(h.runUntil(() => !!e.findBuff('ab:takeoff'), s.initCooldown + 1), 'takes off when blocked');
+  const t0 = h.b.time;
   h.step();
   assert.ok(e.isFlying && e.s.flags.unblockable && e.s.flags.noDisplace && !e.blockedBy, '近地悬浮, 不可阻挡, 失衡免疫');
   assert.equal(e.motion, 'WALK', 'keeps the ground path');
+  // "切换为飞行模式后，1.5秒内移动速度最终降低90%"
+  approx(speed(), fly * 0.1, 1e-9, 'braking after the take-off');
   // 较大力 (2) − weight 3 = −1 would move a ground 喷气人 35 % of the way
   assert.equal(h.b.pull(e, 2, { to: { x: 9, y: 9 }, stop: 0 }), 0, 'not pulled');
   assert.equal(h.b.push(e, 3, { from: { x: 3, y: 9 } }), 0, 'not pushed');
-  h.run(s.bb.duration + 0.2);
-  assert.ok(!e.findBuff('ab:takeoff') && !e.isFlying && !e.s.flags.noDisplace, 'landed: a ground unit');
+  h.run(1.6);
+  approx(speed(), fly, 1e-9, '移动速度+50%');
+  // "飞行模式持续7秒；结束后，1.333秒内不可阻挡，移动速度最终降低90%"
+  h.runUntil(() => !e.findBuff('ab:takeoff'), s.bb.duration);
+  approx(h.b.time - t0, s.bb.duration, 0.05, '7 s of flight');
+  h.step();
+  assert.ok(!e.isFlying && !e.s.flags.noDisplace, 'landed: a ground unit');
+  assert.ok(e.s.flags.unblockable && !e.blockedBy, 'unblockable for a while');
+  approx(speed(), 0.1, 1e-9, 'braking after the landing');
   approx(h.b.push(e, 3, { from: { x: 3, y: 9 } }), PUSH_TILES[0], 1e-9, '大力 − 3 = 0 → 1.7 tiles');
+  h.run(1.4);
+  assert.ok(!e.s.flags.unblockable, 'blockable again after 1.333 s');
+  approx(speed(), 1, 1e-9, 'its own speed');
+});
+
+test('守墓石像 (PRTS 天赋): the statue (无法被阻挡，自缚，失衡免疫，免疫浮空) and the flight (飞行单位，失衡免疫) — nothing moves it, even 失重', REAL, () => {
+  const wall = chessRec({ id: 't_wall', profession: 'TANK', stats: { atk: 0, maxHp: 1e7, blockCnt: 3 }, rangeGrid: [[0, 0]], skill: null });
+  for (const key of ['enemy_1172_dugago', 'enemy_1172_dugago_2']) {
+    const h = makeBattle({
+      defs: { chess: { t_wall: wall } }, kits: { t_wall: () => ({ trait: { noAttack: true } }) },
+      units: [{ chessId: 't_wall', row: 10, col: 6 }], autoFinish: false, timeLimit: 60,
+    });
+    h.step();
+    const e = h.spawn(key, { pos: [10, 6], routeIndex: 0, mods: { speedMul: 0, atkMul: 0 } });
+    h.step();
+    assert.ok(e.blockedBy && !e.def.staticBody && e.s.massLevel === 4, `${key}: blocked, a dynamic body of weight 4`);
+    const dur = e.def.talent['stone.duration'];
+    h.b.kill(e, null);
+    h.step();
+    assert.ok(e.alive && e.findBuff('ab:stone'), `${key}: the statue`);
+    assert.ok(e.s.flags.unblockable && !e.blockedBy && e.s.flags.noMove && e.s.flags.noDisplace, `${key}: 无法被阻挡, 自缚, 失衡免疫`);
+    assert.equal(h.b.applyStatus(e, 'levitate', { duration: 2 }), false, `${key}: 免疫浮空`);
+    // 失重 (massFlat −1 → weight 3): 较大力 (2) − 3 = −1 would pull it 35 % of the way, 大力 (3) − 3 = 0 push it 1.7 tiles
+    h.b.addBuff(e, { key: 'test:weightless', duration: 60, mods: { massFlat: -1 } });
+    assert.equal(e.s.massLevel, 3);
+    const at = { x: e.x, y: e.y };
+    assert.equal(h.b.pull(e, 2, { to: { x: 2, y: 10 }, stop: 0 }), 0, `${key}: statue not pulled`);
+    assert.equal(h.b.push(e, 3, { from: { x: 4, y: 10 } }), 0, `${key}: statue not pushed`);
+    h.run(dur + 0.5);
+    assert.ok(e.alive && e.motion === 'FLY' && e.isFlying && !e.findBuff('ab:stone'), `${key}: reborn as a flyer`);
+    assert.ok(e.s.flags.noDisplace && !e.def.staticBody, `${key}: 失衡免疫 (not a 静态刚体)`);
+    assert.equal(h.b.pull(e, 2, { to: { x: 2, y: 10 }, stop: 0 }), 0, `${key}: flyer not pulled`);
+    assert.equal(h.b.push(e, 3, { from: { x: 4, y: 10 } }), 0, `${key}: flyer not pushed`);
+    assert.equal(h.b.pullToFront(e, h.unit('t_wall'), 5), 0, `${key}: flyer not hooked`);
+    approx(Math.hypot(e.x - at.x, e.y - at.y), 0, 1e-9, `${key}: in place`);
+    checkInvariants(h.b);
+  }
 });
