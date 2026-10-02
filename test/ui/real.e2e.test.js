@@ -42,7 +42,7 @@ class Client {
   }
 
   async open(query = '') {
-    this.browser = await this.puppeteer.launch({ executablePath: CHROME, headless: 'new', args: CHROME_ARGS, protocolTimeout: 60000 });
+    this.browser = await this.puppeteer.launch({ executablePath: CHROME, headless: true, args: CHROME_ARGS, protocolTimeout: 60000 });
     const [first] = await this.browser.pages();
     const page = first || await this.browser.newPage();
     this.page = page;

@@ -15,7 +15,6 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
 import { PHASE, BOND_LAYER_CAP } from '../../shared/constants.js';
 import { createBattleFromSpec, resultDigest } from '../../server/sim/spec.js';
 import { DataSource } from '../../server/sim/simdata.js';
@@ -86,11 +85,10 @@ function runField(S, ds, spec, maxSeconds) {
 describe('Final Assault / Hidden Core fields in the browser sim', { skip }, () => {
   let srv, browser;
   before(async () => {
-    const require = createRequire(path.join(ROOT, 'package.json'));
-    const puppeteer = require('puppeteer-core');
+    const puppeteer = (await import('puppeteer-core')).default;
     const { startServer } = await import('../../server/index.js');
     srv = await startServer({ port: 0, host: '127.0.0.1', quiet: true });
-    browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-first-run'] });
+    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-first-run'] });
   });
   after(async () => {
     await browser?.close();

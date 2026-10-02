@@ -12,7 +12,6 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
 import { buildBattleSpec } from '../../server/sim/spec.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -32,11 +31,10 @@ const SPEC = buildBattleSpec({
 describe('掠海漂移体 drops to 爬行模式: its model crawls (headless Chrome, real sim)', { skip }, () => {
   let srv, browser;
   before(async () => {
-    const require = createRequire(path.join(ROOT, 'package.json'));
-    const puppeteer = require('puppeteer-core');
+    const puppeteer = (await import('puppeteer-core')).default;
     const { startServer } = await import('../../server/index.js');
     srv = await startServer({ port: 0, host: '127.0.0.1', quiet: true });
-    browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-first-run'] });
+    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-first-run'] });
     mkdirSync(OUT, { recursive: true });
   });
   after(async () => {

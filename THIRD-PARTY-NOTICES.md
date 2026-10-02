@@ -18,7 +18,7 @@ them (with `node_modules/`, which keeps each package's own licence file).
 | [htm](https://github.com/developit/htm) | 3.1.1 | Apache-2.0 | UI templates — `public/vendor/htm.module.js` | no (npm) | yes |
 | [three.js](https://github.com/mrdoob/three.js) | 0.186.1 | MIT | official 3D board — `public/vendor/three.core.js`, `three.module.js` | no (npm) | yes |
 | [ws](https://github.com/websockets/ws) | 8.22.0 | MIT | WebSocket server (`server/`) | no (npm) | yes (`node_modules/`) |
-| [puppeteer-core](https://github.com/puppeteer/puppeteer) | 23.11.1 | Apache-2.0 | optional browser tests (dev dependency) | no (npm) | no |
+| [puppeteer-core](https://github.com/puppeteer/puppeteer) | 25.12.0 | Apache-2.0 | optional browser tests (dev dependency) | no (npm) | no |
 | [Ark-Unpacker](https://github.com/isHarryh/Ark-Unpacker) LZ4AK decoder | — | BSD-3-Clause | `tools/local-extract/aklz4.py` (optional local extraction) | **yes** — keeps its notice; full text also in `tools/local-extract/LICENSE-Ark-Unpacker.txt` | yes |
 | [UnityPy](https://github.com/K0lb3/UnityPy) (via MooncellWiki/UnityPy), [lz4](https://github.com/python-lz4/python-lz4), [Pillow](https://github.com/python-pillow/Pillow) | see `tools/local-extract/requirements.txt` | MIT / BSD-3-Clause / MIT-CMU | optional local extraction; installed by pip into `.venv-extract` only when the host opts in | no | no |
 

@@ -95,7 +95,7 @@ export class Client {
 
   async open(query = '') {
     mkdirSync(OUT, { recursive: true });
-    this.browser = await this.puppeteer.launch({ executablePath: CHROME, headless: 'new', args: CHROME_ARGS, protocolTimeout: 90000 });
+    this.browser = await this.puppeteer.launch({ executablePath: CHROME, headless: true, args: CHROME_ARGS, protocolTimeout: 90000 });
     const [first] = await this.browser.pages();
     const page = first || await this.browser.newPage();
     this.page = page;

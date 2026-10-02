@@ -13,7 +13,6 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(ROOT, 'test/e2e/out');
@@ -26,11 +25,10 @@ describe('field view features in headless Chrome', { skip }, () => {
   let srv, browser;
   const perf = { generated: new Date().toISOString(), throttle: 4, views: [] };
   before(async () => {
-    const require = createRequire(path.join(ROOT, 'package.json'));
-    const puppeteer = require('puppeteer-core');
+    const puppeteer = (await import('puppeteer-core')).default;
     const { startServer } = await import('../../server/index.js');
     srv = await startServer({ port: 0, host: '127.0.0.1', quiet: true });
-    browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-first-run', '--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] });
+    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-first-run', '--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] });
     mkdirSync(OUT, { recursive: true });
   });
   after(async () => {
@@ -297,8 +295,7 @@ describe('field view features in headless Chrome', { skip }, () => {
       for (const [name, q] of PERF) {
         const { page, problems } = await open(`${q}&board=${board}`, 1920, 1080);
         await wait(2500);
-        const cdp = await page.target().createCDPSession();
-        await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+        await page.emulateCPUThrottling(4);
         await wait(1500);
         const r = await page.evaluate(async () => {
           const times = [];
@@ -310,7 +307,7 @@ describe('field view features in headless Chrome', { skip }, () => {
           const st = window.__demo.stats();
           return { fps: Math.round((1000 / mean) * 10) / 10, cpuMs: st.cpuMs, renderMs: st.renderMs, units: st.units, pen: st.pen, lod: st.lod, culled: st.culled };
         });
-        await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+        await page.emulateCPUThrottling(null);
         await page.close();
         assert.deepEqual(problems, []);
         perf.views.push({ name, board, ...r });
