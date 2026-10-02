@@ -8,6 +8,13 @@
 *.mjs text eol=lf
 *.js  text eol=lf
 *.py  text eol=lf
+# Text the tests read and match line by line (CSS rules, HTML, data, docs): LF everywhere, so a Windows checkout
+# (core.autocrlf=true) runs `node --test` exactly like Linux and macOS.
+*.css  text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
 # binary assets
 *.png binary
 *.jpg binary

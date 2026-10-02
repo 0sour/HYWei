@@ -35,7 +35,7 @@
     "launch": "node scripts/launch.mjs"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "dependencies": {
     "htm": "^3.1.1",

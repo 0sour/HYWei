@@ -4,7 +4,7 @@
 //   node tools/setup.mjs [options]
 //
 // Steps (each one is skipped when already done, so re-running is cheap — the start scripts run it on every start):
-//   1. Node.js ≥ 18 check (clear message + download link otherwise).
+//   1. Node.js ≥ 22 check (clear message + download link otherwise).
 //   2. Dependencies: `npm ci` (falls back to `npm install`) when node_modules is missing or incomplete.
 //   3. Client libraries in public/vendor (tools/vendor.mjs) when any is missing.
 //   4. Game data (data/*.json, committed) present and parseable.
@@ -37,7 +37,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const MIN_NODE = 18;
+export const MIN_NODE = 22;
 export const IS_WIN = process.platform === 'win32';
 export const IS_MAC = process.platform === 'darwin';
 const NODE_URL = 'https://nodejs.org/zh-cn/download';
@@ -133,7 +133,7 @@ async function ask(question, def, timeoutMs = 60000) {
 /** Node.js version check. */
 export function checkNode() {
   const major = nodeMajor();
-  return { ok: major >= MIN_NODE, version: process.versions.node, major, recommended: major >= 20 };
+  return { ok: major >= MIN_NODE, version: process.versions.node, major, recommended: major >= MIN_NODE };
 }
 
 /** Runtime dependencies installed? */
@@ -353,11 +353,11 @@ async function main() {
   // 1. Node
   const node = checkNode();
   if (!node.ok) {
-    log(`${mark.err} Node.js ${node.version} 太旧：需要 ${MIN_NODE} 或更高（推荐 22 LTS）。`);
+    log(`${mark.err} Node.js ${node.version} 太旧：需要 ${MIN_NODE} 或更高（22 / 24 LTS）。`);
     log(`  下载：${NODE_URL}` + (IS_WIN ? '   或在终端运行：winget install OpenJS.NodeJS.LTS' : IS_MAC ? '   或：brew install node@22' : ''));
     return 1;
   }
-  add('ok', 'Node.js', `v${node.version}${node.recommended ? '' : '（可用；推荐升级到 22 LTS）'}`);
+  add('ok', 'Node.js', `v${node.version}${node.recommended ? '' : '（可用；推荐 22 / 24 LTS）'}`);
 
   // 2. npm dependencies
   let deps = checkDeps();
