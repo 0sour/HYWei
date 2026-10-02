@@ -34,7 +34,7 @@ import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Grid } from '../server/sim/grid.js';
+import { Grid, DEPLOY_REFUSED_TILES } from '../server/sim/grid.js';
 
 // ===== CLI & IO ==================================================================================
 
@@ -1095,11 +1095,15 @@ function buildTokens(ctx, chess, tokenOwners, enemies) {
     // SKILL_SUMMON_START_DEPLOY).
     const makes = (list) => (list || []).some((s) => s === 'talent' || s === 'skill');
     const produced = owners.some((o) => makes(o.sources) || (o.skillAlts || []).some((a) => makes(a.sources)));
+    // `ownerRange`: the token text "只能部署在召唤者攻击范围内" (the tacticians' 援军 — 伺夜's 狼群, 缪尔赛思's 流形; PRTS 狼群
+    // 特性): its hand piece may only be placed on a tile of its owner's attack range (server/match/board.js
+    // ownerRangeKeys, PlayerState._legal; player report #9 after 0.1.0: 伺夜's tactical point could go anywhere)
+    const ownerRange = /只能部署在\S*攻击范围内/.test(stripRich(first.trait.desc) || '');
     out[tokenId] = {
       tokenId, kind: 'summon', name: char.name, appellation: char.appellation || null,
       desc: stripRich(first.trait.desc), descRaw: first.trait.descRaw,
       profession: char.profession, subProfessionId: char.subProfessionId, position: char.position,
-      displayType: displayType(tokenId), placeable: displayType(tokenId) !== 'HIDDEN' && produced,
+      displayType: displayType(tokenId), placeable: displayType(tokenId) !== 'HIDDEN' && produced, ownerRange,
       owners: owners.map((o) => o.chessId),
       // Defaults = first owner's variant; per-owner data in variants[chessId].
       stats: first.stats, rangeGrid: first.rangeGrid, dmgType: first.dmgType, attackKind: first.attackKind,
@@ -1120,7 +1124,7 @@ function buildTokens(ctx, chess, tokenOwners, enemies) {
       tokenId: 'enemy_9012_acloon', kind: 'bondSummon', bondId: 'yanShip', name: loon.name, appellation: null,
       desc: '【炎】6名成员激活时召唤的友方单位；开战时攻击力/生命值增加【炎】干员攻击力/生命值总和的30%（见 bonds.json yanShip）',
       descRaw: null, profession: 'TOKEN', subProfessionId: null, position: 'NONE', motion: loon.stats.motion,
-      displayType: null, placeable: false, owners: [],
+      displayType: null, placeable: false, ownerRange: false, owners: [],
       stats: enemyAsTokenStats(loon), rangeGrid: null, dmgType: loon.stats.dmgType, attackKind: 'ranged',
       projectile: 'bolt', canHitFly: true, skill: loon.skills?.[0] ? { skillId: loon.skills[0].prefabKey, bb: loon.skills[0].bb } : null,
       skills: loon.skills, talents: loon.talents, deployLimit: 2, count: 1,
@@ -1152,7 +1156,7 @@ function buildTokens(ctx, chess, tokenOwners, enemies) {
     out[charId] = {
       tokenId: charId, kind: 'mapChar', name: char.name, appellation: char.appellation || null,
       desc: v.trait.desc, descRaw: v.trait.descRaw, profession: char.profession, subProfessionId: char.subProfessionId,
-      position: char.position, displayType: null, placeable: false, owners: [],
+      position: char.position, displayType: null, placeable: false, ownerRange: false, owners: [],
       stats: v.stats, rangeGrid: v.rangeGrid, dmgType: v.dmgType, attackKind: v.attackKind, projectile: v.projectile,
       canHitFly: v.canHitFly, skill: v.skill, talents: v.talents, trait: v.trait, phase: v.phase, level: v.level,
       deployLimit: 1, count: 1, abnormal: [], positions: positions.sort((a, b) => naturalCmp(a.alias, b.alias)), variants: {},
@@ -1986,7 +1990,7 @@ const TILE_LEGEND = {
   O: { tileKey: 'tile_telout', desc: '传送出口/领袖区出生点' },
   m: { tileKey: 'tile_mire', special: 'mire', desc: '沼泽：停留叠加减速减攻速' },
   g: { tileKey: 'tile_smog', special: 'smog', desc: '排气格栅：其上干员不会成为敌方远程攻击目标' },
-  d: { tileKey: 'tile_deepsea', special: 'deepsea', desc: '深水：敌人持续受伤、减速、减攻速' },
+  d: { tileKey: 'tile_deepsea', special: 'deepsea', desc: '深水区：不可部署（拒绝部署），敌人持续受伤、减速、减攻速' },
   i: { tileKey: 'tile_infection', special: 'infection', desc: '活性源石：单位受持续真实伤害，攻击力与攻速提升' },
 };
 
@@ -2038,6 +2042,14 @@ const DEVICE_ROLES = {
 };
 /** Roles that block ground movement while active ([ASSUMED] for platform/mound). */
 const BLOCKING_ROLES = new Set(['crate', 'platform', 'mound']);
+
+/**
+ * The deploy type the game applies to a level tile: its buildableType, except tiles whose mechanism refuses deployment
+ * (server/sim/grid.js DEPLOY_REFUSED_TILES — 深水区 tile_deepsea: PRTS 深水区 地形信息 "地形机制：拒绝部署（待补充）";
+ * player report after 0.1.0: operators could be placed in 战场#08's pool), which are NONE. The stages.json legend's
+ * `buildable` is this value; `buildableType` keeps the level's own where they differ.
+ */
+const effectiveBuildable = (t) => (DEPLOY_REFUSED_TILES.has(t.tileKey) ? 'NONE' : t.buildableType);
 
 /**
  * Is a predefined device active at match start? Exactly the non-hidden ones: the 下半 act1 m02 has all its crates
@@ -2131,8 +2143,10 @@ function buildStages(ctx, modesById) {
         line += g;
         if (t && !glyphTiles[g]) {
           const { bb } = flattenBB(t.blackboard);
+          const buildable = effectiveBuildable(t);
           glyphTiles[g] = {
-            tileKey: t.tileKey, height: t.heightType === 'HIGHLAND' ? 'HIGH' : 'LOW', buildable: t.buildableType,
+            tileKey: t.tileKey, height: t.heightType === 'HIGHLAND' ? 'HIGH' : 'LOW', buildable,
+            ...(buildable !== t.buildableType ? { buildableType: t.buildableType } : {}),
             passable: t.passableMask, groundPassable: t.passableMask === 'ALL', flyPassable: t.passableMask !== 'NONE',
             special: TILE_LEGEND[g]?.special || null, bb,
           };
@@ -2163,21 +2177,25 @@ function buildStages(ctx, modesById) {
     const runes = (lv.runes || []).map((r) => ({ key: r.key, ...flattenBB(r.blackboard) }));
     const globalBuffs = (lv.globalBuffs || []).map((g) => ({ key: g.key, ...flattenBB(g.blackboard) }));
 
-    // Deployable tiles at match start (active crates/mounds remove a tile, platforms make it ranged-only).
+    // Deployable tiles at match start (active crates/mounds remove a tile, platforms make it ranged-only, a 特制水上平台
+    // makes its 深水区 tile deployable for any unit: "在水上建立可以部署任意单位的平台", sktok_canoe_1).
     const activeBlocking = devices.filter((d) => d.active && BLOCKING_ROLES.has(d.role));
     const blocked = new Set(activeBlocking.map((d) => d.pos.join(',')));
     const platformAt = new Set(activeBlocking.filter((d) => d.role === 'platform').map((d) => d.pos.join(',')));
+    const waterPlatformAt = new Set(devices.filter((d) => d.active && d.role === 'waterPlatform').map((d) => d.pos.join(',')));
     const deployIn = (r0, r1, c0, c1) => {
       const melee = [], rangedOnly = [], byDevice = [];
       for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
         const t = tileAt(r, c);
         if (!t) continue;
         const k = `${r},${c}`;
-        const buildable = t.buildableType !== 'NONE';
+        const bt = effectiveBuildable(t);
+        const buildable = bt !== 'NONE';
         if (platformAt.has(k)) { rangedOnly.push([r, c]); if (buildable) byDevice.push([r, c]); continue; }
         if (blocked.has(k)) { if (buildable) byDevice.push([r, c]); continue; }
-        if (t.heightType === 'LOWLAND' && (t.buildableType === 'ALL' || t.buildableType === 'MELEE')) melee.push([r, c]);
-        else if (t.buildableType === 'RANGED' || (t.heightType === 'HIGHLAND' && t.buildableType === 'ALL' && t.tileKey !== 'tile_achand')) rangedOnly.push([r, c]);
+        if (waterPlatformAt.has(k)) { melee.push([r, c]); if (!buildable) byDevice.push([r, c]); continue; }
+        if (t.heightType === 'LOWLAND' && (bt === 'ALL' || bt === 'MELEE')) melee.push([r, c]);
+        else if (bt === 'RANGED' || (t.heightType === 'HIGHLAND' && bt === 'ALL' && t.tileKey !== 'tile_achand')) rangedOnly.push([r, c]);
       }
       return { melee, rangedOnly, changedByDevices: byDevice };
     };

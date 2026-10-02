@@ -48,7 +48,14 @@
 //     it swaps it away) sends its placed summons back onto their stack ("移动干员时，其所属召唤物全部退场并重置至手牌区");
 //     a summon stack removed from temp at a prep deadline comes back at the next round start (startRound tops every
 //     board owner's summons up to the deploy limit, "干员所属召唤物会于下一回合返还"). In battle a skill's summon takes its
-//     tile when the skill fires (sim/content/tokens.js dockSkillSummons).
+//     tile when the skill fires (sim/content/tokens.js dockSkillSummons). A summon whose text reads "只能部署在召唤者
+//     攻击范围内" (tokens.json `ownerRange`: the tacticians' 狼群 / 流形 — their tactical point; player report #9 after
+//     0.1.0) only goes on a tile of its owner's attack range (_legal / summonRange: the loadout's grid rotated by the
+//     owner's facing); a swap with its owner is checked from the owner's new tile, and one an in-place re-orientation
+//     (or a promotion) leaves outside goes back onto its stack (recompute → _liftOutOfRange) [ASSUMED: kept when still
+//     inside]. A re-orientation that would leave such a summon with no stack and no free hand / temp slot is refused
+//     (HAND_FULL); elsewhere (a promotion, an owner moved with no room) it leaves the board and its stack comes back at
+//     the next round start (grantTokensFor) — no out-of-range placement reaches the battle.
 //   * Facing (DESIGN §3, research 09 §1.2): every board piece has `dir` ∈ UP|RIGHT|DOWN|LEFT (server/sim/dir.js), set
 //     by g.move {…, dir} (absent ⇒ RIGHT) and kept across rounds. g.move onto the piece's OWN tile re-orients it in
 //     place; a swap keeps the occupant's dir; pieces put on the board by effects (a merge elite taking a consumed
@@ -62,7 +69,8 @@
 
 import { ERR, GEO, PHASE, layerGainRoom } from '../../shared/constants.js';
 import { checkLoadout, resolveLoadout } from '../../shared/protocol.js';
-import { FIELD, tileKey, parseKey, inField, canPlace, positionClass, boardOrder, freeSlot, pieceDir, parseDir, mergeTile } from './board.js';
+import { FIELD, tileKey, parseKey, inField, canPlace, positionClass, boardOrder, freeSlot, pieceDir, parseDir, mergeTile, ownerRangeKeys } from './board.js';
+import { attackRangeGrid, loadoutRecord, resolveRecordLoadout } from '../../shared/loadoutRecord.js';
 import { offsetTile } from '../sim/dir.js';
 import { computeBonds, bondList, bondSnapshot, activatedLayers, bondsWithGains } from './bondsMeta.js';
 import { itemKey } from './gamedata.js';
@@ -1003,7 +1011,78 @@ export class PlayerState {
     return positionClass(rec);
   }
 
-  _legal(piece, r, c) { return canPlace(this.deployMap(), this._placementOf(piece), r, c); }
+  /**
+   * Where piece may stand on (r, c): the deploy map of its position class (board.js canPlace) and, for a summon whose
+   * text reads "只能部署在召唤者攻击范围内" (tokens.json `ownerRange`: 伺夜's 狼群, 缪尔赛思's 流形), a tile of its owner's
+   * attack range (summonRange). `owner` = the owner's position after the move being checked ({ key, piece, dir }: a
+   * summon swapped with its own owner).
+   */
+  _legal(piece, r, c, owner = null) {
+    if (!canPlace(this.deployMap(), this._placementOf(piece), r, c)) return false;
+    const range = this.summonRange(piece, owner);
+    return !range || range.has(tileKey(r, c));
+  }
+
+  /**
+   * The 'r,c' keys of the attack range of a range-bound summon's owner (player report #9 after 0.1.0: 伺夜's tactical
+   * point could be placed anywhere; PRTS 狼群 特性 "只能部署在召唤者攻击范围内"): the owner's loadout-resolved range grid
+   * (shared/loadoutRecord.js attackRangeGrid — what the deploy wheel previews) rotated by its facing around its board
+   * tile (board.js ownerRangeKeys). Null when the piece is not range-bound or its owner is not on the board (the other
+   * rules refuse such a placement).
+   * @param {any} piece
+   * @param {{ key: string, piece: any, dir: string } | null} [owner] the owner's position to use instead of its current one
+   * @returns {Set<string> | null}
+   */
+  summonRange(piece, owner = null) {
+    if (!piece || piece.kind !== 'token' || this.gd.token(piece.id)?.ownerRange !== true) return null;
+    let at = owner;
+    if (!at) for (const [key, p] of this.board) if (p.uid === piece.ownerUid && p.kind === 'chess') { at = { key, piece: p, dir: pieceDir(p) }; break; }
+    const rec = at && this.gd.chess(at.piece.id);
+    if (!rec) return null;
+    const grid = attackRangeGrid(loadoutRecord(rec, resolveRecordLoadout(rec, this.loadoutFor(rec)))) || rec.rangeGrid;
+    const [r, c] = parseKey(at.key);
+    return ownerRangeKeys(grid, r, c, at.dir);
+  }
+
+  /**
+   * Range-bound summons left outside their owner's attack range (the owner re-oriented in place, promoted, its loadout
+   * changed, moved with no room to take its summons back) go back onto their stack — a summon still inside stays
+   * [ASSUMED: the official moves every summon of a MOVED owner back, PRTS 卫戍协议/帮助 "移动干员时，其所属召唤物全部退场
+   * 并重置至手牌区"; an in-place re-orientation keeps the ones it can]. One with no stack and no free hand / temp slot
+   * leaves the board: its stack comes back at the next round start like a summon stack removed from temp at a prep
+   * deadline (startRound → grantTokensFor, "干员所属召唤物会于下一回合返还"), so no illegal placement reaches the
+   * battle. Returns the number taken off the board; a toast names them.
+   */
+  _liftOutOfRange() {
+    const back = [], gone = [];
+    for (const [k, p] of [...this.board]) {
+      if (p.kind !== 'token') continue;
+      const range = this.summonRange(p);
+      if (!range || range.has(k)) continue;
+      this.board.delete(k);
+      (this._returnToken(p, null, { allowTemp: true }) ? back : gone).push(this.gd.token(p.id)?.name || p.id);
+    }
+    if (back.length) this.m.toast(this, 'warn', `${back.join('、')}只能部署在召唤者攻击范围内，已退回整备区`);
+    if (gone.length) this.m.toast(this, 'warn', `${gone.join('、')}只能部署在召唤者攻击范围内，整备区已满，下回合返还`);
+    return back.length + gone.length;
+  }
+
+  /**
+   * Whether every range-bound summon of `owner` that the range from (ownerKey, dir) leaves out can go back onto its
+   * stack or into a free hand / temp slot (_reorient refuses otherwise: the player's own re-orientation never costs a
+   * summon, like withdrawing one into a full hand gives HAND_FULL).
+   */
+  _roomForOutOfRange(owner, ownerKey, dir) {
+    const at = { key: ownerKey, piece: owner, dir };
+    const stacks = [...this.hand, ...this.temp].filter((p) => p && p.kind === 'token' && p.ownerUid === owner.uid);
+    const needSlot = new Set();
+    for (const [k, p] of this.board) {
+      if (p.kind !== 'token' || p.ownerUid !== owner.uid || stacks.some((s) => s.id === p.id)) continue;
+      const range = this.summonRange(p, at);
+      if (range && !range.has(k)) needSlot.add(p.id);
+    }
+    return needSlot.size <= [...this.hand, ...this.temp].filter((p) => p == null).length;
+  }
 
   _moveChessToBoard(loc, r, c, dir = 'RIGHT') {
     const piece = loc.piece;
@@ -1013,10 +1092,12 @@ export class PlayerState {
     if (occ === piece) return this._reorient(piece, dir);
     if (loc.area === 'board') {
       // board → board: move or swap (the occupant must be legal on the source tile and keeps its own facing); an
-      // operator that changes its tile takes its summons off the board (back onto their stacks, _liftTokensOf)
+      // operator that changes its tile takes its summons off the board (back onto their stacks, _liftTokensOf) — its
+      // own summon swapped onto its old tile included, so that one needs no tile check
       if (occ) {
         const [sr, sc] = parseKey(loc.key);
-        if (!this._legal(occ, sr, sc)) return fail(ERR.BAD_TILE);
+        const ownSummon = occ.kind === 'token' && occ.ownerUid === piece.uid;
+        if (!ownSummon && !this._legal(occ, sr, sc)) return fail(ERR.BAD_TILE);
         this.board.set(loc.key, occ);
         if (occ.kind === 'chess') this._liftTokensOf(occ.uid);
       } else {
@@ -1049,9 +1130,19 @@ export class PlayerState {
     return OK;
   }
 
-  /** In-place re-orientation (g.move onto the piece's own tile with a new direction). */
+  /**
+   * In-place re-orientation (g.move onto the piece's own tile with a new direction). An owner's range-bound summons the
+   * new range leaves out go back onto their stack (recompute → _liftOutOfRange); HAND_FULL (nothing changes) when one
+   * of them would have nowhere to go.
+   */
   _reorient(piece, dir) {
-    if (pieceDir(piece) !== dir) { piece.dir = dir; this.dirty(); }
+    if (pieceDir(piece) === dir) return OK;
+    if (piece.kind === 'chess') {
+      const loc = this.find(piece.uid);
+      if (loc && loc.area === 'board' && !this._roomForOutOfRange(piece, loc.key, dir)) return fail(ERR.HAND_FULL);
+    }
+    piece.dir = dir;
+    this.recompute();
     return OK;
   }
 
@@ -1077,9 +1168,13 @@ export class PlayerState {
 
   _moveTokenToBoard(loc, r, c, dir = 'RIGHT') {
     const piece = loc.piece;
-    if (!inField(r, c) || !this._legal(piece, r, c)) return fail(ERR.BAD_TILE);
+    if (!inField(r, c)) return fail(ERR.BAD_TILE);
     const key = tileKey(r, c);
     const occ = this.board.get(key) || null;
+    // a summon dragged onto its own owner swaps with it: a range-bound one must be inside the owner's range from the
+    // tile the owner takes (the summon's, with the owner's facing)
+    const ownerAfter = loc.area === 'board' && occ && occ !== piece && occ.uid === piece.ownerUid ? { key: loc.key, piece: occ, dir: pieceDir(occ) } : null;
+    if (!this._legal(piece, r, c, ownerAfter)) return fail(ERR.BAD_TILE);
     if (occ === piece) return this._reorient(piece, dir);
     if (loc.area === 'board') {
       // board → board: move or swap; an operator swapped onto the summon's old tile changed its tile, so its other
@@ -1421,6 +1516,7 @@ export class PlayerState {
   recompute() {
     this.deployMap(); // a change of the deploy field (a boss round's prep) marks the legality stale
     if (this._legalityStale) this._evictIllegal();
+    this._liftOutOfRange();
     this.bonds = computeBonds(this.gd, this);
     this.dirty();
   }
