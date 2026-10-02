@@ -710,7 +710,7 @@ const KITS = {
 
   // ---- 3_07 见行者 · 推击手 (hidden) — S2 惊爆射击: push every enemy in the skill range forward + stun (longer when
   //      slammed into a wall, collided enemies stunned too; air units too [ASSUMED: "范围内所有敌人", no 对空 note on
-  //      PRTS] — a 失衡免疫 enemy is not pushed but still stunned); 技巧射击: ignore DEF vs heavy enemies;
+  //      PRTS] — a 失衡免疫 enemy or a 静态刚体 (the drones) is not pushed but still stunned); 技巧射击: ignore DEF vs heavy enemies;
   //      精锐 module PUS-X: redeployed on a ranged tile ⇒ half the deployment cost back
   chess_char_3_07_a: (bb, chess, def) => {
     const d = defOf(chess, def);
@@ -818,7 +818,9 @@ const KITS = {
           onHit({ battle, unit, target }) {
             if (!target || !target.alive || target.side !== 'enemy') return;
             // PRTS 备注: "此技能的“拖拽”机制实际为反方向（指向薄绿方向）的推开" — a radial push towards her by the
-            // official 力度 − 重量 push distance (小力 vs weight 1: 0.44 tiles), never past her (Battle.push inward)
+            // official 力度 − 重量 push distance (小力 vs weight 1: 0.44 tiles), never past her (Battle.push inward). Her
+            // attack reaches air units (阵法术师 "攻击时可对空"), but the drones of the mode are 静态刚体 (PRTS 特殊机制): hit,
+            // never dragged (player report after 0.1.0, "飞机可以被薄绿的技能拉走")
             if (battle.push(target, pullForce, { from: unit, inward: true }) > 0) fx(battle, 'pull', target, { src: unit.id });
           },
         },

@@ -1653,6 +1653,28 @@ const HIT_AREAS = Object.freeze({
 });
 
 /**
+ * 静态刚体 (static rigidbody) enemies → enemies.json `staticBody: true`: pushes and pulls never move them (player report
+ * after 0.1.0, "飞机可以被薄绿的技能拉走"). PRTS 特殊机制 静态刚体: "该单位的Unity刚体的刚体类型为部分静态（Kinematic）或静态
+ * （Static）。使用该类刚体的单位可以进入失衡状态并启用物理，但物理层面上无法产生任何速度或移动 … ※与失衡免疫不同 … ※是否为静态
+ * 刚体与单位的行动方式无关" (example: 妖怪). Like HIT_AREAS the rigidbody lives in the prefab, not in the game tables: the
+ * keys whose PRTS page lists "{{特殊机制|静态刚体}}" in its 天赋 (the page of every enemy of data/enemies.json, read 2026-10-03) —
+ * every air unit of the mode except “炎佑” (its page lists none; weight 10, so no push or pull moves it anyway), plus
+ * the ground boss 盐风主教昆图斯.
+ */
+const STATIC_BODIES = Object.freeze(new Set([
+  'enemy_1005_yokai', 'enemy_1005_yokai_2', 'enemy_1005_yokai_3',   // 妖怪 / 妖怪MKII / 威龙
+  'enemy_1017_defdrn', 'enemy_1040_bombd', 'enemy_1041_lazerd', 'enemy_1041_lazerd_2', 'enemy_1042_frostd', // 御4 / 暴鸰 / 法术大师A1 / A2 / 寒霜
+  'enemy_1112_emppnt', 'enemy_1112_emppnt_2',                        // 帝国炮火先兆者 / 帝国炮火中枢先兆者
+  'enemy_1269_nhfly', 'enemy_1321_wdarft',                           // 枯朽之种 / 枯朽萃聚使徒
+  'enemy_1355_mrfly', 'enemy_1355_mrfly_2', 'enemy_1407_hummbd',     // 护障 / 护障·P / 远眺
+  'enemy_1430_lrrook', 'enemy_1521_dslily',                          // 愧悔魂灵圣杯 / 盐风主教昆图斯 (WALK)
+  'enemy_9009_acfort', 'enemy_9014_acstma', 'enemy_9015_acstmb', 'enemy_9016_acstmr', // 假想敌：黑云 / “斩胄之剑” / “破胄之锤” / 刺胄之弹
+  'enemy_10028_vtswd', 'enemy_10029_vtshld', 'enemy_10030_vtwand',   // 未装配刀片 / 防护背心 / 冲击式施术单元
+  'enemy_10040_cnvbln',                                              // 节日气球
+  'enemy_10083_hlbird', 'enemy_10084_hlegle', 'enemy_10085_hllevi_2', // “萨科塔之翼” / “萨科塔之眼” / “萨科塔昂首”
+]));
+
+/**
  * Official drawn size of enemy models (user playtest #6 item 9: 威龙 far too large) → enemies.json `modelScale`.
  * The official client scales every Spine model in its battle prefab (`dyn/battle/prefabs/enemies/<prefab>.prefab`,
  * bundles battle/enm_pfb_*.ab): world size = skeleton units × SkeletonDataAsset.scale (0.01 for all 1731 enemy
@@ -1807,9 +1829,11 @@ function buildEnemies(ctx) {
       seasonOverride: override ? Object.keys(definedFields(override)) : null,
       iconId: key, spine: mv(data.prefabKey) || key,
       ...(hitArea ? { hitArea: { ...hitArea } } : {}),
+      ...(STATIC_BODIES.has(key) ? { staticBody: true } : {}),
       ...(modelScale != null && modelScale !== 1 ? { modelScale } : {}),
     };
   }
+  for (const k of STATIC_BODIES) if (!out[k]) warn(`STATIC_BODIES: ${k} is not an enemy of the mode`);
   return out;
 }
 

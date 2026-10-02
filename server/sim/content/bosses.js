@@ -25,7 +25,8 @@
 //                            level's blink route, fly at the lowest-ATK operator (3×3 stun + DoT); 15 hits shoot it
 //                            down (瘫痪: stun 10 s, ground unit, damage ×1.3). Either way a new 初始模式 copy with its HP
 //                            replaces it at home. Every damage it takes costs 胄 as much (PART_TRANSFER, 无来源, 等量) —
-//                            grounded per both texts, during the dive per the PRTS talent [ASSUMED].
+//                            grounded per both texts, during the dive per the PRTS talent [ASSUMED]. The shell, 剑 and
+//                            锤 are 失衡免疫 + 静态刚体 (PRTS 天赋): no push or pull moves them.
 //   boss_2/9 假想敌：铳      unblockable; highest-DEF target in range; erosion; ASPD ramp (+80 × 5) on the same target
 //                            (floor 20); 最终之罚 charge at the highest-DEF ground unit (disabled by the h07_02 override).
 //                            boss_9: damage ×0.2 while springs live, 盲信之誓 links (100 phys/s on the lines), 末日布道 dash.
@@ -418,7 +419,10 @@ function fireShell(b, boss, target) {
 function kitShell(ab, e) {
   const stun = T(ab, 'killed.duration') ?? 0, dot = T(ab, 'killed.value') ?? 0;
   return [{
-    spawn(b, e2) { setHits(e2, e2.def.maxHp); hitCount(b, e2, true); }, // 需要数次攻击击倒
+    spawn(b, e2) {
+      setHits(e2, e2.def.maxHp); hitCount(b, e2, true);                       // 需要数次攻击击倒
+      b.addBuff(e2, { key: 'boss:shellGuard', persist: true, flags: { noDisplace: true } }); // 失衡免疫 (PRTS 天赋; also 静态刚体)
+    },
     tick(b, e2, a, dt) {
       const s = e2.mem.ab.shell;
       if (!s || a.done) return;
@@ -479,7 +483,8 @@ function kitBlade(ab, e, b, tpl) {
     {
       spawn(b2, e2) {
         hover(b2, true);
-        b2.addBuff(e2, { key: 'boss:anchor', persist: true, flags: { noMove: true, unblockable: true } }); // 自缚 (moved by hand) · 不可阻挡
+        // 自缚 (moved by hand) · 不可阻挡 · 失衡免疫 (PRTS 天赋 "{{特殊机制|静态刚体}}，不可阻挡、失衡免疫…" — data `staticBody` too)
+        b2.addBuff(e2, { key: 'boss:anchor', persist: true, flags: { noMove: true, unblockable: true, noDisplace: true } });
         if (BLADE_ATK_SCALE[e2.defId]) e2.profile.atkScale = BLADE_ATK_SCALE[e2.defId];
       },
       before(c, b2, e2) { const l = targetsNear(b2, e2, e2.base.rangeRadius || 1.6, { ranged: false }); if (l.length) c.targets = l; }, // 范围物理伤害

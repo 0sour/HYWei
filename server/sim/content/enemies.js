@@ -655,7 +655,8 @@ const refraction = (res, hpPct = 0) => ({
  * splash, ground traps and terrain skip it; ranged attacks hit it) with 失衡免疫 (`noDisplace`, "初始模式：近地悬浮，失衡
  * 免疫" on the enemies' PRTS pages) — its `motion` stays WALK, so it keeps the ground path (and 浮空 can still lift it:
  * Battle.applyStatus refuses data flyers only). Losing the float is each
- * enemy's own ability (PRTS; 缚地 "使部分近地悬浮敌人掉落" is "实为敌人自身的能力"): kitSyufo, kitParrot.
+ * enemy's own ability (PRTS; 缚地 "使部分近地悬浮敌人掉落" is "实为敌人自身的能力"): kitSyufo, kitParrot. 喷气人's 飞行模式 is
+ * the same state for 7 s (its 'ab:takeoff' buff carries the flags; kitLeaderMisc).
  */
 const FLOAT_KEY = 'ab:float';
 const setFloat = (b, e, on) => {
@@ -895,12 +896,14 @@ function husk({ hits, delay, stealthy = true, unblock = false, onHusk = null, ke
 }
 
 /**
- * 守墓石像 (PRTS 守墓石像 天赋): 地面模式 — melee attacks only while blocked; the first defeat is an instant 重生 (statuses
- * cleared: rebirthCleanse) to 100 % HP into 转换模式 for stone.duration s — unblockable, 自缚 (immobile), 失衡免疫, immune
- * to 浮空, DEF +stone.def, RES +stone.magic_resistance, no attack [ASSUMED: PRTS lists none] — then 飞行模式: a flyer
- * (失衡免疫) whose ranged attacks (the
- * data's 1.6 radius) deal arts damage and never target flyers; the HP is not refilled again. fx forms 'stone' / 'fly'
- * (its Sleep and *_2 clips, render/units.js FORMS). <破碎支柱> (an event device) has no counterpart in this mode.
+ * 守墓石像 / 愤怒的守墓石像 (PRTS 天赋): 地面模式 — melee attacks only while blocked; the first defeat is an instant 重生
+ * (statuses cleared: rebirthCleanse) to 100 % HP into 转换模式 for stone.duration s — "无法被阻挡，自缚，失衡免疫，免疫浮空。
+ * 防御力增加800，法术抗性增加30", no attack [ASSUMED: PRTS lists none] — then 飞行模式, "变为飞行单位，失衡免疫": a flyer
+ * no push or pull moves, whose ranged attacks (the data's 1.6 radius) deal arts damage and never target flyers; the HP is
+ * not refilled again. Its pages list no 静态刚体 (data `staticBody` stays off), so the 失衡免疫 of the flight is a persistent
+ * `noDisplace` buff. 浮空 is refused from the statue on (`ab.immune`; data flyers refuse it anyway). [ASSUMED] a 浮空 it
+ * already carries at the knock-out runs out. fx forms 'stone' / 'fly' (its Sleep and *_2 clips, render/units.js FORMS).
+ * <破碎支柱> (an event device) has no counterpart in this mode.
  */
 function statue(ab) {
   const dur = T(ab, 'stone.duration') ?? 0;
@@ -1790,9 +1793,18 @@ function kitLeaderMisc(key, ab, e) {
       }, { cond: (b, e2) => cands(b, e2).length > 0 })];
     }
     case 'enemy_2004_balloon': {
+      // 喷气人 · 升空 when blocked → 飞行模式 for `duration` s: PRTS 喷气人 "近地悬浮，不可阻挡，失衡免疫，移动速度+50%，不进行
+      // 攻击" — an air unit meanwhile (flag `float`: melee cannot hit it; it keeps the ground path, as setFloat), never
+      // displaced; "切换为飞行模式后，1.5秒内移动速度最终降低90% … 结束后，1.333秒内不可阻挡，移动速度最终降低90%" (PRTS numbers:
+      // the blackboard has only the duration and the +50 %).
       const s = ab.sk.TakeOff;
+      const BRAKE = { moveMul: 0.1 }, BRAKE_UP = 1.5, LANDING = 1.333;
       return [skill(s, (b, e2) => {
-        b.addBuff(e2, { key: 'ab:takeoff', duration: s.bb.duration ?? 0, flags: { unblockable: true }, mods: { moveMul: 1 + (s.bb['balloon_s[fly].move_speed'] ?? 0) }, visible: true });
+        b.addBuff(e2, {
+          key: 'ab:takeoff', duration: s.bb.duration ?? 0, flags: { unblockable: true, float: true, noDisplace: true }, mods: { moveMul: 1 + (s.bb['balloon_s[fly].move_speed'] ?? 0) }, visible: true,
+          onExpire: ({ battle }) => { if (e2.alive) battle.addBuff(e2, { key: 'ab:landing', duration: LANDING, flags: { unblockable: true }, mods: BRAKE }); },
+        });
+        b.addBuff(e2, { key: 'ab:takeoffBrake', duration: BRAKE_UP, mods: BRAKE });
         b.fx('telegraph', { x: e2.x, y: e2.y, r: 0.5, kind: 'takeoff', id: e2.id });
       }, { cond: (b, e2) => !!e2.blockedBy })];
     }
@@ -2576,7 +2588,7 @@ export const KITS = Object.freeze({
   enemy_1513_dekght_2: (ab, e) => kitLeaderMisc('enemy_1513_dekght_2', ab, e), // 凋零骑士 · 2 targets; rage when 腐败骑士 dies
   enemy_1539_reid: (ab, e) => kitLeaderMisc('enemy_1539_reid', ab, e),       // “复仇者” · ATK up below half; revives once at 50 %
   enemy_2003_rockman: (ab, e) => kitLeaderMisc('enemy_2003_rockman', ab, e), // 迷路的巨像 · long-stun boulder on a non-stunned unit
-  enemy_2004_balloon: (ab, e) => kitLeaderMisc('enemy_2004_balloon', ab, e), // 喷气人 · takes off (unblockable) when blocked
+  enemy_2004_balloon: (ab, e) => kitLeaderMisc('enemy_2004_balloon', ab, e), // 喷气人 · takes off when blocked: 7 s hovering, unblockable, 失衡免疫
   enemy_2005_axetro: (ab, e) => kitLeaderMisc('enemy_2005_axetro', ab, e),   // “遗弃者” · attack stacks, reset after 4 s idle
   enemy_2008_flking: (ab, e) => kitLeaderMisc('enemy_2008_flking', ab, e),   // “墓碑” · operators' ATK/DEF halved; periodic barrier
   enemy_2048_smgrd: (ab, e) => kitLeaderMisc('enemy_2048_smgrd', ab, e),     // “邪魔的利刃” · 国度 ASPD-down around it, ×2.5 inside
