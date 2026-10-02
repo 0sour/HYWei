@@ -401,8 +401,9 @@ const KITS = {
   //      大买家: coin at skill start + coin & ATK stack per trait payment; 破财消灾: DP-paid revive (cost doubles)
   //      S1 仗义疏财 (passive, 2 coins): an attack spends a coin to heal the most injured ally (< 70 % HP) of the 8
   //      surrounding tiles for attack@heal_scale × ATK. S3 千金一掷 (持续时间无限): attacks hit twice, kills give a coin;
-  //      closing it spends every coin on random ground enemies of the front range (atk_scale phys + small push forward;
-  //      PRTS 备注: 地面敌方单位, 弹道不可对空).
+  //      closing it spends every coin on random ground enemies of the front range (atk_scale phys + a small push, radial
+  //      despite the text's 向前 — PRTS 备注 "推开效果为径向推动"; client charpack char_1033_swire2: the RandomGold ability
+  //      (Skill_3_End) carries swire2_s_3[knockback] of template knockback[relative]; 地面敌方单位, 弹道不可对空).
   //      Auto-close (the mode casts everything itself; the player's "主动关闭" is not available): once the purse is full
   //      (10) and an enemy stands in range. 精锐 module MER-Y: ATK +4 % per trait payment (≤ 5 stacks).
   chess_char_3_04_a: (bb, chess, def) => {
@@ -494,8 +495,10 @@ const KITS = {
                 if (!e) break;
                 spent++;
                 battle.dealDamage(unit, e, { amount: unit.s.atk * cash, type: 'phys', isSkill: true, tags: ['skill', 'swire2Cash'] });
-                // "将目标小力地向前推开": a directional push along her direction (Battle.push, official 力度 − 重量 distance)
-                if (e.alive) battle.push(e, force, { from: unit, dir: { x: unit.fwd[1], y: unit.fwd[0] } });
+                // "将目标小力地向前推开" — PRTS 备注 "金币弹道…推开效果为径向推动", client knockback[relative]: a radial push
+                // away from her centre (not along her direction, so no 45° / 0.25-tile 特殊修正), official 力度 − 重量
+                // distance (Battle.push)
+                if (e.alive) battle.push(e, force, { from: unit });
               }
               fx(battle, 'coin', unit, { n: 0, spent, skill: 'swire2_3' });
             },
