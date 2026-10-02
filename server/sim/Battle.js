@@ -1118,9 +1118,10 @@ export class Battle {
    * Can ally/device `u` block enemy `e` (block weight `w`) right now — everything but the contact distance. A unit on a
    * tile ground units cannot pass blocks no ground enemy: the fenced tiles (围墙 tile_fence_bound / 围栏 tile_fence —
    * low ground, deployable, passable to flyers only) — PRTS 围墙 / 围栏 地形机制 "部署在其中的单位，若当前阻挡类型为'地面
-   * 阻挡'则无法阻挡敌人". Air blocking (blockFly against flyers) is not ground blocking and stays. Nothing walks onto such
-   * a tile, so it matters for an enemy pushed or pulled against the fence (Battle.displace stops it at the tile edge,
-   * 0.5 from the fenced unit — inside the ground block radius).
+   * 阻挡'则无法阻挡敌人". The gate reads the tile's ground passability; on the stages the fenced tiles are the only low
+   * tiles ground units cannot pass. Air blocking (blockFly against flyers) stays [ASSUMED: PRTS restricts the rule to
+   * 地面阻挡]. Nothing walks onto such a tile, so it matters for an enemy pushed or pulled against the fence
+   * (Battle.displace stops it at the tile edge, 0.5 from the fenced unit — inside the ground block radius).
    */
   _blockerFor(u, e, w) {
     if (!u.alive || !u.deployed || u.hidden || u.s.flags.noBlock || u.s.flags.sleep) return false;

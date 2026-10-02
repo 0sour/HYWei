@@ -12,7 +12,8 @@
 // Nearby rule fixed: PRTS 围墙 / 围栏 地形机制 "部署在其中的单位，若当前阻挡类型为'地面阻挡'则无法阻挡敌人" — a unit on a fenced
 // tile blocks no ground enemy (Battle._blockerFor). Nothing walks onto such a tile, but a push / pull stops an enemy at
 // the tile edge, 0.5 from the fenced unit — inside the ground block radius 0.7071 — and 0.1.0 let the fenced unit block
-// it there. Air blocking (blockFly against flyers) is not ground blocking and stays.
+// it there (found while checking F4, with 薄绿 S2). Air blocking (blockFly against flyers) stays [ASSUMED: PRTS restricts
+// the rule to 地面阻挡].
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -152,6 +153,7 @@ test('fix, real kit: 薄绿 on a 围墙 tile drags enemies against the fence and
 });
 
 test('fix: air blocking stays — a blockFly unit on a fenced tile blocks a flyer over the fence', () => {
+  // [ASSUMED] PRTS's rule names only 地面阻挡 ("若当前阻挡类型为'地面阻挡'则无法阻挡敌人"), so air blocking is kept
   const h = makeBattle({ stageId: 'act1autochess_m01', units: [{ chessId: UDFLOW, row: 11, col: 7, dir: 'RIGHT' }], autoFinish: false, timeLimit: 60, seed: 3 });
   h.step(1);
   const u = h.unit(UDFLOW);
