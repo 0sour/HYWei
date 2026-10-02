@@ -125,14 +125,12 @@ function textNum(text, re, fallback) {
   return /^\d+(\.\d+)?$/.test(m[1]) ? +m[1] : (CN_NUM[m[1]] ?? fallback);
 }
 /**
- * A tile a summon may take: inside the field, nobody on it, and not the home tile of an ally that has not deployed
- * yet / waits to redeploy (the initial deployment runs top→bottom: a summon placed while it runs must not steal a
- * later board unit's tile — that unit would never deploy; a dead operator must be able to come back).
+ * A tile a summon may take: inside the field and not reserved (Battle.isReservedTile: nobody on it, no knocked-out
+ * operator lying there, not the home tile of an ally that has not deployed yet / waits to redeploy — the initial
+ * deployment runs top→bottom: a summon placed while it runs must not steal a later board unit's tile).
  */
 function freeTile(battle, r, c) {
-  if (!Number.isInteger(r) || !Number.isInteger(c) || !battle.grid.inRect(r, c) || battle.unitAt(r, c)) return false;
-  for (const u of battle.allyUnits) if (!u.alive && !u.removed && u.kind !== 'device' && u.homeR === r && u.homeC === c) return false;
-  return true;
+  return Number.isInteger(r) && Number.isInteger(c) && battle.grid.inRect(r, c) && !battle.isReservedTile(r, c);
 }
 /** Walkable ground tile a melee summon can stand on. */
 const groundTile = (battle, r, c) => battle.grid.groundPassable(r, c) && battle.grid.canStand(r, c);

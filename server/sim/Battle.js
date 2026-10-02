@@ -10,6 +10,9 @@
 // the players of a shared field side by side), fires `deploy` (initial) for each unit, forces out the operators that
 // enter already knocked out (`carryState.down`, 联防: constants.js FORCED_EXIT — down on their tile, redeploy timer
 // running) and then fires `battleStart`.
+// A knocked-out operator lies on its `body` tile — where it fell, or its own home when it fell on another board piece's
+// home — and redeploys there; no ally deploys or moves onto that tile meanwhile (PRTS 卫戍协议/帮助 §作战阶段 单位部署;
+// `_layBody`, `downOn`, `restTile`, `isReservedTile`; docs/SIM.md §1).
 // Tick order: scheduled callbacks → spawns → DP → buffs → enemies (attack, move, block) → enemy index →
 //   allies (skill tick, attack) → projectiles → redeploys → boss sync → `tick` hook → release hooks of removed units →
 //   time += TICK → end checks. A forceEnd() requested mid-step ends the step after the current phase (docs/SIM.md §1.4).
@@ -854,11 +857,14 @@ export class Battle {
     const k = R0 * COLS + C0;
     const occ = this._occ[k];
     if (occ && occ !== u && occ.alive && occ.deployed) { this.log(`tile ${R0},${C0} occupied; ${u} not deployed`); return false; }
+    // "倒地干员所在地块视为可部署，但所有我方单位在此处的部署行为将被阻止" (PRTS 卫戍协议/帮助 §作战阶段 单位部署)
+    if (this.downOn(R0, C0, u)) { this.log(`a knocked-out operator lies on ${R0},${C0}; ${u} not deployed`); return false; }
     const first = u.deploySeq === 0;
     u.alive = true;
     u.deployed = true;
     u.removed = false;
     u.hidden = false;
+    u.body = null;
     u.x = C0; u.y = R0; u.tileR = R0; u.tileC = C0;
     u.blocking = [];
     u.deploySeq = ++this._deploySeq;
@@ -940,6 +946,7 @@ export class Battle {
         if (reason === 'killed') { const pp = this._pp(unit.ownerId); if (pp) pp.deaths++; }
         const mul = unit.persist.redeployMul * unit.s.redeployMul;
         unit.respawnAt = this.time + Math.max(0, unit.base.respawnTime * mul);
+        if (this.isDown(unit)) this._layBody(unit); // before `die` / `death`: the body's tile is final for them
       } else {
         unit.removed = true;
       }
@@ -993,10 +1000,11 @@ export class Battle {
   }
 
   /**
-   * Immediately redeploy a dead (or retreated) ally. opts:
+   * Immediately redeploy a dead (or retreated) ally on its rest tile (restTile: where a knocked-out operator lies, else
+   * its home tile). opts:
    *   free=true   no DP cost (false: pays `base.cost`, refused when the player lacks the DP)
-   *   tile=[r,c]  land on this in-rect tile instead of the home tile (the home stays the tile of later redeploys);
-   *               refused (false) when the tile is outside the rect or a living unit stands there — no fallback
+   *   tile=[r,c]  land on this in-rect tile instead (the home stays the board tile); refused (false) when the tile is
+   *               outside the rect, a living unit stands there or another knocked-out operator lies there — no fallback
    *   keepSp      keep the SP / charges the unit had (保留技力): restored before the `deploy` hook fires
    * Returns true when the unit was deployed (full HP, `deploy {initial:false}` fires).
    */
@@ -1006,10 +1014,14 @@ export class Battle {
     if (tile != null) {
       if (!Array.isArray(tile) || !Number.isInteger(tile[0]) || !Number.isInteger(tile[1]) || !this.grid.inRect(tile[0], tile[1])) return false;
       at = [tile[0], tile[1]];
+    } else {
+      const rest = this.restTile(unit);
+      if (rest[0] !== unit.homeR || rest[1] !== unit.homeC) at = rest;
     }
     const k = at ? at[0] * COLS + at[1] : unit.homeR * COLS + unit.homeC;
     const occ = this._occ[k];
     if (occ && occ.alive && occ !== unit) return false;
+    if (at && this.downOn(at[0], at[1], unit)) return false;
     const ps = this.getPlayer(unit.ownerId);
     const cost = unit.base.cost;
     let paid = 0;
@@ -1025,18 +1037,24 @@ export class Battle {
     return false;
   }
 
+  /**
+   * Automatic redeploys (DESIGN §5.5): a withdrawn operator whose timer is done comes back on its rest tile — a knocked-out
+   * one where it lies ("满足再部署条件时，移除场上的该倒地干员并自动部署至该位置", PRTS 卫戍协议/帮助) — when that tile is
+   * free and its player has the DP.
+   */
   _checkRedeploys() {
     for (const u of this.allyUnits) {
       if (u.alive || u.removed || u.kind !== 'op') continue;
       if (this.time + 1e-9 < u.respawnAt) continue;
-      const k = u.homeR * COLS + u.homeC;
-      const occ = this._occ[k];
+      const [r, c] = this.restTile(u);
+      const occ = this._occ[r * COLS + c];
       if (occ && occ.alive && occ !== u) continue;
+      if (this.downOn(r, c, u)) continue;
       const ps = this.getPlayer(u.ownerId);
       const cost = u.base.cost;
       if (!ps || ps.dp + 1e-9 < cost) continue;
       ps.dp = Math.max(0, ps.dp - cost);
-      this._deploy(u, { initial: false });
+      this._deploy(u, { initial: false, tile: r === u.homeR && c === u.homeC ? null : [r, c] });
     }
   }
 
@@ -1709,10 +1727,12 @@ export class Battle {
    * the tile impassable.
    */
   spawnDevice(key, row, col, opts = {}) {
-    // Devices are ally-side units on a field tile: never outside the rect, never on top of a living unit.
+    // Devices are ally-side units on a field tile: never outside the rect, never on top of a living unit or of a
+    // knocked-out operator (downOn).
     if (!Number.isInteger(row) || !Number.isInteger(col) || !this.grid.inRect(row, col)) return null;
     const occ = this._occ[row * COLS + col];
     if (occ && occ.alive) return null;
+    if (this.downOn(row, col)) return null;
     const hp = fin(opts.hp, 100);
     const bat = fin(opts.bat, 1), aspd = fin(opts.aspd, 100);
     const def = {
@@ -1771,7 +1791,7 @@ export class Battle {
 
   addProjectile(p) { return this.projectiles.add(p); }
 
-  /** Move an ally to another tile (keeps state). */
+  /** Move an ally to another tile (keeps state); never onto a living unit or a knocked-out operator (downOn). */
   relocate(unit, r, c) {
     // only a living, deployed ally moves, and only onto an integer tile of this field (a dead unit left in _occ
     // would later "block" from a tile it no longer stands on once it redeploys at home)
@@ -1779,6 +1799,7 @@ export class Battle {
     if (!Number.isInteger(r) || !Number.isInteger(c) || !this.grid.inRect(r, c)) return false;
     const k = r * COLS + c;
     if (this._occ[k] && this._occ[k] !== unit && this._occ[k].alive) return false;
+    if (this.downOn(r, c)) return false;
     const ok = unit.tileR * COLS + unit.tileC;
     if (this._occ[ok] === unit) this._occ[ok] = null;
     this.releaseBlocked(unit);
@@ -1911,17 +1932,62 @@ export class Battle {
   }
 
   /**
-   * A tile a summon must not take: a living unit stands on it, or it is the home tile of an ally piece that has not
-   * deployed yet or waits to redeploy (a token parked there would keep that unit off the field for the whole battle).
+   * A tile no automatic placement may take (the 突袭 landing tile, tactical points, summon / device tiles): a living
+   * unit stands on it, or it is the rest tile (restTile) of an ally piece that has not deployed yet or waits to
+   * redeploy — the tile a knocked-out operator lies on ("倒地干员所在地块…所有我方单位在此处的部署行为将被阻止", PRTS
+   * 卫戍协议/帮助 §作战阶段 单位部署), else its home tile (a token parked there would keep that unit off the field).
    */
   isReservedTile(r, c) {
     if (!Number.isInteger(r) || !Number.isInteger(c) || r < 0 || r >= ROWS || c < 0 || c >= COLS) return true;
     const u = this._occ[r * COLS + c];
     if (u && u.alive) return true;
     for (const a of this.allyUnits) {
-      if (!a.alive && !a.removed && a.homeR === r && a.homeC === c && (a.kind === 'op' || a.kind === 'token')) return true;
+      if (a.alive || a.removed || (a.kind !== 'op' && a.kind !== 'token')) continue;
+      const [tr, tc] = this.restTile(a);
+      if (tr === r && tc === c) return true;
     }
     return false;
+  }
+
+  /**
+   * The knocked-out operator (isDown) lying on (r, c), other than `except`, or null. Official (PRTS 卫戍协议/帮助 §作战阶段
+   * 单位部署): "干员退场后…原地留下一个“倒地干员”…满足再部署条件时，移除场上的该倒地干员并自动部署至该位置" and "倒地干员所在
+   * 地块视为可部署，但所有我方单位在此处的部署行为将被阻止" — its tile (`body`, _layBody) takes no other ally: `_deploy`
+   * (initial deploys, redeploys, the 突袭 landing, summons), `spawnDevice` and `relocate` refuse it.
+   */
+  downOn(r, c, except = null) {
+    for (const a of this.allyUnits) {
+      if (a === except || !this.isDown(a)) continue;
+      const [br, bc] = a.body ?? [a.tileR, a.tileC];
+      if (br === r && bc === c) return a;
+    }
+    return null;
+  }
+
+  /**
+   * The tile a withdrawn ally comes back on (redeploy, _checkRedeploys): a knocked-out operator's body tile — where it
+   * fell, or its home (_layBody) — else its home tile.
+   */
+  restTile(u) {
+    return this.isDown(u) ? (u.body ? [u.body[0], u.body[1]] : [u.tileR, u.tileC]) : [u.homeR, u.homeC];
+  }
+
+  /**
+   * Where a knocked-out operator lies (it redeploys there): the tile it fell on, except — "若干员被击倒的位置为其他干员或
+   * 召唤物的初始位置，则在被击倒后，尝试返回其自身的初始位置" (PRTS 卫戍协议/帮助) — a tile that is another board piece's
+   * home (a piece with a board uid: the 初始位置 is the prep placement), where it goes back to its own home tile when
+   * that is in the rect and free (isReservedTile: no living unit, no other body, no other waiting piece's tile). It
+   * stays where it fell when its home is taken [ASSUMED: one attempt, at the knock-out]. Only an operator moved off its
+   * board tile — a 突袭 jump, 乌尔比安's anchor — can fall elsewhere. Sets `u.body` (b.snap `down` carries it); x / y /
+   * tileR / tileC keep where it fell, so the `kill` / `death` handlers (被击倒时 effects) still act there.
+   */
+  _layBody(u) {
+    const r = u.tileR, c = u.tileC, hr = u.homeR, hc = u.homeC;
+    u.body = [r, c];
+    if (r === hr && c === hc) return;
+    if (!this.allyUnits.some((a) => a !== u && a.uid != null && !a.removed && (a.kind === 'op' || a.kind === 'token') && a.homeR === r && a.homeC === c)) return;
+    if (!this.grid.inRect(hr, hc) || this.isReservedTile(hr, hc)) return;
+    u.body = [hr, hc];
   }
 
   /**
@@ -2103,8 +2169,9 @@ export class Battle {
 
   /**
    * Compact full snapshot of this field (DESIGN §8.2 b.snap), plus (only when non-empty):
-   *   down: [[id, respawnAt, respawnTime, state]] — knocked-out operators waiting to redeploy on their own tile
-   *         (isDown): the game time their respawn timer ends, its length (s) and constants.js DOWN_STATE;
+   *   down: [[id, respawnAt, respawnTime, state, row, col]] — knocked-out operators waiting to redeploy (isDown): the
+   *         game time their respawn timer ends, its length (s), constants.js DOWN_STATE and the tile they lie on (and
+   *         come back on: _layBody — where they fell, or their home);
    *   elem: [[id, element, fill, cooldownEnd, cooldown]] — the element gauge each unit shows (damage.js elementView).
    */
   snapshot() {
@@ -2125,7 +2192,7 @@ export class Battle {
     let down = null;
     for (const u of this.allyUnits) {
       if (!this.isDown(u)) continue;
-      (down || (down = [])).push([u.id, r2(u.respawnAt), r2(Math.max(0, u.respawnAt - u.deathAt)), this._downState(u)]);
+      (down || (down = [])).push([u.id, r2(u.respawnAt), r2(Math.max(0, u.respawnAt - u.deathAt)), this._downState(u), ...this.restTile(u)]);
     }
     if (down) snap.down = down;
     let elem = null;
@@ -2139,20 +2206,24 @@ export class Battle {
   }
 
   /**
-   * A knocked-out operator waiting to redeploy on its own tile (DESIGN §5.5: after its respawn time, when the tile is
-   * free and DP ≥ cost): killed — or entering the battle knocked out (FORCED_EXIT, 联防) — not withdrawn, not removed
-   * for good, after it was deployed. The client keeps its model on the field knocked down with a redeploy countdown
-   * (b.snap `down`, render/units.js); summons, devices and enemies simply leave.
+   * A knocked-out operator waiting to redeploy on the tile it lies on (DESIGN §5.5: after its respawn time, when the
+   * tile is free and DP ≥ cost; _layBody, downOn): killed — or entering the battle knocked out (FORCED_EXIT, 联防) —
+   * not withdrawn, not removed for good, after it was deployed. The client keeps its model on that tile knocked down
+   * with a redeploy countdown (b.snap `down`, render/units.js); summons, devices and enemies simply leave.
    */
   isDown(u) {
     return !!u && u.side === 'ally' && u.kind === 'op' && !u.alive && !u.removed && (u.removeReason === 'killed' || u.removeReason === FORCED_EXIT)
       && u.deploySeq > 0 && Number.isFinite(u.respawnAt);
   }
 
-  /** constants.js DOWN_STATE of a down operator: its timer runs, or it waits for its tile / the DP (_checkRedeploys). */
+  /**
+   * constants.js DOWN_STATE of a down operator: its timer runs, or it waits for its tile / the DP (_checkRedeploys). No
+   * ally may take the tile it lies on (downOn), so WAIT_TILE is a safeguard only.
+   */
   _downState(u) {
     if (this.time + 1e-9 < u.respawnAt) return DOWN_STATE.COUNTING;
-    const occ = this._occ[u.homeR * COLS + u.homeC];
+    const [r, c] = this.restTile(u);
+    const occ = this._occ[r * COLS + c];
     if (occ && occ.alive && occ !== u) return DOWN_STATE.WAIT_TILE;
     const ps = this.getPlayer(u.ownerId);
     return !ps || ps.dp + 1e-9 < u.base.cost ? DOWN_STATE.WAIT_DP : DOWN_STATE.COUNTING;

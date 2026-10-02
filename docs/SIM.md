@@ -77,6 +77,17 @@ field — units deploy one after another with a fixed delay from the battle star
 enemy tile index → allies (skill tick, attack) → projectiles → auto-redeploys → boss pool sync → `tick` hook →
 release hooks/timers of units removed this tick (§1.4) → `time += TICK` → end checks.
 
+**Knocked-out operators** (PRTS 卫戍协议/帮助 §作战阶段 单位部署; player report F5 after 0.1.0): "干员退场后…原地留下一个
+“倒地干员”…满足再部署条件时，移除场上的该倒地干员并自动部署至该位置" — an operator knocked out (`isDown`) lies on the tile it
+fell on (`unit.body`, `Battle._layBody`; b.snap `down` carries it) and its redeploy — the timed one (`_checkRedeploys`:
+timer done, tile free, DP ≥ cost), 不屈's, 阿戈尔's — comes back there (`restTile`); "若干员被击倒的位置为其他干员或召唤物的
+初始位置，则在被击倒后，尝试返回其自身的初始位置": one that fell on another board piece's home (a 突袭 member after its jump,
+乌尔比安 off his anchor) lies on its own home instead when that is free (else it stays [ASSUMED: one attempt]); x / y /
+tileR / tileC keep where it fell for the `kill` / `death` handlers. "倒地干员所在地块视为可部署，但所有我方单位在此处的部署
+行为将被阻止": `downOn(r, c)` — `_deploy` (redeploys, the 突袭 landing, summons), `spawnDevice` and `relocate` refuse that
+tile and `isReservedTile` reports it, so every automatic picker skips it. A withdrawn operator that is not down (a
+retreat) comes back on its home tile.
+
 ### 1.1 Coordinates (PlayerBattleInput units)
 
 `units[].row/col` are **board coordinates** (rows 9–12, cols 2–10) unless `abs: true` (or player
@@ -277,7 +288,8 @@ Guarantees content can rely on (pinned by `test/sim/robustness.test.js`):
   unit rows/cols are coerced to integers (junk ⇒ unit skipped); `spawnEnemy` mods must be finite ≥ 0 (else ×1), the spawn
   point is clamped into the rect; `spawnDevice`/`spawnToken`/`relocate` accept only integer in-rect free tiles
   (`spawnToken` returns null and leaves nothing behind when the tile is busy, `relocate` only moves living deployed allies,
-  `redeploy {tile}` refuses a non-integer / out-of-rect / occupied tile without falling back to the home tile);
+  `redeploy {tile}` refuses a non-integer / out-of-rect / occupied tile — or one a knocked-out operator lies on —
+  without falling back to the home tile);
   non-finite `hp`/`stats`/`duration`/`extend`/`addAmmo`/`addCharge`/`addLayers`/`addCoins`/`spCostMul` values are ignored;
   aggregated stats that overflow (stacked `*Mul`) fall back to base values; a revive written by a `kill` handler is
   clamped to max HP (NaN/≤ 0 ⇒ the unit dies with hp 0); projectiles with non-finite coordinates are re-aimed at their
@@ -298,7 +310,7 @@ Guarantees content can rely on (pinned by `test/sim/robustness.test.js`):
 
 `Unit` fields: `id, side ('ally'|'enemy'), kind ('op'|'token'|'enemy'|'device'), defId, def (normalised), name, ownerId
 (playerId), uid (board piece), ownerUnit (tokens), x, y (floats; x = col, y = row), tileR, tileC (allies), homeR, homeC
-(board tile: auto-redeploys land there), dir ('UP'|'RIGHT'|'DOWN'|'LEFT'; getters `fwd` = forward vector, `facing` =
+(board tile: a retreated operator's redeploys land there; a knocked-out one's on its `body` tile, §1), dir ('UP'|'RIGHT'|'DOWN'|'LEFT'; getters `fwd` = forward vector, `facing` =
 horizontal sign ±1 for sprites only), hp, alive, deployed, removed, hidden, base {…}, buffs[],
 rangeKeys / rangeKeySet (current range, absolute tile keys `r × 21 + c`), baseRangeKeys (initial range, §7.1),
 extraRangeKeys (content extra targets, `battle.setExtraRange`), blocking[] (allies), blockedBy (enemies), motion
@@ -560,8 +572,9 @@ or guard with a per-unit flag while dealing it. When the guard trips, the logged
 | `spawnToken(ownerUnit | playerId, tokenId, row, col, { def, stats, hp, duration, untargetable, dir, kit, force, anySource })` | field tiles; def from data/tokens.json `variants[ownerChessId]` for the owner unit's selected skill / module (`tokenDef`); `dir` defaults to the owner unit's (else the player's: RIGHT, mirrored side LEFT; a legacy `facing` ±1 is still read); returns the token or null (tile busy; or the owner runs a **non-default** skill that does not produce the token — `producesToken` — unless `anySource`: kit install hooks written for the default skill run under every skill). `spawnDevice(key, row, col, { …, dir })` likewise |
 | `tokenDef(tokenId, ownerUnit | chessId)`, `producesToken(ownerUnit, tokenId)` | the token def a summon of that owner gets — `getToken(id, owner.defId, owner.def.loadout)`, exact even when two players of one field give the same chess different loadouts (prefer it over an id-only `battle.data.getToken(id, unit.defId)` for summon stats / blackboards); whether the owner's loadout makes the token (DATA.md §14 `sources` has 'skill' or 'talent'; true when the data does not tell: no own variant, player-owned summons) |
 | `spawnEnemy(enemyKey, { routeIndex, route, pos, mods, tag, sourcePlayerId, ownerPlayerId, bounty, countInTotal, def })` | returns the enemy, or null past `MAX_ALIVE_ENEMIES`; `def` = inline record (enemies.json shape or normalised) for keys missing from data |
-| `spawnDevice(key, row, col, { hp, obstacle, blockCnt, name, def, res, atk, bat, aspd })`, `setObstacle(r, c, on)` | obstacles re-path enemies; spawnDevice returns null outside the rect or on a living unit |
-| `isReservedTile(r, c)` | true when a living unit stands there or it is the home tile of an ally piece that has not deployed yet / waits to redeploy — summon tile pickers must skip these (`findTacticalPoint` does) |
+| `spawnDevice(key, row, col, { hp, obstacle, blockCnt, name, def, res, atk, bat, aspd })`, `setObstacle(r, c, on)` | obstacles re-path enemies; spawnDevice returns null outside the rect, on a living unit or on a knocked-out operator's tile |
+| `isReservedTile(r, c)` | true when a living unit stands there or it is the rest tile (`restTile`) of an ally piece that has not deployed yet / waits to redeploy — the tile a knocked-out operator lies on, else the home tile — every automatic picker (the 突袭 landing tile, tactical points, summon / device tiles) must skip these (`findTacticalPoint` does) |
+| `downOn(r, c, except?)`, `restTile(u)` | the knocked-out operator lying on a tile (no ally deploys / moves there: `_deploy`, `spawnDevice`, `relocate`); the tile a withdrawn ally comes back on — its `body` tile when knocked out, else its home (§1) |
 | `addProjectile({ from, target | to:{x,y}, speed, onHit(ctx), visual, source, hitDead })` | homing; fizzles if the target dies unless `hitDead` |
 | `allySelectable(ally, by)`, `alliesFor(by, ownerId?)` | may an ability of ally `by` select `ally` — never a 孤立 unit (炎佑, 从不混淆的方向) but `by` itself (PRTS 选择器: "若掩码中孤立为1，且选择器的阵营与目标为友好关系，则不可选中"); `allies()` without the 孤立 ones — content picks ally targets (buffs, auras, 全场 talents, heal picks) through these, `alliesInGrid` too |
 | `unitsInGrid(unit, grid, {side, extend})`, `alliesInGrid(unit)`, `enemiesInRadius(x, y, r, centre?)`, `alliesInRadius(x, y, r, ownerId?)` | grid offsets are relative to facing RIGHT, rotated by `unit.dir`; enemies by their body (§2 hit areas: a huge enemy on every tile it occupies / within `r` of its rectangle; `centre` = splash around a target, a 中点判定 by position) |
@@ -571,7 +584,7 @@ or guard with a per-unit flag while dealing it. When the guard trips, the logged
 | `getPlayer(playerId)` | `{ playerId, seat, side, colOffset, mirror, dir (default unit direction: RIGHT, mirrored side LEFT), facing (its sign), bonds (live copy, layers updated by addLayers), bandId, playerEffects, lpForBoss, dp, units }` |
 | `mapTile(ps, row, col, abs?)` / `mapDir(ps, dir, abs?)` | board → field tile / direction of a player (the FA right-side mirror) |
 | `addDp(playerId, n)`, `retreat(unit, {reason, permanent})`, `relocate(unit, r, c)` | |
-| `redeploy(unit, { free=true, tile, keepSp })` | immediate (re)deployment of a dead/retreated ally (full HP, `deploy {initial:false}`); `free: false` pays `base.cost` DP (refused without it); `tile: [r, c]` lands on that tile once (home unchanged — later redeploys use the board tile; refused when off-rect or occupied, no fallback); `keepSp` keeps SP/charges (保留技力), restored before `deploy` fires — 突袭 raids, 阿戈尔 revive in place |
+| `redeploy(unit, { free=true, tile, keepSp })` | immediate (re)deployment of a dead/retreated ally (full HP, `deploy {initial:false}`); `free: false` pays `base.cost` DP (refused without it); without `tile` it lands on the unit's rest tile (`restTile`: where a knocked-out operator lies, else home); `tile: [r, c]` lands on that tile once (home unchanged; refused when off-rect, occupied or a knocked-out operator's tile, no fallback); `keepSp` keeps SP/charges (保留技力), restored before `deploy` fires — 突袭 raids, 阿戈尔 / 不屈 revives where the unit lies |
 | `refreshRange(unit)`, `setExtraRange(unit, keys)`, `rangeChanged(unit)` | rebuild the ranges after changing `unit.rangeGrid` (流形 copies); extra targetable tiles (absolute keys; merged into every later rebuild until set again; `null` clears; never in `baseRangeKeys`): 蕾缪安 wanted, 维娜 S3 |
 | `push(enemy, force, {from, dir, fixed, fixedAngle, inward, effect})`, `pull(enemy, force, {to, center, stop})`, `pullToFront(enemy, unit, force)`, `forceLevel(enemy, force)`, `pushDistance(enemy, force, {effect})` | the official 位移 (PRTS 游戏数据基础 §重量公式 / 推与拉; user playtest #6 item 14): 受力等级 = 力度 (微小力 −1, 小力 0, 中力 1, 较大力 2, 大力 3 …) − current 重量等级 (massLevel, 失重 counts). Push distance per level (`constants.js PUSH_TILES`, PRTS 推与拉's 弹道 column): ≤ −3 → 0, −2 → 0.12, −1 → 0.44, 0 → 1.7, 1 → 2.14, 2 → 2.96, ≥ 3 → 3.53 tiles; `effect` = a 特效 push (`PUSH_TILES_EFFECT`: −2 → 0.085, −1 → 0.374, 0 → 1.562, 1 → 1.987, 2 → 2.773, ≥ 3 → 3.331 — 见行者 S1 / S2, `PUSH_EFFECT_SKILLS`; every other pusher uses the 弹道 column [ASSUMED]); radial (away from `from`) unless `dir` (directional: 推击手, 朝部署方向 — > 45° off or < 0.25 tile ⇒ radial and level −2; `fixed` waives both (圣聆初雪 S1), `fixedAngle` only the angle (见行者 S2)); `inward` = a push towards `from` (薄绿 S2), stopping at the 急停 radius. Pull: level ≥ 0 → to `to` / the 急停 radius around `center`, −1 → 35 % of the way, −2 → 0.03, ≤ −3 → 0; `pullToFront` aims at the 拉力起点 0.5 tile ahead of the unit with the 急停 radius 0.6708 around it (never moves an enemy the unit itself blocks — nor does a pull towards an ally's centre, e.g. the 流形 S3 pulse) |
 | `displace(enemy, {x, y}, tiles)` | the raw mover behind push / pull: along passable tiles (by `motion`: FLY in the rect, else ground-passable), no weight rule; nothing for 失衡免疫 (`noDisplace`: 近地悬浮, 浮空) and leaders; unblocks + re-paths |
@@ -947,10 +960,11 @@ Unknown subprofessions fall back to the profession default (test `professions.te
 
 - `snapshot()` → `{ fieldId, t, units: [[id, x, y, hp, maxHp, sp, spMax, flags, anim]], dp, killed, total, dps?, boss?, down?, elem? }`.
   `sp/spMax` show remaining duration/ammo as a draining bar while a timed skill is active. Units in DIE state stay 0.8 s.
-  `down: [[id, respawnAt, respawnTime, state]]` (only when non-empty) = knocked-out operators waiting to redeploy
+  `down: [[id, respawnAt, respawnTime, state, row, col]]` (only when non-empty) = knocked-out operators waiting to redeploy
   (`Battle.isDown(u)`: reason `'killed'` or `FORCED_EXIT` (§1.1 carryState `down`), deployed at least once, a finite
   respawn timer; `state` = constants.js
-  `DOWN_STATE`: 0 counting, 1 timer done / DP short, 2 timer done / own tile taken); `elem: [[id, element, fill,
+  `DOWN_STATE`: 0 counting, 1 timer done / DP short, 2 timer done / its tile taken — a safeguard: no ally deploys on a
+  knocked-out operator's tile, §1; `row, col` = the tile it lies on and comes back on, `unit.body`); `elem: [[id, element, fill,
   cooldownEnd, cooldown]]` (only when non-empty) = `elementView` of every unit with a gauge or a running 爆发冷却 (§3).
   `fieldMeta()` lists the knocked-out operators too (a client joining mid-battle shows them; DESIGN §18.3).
 - `drainEvents()` tuples: `['spawn', UnitInfo]` (first appearance), `['deploy', id]` (every (re)deploy), `['atk', src, tgt, projKind]`
