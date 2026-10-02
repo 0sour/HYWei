@@ -417,7 +417,9 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   the hand / temp (kept through the next prep, see Hand). In a boss round's prep the tile is read on the player's half of
   the boss field (board coordinates unchanged). `onMerge` carries `area` ('board' | 'hand' | 'temp').
 * **Board**: rows 9–12 × cols 2–10, legality from `stages[id].tiles` + devices (board.js); deploy cap 8 (+effects);
-  summons don't use slots; board↔hand swaps always allowed. A terrain change (terrain 机变 cards such as 模拟战场演变·
+  summons don't use slots; board↔hand swaps always allowed. The legend's `buildable` is the effective deploy type: the
+  深水区 (`tile_deepsea`, 战场#08's pool — level buildableType ALL) refuses deployment (PRTS 地形 深水区 "拒绝部署"; a
+  特制水上平台 device makes its tile deployable for any unit; player report #3 after 0.1.0). A terrain change (terrain 机变 cards such as 模拟战场演变·
   模式二 "阻隔工事变为射击台", content `setDeviceActive` / `setTileOverride`) is checked at the next `recompute()` (at the
   latest when the battle input is built): a piece left on a tile it may no longer occupy — a melee operator on a new
   射击台 — is withdrawn to the hand (overflow temp: re-placed during the prep; its summons leave with it), a summon back
@@ -431,7 +433,14 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   where it was dropped) sends its placed summons back onto their stack ("移动干员时，其所属召唤物全部退场并重置至手牌区";
   `PlayerState._liftTokensOf`). A stack that overflowed into temp and was removed at a prep deadline comes back at the
   next round start (§手牌区 "干员所属召唤物会于下一回合返还": `PlayerState.startRound` tops every board owner's summons up
-  to the deploy limit, `grantTokensFor`). Battle side: SIM.md §1.1 token pieces.
+  to the deploy limit, `grantTokensFor`). A summon whose text reads "只能部署在召唤者攻击范围内" (tokens.json `ownerRange`:
+  the tacticians' 援军, 伺夜 狼群 / 缪尔赛思 流形 — choosing the tactical point; player report #9 after 0.1.0) only goes on
+  a tile of its owner's attack range: the owner's loadout grid (`attackRangeGrid`) rotated by its facing around its tile
+  (`PlayerState._legal` / `summonRange`, `board.js ownerRangeKeys`; a summon dragged onto its own owner is checked from
+  the owner's new tile, an operator dragged onto the summon from the summon's new tile). When the owner is re-oriented in
+  place (or promoted) a summon its new range leaves out goes back onto its stack with a toast (`_liftOutOfRange` in
+  `recompute`) — one still inside stays [ASSUMED]. The client lights and accepts the same tiles (`ui/gameLogic.js
+  summonRange`), the bot plans inside them. Battle side: SIM.md §1.1 token pieces.
 * **Bonds**: bondsMeta.js (BOARD distinct, BOARD_AND_DECK, 绝技 elites, 调和 +1, 独行 downward, 助力 upper tiers,
   变形同构体 grants). Σ activated layers for the hidden core = Σ layers of active bonds at the boss round's prep end.
   **Layer cap** (research 11 §1; the client's `MAX_GARRISON_STACK` / `AddBondCount` = min(L + n, 999)): each bond's

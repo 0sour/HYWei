@@ -34,7 +34,9 @@
 //      generators that yield between whole actions (never with a transient board) — the same actions in the same
 //      order as the one-shot functions (runSteps), hence the same rng draws and decisions.
 //      The summon cards of the placed operators (赫默's 医疗探机, 伺夜's 狼群 …; user playtest #6) are placed after
-//      them on the best remaining tiles, 凯瑟琳's 支援装置 next to the best operator no device faces yet, facing it.
+//      them on the best remaining tiles — the tacticians' 狼群 / 流形 only inside their owner's attack range
+//      (PlayerState.summonRange; player report #9 after 0.1.0) —, 凯瑟琳's 支援装置 next to the best operator no device
+//      faces yet, facing it.
 //   5. equip items on the strongest deployed damage dealers (consume-on-equip items / Arts only with a handler)
 //   6. resolve the temp slots, keep one hand slot free, then Ready.
 // Placement quality (tools/matchrun sweeps, research-faithful waves): the planner beats random layouts by ≈ 8 points
@@ -606,9 +608,11 @@ export function* planLayoutSteps(m, ps, pieces, params = LAYOUT_PARAMS, { occupi
     if (!r0) continue;
     let best = null;
     let bestV = -Infinity;
+    // a "只能部署在召唤者攻击范围内" summon (伺夜's 狼群, 缪尔赛思's 流形): only the tiles of its owner's range
+    const within = p.kind === 'token' && typeof ps.summonRange === 'function' ? ps.summonRange(p) : null;
     for (const [r, c] of legalTiles(map, positionClass(r0))) {
       const k = tileKey(r, c);
-      if (taken.has(k)) continue;
+      if (taken.has(k) || (within && !within.has(k))) continue;
       const noise = m.rngBots() * 1e-6;
       const seen = new Set();
       for (const dir of PLAN_DIRS) {

@@ -23,7 +23,9 @@
 //                      + 脆弱 ×damage_scale for weak[limit] s
 //   助力 deputShip     all operators DEF +(base + per·L), redeploy time ×(1 + respawn_time)
 //   突袭 raidShip      member idle ≥ no_attack_duration s (or skill ready) with no enemy in range → "保留技力立即再部署"
-//                      next to the most advanced ground enemy: a real redeployment (retreat + free redeploy on the
+//                      next to the most advanced ground enemy, on a free tile its position may be deployed on
+//                      (grid.canStand: never the 深水区 — player report #3 after 0.1.0, members dropped into 战场#08's
+//                      pool after an enemy wading in it): a real redeployment (retreat + free redeploy on the
 //                      landing tile, full HP, `deploy` fires — 部署时 traits such as 史尔特尔, 突袭手雷, 卡西米尔, 叙拉古)
 //                      with its SP / charges kept (engine redeploy tile + keepSp); ATK/HP +(base + per·L)
 //                      until it leaves the field; later redeploys use its board tile again;

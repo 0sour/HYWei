@@ -5,6 +5,11 @@
 // Stage input: `{ id, rows: string[19] (bottom-first), legend?: {glyph: {...}}, devices?: [...] }`.
 // Legend entries are normalised from either the research format (heightType/buildableType/passableMask/tileKey)
 // or the build-data format (height/build/passable/terrain); missing glyphs fall back to DEFAULT_LEGEND.
+// `build` is the EFFECTIVE deploy type: a tile whose mechanism refuses deployment (DEPLOY_REFUSED_TILES: 深水区
+// tile_deepsea — PRTS 地形 深水区 "地形机制：拒绝部署"; player report after 0.1.0: operators stood in 战场#08's pool and
+// 突袭 members jumped into it) is NONE whatever its level buildableType (ALL), so `canStand` — every automatic
+// placement: the 突袭 landing tile, tactical points, summon tiles — and the path tie-break below treat it as ground no
+// operator can stand on. data/stages.json legends already carry the effective value (tools/build-data.mjs).
 //
 // Pathfinding = the official client's (`Torappu.Battle.SPFA`, research 08 §3.1/§3.4): one FLOW FIELD per destination,
 // a FIFO SPFA from the destination over the rect with the 4 neighbours UP (row+1), RIGHT, DOWN, LEFT (in that order,
@@ -18,7 +23,8 @@
 // operator can block them"). Two refinements on top of the official algorithm; `dist` (so the crate cost 1000 and
 // every grid route length) stays exactly the official one:
 //   * tie-break: the SPFA relaxes on (dist, pen) lexicographically, `pen` = number of NON-BLOCKABLE walkable tiles
-//     (floor / gate / goal / teleport tiles — `blockable()` false: not LOW ground buildable for melee) on the chain.
+//     (floor / gate / goal / teleport / 深水区 tiles — `blockable()` false: not LOW ground buildable for melee) on the
+//     chain (the 深水区 on 战场#08's routes is unavoidable: no route there changed when it became non-buildable).
 //     Among equal-length chains the one with the fewest non-blockable tiles wins; remaining ties go to the first
 //     parent in SPFA order (the official order unless a pen improvement re-queued a tile).
 //   * smoothing: a line of sight may only cross a non-blockable tile (including the corner tiles of a diagonal step)
@@ -67,9 +73,16 @@ export const DEFAULT_LEGEND = Object.freeze({
   O: { height: 'LOW', build: 'NONE', pass: 'ALL', key: 'tile_telout', special: 'telout' },
   m: { height: 'LOW', build: 'ALL', pass: 'ALL', key: 'tile_mire', terrain: 'mire' },
   g: { height: 'LOW', build: 'ALL', pass: 'ALL', key: 'tile_smog', terrain: 'smog' },
-  d: { height: 'LOW', build: 'ALL', pass: 'ALL', key: 'tile_deepsea', terrain: 'deepsea' },
+  d: { height: 'LOW', build: 'NONE', pass: 'ALL', key: 'tile_deepsea', terrain: 'deepsea' },
   i: { height: 'LOW', build: 'ALL', pass: 'ALL', key: 'tile_infection', terrain: 'infection' },
 });
+
+/**
+ * Tile keys whose mechanism refuses deployment although the level's buildableType allows it: 深水区 tile_deepsea (PRTS
+ * 地形 深水区 "部署类型 全部位 … 地形机制 拒绝部署"; the season-1 战场#05 puts a 特制水上平台 — "在水上建立可以部署任意单位
+ * 的平台" — on every one of its 深水区 tiles). Shared with tools/build-data.mjs (the stages.json legend's `buildable`).
+ */
+export const DEPLOY_REFUSED_TILES = Object.freeze(new Set(['tile_deepsea']));
 
 const TERRAIN_BY_KEY = { tile_mire: 'mire', tile_smog: 'smog', tile_deepsea: 'deepsea', tile_infection: 'infection', tile_deepwater: 'deepsea' };
 const SPECIAL_BY_KEY = { tile_start: 'start', tile_end: 'end', tile_telin: 'telin', tile_telout: 'telout' };
@@ -92,7 +105,8 @@ export function normalizeLegendEntry(glyph, e) {
   const heightRaw = e.height ?? e.heightType;
   const height = heightRaw == null ? base.height : (/HIGH/i.test(String(heightRaw)) ? 'HIGH' : 'LOW');
   const buildRaw = e.build ?? e.buildable ?? e.buildableType;
-  const build = buildRaw == null ? base.build : (buildRaw === true ? 'ALL' : buildRaw === false ? 'NONE' : String(buildRaw).toUpperCase());
+  const build = DEPLOY_REFUSED_TILES.has(key) ? 'NONE'
+    : buildRaw == null ? base.build : (buildRaw === true ? 'ALL' : buildRaw === false ? 'NONE' : String(buildRaw).toUpperCase());
   let pass;
   if (e.pass != null) pass = normPass(e.pass);
   else if (e.passable != null || e.passableMask != null) pass = normPass(e.passable ?? e.passableMask);
@@ -171,11 +185,17 @@ export class Grid {
 
   flyPassable(r, c) { return this.inRect(r, c) && this.tile(r, c).pass !== 'NONE'; }
 
-  /** Whether a unit may stand on this tile. `ranged` units may also use LOW ALL/MELEE tiles (DESIGN §3). */
+  /**
+   * Whether a unit may be placed on this tile (every automatic placement: the 突袭 landing tile, tactical points, summon
+   * tiles). `ranged` units may also use LOW ALL/MELEE tiles (DESIGN §3). The effective `build` refuses the 深水区
+   * (DEPLOY_REFUSED_TILES); a hard-blocked tile (OB_BLOCK: a 射击台 switched on by a map card, a mound) takes no melee
+   * unit — the match's deploy map makes a 射击台 ranged-only (server/match/board.js).
+   */
   canStand(r, c, { ranged = false } = {}) {
     const t = this.tile(r, c);
     if (t.build === 'NONE') return false;
     if (ranged) return t.build === 'ALL' || t.build === 'RANGED' || (t.height === 'LOW' && t.build === 'MELEE');
+    if (this.inBounds(r, c) && (this.obstacle[r * COLS + c] & OB_BLOCK)) return false;
     return t.height === 'LOW' && (t.build === 'ALL' || t.build === 'MELEE');
   }
 

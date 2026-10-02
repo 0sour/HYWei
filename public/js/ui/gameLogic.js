@@ -5,7 +5,10 @@
 //
 //   Board = own normal field (GEO.FIELD rows 9–12, cols 2–10). Melee chess stand on `melee` deploy tiles
 //   (LOW, buildable ALL/MELEE); ranged chess on `melee ∪ rangedOnly` (stages.json → deployTiles.normal,
-//   derived from the tile legend when missing). Tokens follow their own `position`. In the prep of a boss round
+//   derived from the tile legend when missing — the legend's `buildable` is the effective type: 深水区 tile_deepsea
+//   refuses deployment, PRTS 地形 深水区 "拒绝部署", player report #3 after 0.1.0). Tokens follow their own `position`;
+//   a summon whose text reads "只能部署在召唤者攻击范围内" (tokens.json `ownerRange`: 伺夜's 狼群, 缪尔赛思's 流形) also
+//   needs a tile of its owner's attack range (`summonRange`, player report #9). In the prep of a boss round
 //   (最终攻势 / 隐秘核心) the tiles are the player's half of the boss field (`deployFieldOf`: 'bossL' / mirrored
 //   'bossR', board (r, c) = stage tile (r − 7, c) / (r − 7, 20 − c)) like the server's deploy map (server/match/
 //   board.js field; user playtest #5 item 7) — board coordinates stay the same.
@@ -19,7 +22,8 @@
 
 import { GEO, PHASE, UF } from '../../../shared/constants.js';
 import { resolveLoadout, loadoutOptions, MODULE_NONE } from '../../../shared/protocol.js';
-import { resolveRecordLoadout, loadoutRecord } from '../../../shared/loadoutRecord.js';
+import { resolveRecordLoadout, loadoutRecord, attackRangeGrid } from '../../../shared/loadoutRecord.js';
+import { rotateOffset, pieceDir } from './facing.js';
 import { layoutPen } from '../render/pen.js';
 import { BOSS_ROW_SHIFT, MAX_COL } from '../render/prepfield.js';
 import { bossLevelSeconds } from './matchStatus.js';
@@ -614,6 +618,8 @@ export function deploySets(stage, field = 'normal', overrides = {}) {
 
 const OBSTACLE_ROLES = new Set(['crate', 'mound']);
 const PLATFORM_ROLES = new Set(['platform']);
+/** 特制水上平台 (act1 m05, weight 0 this season): its 深水区 tile takes any unit ("在水上建立可以部署任意单位的平台"). */
+const WATER_PLATFORM_ROLES = new Set(['waterPlatform']);
 const hasKeys = (o) => isObj(o) && Object.keys(o).length > 0;
 
 /**
@@ -689,6 +695,7 @@ export function deployMap(stage, { deviceOverrides = {}, tileOverrides = {}, fie
     if (!active) continue;
     if (OBSTACLE_ROLES.has(d.role)) map.delete(tileKey(r, c));
     else if (PLATFORM_ROLES.has(d.role)) map.set(tileKey(r, c), 'ranged');
+    else if (WATER_PLATFORM_ROLES.has(d.role)) map.set(tileKey(r, c), 'melee');
   }
   for (const [k, v] of Object.entries(isObj(tileOverrides) ? tileOverrides : {})) {
     const [r, c] = String(k).split(',').map(Number);
@@ -786,6 +793,39 @@ export function tileAllows(ctx, piece, row, col) {
 }
 
 /**
+ * Board tiles ('r,c') where a summon whose text reads "只能部署在召唤者攻击范围内" may stand (tokens.json `ownerRange`:
+ * 伺夜's 狼群, 缪尔赛思's 流形 — the tactical point; player report #9 after 0.1.0): its owner's attack range (the
+ * loadout's grid, shared/loadoutRecord.js attackRangeGrid, rotated by the owner's facing around its tile). Null when
+ * the piece is not range-bound or its owner is not on the board. `owner` ({ row, col, piece }) replaces the owner's
+ * current position (a summon swapped with its own owner). Mirror of server/match/PlayerState.js summonRange.
+ * @param {ReturnType<typeof placementContext>} ctx
+ * @returns {Set<string> | null}
+ */
+export function summonRange(ctx, piece, owner = null) {
+  if (!isObj(piece) || piece.kind !== 'token' || ctx?.getToken?.(piece.id)?.ownerRange !== true) return null;
+  let at = owner;
+  if (!at) for (const e of ctx.boardAt.values()) if (e.piece.uid === piece.ownerUid && e.piece.kind === 'chess') { at = e; break; }
+  const rec = at && ctx.getChess(at.piece.id);
+  if (!rec) return null;
+  let grid = null;
+  try { grid = attackRangeGrid(chessLoadout(rec, ctx.priv?.loadout ?? null, ctx.getChess)?.record || rec); } catch { /* the data grid */ }
+  const out = new Set();
+  for (const g of grid || rec.rangeGrid || []) {
+    if (!Array.isArray(g)) continue;
+    const [dr, dc] = rotateOffset(g[0], g[1], pieceDir(at.piece));
+    out.add(tileKey(at.row + dr, at.col + dc));
+  }
+  return out;
+}
+
+/** tileAllows plus the owner-range rule of a range-bound summon (summonRange). */
+function unitAllowed(ctx, piece, row, col, owner = null) {
+  if (!tileAllows(ctx, piece, row, col)) return false;
+  const range = summonRange(ctx, piece, owner);
+  return !range || range.has(tileKey(row, col));
+}
+
+/**
  * Placement legality of dropping piece `uid` on `target` (mirror of server/match/PlayerState.js move / equip /
  * useArt and server/match/board.js canPlace):
  *   board ← chess: legal tile for its position; empty tile or a chess occupant (swap; from the board the occupant
@@ -849,9 +889,16 @@ export function canPlace(ctx, uid, target) {
       const deployable = ctx.deploy.ranged.has(tileKey(row, col));
       return no('BAD_TILE', deployable && piecePosition(ctx, piece) === 'MELEE' ? '近战单位只能部署在地面' : '无法部署在该位置');
     }
+    // a range-bound summon (战术点): inside its owner's attack range — seen from the summon's old tile when it is
+    // dropped onto its own owner (the two swap)
+    const ownerSwap = src.area === 'board' && occ && occ.piece.uid === piece.ownerUid ? { row: src.row, col: src.col, piece: occ.piece } : null;
+    const range = summonRange(ctx, piece, ownerSwap);
+    if (range && !range.has(tileKey(row, col))) return no('BAD_TILE', '只能部署在召唤者攻击范围内');
     if (src.area === 'board') {
-      // board → board: move or swap (the occupant must be legal on the source tile)
-      if (occ && !tileAllows(ctx, occ.piece, src.row, src.col)) return no('BAD_TILE', '交换后的单位无法部署在原位置');
+      // board → board: move or swap (the occupant must be legal on the source tile — the mover's own summon excepted:
+      // a moved operator's summons go back to the hand anyway)
+      const ownSummon = occ && occ.piece.kind === 'token' && occ.piece.ownerUid === piece.uid;
+      if (occ && !ownSummon && !unitAllowed(ctx, occ.piece, src.row, src.col)) return no('BAD_TILE', '交换后的单位无法部署在原位置');
       return { ok: true, action: occ ? 'swap' : 'move' };
     }
     if (piece.kind === 'token') {

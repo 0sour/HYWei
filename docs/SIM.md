@@ -103,7 +103,10 @@ waits on its tile and takes the field there each time the skill gives one (stock
 once it left, free; never while its owner is off the field [ASSUMED] — a stocked one deploys as soon as the owner is
 back; the doll also leaves when 巫恋 leaves, the drone stays when 赫默 leaves: PRTS token 备注). A skill's summon, a
 device or 海嗣 that was not placed never appears (the hidden 待部署区 deploys nothing by itself); the tacticians' 狼群 /
-流形 still come as their 援军 on a tactical point without a piece (content/tokens.js `tacticalPoint`). The start deploy
+流形 still come as their 援军 on a tactical point without a piece (content/tokens.js `tacticalPoint`). Their piece stands
+inside the tactician's attack range — the prep enforces "只能部署在召唤者攻击范围内" (tokens.json `ownerRange`, player
+report #9 after 0.1.0) — and the kits re-use the piece's tile for a re-summoned pack only while it is a free, standable
+tile of her initial range (tier3 `tacticalPoint`, tokens.js `ensureReinforcement`). The start deploy
 is the user's call after playtest #6 (DESIGN §20); `shared/constants.js SKILL_SUMMON_START_DEPLOY = false` would bring
 back the playtest #4 reading (only with the skill) in the sim and the summon card's hint (docs/PLAYING.md §4 and this
 passage must follow; test/ui/playtest6_summons.test.js checks).
@@ -575,9 +578,9 @@ or guard with a per-unit flag while dealing it. When the guard trips, the logged
 | `after(seconds, fn, {owner})`, `every(seconds, fn, {owner, immediate})` | return `{cancel()}`; fn(battle, sched) |
 | `fx(kind, params)`, `rng()` (+ `rng.int/range/chance/pick/shuffle/weighted`) | never use Math.random |
 | `forceAttack(unit, targets?, { noAmmo })` | an immediate attack with the current profile (hooks, attack SP, a running ammo skill's bullet); `noAmmo: true` = spends no bullet and emits no `ammoUsed` (圣约送葬人 extra attack). Returns true when it attacked |
-| `findTacticalPoint(unit)`, `groundPathTiles()` | tactical point (战术点, tactician 援军 / talent tokens): a free (`isReservedTile`) walkable tile of the initial range **on an enemy ground path first** (`groundPathTiles`: grid paths of every non-FLY route, cached per grid version), then nearest (Chebyshev, rows break ties), then the lowest tile key |
+| `findTacticalPoint(unit)`, `groundPathTiles()` | tactical point (战术点, tactician 援军 / talent tokens): a free (`isReservedTile`) walkable, standable (`canStand`: never the 深水区) tile of the initial range **on an enemy ground path first** (`groundPathTiles`: grid paths of every non-FLY route, cached per grid version), then nearest (Chebyshev, rows break ties), then the lowest tile key |
 | `effectiveProfile(unit)`, `reduceElement(unit, amount, el?)` | |
-| `battle.grid` | `tile(r,c)` → `{glyph, key, height:'LOW'|'HIGH', build, pass:'ALL'|'FLY'|'NONE', terrain, special}`, `inRect`, `canStand(r,c,{ranged})`, `groundPassable`, `isLow`, `findPath(sr,sc,er,ec)`, `specialTiles('start'|'end'|…)`; `battle.rect`, `battle.stage` (normalised stage incl. `special` terrain params) |
+| `battle.grid` | `tile(r,c)` → `{glyph, key, height:'LOW'|'HIGH', build, pass:'ALL'|'FLY'|'NONE', terrain, special}`, `inRect`, `canStand(r,c,{ranged})` (every automatic placement: the 突袭 landing tile, tactical points, summon tiles — `build` is the effective deploy type, so never the 深水区 `tile_deepsea` (PRTS "拒绝部署"); no melee unit on a hard-blocked 射击台 / mound tile), `groundPassable`, `isLow`, `findPath(sr,sc,er,ec)`, `specialTiles('start'|'end'|…)`; `battle.rect`, `battle.stage` (normalised stage incl. `special` terrain params) |
 | `battle.data` | DataSource: `getChess(id, loadout?)`, `getEnemy(key)`, `getToken(id, ownerChessId, ownerLoadout?)`, `getStage(id)`, `getWave(id)` (normalised defs; raw record in `def.raw`; the per-battle loadout view, §12) |
 
 ---

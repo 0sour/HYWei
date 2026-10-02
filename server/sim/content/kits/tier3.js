@@ -137,12 +137,14 @@ function freeTile(battle, r, c) {
 /** Walkable ground tile a melee summon can stand on. */
 const groundTile = (battle, r, c) => battle.grid.groundPassable(r, c) && battle.grid.canStand(r, c);
 /**
- * Tactical point (战术点) of a tactician: `prefer` (the board piece's tile, i.e. the player's choice) when usable,
- * else the shared tactical point (tokens.js tacticalPoint = Battle.findTacticalPoint: a free walkable tile of its
- * initial range on an enemy ground path first, then the nearest one).
+ * Tactical point (战术点) of a tactician: `prefer` (the board piece's tile, i.e. the player's choice) when usable —
+ * free, standable ground (never 深水区: grid.canStand) inside her initial range ("只能部署在召唤者攻击范围内"; the prep
+ * already keeps the piece there, PlayerState._legal) —, else the shared tactical point (tokens.js tacticalPoint =
+ * Battle.findTacticalPoint: a free walkable tile of its initial range on an enemy ground path first, then the nearest).
  */
 function tacticalPoint(battle, unit, prefer = null) {
-  if (prefer && freeTile(battle, prefer[0], prefer[1]) && groundTile(battle, prefer[0], prefer[1])) return prefer;
+  const inRange = (r, c) => (unit.baseRangeKeys || unit.rangeKeys || []).includes(r * COLS + c);
+  if (prefer && freeTile(battle, prefer[0], prefer[1]) && groundTile(battle, prefer[0], prefer[1]) && inRange(prefer[0], prefer[1])) return prefer;
   return sharedTacticalPoint(battle, unit);
 }
 /** Tokens `tokenId` summoned by / placed for `owner` (board pieces included). */

@@ -188,7 +188,12 @@ const UNAVOIDABLE = {
   act2autochess_m01: { low: '', up: '12,9 11,9 10,9', uLow: '9,10', uUp: '12,17 11,17 10,17 9,10', b5: '5,9 4,9 3,9|5,11 4,11 3,11', b2: '|' },
   act2autochess_m02: { low: '', up: '12,9', uLow: '9,10', uUp: '12,17 9,10', b5: '5,9|5,11', b2: '|' },
   act2autochess_m03: { low: '10,9', up: '12,9', uLow: '10,17 9,10 10,9', uUp: '12,17 9,10 10,9', b5: '5,9|5,11', b2: '3,9|3,11' },
-  act2autochess_m04: { low: '', up: '12,9', uLow: '9,10', uUp: '12,17 9,10', b5: '5,9|5,11', b2: '|' },
+  // the 深水区 (cols 6 / 14 between the fences) refuses deployment (player report #3 after 0.1.0): non-blockable, and
+  // every route crosses it — the routes themselves did not change
+  act2autochess_m04: {
+    low: '10,6 11,6', up: '12,9 12,6', uLow: '10,14 11,14 9,10 10,6 11,6', uUp: '12,17 12,14 9,10 10,6 11,6',
+    b5: '5,9 5,6|5,11 5,14', b2: '3,6 4,6|3,14 4,14',
+  },
 };
 
 test('audit: every active stage × gate × field — the non-blockable tiles crossed are exactly the listed unavoidable ones', REAL, () => {
@@ -269,7 +274,9 @@ test('audit: every WALK leg of every wave template (normal / 联防 / boss / hid
     }
   }
   assert.ok(n > 200, `${n} legs audited (${extra} unavoidable non-blockable crossings)`);
-  assert.equal(accepted, 17, 'accepted boss-arena exceptions (update the count only after reviewing a new one)');
+  // (17 before 战场#08's 深水区 became non-blockable: on its boss field the +2 detours around the arena floor cross the
+  // water as well, so three of its legs are no longer exceptions — player report #3 after 0.1.0)
+  assert.equal(accepted, 14, 'accepted boss-arena exceptions (update the count only after reviewing a new one)');
 });
 
 // ---------------------------------------------------------------------------------------------------------------
