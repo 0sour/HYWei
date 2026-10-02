@@ -1502,6 +1502,7 @@ function kitBombd(ab) {
         if (!e.alive) return;
         const atk = e.s.atk;
         b._ev(['atk', e.id, t.id, 'droneBomb']);
+        e.form = 'bombed';                                   // UnitInfo.form: a view built later draws it bomb-less
         b.fx('phase', { x: e.x, y: e.y, id: e.id, kind: 'bombed' });
         b.addProjectile({ from: e, target: t, speed: PROJECTILE_SPEEDS.droneBomb, visual: 'droneBomb', source: e, hitDead: true,
           onHit: (c) => land(b, e, atk, c.target, c.x, c.y) });

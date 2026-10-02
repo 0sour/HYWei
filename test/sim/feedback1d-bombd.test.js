@@ -70,6 +70,7 @@ describe('D4 暴鸰: the bomb leaves the drone and lands', () => {
     assert.ok(Math.abs(relT - castAt - RELEASE) <= TICK + 1e-9, `released ${(relT - castAt).toFixed(3)} s after the trigger (OnAttack ${RELEASE})`);
     const phase = log.find(([, ev]) => ev[0] === 'fx' && ev[1] === 'phase');
     assert.ok(phase && phase[1][4].kind === 'bombed' && Math.abs(phase[0] - relT) < 1e-9, 'the model drops to its bomb-less mode at the release');
+    if (drone.alive) assert.equal(b.fieldMeta().units.find((u) => u.id === drone.id).form, 'bombed', 'a field opened later draws it bomb-less');
     assert.ok(hitAt != null, 'the bomb lands');
     assert.equal(firstHit.id, relEv[2], 'on the operator it was dropped on');
     assert.ok(hitAt - relT > TICK, `then flies (${(hitAt - relT).toFixed(3)} s at ${PROJECTILE_SPEEDS.droneBomb} tiles/s)`);

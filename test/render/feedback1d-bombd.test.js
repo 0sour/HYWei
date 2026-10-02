@@ -88,6 +88,13 @@ describe('D4 暴鸰: the drone lets go of its bomb on screen', () => {
     assert.equal(v.atkInterval, 5, 'a one-off drop leaves the attack rhythm alone');
   });
 
+  test('render/app.js keeps UnitInfo.form (a field opened after the drop) and hands the atk kind to the view', () => {
+    const src = readFileSync(path.join(ROOT, 'public/js/render/app.js'), 'utf8');
+    assert.match(src, /function addInfo\(u\)[\s\S]{0,2000}form: typeof u\.form === 'string' \? u\.form : undefined/);
+    assert.match(src, /src\.onAttack\?\.\(tgt, now, e\[3\]\)/);
+    assert.match(src, /v\.windUp\(t - upcomingT, e\[3\]\)/);
+  });
+
   test('the drop draws a falling bomb at the sim\'s speed and the mode change draws nothing of its own', () => {
     assert.ok(PROJ.droneBomb, 'PROJ.droneBomb');
     assert.equal(PROJ.droneBomb.speed, PROJECTILE_SPEEDS.droneBomb);

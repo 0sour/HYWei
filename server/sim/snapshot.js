@@ -1,8 +1,10 @@
 // server/sim/snapshot.js — compact serialization for clients (DESIGN §8.2).
 //
 // b.snap  = { fieldId, t, units: [[id, x, y, hp, maxHp, sp, spMax, flags, anim]], dp, killed, total }
-// UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, skillIndex?, moduleId? }
-//   dir = 'UP'|'RIGHT'|'DOWN'|'LEFT' (allies: the deploy direction, sim/dir.js); facing = its horizontal sign (±1).
+// UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, skillIndex?, moduleId?, form? }
+//   dir = 'UP'|'RIGHT'|'DOWN'|'LEFT' (allies: the deploy direction, sim/dir.js); facing = its horizontal sign (±1);
+//   form = an enemy's current mode (`unit.form`, the last fx 'phase' kind content recorded — 暴鸰 'bombed'), so a view
+//   built after the change (a field opened mid-battle) draws it (render/units.js FORMS).
 // flags bits & anim codes come from shared/constants.js (UF / ANIM).
 
 import { UF, ANIM } from '../../shared/constants.js';
@@ -33,6 +35,7 @@ export function unitInfo(u) {
     motion: u.motion === 'FLY' ? 'FLY' : undefined,
     boss: u.isBoss ? true : undefined,
     uid: u.uid ?? undefined,
+    form: typeof u.form === 'string' ? u.form : undefined,
     // DESIGN §16: the equipped skill's index (the renderer / audio pick that skill's Spine clip and sound)
     skillIndex: u.side === 'ally' && Number.isInteger(d.skill?.index) ? d.skill.index : undefined,
     // DESIGN §16: an elite ally's equipped module (uniEquipId | 'none'; display only — a teammate's unit in a shared

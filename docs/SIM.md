@@ -963,7 +963,7 @@ Unknown subprofessions fall back to the profession default (test `professions.te
   `['heal', tgt, amount]`, `['skill', id, 1|0]`, `['die', id, reason]`, `['leak', id]`, `['status', id, key, 1|0]`,
   `['fx', kind, x, y, extra]` (`hitCap` `{ id, n }`: a leader's hit cancelled by 限伤 — the renderer draws nothing),
   `['layer', playerId, bondId, n]` (n = the layers actually added, capped at 999), `['bounty', playerId, coins]`.
-- `UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?, skillIndex? }` (`skillIndex`: an ally's equipped skill, DESIGN §16)
+- `UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?, skillIndex?, form? }` (`skillIndex`: an ally's equipped skill, DESIGN §16; `form`: an enemy's mode recorded by content as `unit.form` — 暴鸰 `'bombed'` after its drop — for views built later)
   (`dir` = the unit direction, allies meaningful, enemies 'RIGHT'; `facing` = its horizontal sign for sprite flipping)
   (`spine`/`avatar` are asset ids from data).
 - flags: UF bits (blocked 1, stunned 2, frozen 4, stealth 8 — 隐匿 or an ally's 迷彩 — skill 16, shield 32, invuln 64, cold 128, sleep 256, flying 512);

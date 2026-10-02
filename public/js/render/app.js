@@ -1296,6 +1296,8 @@ export async function createFieldView(host, options = {}) {
       // tap hands them to the detail card (a teammate's unit shows its owner's skill / module)
       skillIndex: Number.isInteger(u.skillIndex) ? u.skillIndex : undefined,
       moduleId: typeof u.moduleId === 'string' ? u.moduleId : undefined,
+      // an enemy's mode already taken (UnitInfo.form: 暴鸰 'bombed'): a field opened later draws it (units.js FORMS)
+      form: typeof u.form === 'string' ? u.form : undefined,
     };
     infos.set(info.id, info);
     return info;
