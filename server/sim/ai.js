@@ -12,9 +12,10 @@
 // but walks the ground. An unblocked enemy touching an ally with free block capacity — within its block radius (0.7071
 // ground, 0.8944 air, devices 0.4472; Battle._checkBlock) — is blocked, moving or not, so an enemy overlapping an
 // operator is taken over once its blocker is gone. Blocked enemies fight their blocker (ranged ones may pick anyone in
-// range, blocker first); every blocker — a ranged operator on a melee tile included — may always target the enemies
-// it blocks, in range or not, whatever its facing, and targets them first (acquireTargets, Battle.blockedTargets;
-// user playtest #6: "阻挡了就一定要能打到").
+// range, blocker first); every blocker whose attack hits enemies — a ranged operator on a melee tile included — may
+// always target the enemies it blocks, in range or not, whatever its facing, and targets them first (acquireTargets,
+// Battle.blockedTargets; user playtest #6: "阻挡了就一定要能打到"); a heal attack keeps selecting injured allies while
+// its unit blocks (PRTS 卫戍协议/帮助 "对于医疗干员（咒愈师分支除外），攻击目标为需要治疗的单位").
 // Unblocked ranged enemies attack allies within their radius and pause ATTACK_PAUSE seconds after each attack; the
 // candidates pass the enemy's own rule (`e.profile.canTarget`) and are ordered blocker → taunt → latest deployed
 // (targeting.js sortAllyTargets). An enemy's damage type is its data's unless content arms it (`e.profile.dmgType`:
@@ -103,6 +104,9 @@ export function enforceBlockCapacity(b, u) {
 
 /** Collect targets for an ally with profile `prof`. */
 export function acquireTargets(b, u, prof) {
+  // a heal attack (医师 / 群愈师 / 疗养师 / 链愈师 / 行医, a skill attack turned into a heal) selects injured allies only,
+  // never the enemies its unit blocks — a blocking healer keeps healing: PRTS 卫戍协议/帮助 "对于医疗干员（咒愈师分支除外），
+  // 攻击目标为需要治疗的单位" (the blocked-first rule below is for attackers of enemies; community feedback after 0.1.0, E2)
   if (prof.heal && prof.dmgType === 'heal') {
     let cands = b.injuredAlliesInKeys(u.rangeKeys, u, !!prof.heal.elementHealRatio);
     // a heal restricted to allies at or below an HP ratio (塞雷娅 S1 急救 "血量小于等于一半")

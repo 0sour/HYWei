@@ -202,6 +202,13 @@ targets from the range (`beforeAttack`) adds `battle.blockedTargets` to its cand
 S2: icicles on random tiles of her range). This replaces the
 playtest #5 QA's melee-only reading (PRTS 索敌的概念 "我方索敌优先级：阻挡（近战限定）"; "远程位干员…无法攻击到这个敌人");
 DESIGN §20 keeps the one-line flip (`Battle.blockedTargets` / `sortEnemyTargets` gated on a melee position again).
+The every-blocker rule is for units whose attack hits enemies (咒愈师 included: "攻击造成法术伤害"). A healer — dmgType
+`heal` (医师 / 群愈师 / 疗养师 / 链愈师 / 行医, the map characters 预备干员-医疗 / Touch) or a skill attack turned into a
+heal (古米 S1 / S2, 塞雷娅 S1, 波登可 S1) — selects injured allies only and keeps healing while it blocks; it never targets
+the enemy it blocks (PRTS 卫戍协议/帮助 "对于医疗干员（咒愈师分支除外），攻击目标为需要治疗的单位"; PRTS 仇恨
+HP_RATIO_NOT_FULL_ASC; PRTS 选择器 adds only the blocked units the selector's side can pick): `ai.js acquireTargets`
+returns its heal targets before the blocked targets, and the heal skills' DEFAULT trigger looks at injured allies
+(test/sim/feedback1e-healers.test.js).
 
 **Enemy attacks:** blocked melee enemies hit their blocker; enemies with `rangeRadius > 0` **and `applyWay` ≠ `MELEE`**
 attack allies whose collider touches their range circle — centre distance ≤ `rangeRadius` + `ALLY_COLLIDER_RADIUS` 0.25
