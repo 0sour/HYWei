@@ -31,9 +31,9 @@
 // Passive skills only apply stat mods (for bb.duration s when the text says "N秒内": 宴) and the self/counter effects
 //   above — their scales describe procs (bombs, sword rain, counters) that need a hand-authored kit.
 // force→onHit displacement with the official 力度 − 重量 rules (Battle.push / pullToFront): a pull "至面前" when the text says
-//   拖拽 or for hookmasters, else a push — along the unit's direction when the text says 朝部署方向 / 向前 / 身前方向 or for
-//   推击手 (directional), otherwise away from the unit (radial); a skill of constants.js PUSH_EFFECT_SKILLS (见行者 S1) pushes
-//   by PRTS 推与拉's 特效 column.
+//   拖拽 or for hookmasters, else a push — along the unit's direction when the text says 往攻击方向 (the 推击手 wording, PRTS
+//   推与拉 方向力) / 朝部署方向 / 向前 / 身前方向 or for 推击手 (directional), otherwise away from the unit (radial); a skill of
+//   constants.js PUSH_EFFECT_SKILLS (见行者 S1) pushes by PRTS 推与拉's 特效 column.
 
 import { normalizeSkill } from '../simdata.js';
 import { sortEnemyTargets } from '../targeting.js';
@@ -218,7 +218,7 @@ export function genericSkillSpec(sk, bb = sk?.bb ?? {}, def = null) {
   const hasForce = !passive && forceRaw !== undefined;
   const force = forceRaw ?? 0; // 力度 (微小力 −1 … 特大力 5)
   const pull = /拖拽/.test(desc) || (!/推开|击退/.test(desc) && def && def.subProf === 'hookmaster');
-  const directional = !pull && (/朝部署方向|向前|身前方向/.test(desc) || (def && def.subProf === 'pusher'));
+  const directional = !pull && (/攻击方向|朝部署方向|向前|身前方向/.test(desc) || (def && def.subProf === 'pusher'));
   const effectPush = PUSH_EFFECT_SKILLS.has(sk.id);
   const hitElement = element && !counterText;
 

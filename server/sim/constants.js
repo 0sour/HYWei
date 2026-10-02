@@ -99,8 +99,8 @@ export const PALSY_MAX = 3;
  * ≥ 0 → all the way to the pull point (必定拉至身前), −1 → PULL_WEAK_SHARE of the starting distance, −2 → PULL_CRAWL
  * tiles, ≤ −3 → nothing. A pull "至面前" aims at the point PULL_ORIGIN tiles in front of the puller (拉力起点 "干员前方0.5格
  * 距离处") and stops once the target is within PULL_STOP_RADIUS of the puller's centre (急停 "拖拽者中心半径0.6708").
- * A directional push (推击手 / 朝部署方向) on a target more than 45° off the direction or nearer than
- * PUSH_DIRECTIONAL_MIN_DIST becomes radial with 受力等级 −2 (推与拉 "特殊修正").
+ * A directional push (推击手 and the same "往攻击方向" wording — 野鬃 S2 —, 朝部署方向) on a target more than 45° off the
+ * direction or nearer than PUSH_DIRECTIONAL_MIN_DIST becomes radial with 受力等级 −2 (推与拉 "特殊修正").
  * PRTS 推与拉 gives two columns of 理想移动距离: 弹道 (a push carried by a projectile — "温蒂的23技能、阿消的12技能"; equal
  * to the 游戏数据基础 table above) and 特效 (an effect push, one frame less of travel — "食铁兽的12技能、见行者的12技能"):
  * PUSH_TILES_EFFECT, used by the skills in PUSH_EFFECT_SKILLS (见行者 S1 护身射击 / S2 惊爆射击, the only 特效 pushers of
