@@ -5,9 +5,13 @@
 //   (2) S3's "攻击变为群体攻击" hit every enemy INSIDE the 4-11 diamond instead of the official one target + a 1.7 splash
 //   (PRTS 烛煌 技能3 备注 "攻击溅射半径1.7"), so the fire never reached past the diamond. Same 备注: "补充后的弹药数量
 //   无法超过上限" — a burn burst's +2 ammo stops at the skill's ammo.
-//   Audit: every selectable skill whose text changes the attack range (攻击范围改变 / 扩大 / 缩小 / 缩短, 攻击距离+N) uses the
-//   official grid (skill rangeId, or the base grid grown by ability_range_forward_extend) while it runs, and the DEFAULT
-//   trigger still reads the initial range (PRTS 卫戍协议/帮助 "技能就绪，且即将进行普通攻击").
+//   The bonus on burning enemies comes BEFORE the attack's damage (备注 "于攻击造成伤害前判定元素爆发并造成元素伤害").
+//   Audit: every selectable skill whose text changes the attack range (攻击范围改变 / 扩大 / 缩小 / 缩短, 攻击距离+N / 加长 /
+//   缩短) uses the official grid (skill rangeId, or the base grid grown by ability_range_forward_extend) while it runs —
+//   with every module of the loadout: a module's 攻击距离 widens it too, except where the skill's range ignores 攻击距离
+//   (信仰搅拌机 S3 with SPT-Y, PRTS 备注 "此技能的攻击范围不受'攻击距离'属性影响") — and the DEFAULT trigger still reads the
+//   initial range (PRTS 卫戍协议/帮助 "技能就绪，且即将进行普通攻击"). A skill grid that only selects targets (荒芜拉普兰德
+//   S1: no rangeId, no 攻击范围 text) leaves the card on the unit's own range.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,6 +22,7 @@ import { buildBattleSpec, createBattleFromSpec } from '../../server/sim/spec.js'
 import { createRng } from '../../server/sim/rng.js';
 import { COLS } from '../../server/sim/constants.js';
 import { unitStatsEntry } from '../../shared/protocol.js';
+import { resolveRecordLoadout, loadoutRecord, attackRangeGrid } from '../../shared/loadoutRecord.js';
 
 const ds = getDefaultSource();
 const C = ds.raw.chess;
@@ -126,6 +131,33 @@ test('烛煌 S3: the +60 % ATK elemental damage hits every enemy of the attack i
   done(h);
 });
 
+test('烛煌 S3: the burst bonus is dealt BEFORE the attack\'s damage (PRTS 备注 "于攻击造成伤害前判定元素爆发并造成元素伤害")', () => {
+  // enemy_low dies to one S3 hit: the bonus still lands (it came first); every bonus precedes its hit on the same enemy
+  const h = blazeArena([{ key: 'enemy_cast', pos: [11, 3] }, { key: 'enemy_main', pos: [10, 7] }, { key: 'enemy_low', pos: [10, 8], o: { hp: 30 } }]);
+  const u = h.unit(BLAZE);
+  h.step();
+  const main = h.enemy('enemy_main'), low = h.enemy('enemy_low');
+  u.skill.gainSp(1000);
+  assert.ok(h.runUntil(() => u.skill.active, 5));
+  h.b.applyStatus(main, 'burnBurst', { duration: 10 });
+  h.b.applyStatus(low, 'burnBurst', { duration: 10 });
+  const mark = h.hooksOf('damaged').length;
+  h.run(1.5);
+  const ev = h.hooksOf('damaged').slice(mark).filter((c) => c.source === u);
+  const isBonus = (c) => (c.dmg.tags || []).includes('blazeBurn');
+  assert.ok(ev.some((c) => c.target === low && isBonus(c)), 'the enemy the hit kills still takes the bonus');
+  assert.ok(!low.alive, 'and dies');
+  let pairs = 0;
+  for (let i = 0; i < ev.length; i++) {
+    if (!ev[i].dmg.isAttack) continue;
+    const prev = ev.slice(0, i).reverse().find((c) => c.target === ev[i].target);
+    assert.ok(prev && isBonus(prev), `the hit on ${ev[i].target.defId} follows its bonus`);
+    pairs++;
+  }
+  assert.ok(pairs >= 2, `bonus → hit pairs (${pairs})`);
+  done(h);
+});
+
 test('烛煌 S3: a burn burst refills 2 ammo but never above the skill\'s ammo (PRTS 备注 "补充后的弹药数量无法超过上限")', () => {
   for (const id of [BLAZE, 'chess_char_5_03_b']) {
     const h = blazeArena([{ key: 'enemy_main', pos: [10, 5] }, { key: 'enemy_b', pos: [10, 6] }, { key: 'enemy_c', pos: [9, 5] }], { id });
@@ -185,8 +217,13 @@ test('extendedGrid: the relative form of absoluteRangeKeys\' rangeExtend, for ev
 
 // ---- audit: every attack-range change of the mode -----------------------------------------------------------------
 
-/** "攻击范围改变 / 扩大 / 缩小 / 缩短" ("攻击范围与溅射范围扩大"), "攻击距离+N", "攻击范围改为…" — an attack-range change (plain text; not a 技能范围). */
-const RANGE_TEXT = /攻击范围(?:与溅射范围)?(?:改变|扩大|缩小|缩短)|攻击距离\+|攻击范围改为/;
+/**
+ * "攻击范围改变 / 扩大 / 缩小 / 缩短" ("攻击范围与溅射范围扩大"), "攻击距离+N / 加长 / 缩短", "攻击范围改为…" — an attack-range
+ * change (plain text; not a 技能范围).
+ */
+const RANGE_TEXT = /攻击范围(?:与溅射范围)?(?:改变|扩大|缩小|缩短)|攻击距离(?:\+|加长|缩短)|攻击范围改为/;
+/** Skills whose range ignores 攻击距离 (a module's ability_range_forward_extend): PRTS 信仰搅拌机 S3 备注. */
+const NO_EXTEND = new Set(['skchr_rmixer_3']);
 /** Text-matched skills whose range the audit table checks by hand (their kit draws the range itself). */
 const BY_HAND = new Map([
   ['skchr_lionhd_2', 'instant: the burst hits the 3-3 skill range at its cast (kit onStart); no lasting range'],
@@ -208,29 +245,105 @@ function rangeSkills() {
   return out;
 }
 
-test('audit: every selectable attack-range change attacks with the official grid while it runs and shows it as the live range', () => {
+test('audit: every selectable attack-range change attacks with the official grid while it runs and shows it as the live range — with every module', () => {
   const list = rangeSkills();
-  assert.ok(list.length >= 90, `normal + elite records (${list.length})`);
+  assert.ok(list.length >= 94, `normal + elite records (${list.length})`);
+  for (const id of ['skchr_udflow_2', 'skchr_f12yin_2']) assert.ok(list.some((x) => x.s.skillId === id), `${id}: 攻击距离加长 / 缩短`);
   const seen = new Set();
+  let runs = 0, extended = 0;
   for (const { c, s, ext } of list) {
     if (BY_HAND.has(s.skillId)) { seen.add(s.skillId); continue; }
-    const h = makeBattle({ units: [{ chessId: c.chessId, row: 10, col: 5, dir: 'UP', skillIndex: s.index }], autoFinish: false, timeLimit: 30 });
-    const u = h.unit(c.chessId);
-    h.step();
-    const permExt = u.s.rangeExtend;
-    const grid = s.rangeGrid && !ext ? s.rangeGrid : c.rangeGrid;
-    const want = keysOf(grid, u, permExt + ext);
-    if (s.skillType !== 'PASSIVE' && !/被动效果：攻击范围扩大/.test(s.desc)) {
-      assert.ok(u.skill.activate('test', { free: true }), `${c.chessId} ${s.name}: cast`);
+    const mods = [null, ...(Array.isArray(c.modules) && c.modules.length ? ['none', ...c.modules.map((m) => m.uniEquipId)] : [])];
+    for (const mid of mods) {
+      const rec = loadoutRecord(c, resolveRecordLoadout(c, { skillIndex: s.index, ...(mid ? { moduleId: mid } : {}) }));
+      // the module's 攻击距离 (official data) — not 空弦 ISW-A's, which works "在集成战略中" only
+      const permExt = /集成战略/.test(String(rec.trait?.moduleDesc ?? '')) ? 0 : Math.floor(Number(rec.trait?.bb?.ability_range_forward_extend) || 0);
+      const h = makeBattle({ units: [{ chessId: c.chessId, row: 10, col: 5, dir: 'UP', skillIndex: s.index, ...(mid ? { moduleId: mid } : {}) }], autoFinish: false, timeLimit: 30 });
+      const u = h.unit(c.chessId);
       h.step();
-      assert.ok(u.skill.active, `${c.chessId} ${s.name}: running`);
+      const tag = `${c.chessId} S${s.index + 1} ${s.name} ${mid ?? 'default'}`;
+      assert.equal(u.s.baseRangeExtend, permExt, `${tag}: permanent 攻击距离`);
+      const grid = s.rangeGrid && !ext ? s.rangeGrid : attackRangeGrid(rec);
+      const want = keysOf(grid, u, (NO_EXTEND.has(s.skillId) ? 0 : permExt) + ext);
+      if (permExt) extended++;
+      if (s.skillType !== 'PASSIVE' && !/被动效果：攻击范围扩大/.test(s.desc)) {
+        assert.ok(u.skill.activate('test', { free: true }), `${tag}: cast`);
+        h.step();
+        assert.ok(u.skill.active, `${tag}: running`);
+      }
+      assert.ok(sameSet(new Set(u.rangeKeys), want), `${tag}: the attack tiles (${u.rangeKeys.length} vs ${want.size})`);
+      const live = unitStatsEntry(u, u._s).range;
+      assert.ok(sameSet(keysOf(live, u), want), `${tag}: the live range on the card`);
+      done(h);
+      runs++;
     }
-    assert.ok(sameSet(new Set(u.rangeKeys), want), `${c.chessId} S${s.index + 1} ${s.name}: the attack tiles`);
-    const live = unitStatsEntry(u, u._s).range;
-    assert.ok(sameSet(keysOf(live, u), want), `${c.chessId} S${s.index + 1} ${s.name}: the live range on the card`);
-    done(h);
   }
   assert.deepEqual([...seen].sort(), [...BY_HAND.keys()].sort(), 'the hand-checked skills are still in the data');
+  assert.ok(runs > list.length, `module variants checked (${runs})`);
+  assert.ok(extended >= 1, 'a module with 攻击距离 is among them (信仰搅拌机 SPT-Y)');
+});
+
+test('信仰搅拌机 SPT-Y "攻击距离+1（部分技能不受此影响）": S1 / S2 range 2-2 + 1; S3 退休前布道 exactly 3-13 (PRTS 备注 "此技能的攻击范围不受“攻击距离”属性影响")', () => {
+  const id = 'chess_char_4_01_b';
+  for (const skillIndex of [0, 1, 2]) for (const mid of ['uniequip_002_rmixer', 'uniequip_003_rmixer']) {
+    const h = makeBattle({ units: [{ chessId: id, row: 10, col: 5, dir: 'RIGHT', skillIndex, moduleId: mid }], autoFinish: false, timeLimit: 30 });
+    const u = h.unit(id);
+    h.step();
+    const plus = mid === 'uniequip_003_rmixer' ? 1 : 0;
+    const tag = `S${skillIndex + 1} ${mid}`;
+    assert.ok(sameSet(new Set(u.rangeKeys), keysOf(C[id].rangeGrid, u, plus)), `${tag}: before the cast 2-2${plus ? ' + 1' : ''}`);
+    assert.ok(sameSet(new Set(u.baseRangeKeys), keysOf(C[id].rangeGrid, u, plus)), `${tag}: the initial range`);
+    assert.ok(u.skill.activate('test', { free: true }), `${tag}: cast`);
+    h.step();
+    const want = skillIndex === 2 ? keysOf(C[id].skills[2].rangeGrid, u, 0) : keysOf(C[id].rangeGrid, u, plus);
+    assert.equal(u.rangeKeys.length, want.size, `${tag}: ${want.size} tiles while it runs`);
+    assert.ok(sameSet(new Set(u.rangeKeys), want), `${tag}: the tiles`);
+    assert.ok(sameSet(keysOf(unitStatsEntry(u, u._s).range, u), want), `${tag}: the card`);
+    if (skillIndex === 2) {
+      assert.equal(want.size, 8, '3-13');
+      u.skill.stop();
+      assert.ok(sameSet(new Set(u.rangeKeys), keysOf(C[id].rangeGrid, u, plus)), `${tag}: after S3 the module's +1 is back`);
+    }
+    done(h);
+  }
+});
+
+test('S3 counter of 信仰搅拌机 with SPT-Y reaches 3-13 only: an enemy on the +1 tile is not countered', () => {
+  // facing RIGHT at (10,5): 3-13 reaches [0,3] at most in its row; with +1 it would add [0,4] = (10,9)
+  const id = 'chess_char_4_01_b';
+  const g = C[id].skills[2].rangeGrid;
+  const far = Math.max(...g.filter(([r]) => r === 0).map(([, c]) => c)) + 1;
+  const h = makeBattle({
+    defs: { enemies: { enemy_far: dummy('enemy_far'), enemy_hit: dummy('enemy_hit', { atk: 50, range: 9, attackInterval: 1 }) } },
+    units: [{ chessId: id, row: 10, col: 5, dir: 'RIGHT', skillIndex: 2, moduleId: 'uniequip_003_rmixer' }],
+    enemies: [{ key: 'enemy_far', pos: [10, 5 + far] }],
+    hooks: ['damaged'], captureNoisy: true, autoFinish: false, timeLimit: 60, seed: 3,
+  });
+  const u = h.unit(id);
+  h.step();
+  assert.ok(u.skill.activate('test', { free: true }));
+  h.step();
+  const e = h.enemy('enemy_far');
+  assert.ok(!u.rangeKeySet.has(tileKey(e)), 'the +1 tile is outside S3');
+  h.b.dealDamage(e, u, { amount: 10, type: 'phys', isAttack: true });
+  h.run(0.5);
+  assert.equal(h.hooksOf('damaged').filter((c) => c.source === u && c.target === e).length, 0, 'no counter on the +1 tile');
+  done(h);
+});
+
+test('荒芜拉普兰德 S1 慵怠者悲鸣 (no rangeId, no 攻击范围 text): the drones lock a still enemy anywhere, the card keeps her 3-1', () => {
+  for (const id of ['chess_char_6_18_a', 'chess_char_6_18_b']) {
+    const h = makeBattle({ units: [{ chessId: id, row: 10, col: 5, dir: 'RIGHT', skillIndex: 0 }], autoFinish: false, timeLimit: 30 });
+    const u = h.unit(id);
+    h.step();
+    assert.ok(u.skill.activate('test', { free: true }));
+    h.step();
+    assert.ok(u.skill.active);
+    assert.ok(u.rangeKeys.length > 100, 'the sim selects targets field-wide');
+    const rel = (g) => new Set(g.map(([r, c]) => `${r},${c}`));
+    assert.ok(sameSet(rel(unitStatsEntry(u, u._s).range), rel(C[id].rangeGrid)), `${id}: the card shows 3-1`);
+    done(h);
+  }
 });
 
 test('audit: the DEFAULT trigger of an attack-range change reads the INITIAL range (PRTS "技能就绪，且即将进行普通攻击")', () => {
@@ -278,4 +391,29 @@ test('real product path: a BattleSpec (S3 by loadout) on act2 m01 with a real wa
   assert.ok(picks > 10, `S3 attacks (${picks})`);
   assert.equal(offGrid, 0, 'every S3 target stands on 4-11');
   assert.ok(splashOut > 0, `splash victims outside 4-11 (${splashOut})`);
+});
+
+test('real product path: 信仰搅拌机 精锐 with SPT-Y and S3 by loadout (BattleSpec, act2 m01, a real wave) — 2-2 + 1 before, 3-13 while S3 runs', () => {
+  const tpl = ds.getWave('act1autochess_05');
+  const spawns = tpl.spawns.map((s) => ({ time: s.time, enemyKey: s.key, routeIndex: s.routeIndex, count: s.count, interval: s.interval }));
+  const spec = buildBattleSpec({
+    battleId: 'fb1e-rmixer', fieldId: 'n:p1', kind: 'normal', seed: 7, modeId: 'mode_multi_hard', round: 5, stageId: 'act2autochess_m01',
+    timeLimit: 110, players: [{ playerId: 'p1', seat: 0, side: 'L', colOffset: 0, bonds: {}, playerEffects: [], units: [
+      { uid: 1, kind: 'chess', chessId: 'chess_char_4_01_b', row: 11, col: 7, dir: 'RIGHT', skillIndex: 2, moduleId: 'uniequip_003_rmixer' },
+    ] }], spawns, routes: tpl.routes, flags: {}, waveId: 'act1autochess_05',
+  });
+  const b = createBattleFromSpec(spec, ds, { recordEvents: false, quiet: true });
+  const u = b.allyUnits.find((x) => x.uid === 1);
+  const s3 = new Set(), before = new Set();
+  let casts = 0;
+  b.on('skillStart', (c) => { if (c.unit === u) casts++; });
+  for (let i = 0; i < 110 * 30 && !b.finished; i++) {
+    b.step();
+    if (!u.deployed) continue;
+    (u.skill.active ? s3 : before).add(u.rangeKeys.length);
+  }
+  assert.equal(b.errors.length, 0);
+  assert.ok(casts >= 1, `S3 cast (${casts})`);
+  assert.deepEqual([...before], [4], 'SPT-Y: 2-2 + 1');
+  assert.deepEqual([...s3], [8], 'S3: the 8 tiles of 3-13, no +1');
 });

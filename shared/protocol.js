@@ -194,8 +194,9 @@ const statView = (x) => ({
  * (s), block, move speed — rounded for display (the sim keeps floats), plus the current HP. The shape of the
  * `m.unitStats` units (Match.unitStats: what the board's units start their next battle with) and of the browser
  * runner's live battle stats (public/js/battle/runner.js unitStats). An ally with a range also carries `range`: the grid
- * (`[dRow, dCol]`, facing RIGHT) it attacks with now — a running skill's range, rangeExtend included (the sim's
- * `unit.liveRangeGrid`, Battle._refreshRange; community report E1 after 0.1.0: 烛煌 S3's 4-11 never reached the card).
+ * (`[dRow, dCol]`, facing RIGHT) it attacks with now — a running skill's range, rangeExtend included, not a kit's
+ * target-selection grid (the sim's `unit.liveRangeGrid`, Battle._refreshRange; community report E1 after 0.1.0: 烛煌
+ * S3's 4-11 never reached the card).
  * @param {{ id?: number, uid?: number|null, defId?: string, hp?: number, alive?: boolean, base?: any, liveRangeGrid?: any } | null} u
  * @param {any} [s] aggregated stats (missing ⇒ the base)
  * @returns {{ id: number|null, uid: number|null, defId: string|null, hp: number, alive: boolean, maxHp: number, atk: number,

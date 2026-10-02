@@ -46,7 +46,8 @@ export function absoluteRangeKeys(grid, r, c, dir, extend = 0) {
 /**
  * A range grid (`[dRow, dCol]`, facing RIGHT) grown by `extend` (rangeExtend, DESIGN §3): every row gains the whole
  * tiles 1 … ⌊extend⌋ beyond its far (+dCol) end — the relative form of what absoluteRangeKeys builds, deduplicated, junk
- * entries dropped. Battle._refreshRange keeps it as `unit.liveRangeGrid` (the detail card's live 攻击范围).
+ * entries dropped. Battle._refreshRange keeps it as `unit.liveRangeGrid` (the detail card's live 攻击范围) when an extend
+ * applies (else the grid itself).
  * @param {Array<[number, number]>|null|undefined} grid
  * @param {number} [extend]
  * @returns {Array<[number, number]>}

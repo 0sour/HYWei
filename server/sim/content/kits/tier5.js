@@ -562,9 +562,10 @@ const KITS = {
   // 烛煌 — S3 众恶的焚场 (ammo): skill range 4-11 (the targets; the DEFAULT cast still needs an enemy in 3-1), ATK +,
   // BAT −1.3 s, "攻击变为群体攻击" = one target + a BLAZE_S3_SPLASH (1.7) splash around it (PRTS 备注 "攻击溅射半径1.7",
   // 中点判定 — so the fire reaches past the diamond; it used to hit every enemy inside it instead, community report E1
-  // after 0.1.0), +attack@atk_scale ATK elemental damage to every enemy of the attack in a burn burst (main and splash;
-  // after the hit [ASSUMED] — the 备注 checks it before); loses 3 % max HP/s; any burn burst on the field refills
-  // ammo_recover bullets, never above the skill's ammo ("补充后的弹药数量无法超过上限").
+  // after 0.1.0), +attack@atk_scale ATK elemental damage to every enemy of the attack in a burn burst (main and splash),
+  // dealt BEFORE the attack's own damage ("于攻击造成伤害前判定元素爆发并造成元素伤害": a 'hit' hook — so a hit that kills
+  // or starts the burst keeps / does not get it); loses 3 % max HP/s; any burn burst on the field refills ammo_recover
+  // bullets, never above the skill's ammo ("补充后的弹药数量无法超过上限").
   // T1 熔点引爆: burn burst anywhere → 350 % ATK elemental damage to it + heal 12 % max HP. T2 绝处重燃: downed instead of
   // dying (6000 shield, no attack, no heal, 3 %/s regen) → revives at full HP and stuns nearby enemies.
   // Module (elite): ×damage_scale vs enemies in an element burst.
@@ -630,12 +631,7 @@ const KITS = {
         kind: 'ammo', ammo: num(bb['attack@trigger_time'], 18),
         mods: mods({ atkPct: num(bb.atk), batPct: batPct(bb.base_attack_time, chess) }),
         targeting: skillGrid(chess, def) ? { rangeGrid: skillGrid(chess, def) } : undefined,
-        attack: {
-          splashRadius: BLAZE_S3_SPLASH,
-          onEachHit({ battle, unit, target }) {
-            if (target && target.alive && target.findBuff('burnBurst')) elementHit(battle, unit, target, unit.s.atk * num(bb['attack@atk_scale']), 'blazeBurn', 'burn');
-          },
-        },
+        attack: { splashRadius: BLAZE_S3_SPLASH },
         onStart({ unit }) { unit.mem.blazeAcc = 0; },
         onTick({ battle, unit, dt }) {
           if (!(lose > 0)) return;
@@ -686,6 +682,12 @@ const KITS = {
         burstSpUp(battle, unit, 'blaze2:module', num(tm.sp_recovery_per_sec));
         if (sid === 'skchr_blaze2_2') whileOn(battle, unit, AURA_IV, () => burnTiles(battle, unit));
         if (sid && sid !== 'skchr_blaze2_3') return;
+        // S3: each hit of her skill attack (main and splash) on an enemy in a burn burst deals the bonus first (PRTS 备注)
+        battle.on('hit', (c) => {
+          const d = c.dmg, t = c.target, sk = unit.skill;
+          if (c.source !== unit || !d.isAttack || !d.isSkill || d.cancel || !sk?.active || sk.kind !== 'ammo') return;
+          if (t.side === 'enemy' && t.alive && t.findBuff('burnBurst')) elementHit(battle, unit, t, unit.s.atk * num(bb['attack@atk_scale']), 'blazeBurn', 'burn');
+        }, { owner: unit });
         const maxAmmo = num(bb['attack@trigger_time'], 18);
         battle.on('elementBurst', (c) => { // S3: burn bursts refill ammo, up to the skill's ammo
           const sk = unit.skill;

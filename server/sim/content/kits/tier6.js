@@ -2754,11 +2754,12 @@ function whitw2(bb, chess, def) {
   const skillGridW = skillGridOf(def);
   const skills = {
     // S1 慵怠者悲鸣: passive 浮游单元+1 (trait: one more hit per attack); toggled on: ATK +atk and the drones lock a random
-    // non-moving enemy anywhere on the field (re-locking when it moves or falls; install), else her range
+    // non-moving enemy anywhere on the field (re-locking when it moves or falls; install), else her range. The whole-field
+    // grid only selects those targets — no rangeId, no 攻击范围 in the text — so the card keeps her 3-1 (showOwnRange)
     skchr_whitw2_1: {
       kind: 'toggle',
       mods: { atkPct: num(bb.atk) },
-      targeting: { rangeGrid: WHOLE_FIELD },
+      targeting: { rangeGrid: WHOLE_FIELD, showOwnRange: true },
       onStart({ unit }) { unit.mem.lazyLock = null; },
     },
     // S2 逐猎狂飙: 浮游单元+attack@cnt, skill range, ATK +atk: every drone locks a random enemy of the range until it falls

@@ -2,7 +2,9 @@
 // (test/sim/feedback1e-skillrange.test.js); the battle detail card did not — its 攻击范围 mini-map kept the base 3-1 grid
 // while the live stats beside it showed S3's ATK and interval. The card now draws the live entry's `range`
 // (shared/protocol.js unitStatsEntry: the grid the unit attacks with now) — in battle from the browser's own sim, in prep
-// from the start-of-battle preview — and names a whole-field range instead of drawing it.
+// from the start-of-battle preview — names a whole-field range instead of drawing it, and draws a grid larger than its
+// box (远牙 S3's 21-tile line) with smaller cells so the box keeps its size (review: the line squeezed the live stats
+// from 326 px to 80 px).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,7 +26,8 @@ globalThis.fetch = async (url) => {
   }
 };
 
-const { ChessDetail, RangeGrid, cardRangeGrid, FIELD_WIDE_CELLS } = await import('../../public/js/ui/detailPanel.js');
+const { ChessDetail, RangeGrid, cardRangeGrid, rangeGridStyle, FIELD_WIDE_CELLS, RANGE_FIT } = await import('../../public/js/ui/detailPanel.js');
+const { rangeGridBox } = await import('../../public/js/ui/gameLogic.js');
 const { data } = await import('../../public/js/data.js');
 
 function* walk(v) {
@@ -101,4 +104,41 @@ test('the game screen hands the card the live entry it already reads (battle run
   assert.match(src, /grid=\$\{cardRangeGrid\(live, fr, c\)\}/);
   const game = readFileSync(path.join(ROOT, 'public/js/screens/game.js'), 'utf8');
   assert.match(game, /battleRunner\.unitStats\(uid, fid\)/);
+});
+
+test('远牙 S3 光羽箭 (default, "攻击范围改为前方无限长的直线"): the 21-tile line is drawn whole, in the box\'s own space', async () => {
+  await data.loadAll('chess', 'garrisons', 'assets', 'bonds', 'items');
+  const id = 'chess_char_4_20_a';
+  const h = makeBattle({ units: [{ chessId: id, row: 10, col: 0, dir: 'RIGHT', skillIndex: 2 }], autoFinish: false, timeLimit: 30 });
+  const u = h.unit(id);
+  h.step();
+  assert.ok(u.skill.activate('test', { free: true }));
+  h.step();
+  const live = { ...unitStatsEntry(u, u._s), src: 'battle' };
+  const box = rangeGridBox(live.range);
+  assert.equal(box.cols, 21);
+  assert.equal(box.rows, 1);
+  const stats = ChessDetail({ chess: data.lookup('chess', id), piece: null, editable: false, bonds: [], loadout: null, live }).find((b) => b.key === 'stats');
+  const grid = [...walk(stats)].find((n) => hasClass(n, 'rgrid'));
+  assert.ok(grid, 'drawn, not named');
+  assert.equal(onCells(stats), 21, 'the whole line, her own tile included');
+  assert.match(grid.props.style, /--rg:max\(1px, min\(\.14rem, calc\(\(6 \* \.14rem \+ 10px\) \/ 21\)/, 'cells shrunk to the 6-column width');
+  assert.match(grid.props.style, /gap:0/);
+});
+
+test('rangeGridStyle: the attack ranges of the records keep the .14rem cells; only a grid beyond RANGE_FIT (6 columns, 7 rows) shrinks them', async () => {
+  await data.loadAll('chess');
+  const plain = (b) => rangeGridStyle(b) === `grid-template-columns:repeat(${b.cols}, var(--rg))`;
+  assert.deepEqual(RANGE_FIT, { cols: 6, rows: 7 });
+  // every attack range a record gives the card (the unit's own, a module's) — the widest 灰毫 / 协律 / 阿罗玛 (6 columns)
+  let n = 0;
+  for (const c of data.list('chess')) {
+    const grids = [c.rangeGrid, ...(c.modules || []).flatMap((m) => (m.talentChanges || []).map((t) => t.rangeGrid))];
+    for (const g of grids) if (Array.isArray(g) && g.length) { n++; assert.ok(plain(rangeGridBox(g)), `${c.name}: ${rangeGridBox(g).cols} cols`); }
+  }
+  assert.ok(n > 250, `record grids (${n})`);
+  // the tallest live skill range (银灰 S3 真银斩 3-7: 7 rows × 4 columns) too
+  assert.ok(plain(rangeGridBox(data.lookup('chess', 'chess_char_4_22_a').skills[2].rangeGrid)), '银灰 S3');
+  assert.ok(!plain({ cols: 7, rows: 1 }) && !plain({ cols: 1, rows: 8 }));
+  assert.match(rangeGridStyle({ cols: 3, rows: 9 }), /calc\(\(7 \* \.14rem \+ 12px\) \/ 9\)/, 'a tall grid fits the 7 rows');
 });

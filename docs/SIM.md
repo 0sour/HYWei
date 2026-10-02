@@ -298,8 +298,10 @@ Guarantees content can rely on (pinned by `test/sim/robustness.test.js`):
 (board tile: auto-redeploys land there), dir ('UP'|'RIGHT'|'DOWN'|'LEFT'; getters `fwd` = forward vector, `facing` =
 horizontal sign ±1 for sprites only), hp, alive, deployed, removed, hidden, base {…}, buffs[],
 rangeKeys / rangeKeySet (current range, absolute tile keys `r × 21 + c`), baseRangeKeys (initial range, §7.1),
-liveRangeGrid (the relative grid behind rangeKeys — a running skill's range, rangeExtend grown on, `targeting.js
-extendedGrid`; no extra keys — read by the detail card through `shared/protocol.js unitStatsEntry` `range`),
+liveRangeGrid (the 攻击范围 the detail card shows, through `shared/protocol.js unitStatsEntry` `range`: the relative grid
+behind rangeKeys — a running skill's range, rangeExtend grown on (`targeting.js extendedGrid`; the grid itself when
+nothing extends it), no extra keys — or the unit's own range while a skill's grid only selects targets,
+`targeting.showOwnRange`),
 extraRangeKeys (content extra targets, `battle.setExtraRange`), blocking[] (allies), blockedBy (enemies), motion
 ('WALK'|'FLY' enemies), profile, skill (SkillRuntime), kit, items (itemIds), lpr/mods/tag/bounty/sourcePlayerId (enemies),
 stats {dmg,kills,heal,taken,attacks}, mem {} and trait {} (free scratch space), persist {redeployMul, …}.`
@@ -369,7 +371,9 @@ defIgnoreFlat defIgnorePct resIgnoreFlat resIgnorePct dodgePhys dodgeArts spReco
 hpRegenRatio spCostFlat moveFlat massFlat` (重量 levels: 失重 = `massFlat: −1`; never edit `base.massLevel`);
 multiplicative: `atkMul defMul hpMul resMul moveMul dmgDealtMul dmgTakenMul physTakenMul artsTakenMul trueTakenMul
 elemTakenMul elementalTakenMul healingDealtMul healingTakenMul spRecoveryMul redeployMul atkScaleMul physDealtMul artsDealtMul`.
-A `rangeExtend` on a `persist` never-expiring buff is **permanent**: it also widens the initial range (§7.1).
+A `rangeExtend` on a `persist` never-expiring buff is **permanent**: it also widens the initial range (§7.1). It widens
+a running skill's range too, unless that skill's range ignores 攻击距离 (`targeting.noRangeExtend`; PRTS 数值范围 "根据配置
+不同，任何范围都可以受/不受该属性影响" — 信仰搅拌机 S3 "此技能的攻击范围不受“攻击距离”属性影响").
 **Flags:** `stun freeze sleep silence disarm stealth invulnerable unblockable levitate fear cold reveal bind noHeal
 untargetable blockFly noMove noSp burstLock hidden attract float noDisplace isolated camou` (`float` = 近地悬浮 (an air
 unit, `Unit.isFlying`), `noDisplace` = 失衡免疫 (`displace()` moves nothing), `isolated` = 孤立 ("无法被同阵营选中": no ally
@@ -698,7 +702,9 @@ Element conventions of the kits (user playtest #5 #3; official term dictionary: 
   heal: bool,            // heal-type skill for the DEFAULT trigger (default: unit is a healer)
   mods: { …mod keys },   // buff while active (instant: only during the pending attack)
   flags: { …flags },
-  targeting: { maxTargets, rangeGrid, rangeExtend, priority, allInRange, canHitFly },
+  targeting: { maxTargets, rangeGrid, rangeExtend, priority, allInRange, canHitFly,
+               noRangeExtend /* the skill's range ignores the unit's 攻击距离 (rangeExtend): 信仰搅拌机 S3, PRTS 备注 */,
+               showOwnRange /* rangeGrid only selects targets, no official range change: the card keeps the unit's own range */ },
   attack: { dmgType, atkScale, healScale, splashRadius, splashScale, hits, projectile, maxTargets, dmgMul,
             chain: {count, falloff, radius, sluggish}, heal: {mode, count, falloff, hpAtMost /* targets at or below this HP ratio only */}, onHitStatus: {key, duration, value},
             onHit(ctx),                           // once per attack (main target; target may be null for a splash landing)
