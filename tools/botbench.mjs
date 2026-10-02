@@ -15,12 +15,14 @@
 //
 // Per match: victory, rounds passed, LP left (the alive players at the end; a won Final Assault: the team LP), and per
 // bot and round: LP, shop level, deployed units, active bonds and Σ bond tiers, activated layers, board value (Σ shop
-// price of the deployed chess, an elite = goldenCopies copies), elites deployed, funds lost at the prep end (leftover
-// funds are lost, PlayerState.endPrep), leaks (bounty leaks apart) and the bounty cards taken.
+// price of the deployed chess, an elite = goldenCopies copies), elites deployed, items equipped, funds lost at the prep
+// end (leftover funds are lost, PlayerState.endPrep), leaks (bounty leaks apart) and the bounty cards taken — with the
+// bot's own kill-chance estimate when the bot has one (bot.bountyKillChance), for a calibration table.
 // Decision time: every bot prep runs in one scheduler callback in virtual time (Match.scheduleBotPrep); the tool times
-// those callbacks (Match.later on the instance) and splits off the rehearsal battles' stepping (Battle.step of the
-// rehearsal fields 'r:<pid>') — "heuristics" = the prep minus the rehearsal. The 机变 / band picks are timed per call
-// (they are cheap). Wall-clock numbers depend on the host load: compare runs made back to back.
+// those callbacks (Match.later on the instance; wall clock and process CPU time) and splits off the rehearsal battles'
+// stepping (Battle.step of the rehearsal fields 'r:<pid>') — "heuristics" = the prep minus the rehearsal. A 机变 pick is
+// the SP_DRAFT callback in which a bot's pick landed. Wall-clock numbers depend on the host load: compare runs made
+// back to back with --jobs 1.
 
 import { performance } from 'node:perf_hooks';
 import { writeFileSync, readFileSync } from 'node:fs';
