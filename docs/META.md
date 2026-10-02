@@ -242,7 +242,7 @@ Every handler method is `(ctx, ev)`; `ev` is shared by all handlers of one dispa
 | `onSold` | a chess was sold (after refund of copies) | `{ piece, gain }` — **write `ev.gain`** to change the funds paid |
 | `onRefresh` | manual refresh | `{ slots, free, price }` (slots mutable, or use `ctx.setShopSlot`) |
 | `onPrice` | every price query of a shop slot (views + buy) — must be **pure** | `{ slot, kind, id, price }` — write `ev.price` / `ctx.setPrice` / `ctx.modifyPrice` |
-| `onBuy` | after a purchase | `{ piece, slot, price, kind }` (`piece` = owned result, elite after a merge) |
+| `onBuy` | after a shop purchase (`g.buy` only) | `{ piece, slot, price, kind }` (`piece` = owned result, elite after a merge). The "购买" counters — 休露丝 首名<谢拉格> 1 资金, 玛恩纳 每购买一名<卡西米尔>, 升华 / 整备 "接下来购买的…" — hook it, so a free pick (promotion reward, 寻呼模块 / 信标 / 凯瑟琳 offers: `g.reward`) or a grant (紧急调度券, 简易通讯机, 拟态物质, strategies) never counts as a purchase (player report F2 after 0.1.0; PRTS 帮助 describes the promotion reward as a 0-cost temporary shop — whether the official 雪域礼赠 counts that pick is unknown, [ASSUMED] no) |
 | `onMerge` | chess or item merge | `{ kind, piece, baseId|itemId, consumed:[uid], area? }` — a chess merge's `area` is where its elite went: 'board' (a consumed copy's tile) \| 'hand' \| 'temp' |
 | `onLevelUp` | shop level up | `{ level, price }` |
 | `onSpend` | a payment's action is complete (buy / refresh / levelUp / reward / effect) | `{ amount, reason, total }` (`total` = funds spent this match) |

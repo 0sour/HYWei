@@ -14,7 +14,8 @@
 //   band_coin_cost_gain_random_char_by_shop_level      绮良     every coin_cnt funds spent → count random chess ≤ shop level
 //   up_shop_next_refresh_must_present_bond_char        佩佩     level-up to a level of lvlist → +1 free refresh (price 0) that prefers <bond>
 //   gain_bond_char_per_round {round,preround,bond}     哈洛德   rounds round, round+preround, …: a <bond> chess (≤ shop level, else any tier)
-//   first_buy_in_round_char_price_change {price,bond}  休露丝   first <bond> chess of the round costs `price`
+//   first_buy_in_round_char_price_change {price,bond}  休露丝   first <bond> chess of the round costs `price` (bought in the
+//                                                               shop: onBuy — a free pick / grant never uses it up)
 //   band_cost_coin_reach_cnt_gain_chess_from_pool      潘格尼尼 once coin_cnt funds spent in total: 1 chess of pool (elite 拉特兰 ≥ T4)
 //   round_start_bond_check_gain_layer                  余       round start of `round`: exactly factioncount active bonds → +count1, else each active +count2
 //   up_shop_add_special_goods {count,choice,pool}      凯瑟琳   every level-up: pick 1 of `count` items of pool (free)
