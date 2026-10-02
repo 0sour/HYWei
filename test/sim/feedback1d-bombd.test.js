@@ -112,6 +112,18 @@ describe('D4 暴鸰: the bomb leaves the drone and lands', () => {
     assert.ok(other.stats.taken > 0, 'its neighbour takes the splash at the landing point');
   });
 
+  test('the drone killed after the release: the bomb in the air still lands (projectile_bombd keeps flying)', () => {
+    const h = arena([{ chessId: 't_a', row: 10, col: 5 }]);
+    h.step();
+    const e = put(h, [10, 7]);
+    h.runUntil(() => (ability(e)?.casts ?? 0) > 0, 5);
+    h.run(RELEASE + TICK);
+    assert.ok(h.eventsOf('atk').some((ev) => ev[1] === e.id), 'released');
+    h.b.kill(e, null);
+    h.run(1.5);
+    assert.ok(Math.abs(h.unit('t_a').stats.taken - e.s.atk) < 1e-6, 'hit for the ATK it had at the release');
+  });
+
   test('the drone killed before the release: no bomb, no mode change', () => {
     const h = arena([{ chessId: 't_a', row: 10, col: 6 }]);
     h.step();
