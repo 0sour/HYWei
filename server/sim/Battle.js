@@ -28,7 +28,7 @@ import { Grid } from './grid.js';
 import { Unit } from './units.js';
 import { makeBuff, STATUS, RESIST_STATUSES } from './buffs.js';
 import { dealDamage as pipeDamage, heal as pipeHeal, applyHpLoss, makeDamageInfo, reduceElement, palsyBuff, elementView, leaderHitCancelled } from './damage.js';
-import { absoluteRangeKeys, canTargetEnemy } from './targeting.js';
+import { absoluteRangeKeys, canTargetEnemy, evadesGround } from './targeting.js';
 import { bodyKeys, bodyInKeys, bodyInRadius } from './body.js';
 import { normDir, mirrorDir, localOrder, localBefore } from './dir.js';
 import { ProjectileSystem } from './projectiles.js';
@@ -1117,7 +1117,8 @@ export class Battle {
   _blockerFor(u, e, w) {
     if (!u.alive || !u.deployed || u.hidden || u.s.flags.noBlock || u.s.flags.sleep) return false;
     if (e.isFlying && !(u.s.flags.blockFly || (u.profile && u.profile.blockFly))) return false;
-    if (!e.isFlying && !u.ground) return false;
+    // ground enemies: only a unit on a ground tile that has not taken off (起飞 "不阻挡地面敌人": flag `liftoff`)
+    if (!e.isFlying && (!u.ground || u.s.flags.liftoff)) return false;
     const cap = u.s.blockCnt;
     if (cap <= 0) return false;
     let used = 0;
@@ -1273,10 +1274,12 @@ export class Battle {
    * ([r, c] or {x, y}; default the source's tile — a new application moves the point); 恐惧 (`fear`) stamps where it
    * was applied and from where (fear.js stampFear: the fan of 恐惧可达地块 its movement uses). A stunned/sleeping operator
    * releases the enemies it blocks; a feared/levitated/unblockable/attracted enemy is released by its blocker.
-   * `statusApplied` reports the final duration and `entered` (the target did not carry the status before).
+   * A ground enemy's status never lands on an airborne 起飞 ally (对地规避: targeting.js evadesGround) unless
+   * `opts.ignoreSelect`. `statusApplied` reports the final duration and `entered` (the target did not carry the status before).
    */
   applyStatus(target, key, opts = {}) {
     if (!target || !target.alive) return false;
+    if (!opts.ignoreSelect && target.s.flags.liftoff && evadesGround(opts.source, target)) return false;
     const tpl = STATUS[key] || { flags: { [key]: true } };
     let duration = opts.duration == null ? Infinity : Number(opts.duration);
     let value = opts.value;

@@ -58,7 +58,7 @@
 //   'sword' 'vest' 'blink' 'summon' 'grow' 'phase' 'lpLoss' (x, y + extra {id, r, tiles, kind, tx, ty …}).
 
 import { MOVE_SCALE } from '../constants.js';
-import { canTargetAlly, aggroCmp } from '../targeting.js';
+import { canTargetAlly, aggroCmp, evadesGround } from '../targeting.js';
 import { compileRoute } from '../ai.js';
 import { normalizeRoute } from '../simdata.js';
 import {
@@ -687,7 +687,7 @@ function kitSpring(ab, e) {
             b.fx('beam', { x: e2.x, y: e2.y, from: e2.id, to: t.id, kind: 'springBullet' });
             elem(b, e2, t, 'erosion', e2.s.atk * ratio * Math.pow(SPRING_BOUNCE_FALLOFF, k));
             const prev = t;
-            t = b.alliesInRadius(prev.x, prev.y, SPRING_BOUNCE_RANGE).filter((u) => !hit.has(u)).sort((p, q) => Math.hypot(p.x - prev.x, p.y - prev.y) - Math.hypot(q.x - prev.x, q.y - prev.y) || aggroCmp(p, q))[0];
+            t = b.alliesInRadius(prev.x, prev.y, SPRING_BOUNCE_RANGE).filter((u) => !hit.has(u) && !evadesGround(e2, u)).sort((p, q) => Math.hypot(p.x - prev.x, p.y - prev.y) - Math.hypot(q.x - prev.x, q.y - prev.y) || aggroCmp(p, q))[0];
           }
         } else { // 十连击
           b.fx('beam', { x: e2.x, y: e2.y, from: e2.id, to: t0.id, kind: 'springCombo' });

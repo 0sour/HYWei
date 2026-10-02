@@ -893,8 +893,8 @@ const KITS = {
               for (const a of unit.mem.sickles || []) {
                 if (!a.alive || !a.deployed) continue;
                 // PRTS 备注 "被添加血镰的单位处于起飞时，血镰可对空": a sickle on the ground spares air units (FLY, 近地悬浮, 浮空);
-                // 起飞 = an airborne skywalker (蒂比's skill: off the ground, flag blockFly)
-                const air = !a.ground && !!a.s.flags.blockFly;
+                // 起飞 = an airborne skywalker (蒂比's skills: flag `liftoff`; still a 地面单位, so she can carry one)
+                const air = !!a.s.flags.liftoff;
                 for (const e of battle.enemiesInRadius(a.x, a.y, RING1)) {
                   if (e.isFlying && !air) continue;
                   battle.dealDamage(unit, e, { amount: unit.s.atk * num(bb.atk_scale), type: 'phys', isSkill: true, tags: ['skill', 'bloodSickle'] });

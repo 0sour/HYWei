@@ -28,7 +28,10 @@
 //   keeps its ground path, Unit.isFlying; kitSyufo / kitParrot lose it when stunned). `e.profile.canTarget(ally)` = the
 //   enemy's own target rule (只攻击地面单位 …), applied by the engine to the candidates before its priority order; a
 //   special priority (优先攻击防御力最高的… / 生命上限最高的…) sorts by its key, ties by taunt then latest deployed
-//   (targeting.js aggroCmp — PRTS 索敌: 特殊优先级 → 仇恨值).
+//   (targeting.js aggroCmp — PRTS 索敌: 特殊优先级 → 仇恨值). An airborne ally (起飞, flag `liftoff`) is no target of a
+//   ground enemy (对地规避, targeting.js evadesGround): targetsNear / allTargets skip it through canTargetAlly, the picks
+//   that bypass it (周围四格 additions, chain and bounce jumps) filter it, and the engine refuses a ground enemy's damage
+//   and statuses on it; damage zones "无视无法选择" (`ignoreSelect`) still reach it.
 //
 // Special types (factions.json):
 //   FLY        — engine (FLY motion, ranged-only targeting). Flyer kits below (御4, 护障, 寒霜, 萨科塔之翼/眼, 黑云 …).
@@ -38,7 +41,8 @@
 //                create those units (death spawns, embers, blades, 再生).
 //   ELEMENT    — element damage on hit = ATK × ep_damage_ratio into the ally's gauge. 侵蚀 (erosion) is an engine
 //                gauge whose burst is the official one (termDescription ba.dt.erosion: "永久降低100点防御力并受到800点物理伤害").
-//   DOT        — damage zones (污染秽蚀: true damage, one tick per second however many cover a unit; 毒雾, 燃烧区域),
+//   DOT        — damage zones (污染秽蚀: true damage, one tick per second however many cover a unit; 毒雾, 燃烧区域 —
+//                they ignore 无法选择, PRTS 污染秽蚀 "可对空，无视无法选择": `ignoreSelect`, 起飞 allies included),
 //                bleeding (removed by healing), pulsing auras.
 //   INVISIBLE  — permanent `stealth` flag (engine: untargetable unless blocked or revealed; AoE still hits).
 //   REFLECTION — 折射 (ba.refraction "生效时，法术抗性+70"): RES +refracting.magic_resistance while NOT silenced
@@ -56,7 +60,7 @@
 // Custom hook: 'lpLoss' {amount, reason, source} — leader "扣除目标生命" effects; also summed into result.lpLoss.
 
 import { TICK, MOVE_SCALE, ELEMENT, ATTACK_PAUSE } from '../constants.js';
-import { canTargetAlly, sortAllyTargets, aggroCmp } from '../targeting.js';
+import { canTargetAlly, sortAllyTargets, aggroCmp, evadesGround } from '../targeting.js';
 import { mitigate } from '../damage.js';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -330,16 +334,19 @@ function onTick(b, dt) {
 // helpers (exported for bosses.js)
 
 /** Element damage (erosion mapped onto the engine gauge). */
-export function elem(b, src, tgt, el, amount) {
+export function elem(b, src, tgt, el, amount, { ignoreSelect = false } = {}) {
   if (!tgt || !tgt.alive || !(amount > 0)) return 0;
   const element = el === 'erosion' ? EROSION : el;
-  return b.dealDamage(src, tgt, { type: 'element', element, amount, tags: ['enemyAbility'] });
+  return b.dealDamage(src, tgt, { type: 'element', element, amount, ignoreSelect, tags: ['enemyAbility'] });
 }
 
-/** Skill / ability damage (no dodge unless asked). */
-export function hurt(b, src, tgt, amount, type = 'phys', { canDodge = false, tags = [], isSkill = true } = {}) {
+/**
+ * Skill / ability damage (no dodge unless asked). `ignoreSelect` = the ability "无视无法选择" (zones): it also reaches an
+ * airborne 起飞 ally, which a ground enemy's damage otherwise skips (damage.js, targeting.js evadesGround).
+ */
+export function hurt(b, src, tgt, amount, type = 'phys', { canDodge = false, tags = [], isSkill = true, ignoreSelect = false } = {}) {
   if (!tgt || !tgt.alive || !(amount > 0)) return 0;
-  return b.dealDamage(src, tgt, { amount, type, canDodge, isSkill, tags: ['enemyAbility', ...tags] });
+  return b.dealDamage(src, tgt, { amount, type, canDodge, isSkill, ignoreSelect, tags: ['enemyAbility', ...tags] });
 }
 
 /** Allies whose tile is within `n` of (r, c): 'plus' = Manhattan (周围四格), 'box' = Chebyshev (周围8格). */
@@ -895,8 +902,8 @@ function bleed(ab) {
 /**
  * 【污染秽蚀】 zone (PRTS 萨卡兹枯朽战士 / 萨卡兹枯朽战车: "范围内位于低地/高地的我方干员和召唤物每秒受到50/25点真实普通伤害
  * （可对空，无视无法选择、迷彩；同名效果不叠加）"): `low` true damage per second on low ground, `high` on high ground, to every
- * ally inside (flyers, stealthed and untargetable ones included); a unit inside several zones takes one tick per second
- * (`mem.pollutedAt`: the last tick it took).
+ * ally inside (flyers, stealthed, untargetable and airborne 起飞 ones included — `ignoreSelect`; an airborne 蒂比 stands on
+ * her low tile: `low`); a unit inside several zones takes one tick per second (`mem.pollutedAt`: the last tick it took).
  */
 function pollution(b, src, x, y, r, life, low, high) {
   zone(b, { x, y, r, life, iv: POLLUTION_INTERVAL, kind: 'pollution', tick(units) {
@@ -904,15 +911,21 @@ function pollution(b, src, x, y, r, life, low, high) {
       const v = u.ground ? low : high;
       if (!(v > 0) || b.time - (u.mem.pollutedAt ?? -Infinity) < POLLUTION_INTERVAL - 1e-6) continue;
       u.mem.pollutedAt = b.time;
-      hurt(b, src, u, v, 'true', { tags: ['pollution'] });
+      hurt(b, src, u, v, 'true', { tags: ['pollution'], ignoreSelect: true });
     }
   } });
 }
 
-/** Damage zone (arts per tick). */
+/**
+ * Damage zone (arts per tick) — on every ally inside, like 【污染秽蚀】 (`ignoreSelect`: 起飞 allies too) [ASSUMED for the
+ * zones PRTS gives no 无法选择 note: 毒雾, 燃烧区域].
+ */
 function dmgZone(b, src, x, y, r, life, iv, amount, type = 'arts', kind = 'zone', el = null, elAmount = 0) {
   zone(b, { x, y, r, life, iv, kind, tick(units) {
-    for (const u of units) { hurt(b, src, u, amount, type); if (el && elAmount > 0) elem(b, src, u, el, elAmount); }
+    for (const u of units) {
+      hurt(b, src, u, amount, type, { ignoreSelect: true });
+      if (el && elAmount > 0) elem(b, src, u, el, elAmount, { ignoreSelect: true });
+    }
   } });
 }
 
@@ -1057,7 +1070,7 @@ function kitTidmag(ab) {
       const t0 = c.targets[0];
       if (!t0) return;
       const l = c.targets.slice();
-      for (const u of alliesInTiles(b, t0.tileR, t0.tileC, 'plus', 1)) if (!l.includes(u)) l.push(u);
+      for (const u of alliesInTiles(b, t0.tileR, t0.tileC, 'plus', 1)) if (!l.includes(u) && !evadesGround(e, u)) l.push(u);
       c.targets = l;
     },
   }];
@@ -1673,7 +1686,7 @@ function kitLeaderMisc(key, ab, e) {
     case 'enemy_1513_dekght': {
       // 攻击时使目标与周围四格的单位受到物理伤害; 【蓄力攻击】 charge `duration` s, then ATK×atk_scale on the target's cross
       const s = ab.sk.ChargeAttack;
-      return [kitDekght(ab), { before(c, b, e2) { const t = c.targets[0]; if (t) for (const u of alliesInTiles(b, t.tileR, t.tileC, 'plus', 1)) if (!c.targets.includes(u)) c.targets.push(u); } },
+      return [kitDekght(ab), { before(c, b, e2) { const t = c.targets[0]; if (t) for (const u of alliesInTiles(b, t.tileR, t.tileC, 'plus', 1)) if (!c.targets.includes(u) && !evadesGround(e2, u)) c.targets.push(u); } },
         skill(s, (b, e2) => {
           const t = e2.blockedBy;
           const dur = s.bb.duration ?? 0, r = t.tileR, cc = t.tileC;
@@ -1789,7 +1802,7 @@ function kitLeaderMisc(key, ab, e) {
           let prev = c.target;
           const hit = new Set([prev]);
           for (let k = 1; k < n; k++) {
-            const nx = b.alliesInRadius(prev.x, prev.y, jr).find((u) => !hit.has(u));
+            const nx = b.alliesInRadius(prev.x, prev.y, jr).find((u) => !hit.has(u) && !evadesGround(e2, u));
             if (!nx) break;
             hit.add(nx);
             hurt(b, e2, nx, e2.s.atk * Math.pow(fall, k), 'arts');
@@ -2320,7 +2333,7 @@ export const KITS = Object.freeze({
     b.fx('telegraph', { x, y, r: 1, dur: CANNON_SHOTS, kind: 'cannon' });
     for (let i = 1; i <= CANNON_SHOTS; i++) b.after(i, () => {
       if (!e.alive) return;
-      const t = b.alliesInRadius(x, y, 1).sort((p, q) => q.hpRatio - p.hpRatio)[0];
+      const t = b.alliesInRadius(x, y, 1).filter((u) => !evadesGround(e, u)).sort((p, q) => q.hpRatio - p.hpRatio)[0];
       if (t) { b.fx('explode', { x: t.x, y: t.y, r: 0.5, kind: 'cannon' }); hurt(b, e, t, e.s.atk * (ab.sk.Cannon.bb.atk_scale ?? 0), 'arts'); }
     }, { owner: e });
   }, { cond: (b, e) => allTargets(b, e).length > 0 })],
