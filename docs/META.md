@@ -115,8 +115,10 @@ or the next two ("接下来两场作战"), 源石虫·特训, and the 7 multi-ro
 feedback after 0.1.0, report #2 — late bounty enemies in the early drafts): a draft up to R7 (the official wave
 generator's first half: 绝境 / 终极 R3, 险境 co-op R3 / R6) draws the 42 "接下来两场作战" cards, a draft from R8 on (R9)
 the 56 "下场作战" cards (boss bounties, 特异 giants, the faction _7 / _8 cards, 源石虫·特训) and the 7 multi-round ones —
-uniformly, with no tier window (the official late-draft screenshot shows boss bounties worth 1 to 6 together; the
-evidence is in `tools/build-data.mjs bountyDraftHalf`). The mode's inactive enemy list does not thin the draft (PRTS
+uniformly, with no tier window (the official late-draft screenshot shows boss bounties worth 1 to 6 together). The
+split by battle count is [ASSUMED] beyond that screenshot and a trend in the faction series (12 of the 18 two-battle
+faction cards bring first-half enemies, no next-battle card does); the evidence and the counter-evidence (the 假想敌
+cards are named `enemyInitial_*`) are in `tools/build-data.mjs bountyDraftHalf`. The mode's inactive enemy list does not thin the draft (PRTS
 11/18 note "不影响悬赏决策出场"). Every bounty card carries the effect's official rich text `descRaw` (the battles in blue
 "下场作战" / "两场作战"; the overlay and the effects column render it; the effects column also says "还剩 N 场作战").
 **Multi-round cards last two battles** (`choices.js MULTI_ROUND_BOUNTY_BATTLES = 2`, `bountyBattles` / `bountyText`): the
@@ -417,7 +419,7 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   consumed copies are removed; a reward offer of 3
   **different** free chess of tier min(level+1, 6) (copy-weighted from the shared pool, already-drawn ones excluded; a
   short tier tops up from the tier below — user playtest #6 item 19; pick 1, expires at prep end; queued when several
-  merges happen). The same rule holds for every way a merge completes — buy, reward pick, effect / band / choice grants
+  merges or special refreshes happen — `shop.rewardOffer.queued` counts the ones behind the shown offer). The same rule holds for every way a merge completes — buy, reward pick, effect / band / choice grants
   (`acquireChess`), transformations — and in every phase: a merge completed after the prep (SETTLE / Final Assault
   effects such as 突变细胞) keeps its offer for the next prep; its elite takes the deployed copy's tile at once, or goes to
   the hand / temp (kept through the next prep, see Hand). In a boss round's prep the tile is read on the player's half of

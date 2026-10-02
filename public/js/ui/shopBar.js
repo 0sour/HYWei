@@ -217,7 +217,7 @@ export function useTwoTap({ editable, keys }) {
  * the special refreshes of strategies, items and 特质 — e.g. 凯瑟琳 【定向投放】 "在调度中心刷新随机3件装备，可以选择并获得
  * 其中1件". Each slot is drawn by its kind: an item slot is an item card (icon, name, tier, description, FREE) — player
  * report #6 after 0.1.0, the items used to be drawn as nameless operator cards — and the header names the offer
- * (gameLogic.offerHeader: 晋升奖励 / the strategy's effect name …).
+ * (gameLogic.offerHeader: 晋升奖励 / the strategy's effect name …; "之后还有 N 项" while more offers wait behind it).
  */
 export function RewardCards({ offer, priv, editable, onPick, onDetail, onLater, armed, onTap }) {
   const head = offerHeader(offer);
@@ -227,6 +227,7 @@ export function RewardCards({ offer, priv, editable, onPick, onDetail, onLater, 
       <b class="rwtag__title">${head.title}</b>
       <span class="rwtag__micro">${head.micro}</span>
       <span class="rwtag__sub">${head.sub}</span>
+      ${head.more ? html`<span class="rwtag__sub rwtag__more">${head.more}</span>` : null}
       <button type="button" class="rwtag__later" onClick=${onLater} title="稍后选择（回合结束后消失）"><${Icon} name="minus" />稍后</button>
     </div>
     <div class="shopbar__rwcards">

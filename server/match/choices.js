@@ -9,9 +9,10 @@
 //                     them) of the draft's half (`bountyDraftHalf`, choices.json `draftHalf`; player feedback after
 //                     0.1.0, report #2 — late bounty enemies in the early drafts): rounds ≤ 7 (the official wave
 //                     generator's first half: R3, 险境 R6) offer the "接下来两场作战" cards, R8 on (R9) the "下场作战" cards
-//                     (boss bounties, 特异 giants, the faction _7 / _8 cards …) and the multi-round ones (tools/build-data.mjs
-//                     bountyDraftHalf has the evidence); drawn uniformly (no tier window: the official late draft shows
-//                     boss bounties worth 1 to 6 together); the mode's inactive enemy list does not apply (PRTS
+//                     (boss bounties, 特异 giants, the faction _7 / _8 cards …) and the multi-round ones ([ASSUMED] beyond
+//                     the evidence in tools/build-data.mjs bountyDraftHalf, which also lists the counter-evidence);
+//                     drawn uniformly (no tier window: the official late draft shows boss bounties worth 1 to 6
+//                     together); the mode's inactive enemy list does not apply (PRTS
 //                     卫戍协议：盟约 11/18 note "以上调整仅针对战术特训敌人，不影响悬赏决策出场"); each card carries its official
 //                     rich text `descRaw` (the battles in blue "下场作战" / "两场作战"); a multi-round card lasts
 //                     MULTI_ROUND_BOUNTY_BATTLES battles and says so (`bountyBattles` / `bountyText`: the user's call

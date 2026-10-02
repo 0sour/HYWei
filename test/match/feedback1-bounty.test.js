@@ -3,11 +3,14 @@
 // 弑君者, 萨卡兹百夫长, 鼠王, 庞贝, 大鲍勃), second-half specials (尖端萨卡兹枯朽战车, 假想敌：蚀裂 / 淤困 …, 法术大师A2,
 // 灼藤, 重弩突袭者) and their upgraded variants (新硎, 家族暗影灭迹人, 异光体孽生者 …): the card tier read from the I/II/III
 // suffix, the boss bounties' small coin values and the multi-round cards' fixed tier 2 all passed the R3 tier window
-// [1, 2]. Official evidence (tools/build-data.mjs bountyDraftHalf): the one official co-op draft screenshot shows six boss
-// bounties with coins 1–6 together at team LP 6 / 10 / 9 / 15 (a late draft), and in every faction series of the data
-// the "接下来两场作战" cards use first-half enemies, the "下场作战" ones second-half enemies. Now a first-half draft
-// (R ≤ 7, the official wave generator's half) offers the two-battle cards, a draft from R8 on the next-battle and
-// multi-round cards. Real data, real draft code, the real match path for the players' scenario.
+// [1, 2]. Evidence (tools/build-data.mjs bountyDraftHalf): the one official co-op draft screenshot shows six boss
+// bounties with coins 1–6 together at team LP 6 / 10 / 9 / 15 (a late draft); in the faction series 12 of the 18
+// "接下来两场作战" cards bring first-half enemies (5 bring enemies outside the wave tables, enemyeffect_12_4 底海滑动者
+// one attached only to second-half specials) and no "下场作战" card a first-half one — a trend, not a rule. Now a
+// first-half draft (R ≤ 7, the official wave generator's half) offers the two-battle cards, a draft from R8 on the
+// next-battle and multi-round cards ([ASSUMED] beyond that evidence: the 假想敌 cards are named enemyInitial_*, which
+// could point at the early draft — kept late, a question for the user). Real data, real draft code, the real match path
+// for the players' scenario.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
@@ -73,7 +76,9 @@ test('#2 data cross-check (official tables): no first-half card brings a boss or
     if (lateEnemy) { assert.equal(c.draftHalf, 2, `${c.effectId} ${c.name}`); late++; }
   }
   assert.ok(late >= 30, `${late} cards with a boss or a second-half special`);
-  // the faction series pair the halves: _4–_6 (two battles) with first-half enemies, _7 / _8 (next battle) with later ones
+  // the rule follows the battle count: the faction series' _4–_6 (two battles) are first-half cards, _7 / _8 (next
+  // battle) second-half ones — whatever wave half their enemy has (enemyeffect_12_4 底海滑动者 is a second-half
+  // attachment, yet a two-battle card)
   for (const s of [10, 11, 12, 13, 14, 15]) {
     for (const i of [4, 5, 6]) assert.equal(CARD.get(`enemyeffect_${s}_${i}`).draftHalf, 1, `enemyeffect_${s}_${i}`);
     for (const i of [7, 8]) assert.equal(CARD.get(`enemyeffect_${s}_${i}`).draftHalf, 2, `enemyeffect_${s}_${i}`);

@@ -4,8 +4,10 @@
 // tier I, no description) under the promotion reward's 晋升奖励 / PROMOTION header, and the reminder pill said
 // 晋升奖励待选择. Now: m.private shop.rewardOffer says what made the offer (`source` 'merge' | 'special', `label` = the
 // effect's name — effectsMeta.offerLabel), an item slot is drawn as an item card (FREE) and the header / pill name the
-// offer (gameLogic.offerHeader). The same path serves 娜仁图亚 见者有份 (two items), 寻呼模块 / 信标 (operators, an item's
-// name) and 松果's 特质. Real match paths for the server side; the bar's offer cards rendered as vnodes.
+// offer (gameLogic.offerHeader; `queued` — "之后还有 N 项" / the pill's "+N" — when more offers wait behind it, e.g. a
+// 定向投放 behind a promotion reward put off). The same path serves 娜仁图亚 见者有份 (two items), 寻呼模块 / 信标
+// (operators, an item's name) and 松果's 特质. Real match paths for the server side; the bar's offer cards rendered as
+// vnodes.
 // The browser check (desktop + phones, real input) is test/ui/feedback1-offers.e2e.test.js (SP_E2E=1).
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -90,9 +92,11 @@ describe('#6 the server names its offers (m.private shop.rewardOffer source / la
     for (let i = 0; i < 2; i++) { ps.shop.upgradePrice = 0; assert.deepEqual(m.handle('p_0', { t: 'g.levelUp' }), OK); }
     assert.equal(ps.offers.length, 2, 'two offers queued');
     assert.equal(ps.privateView().shop.rewardOffer.slots.length, 3, 'the first one is shown');
+    assert.equal(ps.privateView().shop.rewardOffer.queued, 1, 'one more waits behind it');
     assert.deepEqual(m.handle('p_0', { t: 'g.reward', idx: 0 }), OK);
     const second = ps.privateView().shop.rewardOffer;
     assert.ok(second && second.label === '定向投放' && second.slots.length === 3 && second.slots.every((s) => !s.sold), 'the second offer, all free to pick');
+    assert.equal(second.queued, 0);
     assert.deepEqual(m.handle('p_0', { t: 'g.reward', idx: 2 }), OK);
     assert.equal(ps.privateView().shop.rewardOffer, null);
     m.dispose();
@@ -126,6 +130,28 @@ describe('#6 the server names its offers (m.private shop.rewardOffer source / la
     m.dispose();
   });
 
+  test('a promotion reward put off, then a 凯瑟琳 level-up: the promotion reward shows with "+1" (queued 1), then 定向投放', () => {
+    const { m, ps } = prep('band_cathy', 65);
+    ps.pushRewardOffer('merge');
+    ps.shop.upgradePrice = 0;
+    assert.deepEqual(m.handle('p_0', { t: 'g.levelUp' }), OK);
+    let offer = ps.privateView().shop.rewardOffer;
+    assert.equal(offer.source, 'merge', 'the promotion reward first');
+    assert.equal(offer.queued, 1, 'the 定向投放 offer waits behind it');
+    const head = offerHeader(offer);
+    assert.equal(head.pill, '晋升奖励待选择');
+    assert.equal(head.queued, 1);
+    assert.equal(head.more, '之后还有 1 项');
+    const pill = RewardOverlay({ priv: { shop: { rewardOffer: offer } }, minimized: true, onMinimize() {} });
+    const texts = [...walk(pill)].flatMap((n) => (Array.isArray(n.props?.children) ? n.props.children.filter((x) => typeof x === 'string' || typeof x === 'number') : typeof n.props?.children === 'string' ? [n.props.children] : []));
+    assert.ok(texts.join('').includes('+1'), `the pill says +1 (${texts.join(' | ')})`);
+    assert.deepEqual(m.handle('p_0', { t: 'g.reward', idx: 0 }), OK);
+    offer = ps.privateView().shop.rewardOffer;
+    assert.ok(offer.source === 'special' && offer.label === '定向投放' && offer.queued === 0, JSON.stringify(offer));
+    assert.equal(offerHeader(offer).more, null);
+    m.dispose();
+  });
+
   test('offerLabel: a strategy → its effect name, an item → its name, a 特质 → its operator, anything else → null', () => {
     const { m } = prep(null, 64);
     const gd = m.gd;
@@ -146,8 +172,10 @@ describe('#6 the shop bar draws the offer by its slots and names it', () => {
   const merge = { tier: 3, source: 'merge', label: null, slots: chessOfTier(3).slice(0, 3).map((id) => ({ kind: 'chess', id, price: 0, sold: false })) };
 
   test('offerHeader: 晋升奖励 for the promotion reward, the label for a special refresh (items: 免费选择 1 件)', () => {
-    assert.deepEqual(offerHeader(merge), { title: '晋升奖励', micro: 'PROMOTION', sub: '免费选择 1 名', icon: 'crown', items: false, pill: '晋升奖励待选择' });
-    assert.deepEqual(offerHeader(cathy), { title: '定向投放', micro: 'SPECIAL', sub: '免费选择 1 件', icon: 'refresh', items: true, pill: '定向投放待选择' });
+    assert.deepEqual(offerHeader(merge), { title: '晋升奖励', micro: 'PROMOTION', sub: '免费选择 1 名', icon: 'crown', items: false, pill: '晋升奖励待选择', queued: 0, more: null });
+    assert.deepEqual(offerHeader(cathy), { title: '定向投放', micro: 'SPECIAL', sub: '免费选择 1 件', icon: 'refresh', items: true, pill: '定向投放待选择', queued: 0, more: null });
+    assert.equal(offerHeader({ ...cathy, queued: 2 }).more, '之后还有 2 项');
+    assert.equal(offerHeader({ ...cathy, queued: -1 }).queued, 0, 'a bad count is ignored');
     assert.equal(offerHeader({ ...merge, source: 'special', label: '寻呼模块' }).title, '寻呼模块');
     assert.equal(offerHeader({ ...merge, source: 'special', label: '寻呼模块' }).sub, '免费选择 1 名');
     assert.equal(offerHeader({ ...cathy, label: null }).title, '装备补给', 'an unnamed item offer');
@@ -179,6 +207,11 @@ describe('#6 the shop bar draws the offer by its slots and names it', () => {
     const mcards = [...walk(vm)].filter((n) => n.type === ItemCard || n.type === ChessCard);
     assert.ok(mcards.length === 3 && mcards.every((c) => c.type === ChessCard));
     assert.equal(String([...walk(vm)].find((n) => typeof n.props?.class === 'string' && n.props.class.includes('rwtag__title')).props.children), '晋升奖励');
+    assert.ok(!nodes.some((n) => typeof n.props?.class === 'string' && n.props.class.includes('rwtag__more')), 'nothing queued: no "之后还有" line');
+    // an offer with another one behind it says so in the header
+    const vq = RewardCards({ offer: { ...merge, queued: 1 }, priv: { ...priv, shop: { rewardOffer: merge } }, editable: true, onPick() {}, onDetail() {}, onLater() {}, armed: null, onTap() {} });
+    const more = [...walk(vq)].find((n) => typeof n.props?.class === 'string' && n.props.class.includes('rwtag__more'));
+    assert.equal(String(more.props.children), '之后还有 1 项');
   });
 
   test('the reminder pill names the offer (定向投放待选择), with a tier chip only for operator offers', () => {

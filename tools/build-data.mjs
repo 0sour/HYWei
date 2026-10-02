@@ -2338,17 +2338,29 @@ function bountyDraftExclusion(e, main) {
  * The half of the match whose 悬赏决策 drafts offer a drafted bounty card (player feedback after 0.1.0, report #2: "本来应该
  * 后期出的悬赏的怪物在前期的悬赏就出现了"): 1 = the drafts of rounds ≤ firstHalfMaxRound (7: co-op / solo 绝境 · 终极 R3,
  * 险境 co-op R3 / R6), 2 = the drafts from R8 on (R9). The official card list of each draft event (enemy_initial_1..10,
- * bounty_hunter_1..15, bossInitial_1..6) is server-side; what the official side shows:
+ * bounty_hunter_1..15, bossInitial_1..6) is server-side; no table (activity_table, PRTS 敌人轮选, BWIKI) gives rounds.
+ * Evidence for the split:
  *   - the one official co-op 悬赏决策 screenshot (Bahamut 12294, research 06 §15 "Wrkhtxv") holds six boss bounties —
  *     “复仇者” 6, “庞贝” 2, W 1, 萨卡兹百夫长 2, “邪魔的利刃” 3, 碎骨 1 — with the team at LP 6 / 10 / 9 / 15: a late
  *     draft, coin values 1–6 together;
- *   - the data's six faction series pair the battles with the wave generator's halves (specialEnemyInfoDict
- *     isInFirstHalf): "接下来两场作战" (_4–_6) bring first-half enemies or their attached keys (妖怪, 磨砻, 逐腐兽, 萨卡兹
- *     枯朽战车, 山海众头目, 深池伙友卫队 …), "下场作战" (_7 / _8) second-half specials or their upgraded copies (法术大师A2,
- *     假想敌：蚀裂, 尖端萨卡兹枯朽战车, 新硎, 家族暗影灭迹人, 异光体孽生者 …).
- * Rule: a "接下来两场作战" card (data `round` 2) is a first-half card; a "下场作战" card (the boss bounties, the 特异 giants,
- * the faction _7 / _8 cards, 源石虫·特训) and a multi-round card (the 假想敌, a second-half special each) a second-half
- * one [ASSUMED beyond the evidence above]. Not a drafted card ⇒ null.
+ *   - a trend, not a rule, in the six faction series against the wave generator's halves (specialEnemyInfoDict
+ *     isInFirstHalf and the attached keys): of the 18 "接下来两场作战" cards (_4–_6) 12 bring an enemy of the first half
+ *     (妖怪, 磨砻, 逐腐兽, 萨卡兹枯朽战车, 山海众头目, 深池伙友卫队 …), 5 one outside the wave tables (暴鸰, 烹泉, 清明,
+ *     术师快艇, 隐形术师) and 1 (enemyeffect_12_4 底海滑动者) an enemy attached only to second-half specials; of the 12
+ *     "下场作战" cards (_7 / _8) 6 bring a second-half special (法术大师A2, 灼藤, 假想敌：蚀裂, 尖端萨卡兹枯朽战车 …) and 6
+ *     an enemy outside the wave tables (新硎, 家族暗影灭迹人, 异光体孽生者 …), none a first-half one;
+ *   - strength: the half-1 enemies have at most 16000 base HP (median 5000), the half-2 ones up to 100000 (median 22000);
+ *   - the user's playtest #6 report "悬赏决策的敌人…正常只会在选择之后出现两回合" (DESIGN §20.6): the bounty met most
+ *     often — the R3 draft every 绝境 / 终极 match has — lasts two battles.
+ * Counter-evidence, not reconciled: the multi-round 假想敌 cards are enemyInitial_1..6, a name like the enemy_initial_*
+ * events (used here as the first-half header); a community guide "第三回合懸賞怪机制,数值及对策" (NGA tid 46551276,
+ * linked from Bahamut 12316; NGA needs a login, unread) may describe the R3 pool. The pre-series cards follow the
+ * battle count too, so the next-battle and multi-round cards of the first-half specials “萨科塔之眼” and 山海众头目
+ * (enemyeffect_3_2_e / 3_4 / 4) go to the late drafts, while 山海众头目 is offered early through enemyeffect_14_6.
+ * Rule [ASSUMED beyond the evidence above]: a "接下来两场作战" card (data `round` 2) is a first-half card; a "下场作战"
+ * card (the boss bounties, the 特异 giants, the faction _7 / _8 cards, the e3_* cards, 源石虫·特训) and a multi-round card
+ * (山海众头目·多轮悬赏, the 6 假想敌 — second-half specials, 12000–36000 base HP) a second-half one. Not a drafted card ⇒
+ * null. Flip for the multi-round cards: return 1 for `main.rounds >= 99`.
  */
 function bountyDraftHalf(main, draftExcluded) {
   if (draftExcluded) return null;
