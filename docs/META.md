@@ -115,12 +115,16 @@ screenshots of 11 official co-op 绝境 / 终极 matches, readings in `test/fixt
 one of the 10 official sets of six "接下来两场作战" cards, 3 × I + 2 × II + 1 × III — 7 seen (a whole series 17 / 18 / 19,
 or one card from each of 6 of the series 10–15 / 20), the 3 unseen slots built by that rule [ASSUMED]; **R9** boss
 bounties + 源石虫·特训: a seen group of 0–3 named bosses that always come together, filled to 6 with the cheap ones (W /
-碎骨 / 弑君者, 大鲍勃, 庞贝 or 鼠王, 源石虫·特训); **R11** (绝境 / 终极: 悬赏决策, 机密商店 or 战术决策, never 道具补给)
-one 特异III giant + 5 "下场战斗" cards, at most one per faction series. 险境 R6 drafts like R3 [ASSUMED]. A card's enemy
-is fixed by its effect (`enemy_id`): the title only names category and tier (悬赏·损伤I = 底海滑动者 or 临时收音师).
+碎骨 / 弑君者, 大鲍勃, 庞贝 or 鼠王, 源石虫·特训) — 7 groups for 6 events: two game versions or a group set per match
+(leader, map), open; **R11** (绝境 / 终极 co-op: 悬赏决策, 机密商店 or 战术决策, never 道具补给; solo the same weights
+[ASSUMED]) six "下场战斗" cards like R9: a group — one 特异III giant + 1–4 tier-II cards, always together (matches 1 and 6
+share the whole group, only the tier-I card differs) — filled to 6 with tier-I cards, at most one per faction series;
+4 groups seen for the 15 events, the unseen slots draw a group of that shape [ASSUMED]. 险境 R6 drafts like R3
+[ASSUMED]. A card's enemy is fixed by its effect (`enemy_id`): the title only names category and tier (悬赏·损伤I =
+底海滑动者 or 临时收音师).
 No official draft showed a multi-round card, a pre-series card (enemyeffect_3_*) or the boss bounties 凋零骑士 / “遗弃者”
 / 锏 / 扎罗 / 迷路的巨像: `draftExcluded: 'unseen'` [ASSUMED], flipped by adding them to build-data
-`BOUNTY_INITIAL_SETS` / `BOUNTY_BOSS_TEMPLATES` once a screenshot shows one. The card positions are shuffled; solo
+`BOUNTY_INITIAL_SETS` / `BOUNTY_BOSS_TEMPLATES` / `BOUNTY_HUNTER_TEMPLATES` once a screenshot shows one. The card positions are shuffled; solo
 shows 3 of the 6 [ASSUMED]. The mode's inactive enemy list does not thin the draft (PRTS
 11/18 note "不影响悬赏决策出场"). Every bounty card carries the effect's official rich text `descRaw` (the battles in blue
 "下场作战" / "两场作战"; the overlay and the effects column render it; the effects column also says "还剩 N 场作战").

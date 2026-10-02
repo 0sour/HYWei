@@ -5,8 +5,8 @@
 //   R3  six "接下来两场作战" cards, 3 × I + 2 × II + 1 × III, one of the official fixed sets (a whole series 17 / 18 / 19,
 //       or one card from each of 6 of the series 10–15 / 20) — 7 of the 10 events seen;
 //   R9  boss bounties + 源石虫·特训: a group of named bosses that come together + cheap ones to 6;
-//   R11 悬赏决策 / 机密商店 / 战术决策 (never 道具补给); its bounty: one 特异III giant + 5 "下场战斗" cards, at most one per
-//       faction series;
+//   R11 悬赏决策 / 机密商店 / 战术决策 (never 道具补给); its bounty: a group (one 特异III giant + 1–4 tier-II "下场战斗" cards,
+//       always together — matches 1 and 6 share the whole group) + tier-I cards to 6, at most one per faction series;
 //   no draft shows a multi-round card, a pre-series card (enemyeffect_3_*), 战术特训 or the 鸭爵 set; no card twice.
 // Each card's enemy is fixed by its effect; the title only names category and tier (悬赏·损伤I = 底海滑动者 in
 // enemyeffect_12_4, 临时收音师 in enemyeffect_18_1). Real data, real draft code, the real match path for the players' case.
@@ -63,13 +63,21 @@ function initialFit(ids) {
 /** The R9 groups a set of ids fits (its featured bosses all there, the rest from the group's fill). */
 const bossFits = (ids) => SPEC.boss.templates.map((t, i) => [t, i]).filter(([t]) => ids.length === SPEC.boss.count
   && t.featured.every((id) => ids.includes(id)) && ids.filter((id) => !t.featured.includes(id)).every((id) => t.fill.includes(id))).map(([, i]) => i);
-/** Whether a set of ids follows the R11 rule (one giant, the rest from the next-battle cards, one per faction series). */
-function hunterFits(ids) {
-  const h = SPEC.hunter;
-  const anchors = ids.filter((id) => h.anchors.includes(id));
-  const rest = ids.filter((id) => !h.anchors.includes(id));
-  const series = rest.map((id) => CARD.get(id).series).filter((s) => h.onePerSeries.includes(s));
-  return ids.length === h.count && anchors.length === h.anchorCount && rest.every((id) => h.rest.includes(id)) && new Set(series).size === series.length;
+/** At most one card per faction series 10–15 (every official R11 draft). */
+function onePerSeries(ids) {
+  const series = ids.map((id) => CARD.get(id).series).filter((s) => SPEC.hunter.onePerSeries.includes(s));
+  return new Set(series).size === series.length;
+}
+/** The seen R11 groups a set of ids fits (the group's giant + tier-II cards all there, the rest from its fill). */
+const hunterFits = (ids) => SPEC.hunter.templates.map((t, i) => [t, i]).filter(([t]) => ids.length === SPEC.hunter.count && onePerSeries(ids)
+  && t.featured.every((id) => ids.includes(id)) && ids.filter((id) => !t.featured.includes(id)).every((id) => t.fill.includes(id))).map(([, i]) => i);
+/** The R11 shape an unseen slot is built by: one tier-III giant, 1–4 tier-II group cards, tier-I fill, one per faction series. */
+function hunterShape(ids) {
+  const r = SPEC.hunter.rule;
+  const giants = ids.filter((id) => r.giants.includes(id)).length;
+  const group = ids.filter((id) => r.groupCards.includes(id)).length;
+  const fill = ids.filter((id) => r.fill.includes(id)).length;
+  return ids.length === SPEC.hunter.count && giants === 1 && r.groupSizes.includes(group) && giants + group + fill === ids.length && onePerSeries(ids);
 }
 
 /** Bounty drafts generated for `modeId` at `round` over `seeds` seeds. */
@@ -181,31 +189,59 @@ test('#2 R9 (12 of 12 official drafts): boss bounties + 源石虫·特训 — a 
   }
 });
 
-test('#2 R11 (11 matches: 悬赏决策 5, 机密商店 4, 战术决策 2, 道具补给 0): the families, and the bounty rule — one 特异III giant + 5 "下场战斗" cards, one per faction series', () => {
+test('#2 R11 (11 matches: 悬赏决策 5, 机密商店 4, 战术决策 2, 道具补给 0): the families, and the bounty — a group (one 特异III giant + its tier-II cards, always together) + tier-I fill, one card per faction series', () => {
   const r11 = officialDrafts().filter((d) => d.round === 11);
   const fam = {};
   for (const d of r11) fam[d.family] = (fam[d.family] || 0) + 1;
   assert.deepEqual(fam, { bounty: 5, shop: 4, tactic: 2 });
+  const hits = SPEC.hunter.templates.map(() => 0);
+  const byMatch = {};
   for (const d of r11.filter((x) => x.family === 'bounty')) {
-    assert.ok(hunterFits(d.ids), `${d.where}: ${d.ids.join(', ')}`);
-    assert.ok(d.ids.every((id) => CARD.get(id).draftPool === 'hunter' && CARD.get(id).rounds === 1));
+    assert.ok(d.ids.every((id) => CARD.get(id).draftPool === 'hunter' && CARD.get(id).rounds === 1), `${d.where}: R11 cards, 下场战斗`);
+    assert.ok(hunterShape(d.ids), `${d.where}: the shape the unseen slots are built by (${tiersOf(d.ids)})`);
+    const fits = hunterFits(d.ids);
+    assert.equal(fits.length, 1, `${d.where}: fits exactly one seen group (${fits.join(', ')})`);
+    hits[fits[0]]++;
+    byMatch[d.where.split(' ')[1]] = d.ids;
   }
+  assert.deepEqual(hits, [2, 1, 1, 1], 'the 16_4 group in matches 1 and 6, three more groups once');
+  // the evidence against a free draw: matches 1 and 6 share the giant and all four tier-II cards, only the tier-I card differs
+  const shared = byMatch['1'].filter((id) => byMatch['6'].includes(id));
+  assert.equal(shared.length, 5);
+  assert.deepEqual(byMatch['1'].filter((id) => !shared.includes(id)).concat(byMatch['6'].filter((id) => !shared.includes(id))).map((id) => CARD.get(id).tier), [1, 1]);
+  for (const id of ['enemyeffect_10_8', 'enemyeffect_11_8', 'enemyeffect_12_8']) assert.ok(!Object.values(byMatch).flat().includes(id), `${id} in no official R11 draft`);
   for (const modeId of ['mode_multi_hard', 'mode_multi_abyss', 'mode_single_hard', 'mode_single_abyss']) {
     const sch = DATA.choices.schedule[modeId].rounds['11'];
-    assert.deepEqual(sch.families.map((f) => f.family).sort(), ['bounty', 'shop', 'tactic'], `${modeId} R11`);
+    assert.deepEqual(sch.families.map((f) => f.family).sort(), ['bounty', 'shop', 'tactic'], `${modeId} R11 (solo: extrapolated from co-op, [ASSUMED])`);
     assert.equal(sch.bountyDraft, 'hunter');
+    assert.equal(sch.assumed, true);
   }
+  assert.equal(SPEC.hunter.slots, 15, 'bounty_hunter_1..15');
+  // generated: a seen group (about 4 in 15) or a group of the same shape; every seen group and every R11 card comes up
   const gd = new GameData(DATA, 'mode_multi_hard');
   const seen = {};
-  for (let seed = 1; seed <= 200; seed++) {
+  const groups = SPEC.hunter.templates.map(() => 0);
+  const offered = new Set();
+  let bounty = 0;
+  let fitSeen = 0;
+  for (let seed = 1; seed <= 1500; seed++) {
     const d = generateDraft(gd, createRng(seed * 13 + 11), 11, { stageId: 'act2autochess_m01' });
     seen[d.family] = (seen[d.family] || 0) + 1;
     if (d.family !== 'bounty') continue;
-    assert.ok(hunterFits(d.cards.map((c) => c.id)), d.cards.map((c) => c.name).join(', '));
+    const ids = d.cards.map((c) => c.id);
+    assert.equal(new Set(ids).size, 6);
+    assert.ok(hunterShape(ids), d.cards.map((c) => c.name).join(', '));
     assert.match(d.eventId, /^bounty_hunter_\d+$/);
+    const fits = hunterFits(ids);
+    if (fits.length) { fitSeen++; groups[fits[0]]++; }
+    bounty++;
+    ids.forEach((id) => offered.add(id));
   }
   assert.deepEqual(Object.keys(seen).sort(), ['bounty', 'shop', 'tactic'], 'no 道具补给 at R11');
-  assert.ok(seen.bounty > seen.tactic, JSON.stringify(seen));
+  assert.ok(seen.bounty > seen.shop && seen.shop > seen.tactic, JSON.stringify(seen));
+  assert.ok(groups.every((x) => x > 0), `every seen group offered (${groups.join(' ')})`);
+  assert.ok(fitSeen / bounty > 0.17 && fitSeen / bounty < 0.4, `seen groups ${(100 * fitSeen / bounty).toFixed(0)} % of ${bounty}`);
+  for (const c of CARDS.filter((x) => x.draftPool === 'hunter')) assert.ok(offered.has(c.effectId), `${c.effectId} ${c.name} offered at R11`);
 });
 
 test('#2 never offered by a draft (in none of the 27 official bounty drafts): multi-round cards, enemyeffect_3_*, 战术特训, the 鸭爵 set', () => {

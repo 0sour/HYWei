@@ -11,7 +11,9 @@
 //                               set, or for an unseen slot one card from each of 6 of the series 10–15 / 20 with the
 //                               tiers I I I II II III;
 //                       boss (R9): a seen group of named bosses + the group's cheap boss bounties / 源石虫·特训 to 6;
-//                       hunter (R11): one 特异III giant + 5 "下场战斗" cards, at most one per faction series;
+//                       hunter (R11): one of the 15 official events — a seen group (a 特异III giant + its tier-II
+//                               "下场战斗" cards, always together) or for an unseen slot a group of that shape
+//                               [ASSUMED] — filled to 6 with tier-I cards, at most one card per faction series;
 //                     only `draft` cards of that `draftPool` (never 战术特训 — 法术教鞭 only —, the 鸭爵 set, the 7
 //                     multi-round cards or the pre-series cards: no official draft shows them); positions shuffled; the
 //                     mode's inactive enemy list does not apply (PRTS 卫戍协议：盟约 11/18 note "以上调整仅针对战术特训敌人，
@@ -232,9 +234,25 @@ function structuredBounty(rng, kind, spec, byId) {
     return [...featured, ...drawDistinct(rng, get(t.fill), count - featured.length, taken)].slice(0, count);
   }
   if (kind === 'hunter') {
+    // one of the official events: a seen group, or for an unseen slot a group of the same shape; then tier-I fill to 6
     const onePer = new Set(Array.isArray(spec.onePerSeries) ? spec.onePerSeries : []);
-    const anchors = drawDistinct(rng, get(spec.anchors), Number.isInteger(spec.anchorCount) ? spec.anchorCount : 1, taken);
-    return [...anchors, ...drawDistinct(rng, get(spec.rest), count - anchors.length, taken, onePer)];
+    const templates = Array.isArray(spec.templates) ? spec.templates : [];
+    const slots = Math.max(templates.length, Number.isInteger(spec.slots) ? spec.slots : 0);
+    const slot = slots > 0 ? rng.int(slots) : 0;
+    let group;
+    let fill;
+    if (slot < templates.length) {
+      group = get(templates[slot].featured);
+      group.forEach((c) => taken.add(c));
+      fill = get(templates[slot].fill);
+    } else {
+      const r = spec.rule || {};
+      const sizes = Array.isArray(r.groupSizes) && r.groupSizes.length ? r.groupSizes : [1];
+      const giant = drawDistinct(rng, get(r.giants), 1, taken);
+      group = [...giant, ...drawDistinct(rng, get(r.groupCards), rng.pick(sizes), taken, onePer)];
+      fill = get(r.fill);
+    }
+    return [...group, ...drawDistinct(rng, fill, count - group.length, taken, onePer)];
   }
   return [];
 }

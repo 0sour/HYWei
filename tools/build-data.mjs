@@ -2352,11 +2352,21 @@ function bountyDraftExclusion(e, main) {
  *   boss     R9 (bossInitial_1..6): the boss bounties "X·悬赏" and 源石虫·特训, all "下场作战". All 12 drafts (11 matches +
  *            the Bahamut 12294 co-op screenshot) are a group of 0–3 named bosses that always come together, filled up to 6
  *            with cheap ones (W / 碎骨 / 弑君者 1, 大鲍勃 2, 庞贝 or 鼠王 2, 源石虫·特训 0): BOUNTY_BOSS_TEMPLATES. 7 groups
- *            were seen for 6 events (庞贝 and 鼠王 never in one draft: perhaps two versions); uniform [ASSUMED]. 凋零骑士,
- *            “遗弃者”, 锏, 扎罗 and 迷路的巨像 never appeared: not offered [ASSUMED].
- *   hunter   R11 (bounty_hunter_*; R11 is a 悬赏决策 in 5 of the 11 matches): six "下场战斗" cards, exactly one 特异III giant
- *            (enemyeffect_16_1..8, 3 coins) and 5 of the faction _7 / _8 cards and enemyeffect_16_9..12, at most one per
- *            faction series 10–15 (5 of 5 drafts): BOUNTY_HUNTER.
+ *            were seen for 6 events (庞贝 and 鼠王 never in one draft; 杰斯顿 only in matches 7–11): two game versions,
+ *            or a group set by something of the match (its leader, its map — the 杰斯顿 groups came on both boards) —
+ *            open; uniform among the seen groups [ASSUMED]. 凋零骑士, “遗弃者”, 锏, 扎罗 and 迷路的巨像 never appeared: not
+ *            offered [ASSUMED].
+ *   hunter   R11 (bounty_hunter_1..15; R11 is a 悬赏决策 in 5 of the 11 matches): six "下场战斗" cards, exactly one 特异III
+ *            giant (enemyeffect_16_1..8, 3 coins), the others tier II / I faction _7 / _8 cards and enemyeffect_16_9..12,
+ *            at most one per faction series 10–15 (5 of 5 drafts). Not a free draw within that rule: matches 1 and 6
+ *            show the same giant (16_4) and the same four tier-II cards (16_10 15_7 12_7 13_8) and differ only in their
+ *            one tier-I card (10_7 / 11_7); 15_7 + 13_8 come together in matches 1, 3 and 6; 10_8, 11_8 and 12_8 never
+ *            show (a uniform draw under the rule gives some pair of 5 drafts 5 shared cards in about 2.5 % of samples).
+ *            Like R9, a draft is a group — the giant + 1–4 tier-II cards, always together — filled to 6 with tier-I
+ *            cards: BOUNTY_HUNTER_TEMPLATES, 4 groups seen for the 15 events (fill = the 5 tier-I cards seen); an unseen
+ *            event draws a group of that shape over all the R11 cards (BOUNTY_HUNTER) [ASSUMED: the group / fill split
+ *            by tier, uniform among the 15 events]. The fill cards 16_11 and 13_7 only came in matches 10–11 (the
+ *            杰斯顿 period of R9) — too few drafts to split the fill by period.
  * In none of the 27 bounty drafts: the 7 multi-round cards (山海众头目·多轮悬赏, 多轮悬赏·假想敌 ×6), the pre-series cards
  * enemyeffect_3_* (法术大师A2·悬赏 …), 战术特训 (法术教鞭 only) and the 鸭爵 set; no card twice in one draft.
  */
@@ -2386,12 +2396,20 @@ const BOUNTY_BOSS_TEMPLATES = [
   { featured: ['b_9', 'b_23'].map(EE), fill: BOSS_FILL_B, seen: [7, 11] }, // 杰斯顿·威廉姆斯 陷落雪祀
   { featured: ['b_9', 'b_14'].map(EE), fill: BOSS_FILL_B, seen: [8, 9, 10] }, // 杰斯顿·威廉姆斯 “自在”
 ];
-/** The R11 rule: `anchorCount` of `anchors` + the rest from `rest`, at most one card per series of `onePerSeries`. */
-const BOUNTY_HUNTER = {
-  anchors: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => EE(`16_${i}`)), anchorCount: 1,
-  rest: [...[10, 11, 12, 13, 14, 15].flatMap((n) => [EE(`${n}_7`), EE(`${n}_8`)]), ...[9, 10, 11, 12].map((i) => EE(`16_${i}`))],
-  onePerSeries: [10, 11, 12, 13, 14, 15], count: 6,
-};
+const HUNTER_FILL = ['10_7', '11_7', '13_7', '14_7', '16_11'].map(EE); // 法术大师A2 沏虹 假想敌：蚀裂 重弩突袭者 心虚设计师
+/** The R11 groups seen: `featured` (the 特异III giant + its tier-II cards) always all on the card row, `fill` (tier I) drawn to make 6. */
+const BOUNTY_HUNTER_TEMPLATES = [
+  { featured: ['16_4', '16_10', '15_7', '12_7', '13_8'].map(EE), fill: HUNTER_FILL, seen: [1, 6] }, // 温顺的武装大驮兽 异质裂兽·α 深池重甲卫士队长 灼藤 尖端萨卡兹枯朽战车
+  { featured: ['16_3', '15_7', '13_8'].map(EE), fill: HUNTER_FILL, seen: [3] }, // 狂暴宿主组长 深池重甲卫士队长 尖端萨卡兹枯朽战车
+  { featured: ['16_5', '14_8', '12_7', '15_8'].map(EE), fill: HUNTER_FILL, seen: [10] }, // 萨卡兹骸骨拷打者 家族暗影灭迹人 灼藤 愤怒的守墓石像
+  { featured: ['16_7', '16_9'].map(EE), fill: HUNTER_FILL, seen: [11] }, // 乌顶巨角卢鲁 拥霜羽兽
+];
+/**
+ * An unseen R11 group (the seen groups' shape): one tier-III giant + `groupSizes` (one drawn: the seen 4 / 2 / 3 / 1)
+ * tier-II cards, filled with tier-I cards, at most one card per series of `onePerSeries` — over the R11 cards by tier
+ * (buildChoices). [ASSUMED]
+ */
+const BOUNTY_HUNTER = { groupSizes: [1, 2, 3, 4], onePerSeries: [10, 11, 12, 13, 14, 15], count: 6 };
 /** The kind of a round's 悬赏决策: R3 (and 险境 R6, [ASSUMED]) initial, R9 boss, R11 hunter. */
 const bountyDraftOf = (r) => (r < 8 ? 'initial' : r < 11 ? 'boss' : 'hunter');
 
@@ -2472,8 +2490,15 @@ function buildChoices(ctx, effects, items, chess) {
   const checkKind = (ids, kind, what) => { for (const id of ids) if (bountyById.get(id)?.draftPool !== kind) warn(`bounty draft ${what}: ${id} is not a "${kind}" card`); };
   for (const s of BOUNTY_INITIAL_SETS) checkKind(s.cards, 'initial', 'R3 set');
   for (const t of BOUNTY_BOSS_TEMPLATES) checkKind([...t.featured, ...t.fill], 'boss', 'R9 group');
-  checkKind([...BOUNTY_HUNTER.anchors, ...BOUNTY_HUNTER.rest], 'hunter', 'R11 rule');
-  for (const c of bounty) if (c.draftPool === 'hunter' && !BOUNTY_HUNTER.anchors.includes(c.effectId) && !BOUNTY_HUNTER.rest.includes(c.effectId)) warn(`bounty ${c.effectId}: an R11 card outside BOUNTY_HUNTER`);
+  for (const t of BOUNTY_HUNTER_TEMPLATES) {
+    checkKind([...t.featured, ...t.fill], 'hunter', 'R11 group');
+    const tiers = t.featured.map((id) => bountyById.get(id)?.tier);
+    if (tiers.filter((x) => x === 3).length !== 1 || tiers.some((x) => x !== 3 && x !== 2)) warn(`bounty draft R11 group ${t.featured.join(' ')}: not one giant + tier-II cards`);
+    if (t.fill.some((id) => bountyById.get(id)?.tier !== 1)) warn(`bounty draft R11 group ${t.featured.join(' ')}: a fill card is not tier I`);
+  }
+  // the unseen R11 groups draw over the R11 cards by tier: III the giants, II the group cards, I the fill
+  const hunterTier = (t) => bounty.filter((c) => c.draftPool === 'hunter' && c.tier === t).map((c) => c.effectId);
+  if (hunterTier(1).length + hunterTier(2).length + hunterTier(3).length !== bounty.filter((c) => c.draftPool === 'hunter').length) warn('bounty: an R11 card of no tier I–III');
 
   // Tactic cards (BUFF_GAIN effects).
   const tactic = [];
@@ -2508,7 +2533,9 @@ function buildChoices(ctx, effects, items, chess) {
       if (diff === 'TRAINING') families = [{ family: 'supply', weight: 100 }];
       else if (diff === 'HARD' || diff === 'ABYSS') {
         // R11 of the 11 official co-op matches (player feedback after 0.1.0 report #2, the screenshots of BOUNTY_INITIAL_SETS):
-        // 悬赏决策 5, 机密商店 4, 战术决策 2, 道具补给 0 — the weights follow those counts [ASSUMED]
+        // 悬赏决策 5, 机密商店 4, 战术决策 2, 道具补给 0 — the weights follow those counts [ASSUMED]. Solo 绝境 / 终极 take the
+        // same weights [ASSUMED: no solo screenshot; extrapolated from co-op — the data has solo 悬赏决策 events for R11,
+        // bounty_hunter_*_s, which the previous supply 50 / shop 50 never used]
         families = r === 11 ? [{ family: 'bounty', weight: 45 }, { family: 'shop', weight: 35 }, { family: 'tactic', weight: 20 }] : [{ family: 'bounty', weight: 100 }];
       } else if (diff === 'NORMAL') {
         families = solo
@@ -2535,7 +2562,7 @@ function buildChoices(ctx, effects, items, chess) {
   return {
     events,
     families: {
-      bounty: { name: '悬赏决策', desc: '选定悬赏目标，获取额外奖励。', cards: 'bountyDrafts[schedule[*].bountyDraft] — the official draft structure of the round (initial: one of the R3 sets; boss: an R9 group + cheap fill; hunter: one 特异III giant + 5 next-battle cards, one per faction series), over cards.bounty entries with draft: true and that draftPool' },
+      bounty: { name: '悬赏决策', desc: '选定悬赏目标，获取额外奖励。', cards: 'bountyDrafts[schedule[*].bountyDraft] — the official draft structure of the round (initial: one of the R3 sets; boss: an R9 group + cheap fill; hunter: an R11 group — one 特异III giant + tier-II cards — + tier-I fill, one per faction series), over cards.bounty entries with draft: true and that draftPool' },
       supply: { name: '道具补给', desc: '无需消耗资金，获得装备补给。', cards: 'random normal EQUIP items in schedule[*].supplyTiers (duplicates allowed)' },
       shop: { name: '机密商店', desc: '无需消耗资金，获得装备补给。', cards: 'random normal EQUIP items of any tier I–VI (duplicates allowed)' },
       tactic: { name: '战术决策', desc: '选择战术增益。', cards: 'cards.tactic (terrain cards only for the match stage)' },
@@ -2547,11 +2574,17 @@ function buildChoices(ctx, effects, items, chess) {
     },
     cards: { bounty, tactic },
     // the official 悬赏决策 structures by kind (tools/build-data.mjs BOUNTY_INITIAL_SETS; `seen` = the match numbers of
-    // test/fixtures/official-bounty-drafts.json; `slots` = the official events, the unseen ones built by `mixed`)
+    // test/fixtures/official-bounty-drafts.json; `slots` = the official events, the unseen ones built by `mixed` / `rule`)
     bountyDrafts: {
       initial: { events: eventsOf('bounty', (e) => bountyEventRe.initial.test(e.id) && !e.solo), slots: eventsOf('bounty', (e) => bountyEventRe.initial.test(e.id) && !e.solo).length, sets: BOUNTY_INITIAL_SETS, mixed: BOUNTY_INITIAL_MIXED, count: 6, assumed: ['the unseen slots built by `mixed`', '险境 R6 drafts like R3'] },
       boss: { events: eventsOf('bounty', (e) => bountyEventRe.boss.test(e.id) && !e.solo), templates: BOUNTY_BOSS_TEMPLATES, count: 6, assumed: ['a uniform pick among the seen groups', 'boss bounties of no seen group are not offered'] },
-      hunter: { events: eventsOf('bounty', (e) => bountyEventRe.hunter.test(e.id) && !e.solo), ...BOUNTY_HUNTER, assumed: ['uniform draws within the rule'] },
+      hunter: {
+        events: eventsOf('bounty', (e) => bountyEventRe.hunter.test(e.id) && !e.solo), slots: eventsOf('bounty', (e) => bountyEventRe.hunter.test(e.id) && !e.solo).length,
+        templates: BOUNTY_HUNTER_TEMPLATES,
+        rule: { giants: hunterTier(3), groupCards: hunterTier(2), groupSizes: BOUNTY_HUNTER.groupSizes, fill: hunterTier(1) },
+        onePerSeries: BOUNTY_HUNTER.onePerSeries, count: BOUNTY_HUNTER.count,
+        assumed: ['a group (the giant + tier-II cards) + tier-I fill, like R9', 'the unseen slots built by `rule`', 'a uniform pick among the 15 events'],
+      },
     },
     schedule,
     pools: {
