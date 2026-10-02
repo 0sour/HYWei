@@ -212,6 +212,67 @@ describe('逐火 embers and the 再生 puppet (user report after 0.1.0, #8)', ()
   });
 });
 
+describe('the leaders\' 重生 and 守墓石像 (audit of the knock-out forms after report #5)', () => {
+  const REBIRTH = {
+    enemy_1525_blkswb: ['Revive1', 'Revive2', 'Revive3', 'B_Idle', 'B_Die'],
+    enemy_1535_wlfmster: ['A_revive_1', 'A_revive_2', 'A_revive_3', 'B_Idle', 'B_Die'],
+    enemy_1539_reid: ['Revive_Begin', 'Revive_Loop', 'Revive_End', 'Idle', 'Die'],
+  };
+  for (const [id, [begin, hold, end, idle2, die2]] of Object.entries(REBIRTH)) {
+    test(`${id}: knock-out ⇒ ${begin}, ${hold} held through the 重生's stun, ${end}, then ${idle2}; dies on ${die2}`, async () => {
+      const anims = assets.enemies[id].spine.animations;
+      for (const name of [begin, hold, end, idle2, die2]) assert.ok(name in anims, name);
+      const v = await enemy(id);
+      v.sync(sample(UF.STUNNED, ANIM.STUN), 1);
+      v.setForm('reborn');
+      assert.equal(clip(v), begin);
+      frames(v, Math.ceil(anims[begin] * 60) + 5);
+      assert.equal(clip(v), hold, 'held (its stun role) while the sim keeps it stunned');
+      v.sync(sample(0, ANIM.IDLE), 6);
+      v.setForm('form2');
+      assert.equal(clip(v), end);
+      frames(v, Math.ceil(anims[end] * 60) + 5);
+      assert.equal(clip(v), idle2);
+      v.die();
+      assert.equal(clip(v), die2);
+    });
+  }
+
+  test('enemy_1516_jakill 杰斯顿: C1_Die is its 4 s 重生, then the killer form C2_*', async () => {
+    const v = await enemy('enemy_1516_jakill');
+    v.setForm('reborn');
+    assert.equal(clip(v), 'C1_Die');
+    frames(v, 245);
+    v.setForm('form2');
+    v.sync(sample(0, ANIM.MOVE), 5);
+    assert.equal(clip(v), 'C2_Move');
+    v.onAttack(null, 5.5);
+    assert.equal(clip(v), 'C2_Attack');
+  });
+
+  test('enemy_1172_dugago 守墓石像: the statue on Sleep, the flyer on *_2', async () => {
+    const v = await enemy('enemy_1172_dugago');
+    v.setForm('stone');
+    v.sync(sample(), 1);
+    assert.equal(clip(v), 'Sleep');
+    v.setForm('fly');
+    v.sync(sample(UF.FLYING, ANIM.MOVE), 2);
+    assert.equal(clip(v), 'Move_2');
+    v.die();
+    assert.equal(clip(v), 'Die_2');
+  });
+
+  test('a kind without a clip set of that skeleton (an arts barrier, a broken charge) keeps the current form', async () => {
+    const v = await enemy('enemy_10081_mpplai');
+    v.setForm('translator_fuchou');
+    frames(v, 130);
+    v.setForm('artsBarrier');
+    assert.equal(v.form, 'translator_fuchou');
+    v.sync(sample(), 3);
+    assert.equal(clip(v), 'B_Idle');
+  });
+});
+
 test('render/app.js hands the sim\'s fx \'phase\' kind — or the `form` of any fx — to the view and keeps the mode on the unit info', () => {
   const src = readFileSync(path.join(ROOT, 'public/js/render/app.js'), 'utf8');
   assert.match(src, /e\[1\] === 'phase' \? ex4\.kind : 'form' in ex4 \? ex4\.form[\s\S]{0,200}inf\.form = [\s\S]{0,120}setForm\?\.\(form\)/);

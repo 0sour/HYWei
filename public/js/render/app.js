@@ -90,7 +90,7 @@ import { GEO, ANIM, UF } from '../../../shared/constants.js';
 import { Camera, presetCamera, lerpCamera, easeInOutCubic, pickTile, normRect } from './projection.js';
 import { SnapshotBuffer, frameTime } from './interp.js';
 import { TileField } from './tiles.js';
-import { UnitView, ItemView, DeviceView } from './units.js';
+import { UnitView, ItemView, DeviceView, FORMS } from './units.js';
 import { FxSystem, ensureDamageFonts } from './fx.js';
 import { createDragController, pieceTile } from './drag.js';
 import { backdropTextures, shadowTexture, refreshTierChips, silhouetteTexture } from './textures.js';
@@ -1421,13 +1421,14 @@ export async function createFieldView(host, options = {}) {
           if (consumedIds.size > 200) consumedIds.delete(consumedIds.values().next().value);
         }
         // an enemy's mode change (掠海漂移体 → 爬行模式, user playtest #5 item 1; 转译基底's forms, a 逐火 ember and its
-        // revival — user report after 0.1.0): a 'phase' kind, or the `form` any other fx carries, switches the view's
-        // clip set (UnitView.setForm); the info keeps it for a view built later
+        // revival, the leaders' 重生 — user report after 0.1.0): a 'phase' kind, or the `form` any other fx carries,
+        // switches the view's clip set (UnitView.setForm, a kind without a clip set of that skeleton changes nothing);
+        // the info keeps it for a view built later
         const ex4 = e[4] && typeof e[4] === 'object' && e[4].id != null ? e[4] : null;
         const form = !ex4 ? undefined : e[1] === 'phase' ? ex4.kind : 'form' in ex4 ? ex4.form : undefined;
         if (form !== undefined) {
           const inf = infos.get(ex4.id);
-          if (inf) inf.form = typeof form === 'string' ? form : null;
+          if (inf && (typeof form !== 'string' || FORMS[inf.spine || inf.defId]?.[form])) inf.form = typeof form === 'string' ? form : null;
           views.get(ex4.id)?.setForm?.(form);
         }
         fx.simFx(e[1], Number(e[2]), Number(e[3]), e[4]);

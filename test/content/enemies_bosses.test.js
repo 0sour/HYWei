@@ -648,17 +648,33 @@ for (const key of ['enemy_1169_duphlx', 'enemy_1169_duphlx_2']) {
 }
 
 for (const key of ['enemy_1172_dugago', 'enemy_1172_dugago_2']) {
-  test(`${nm(key)}: first knock-out ⇒ statue (DEF +${tb(key, 'stone.def')}) for ${tb(key, 'stone.duration')} s, then reborn as a flyer`, () => {
-    const h = arena({ units: [{ chessId: 't_wall', row: 10, col: 7 }] });
+  test(`${nm(key)}: melee only while blocked; first knock-out ⇒ unblockable statue (DEF +${tb(key, 'stone.def')}, 失衡 / 浮空 immune) for ${tb(key, 'stone.duration')} s, then a flyer with ranged arts attacks that skip flyers (PRTS 天赋)`, () => {
+    // 地面模式: an operator in its 1.6 radius but not blocking it is never attacked
+    const h0 = arena({ units: [{ chessId: 't_gun', row: 11, col: 7 }] });
+    h0.step();
+    put(h0, key, [10, 7]);
+    h0.run(6);
+    assert.equal(h0.unit('t_gun').stats.taken, 0, 'no ranged attack in its ground mode');
+    const h = arena({ units: [{ chessId: 't_wall', row: 10, col: 7 }, { chessId: 't_gun', row: 11, col: 7 }], kits: { t_gun: NOATK }, hooks: ['damaged'], captureNoisy: true });
     h.step();
     const e = put(h, key, [10, 7]);
     h.step();
     killed(h, e, null);
     assert.ok(e.alive);
+    assert.equal(e.hp, e.s.maxHp, 'an instant 重生 to full HP');
     assert.equal(e.s.def, E[key].stats.def + tb(key, 'stone.def'));
+    h.step();
+    assert.ok(e.s.flags.unblockable && e.s.flags.noDisplace && !e.blockedBy, '转换模式: 无法被阻挡, 失衡免疫');
+    assert.equal(h.b.applyStatus(e, 'levitate', { duration: 2 }), false, '免疫浮空');
+    h.b.dealDamage(h.unit('t_gun'), e, { amount: e.s.maxHp * 0.3, type: 'true' });
+    const hp = e.hp;
     h.run(tb(key, 'stone.duration') + 0.5);
     assert.equal(e.motion, 'FLY');
     assert.ok(!e.blockedBy);
+    assert.equal(e.hp, hp, 'no second refill when it takes off');
+    assert.ok(h.runUntil(() => e.stats.attacks > 0, 10), '飞行模式 attacks at range');
+    assert.ok(h.unit('t_gun').stats.taken + h.unit('t_wall').stats.taken > 0, 'an operator in its radius');
+    assert.ok(h.hooksOf('damaged').filter((c) => c.source === e && c.dmg.isAttack).every((c) => c.dmg.type === 'arts'), 'arts damage');
     killed(h, e, null);
     assert.ok(!e.alive, 'second knock-out is final');
   });

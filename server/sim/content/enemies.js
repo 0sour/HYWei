@@ -694,7 +694,8 @@ function freeAllPrisoners(b) {
  * a rebirth of `dur` s — invulnerable, untargetable, released by its blocker, inert (no move / attack / skill).
  * `onKo(b, e, a)` runs at once (self-destruct, freeing prisoners …), `during(b, e, a, elapsed)` every tick of it; then the
  * enemy stands up with `hpRatio` of its max HP, `onReborn(b, e, a)` switches the form and `invincible` s of 无敌 follow.
- * `a.state`: undefined → 'reborn' → 'form2'.
+ * `a.state`: undefined → 'reborn' → 'form2'. The 'telegraph' fx of the knock-out carries `form: 'reborn'` and the 'revive'
+ * fx `form: 'form2'`: models with those clip sets (render/units.js FORMS — 锏, 扎罗, “复仇者”, 杰斯顿) play them.
  */
 function reborn({ dur = 0, hpRatio = 1, invincible = 0, onKo = null, during = null, onReborn = null, key = 'ab:reborn' } = {}) {
   const finish = (b, e, a) => {
@@ -707,7 +708,7 @@ function reborn({ dur = 0, hpRatio = 1, invincible = 0, onKo = null, during = nu
     if (invincible > 0) b.addBuff(e, { key: `${key}:inv`, duration: invincible, visible: true, flags: { invulnerable: true } });
     if (e.route) e.route.pts = null;
     e.atkCd = 0;
-    b.fx('revive', { x: e.x, y: e.y, id: e.id, kind: 'reborn' });
+    b.fx('revive', { x: e.x, y: e.y, id: e.id, kind: 'reborn', form: 'form2' });
   };
   return {
     killed(c, b, e, a) {
@@ -725,7 +726,7 @@ function reborn({ dur = 0, hpRatio = 1, invincible = 0, onKo = null, during = nu
         onTick: during ? ({ battle }) => during(battle, e, a, battle.time - a.t0) : null,
         onExpire: ({ battle }) => finish(battle, e, a),
       });
-      b.fx('telegraph', { x: e.x, y: e.y, r: 1, dur, kind: 'reborn', id: e.id });
+      b.fx('telegraph', { x: e.x, y: e.y, r: 1, dur, kind: 'reborn', id: e.id, form: 'reborn' });
       return true;
     },
   };
@@ -845,28 +846,35 @@ function husk({ hits, delay, stealthy = true, unblock = false, onHusk = null, ke
   };
 }
 
-/** 守墓石像: first knock-out → statue (DEF/RES up, immobile) → reborn as a flyer. */
+/**
+ * 守墓石像 (PRTS 守墓石像 天赋): 地面模式 — melee attacks only while blocked; the first defeat is an instant 重生 to 100 % HP
+ * into 转换模式 for stone.duration s — unblockable, 自缚 (immobile), 失衡免疫, immune to 浮空, DEF +stone.def, RES
+ * +stone.magic_resistance, no attack [ASSUMED: PRTS lists none] — then 飞行模式: a flyer (失衡免疫) whose ranged attacks (the
+ * data's 1.6 radius) deal arts damage and never target flyers; the HP is not refilled again. fx forms 'stone' / 'fly'
+ * (its Sleep and *_2 clips, render/units.js FORMS). <破碎支柱> (an event device) has no counterpart in this mode.
+ */
 function statue(ab) {
   const dur = T(ab, 'stone.duration') ?? 0;
   return {
-    killed(c, b, e, a) {
+    spawn(b, e) { e.profile.melee = true; },
+    killed(c, b, e, a, ab2) {
       if (a.done || !(dur > 0)) return false;
       a.done = true;
       a.noAtk = e.profile.noAttack;
       e.profile.noAttack = true;
       e.hp = e.s.maxHp;
-      b.fx('stone', { x: e.x, y: e.y, id: e.id, dur });
+      ab2.immune = new Set([...(ab2.immune || []), 'levitate']);
+      b.fx('stone', { x: e.x, y: e.y, id: e.id, dur, form: 'stone' });
       b.addBuff(e, {
-        key: 'ab:stone', duration: dur, visible: true, flags: { noMove: true },
+        key: 'ab:stone', duration: dur, visible: true, flags: { noMove: true, unblockable: true, noDisplace: true },
         mods: { defFlat: T(ab, 'stone.def') ?? 0, resFlat: T(ab, 'stone.magic_resistance') ?? 0 },
         onExpire: ({ battle }) => {
           if (!e.alive) return;
           e.motion = 'FLY';
-          e.profile.noAttack = a.noAtk;
-          e.hp = e.s.maxHp;
-          battle.addBuff(e, { key: 'ab:liftoff', duration: 0.2, flags: { unblockable: true } }); // releases its blocker
+          Object.assign(e.profile, { noAttack: a.noAtk, melee: false, dmgType: 'arts', canTarget: (u) => !u.isFlying });
+          battle.addBuff(e, { key: 'ab:flight', persist: true, flags: { noDisplace: true } });
           if (e.route) e.route.pts = null;
-          battle.fx('revive', { x: e.x, y: e.y, id: e.id, kind: 'fly' });
+          battle.fx('revive', { x: e.x, y: e.y, id: e.id, kind: 'fly', form: 'fly' });
         },
       });
       return true;
@@ -2279,7 +2287,7 @@ export const KITS = Object.freeze({
   enemy_1170_dushld_2: kitRefraction,                                // 深池重甲卫士队长 · refraction
   enemy_1169_duphlx: kitPhalanx,                                     // 深池方阵步兵 · refraction + DEF +200 per nearby same unit
   enemy_1169_duphlx_2: kitPhalanx,                                   // 深池方阵指挥官 · same
-  enemy_1172_dugago: (ab) => [...kitRefraction(ab), statue(ab)],     // 守墓石像 · refraction; 1st KO → statue 10 s → flyer
+  enemy_1172_dugago: (ab) => [...kitRefraction(ab), statue(ab)],     // 守墓石像 · refraction; melee when blocked; 1st KO → unblockable statue 10 s → arts flyer
   enemy_1172_dugago_2: (ab) => [...kitRefraction(ab), statue(ab)],   // 愤怒的守墓石像 · same
   enemy_1174_duholy: kitHolyGuard,                                   // 深池伙友卫队 · refraction; ASPD-down field next to 影刃 (taunt from data)
   enemy_1174_duholy_2: kitHolyGuard,                                 // 深池伙友卫队精英 · same

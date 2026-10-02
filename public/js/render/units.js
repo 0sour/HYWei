@@ -108,8 +108,12 @@ export const EL_BAR = Object.freeze({ icon: 0.15, min: 8, max: 15, enemy: 0.8, g
  *   clip: it never attacks) or 特战术师 D_* — its manifest roles are the original form's A_Idle / A_Move;
  * - 深池逐火战士 / 精锐战士 / 护卫 (#8): knocked out → 'Die' (the 1 s 重生), the 余烬 on Idle_2 / Move_2 and its death on
  *   Die_2; standing up again → 'Revive', then the warrior's manifest clips;
- * - 假想敌：再生: knocked out → A_Die, the 傀儡 on B_Idle / B_Move / B_Die; back → B_Revive, then the A_* manifest clips.
- * 吉兆飞鳞's 晕眩模式 is its Stun clip already.
+ * - 假想敌：再生: knocked out → A_Die, the 傀儡 on B_Idle / B_Move / B_Die; back → B_Revive, then the A_* manifest clips;
+ * - the leaders' 重生 (sim reborn(): forms 'reborn' → 'form2'): 锏 Revive1, Revive2 held, Revive3, then B_*; 扎罗 A_revive_1 /
+ *   _2 / _3, then B_* (its double-hit attack); “复仇者” Revive_Begin / _Loop / _End; 杰斯顿 C1_Die (its 4 s 重生), then
+ *   C2_* — their manifests mix the forms (锏 / 扎罗 died on B_Die from the A model, the look of report #5);
+ * - 守墓石像 (forms 'stone' → 'fly'): the statue on Sleep [ASSUMED by name], then the flyer's *_2 clips.
+ * A kind without a clip set of this skeleton (barriers, charges, …) changes nothing. 吉兆飞鳞's 晕眩模式 is its Stun clip.
  */
 const loop = (name, via = null) => Object.freeze(via ? { begin: null, loop: name, end: null, via } : { begin: null, loop: name, end: null });
 const clipSet = (idle, move, die, attack = null) => Object.freeze({
@@ -121,6 +125,16 @@ const EMBER = Object.freeze({
   husk: Object.freeze({ change: 'Die', roles: clipSet('Idle_2', 'Move_2', 'Die_2') }),
   revived: Object.freeze({ change: 'Revive', roles: Object.freeze({}) }),
 });
+/** A 重生 held on `hold` (also while the sim reports the rebirth's stun) after `begin`, then `end` and the second form. */
+const rebirth = (begin, hold, end, form2 = Object.freeze({})) => Object.freeze({
+  reborn: Object.freeze({ change: begin, roles: Object.freeze({ idle: hold, deploy: hold, move: loop(hold), stun: loop(hold), attack: null, skill: null }) }),
+  form2: Object.freeze({ change: end, roles: form2 }),
+});
+const STATUE = Object.freeze({
+  stone: Object.freeze({ change: null, roles: Object.freeze({ idle: 'Sleep', deploy: 'Sleep', move: loop('Sleep'), stun: loop('Sleep'), attack: null, skill: null }) }),
+  fly: Object.freeze({ change: null, roles: clipSet('Idle_2', 'Move_2', 'Die_2', 'Attack_2') }),
+});
+const JAKILL2 = clipSet('C2_Idle', 'C2_Move', 'C2_Die', 'C2_Attack');
 export const FORMS = Object.freeze({
   enemy_2025_syufo: Object.freeze({
     crawl: Object.freeze({ change: 'Change', roles: clipSet('Idle_02', 'Move_02', 'Die_02', 'Attack_02') }),
@@ -137,6 +151,15 @@ export const FORMS = Object.freeze({
     husk: Object.freeze({ change: 'A_Die', roles: clipSet('B_Idle', 'B_Move', 'B_Die') }),
     revived: Object.freeze({ change: 'B_Revive', roles: Object.freeze({}) }),
   }),
+  enemy_1525_blkswb: rebirth('Revive1', 'Revive2', 'Revive3', clipSet('B_Idle', 'B_Move', 'B_Die', 'B_Attack')),
+  enemy_1535_wlfmster: rebirth('A_revive_1', 'A_revive_2', 'A_revive_3', clipSet('B_Idle', 'B_Move', 'B_Die', 'B_Attack')),
+  enemy_1539_reid: rebirth('Revive_Begin', 'Revive_Loop', 'Revive_End'),
+  enemy_1516_jakill: Object.freeze({
+    reborn: Object.freeze({ change: 'C1_Die', roles: JAKILL2 }),
+    form2: Object.freeze({ change: null, roles: JAKILL2 }),
+  }),
+  enemy_1172_dugago: STATUE,
+  enemy_1172_dugago_2: STATUE,
 });
 
 /**
@@ -363,12 +386,14 @@ export class UnitView {
   }
 
   /**
-   * The unit changed mode (sim fx 'phase' { id, kind }): the mode's clip set (FORMS) after its change clip; a kind with
-   * no clip set of its own goes back to the manifest clips. Kept for a model built later.
+   * The unit changed mode (sim fx 'phase' { id, kind } or another fx's `form`): the mode's clip set (FORMS) after its
+   * change clip; null goes back to the manifest clips; a kind this skeleton has no clip set for (an arts barrier, a
+   * broken charge …) changes nothing. Kept for a model built later.
    */
   setForm(kind) {
     const k = typeof kind === 'string' ? kind : null;
     if (k === this.form) return;
+    if (k && !FORMS[this.info.spine || this.info.defId]?.[k]) return;
     const had = !!this._formSpec();
     this.form = k;
     this.info.form = k;

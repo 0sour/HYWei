@@ -212,6 +212,45 @@ describe('#8 深池逐火: a knock-out is a walking 隐匿 ember that a blocker 
 });
 
 // ---------------------------------------------------------------------------------------------------------------
+// audit: every other knock-out form of the mode ends in a targetable, killable unit and tells the model its clip set
+
+describe('audit: the leaders\' 重生 and 守墓石像 — no vanishing, killable afterwards, the model follows', () => {
+  const CASES = [
+    ['enemy_1525_blkswb', 'Reborn.duration', 'Reborn.invincible', 'reborn', 'form2'],
+    ['enemy_1535_wlfmster', 'Reborn.duration', 'Passive2.invincible_time', 'reborn', 'form2'],
+    ['enemy_1539_reid', 'Reborn.duration', 'Reborn.invincible', 'reborn', 'form2'],
+    ['enemy_1516_jakill', 'reborn.duration', null, 'reborn', 'form2'],
+    ['enemy_1517_xi', 'reborn.duration', 'reborn.invincible', 'reborn', 'form2'],
+    ['enemy_1512_mcmstr', 'reborn.duration', null, 'reborn', 'form2'],
+    ['enemy_10098_crhro', 'reborn.duration', 'reborn.invincible', 'reborn', 'form2'],
+    ['enemy_1172_dugago', 'stone.duration', null, 'stone', 'fly'],
+    ['enemy_1172_dugago_2', 'stone.duration', null, 'stone', 'fly'],
+  ];
+  for (const [key, durKey, invKey, f1, f2] of CASES) {
+    test(`${key} ${E[key].name}: knock-out ⇒ form '${f1}' (no die event, no kill), then '${f2}' — targetable and killed for good by the next knock-out`, () => {
+      const h = arena({ units: [{ chessId: 't_gun', row: 10, col: 4 }], kits: QUIET_GUNS });
+      h.step();
+      const e = put(h, key, { pos: [10, 7], mods: { speedMul: 0 } });
+      const gun = h.unit('t_gun');
+      h.b.kill(e, gun);
+      assert.ok(e.alive, 'not removed');
+      const fxOf = (form) => h.eventsOf('fx').some((ev) => ev[4] && ev[4].id === e.id && ev[4].form === form);
+      assert.ok(fxOf(f1), `fx form '${f1}' at the knock-out`);
+      assert.equal(h.eventsOf('die').filter((ev) => ev[1] === e.id).length, 0, 'no die event');
+      assert.equal(h.b.killed, 0, 'no kill');
+      h.run((tb(key, durKey) ?? 0) + (invKey ? tb(key, invKey) ?? 0 : 0) + 0.3);
+      assert.ok(e.alive && fxOf(f2), `fx form '${f2}' when it stands up`);
+      assert.ok(!e.s.flags.untargetable && !e.s.flags.invulnerable, 'targetable and vulnerable again');
+      if (!e.s.flags.stealth && !e.isFlying) assert.ok(canTargetEnemy(gun, e, gun.profile), 'a ranged operator can target it');
+      h.b.kill(e, gun);
+      assert.ok(!e.alive && e.removeReason === 'killed', 'the second knock-out is its death');
+      assert.equal(h.b.killed, 1);
+      assert.equal(h.eventsOf('die').filter((ev) => ev[1] === e.id).length, 1);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------------------
 // #5 转译基底·α
 
 describe('#5 转译基底·α: damage is cancelled until its form change; only the changed form can die', () => {

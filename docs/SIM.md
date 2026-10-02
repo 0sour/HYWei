@@ -230,7 +230,9 @@ a crowd of dying 萨卡兹枯朽战士 totals 50 / s, not 50 × n.
 **Knock-outs that are not deaths** (`content/enemies.js`; player reports after 0.1.0): a `killed` ability that keeps the
 enemy alive hides the knock-out from every later `kill` handler, the kill count, kill credit and the bounty — they all
 wait for the real death, the only one with a `die` event. 重生 / form changes: `reborn()` (first knock-out → second
-form), `husk()` (talent Revive[Trigger], every knock-out: 1 s 重生 — 无敌, 无法阻挡, immobile — then a hit-count husk that
+form; fx forms 'reborn' → 'form2'), `statue()` (守墓石像: melee only while blocked; first knock-out → 10 s unblockable,
+immobile statue → a flyer with ranged arts attacks that skip flyers; forms 'stone' → 'fly'), `husk()` (talent
+Revive[Trigger], every knock-out: 1 s 重生 — 无敌, 无法阻挡, immobile — then a hit-count husk that
 walks its route on: the 深池逐火 余烬 / 火灰 are 隐匿 and disarmed, so only a blocked one can be targeted and beaten; 假想敌：
 再生's 傀儡 is unblockable; a husk still standing after `Revive[Trigger].interval` s stands up again with full HP),
 转译基底·α (its original form cancels every damage instance; the 4th physical / arts instance or a block starts a 2 s
