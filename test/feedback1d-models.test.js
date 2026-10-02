@@ -8,6 +8,8 @@
 // tools/assets/local-enemy-spines.json — never from the disk, so the manifest is the same with or without the
 // extraction). The client (assets.js spineEntry) draws the official model when data/local-assets.json lists every one
 // of its files and falls back to the web model when it fails to load (DESIGN §13: local art is optional).
+// Without the extraction the web alias is drawn tinted toward the slug's own colours (render/units.js ALIAS_TINT,
+// research 07 §5.6 "a hue shift" [ASSUMED look]), so source installs still tell them apart from the plain slug.
 // 高能 / 冰爆 / 简饲源石虫 and “庞贝” always had their own models (checked in headless Chrome).
 
 import { test, describe, before, after } from 'node:test';
@@ -207,7 +209,12 @@ describe('D3 client: the official model only when data/local-assets.json lists i
 
   describe('UnitView', () => {
     let fake, UnitView;
-    before(async () => { fake = installFakePixi(); ({ UnitView } = await import('../public/js/render/units.js')); });
+    let ALIAS_TINT, UF;
+    before(async () => {
+      fake = installFakePixi();
+      ({ UnitView, ALIAS_TINT } = await import('../public/js/render/units.js'));
+      ({ UF } = await import('../shared/constants.js'));
+    });
     after(() => fake.restore());
     const tick = () => new Promise((r) => setImmediate(r));
     const cam = () => presetCamera('normal', { width: 1280, height: 720 });
@@ -237,6 +244,35 @@ describe('D3 client: the official model only when data/local-assets.json lists i
       assert.ok(released.includes(`/assets/local/spine/enemy/${id}/${id}.skel`), 'the failed acquire is released');
       assert.equal(bad.actor?.entry, web, 'drawn with the web model');
       assert.equal(bad.entry, web);
+    });
+
+    test('the web alias of a local-only slug is drawn tinted toward its own colours; the official model and the plain 源石虫 are not', async () => {
+      const store = (local, fail = () => false) => ({
+        picture: () => null, image: async () => null,
+        spineEntry: (id) => spineEntry(MANIFEST, id, local ? { local } : undefined),
+        spine: { acquire: async (e) => { if (fail(e)) throw new Error('404'); return { animations: Object.keys(e.animations).map((name) => ({ name })) }; }, release() {} },
+      });
+      const local = localManifest(SLUGS);
+      const mk = (id, st) => new UnitView(fakeViewCtx(fake.P, { assets: st, cam }), info(id));
+      const web0 = mk(SLUGS[0], store(null)), web1 = mk(SLUGS[1], store(null));
+      const official = mk(SLUGS[0], store(local)), failed = mk(SLUGS[1], store(local, (e) => e.local));
+      const plain = mk('enemy_1007_slime', store(local));
+      for (let i = 0; i < 4; i++) await tick();
+      const all = [web0, web1, official, failed, plain];
+      for (const v of all) v.update(1 / 60, cam(), 0);
+      assert.equal(web0.actor.entry, webOf(SLUGS[0]), 'not extracted: the plain 源石虫 skeleton');
+      assert.equal(web0.actor.spine.tint, ALIAS_TINT[SLUGS[0]], '灼热源石虫: orange');
+      assert.equal(web1.actor.spine.tint, ALIAS_TINT[SLUGS[1]], '炽焰源石虫: red-orange');
+      assert.notEqual(ALIAS_TINT[SLUGS[0]], ALIAS_TINT[SLUGS[1]], 'the two read apart');
+      assert.ok(official.actor.entry.local);
+      assert.equal(official.actor.spine.tint, 0xffffff, 'the official model as it is');
+      assert.equal(failed.actor.entry, webOf(SLUGS[1]));
+      assert.equal(failed.actor.spine.tint, ALIAS_TINT[SLUGS[1]], 'the web fallback of a failed official model is tinted too');
+      assert.equal(plain.actor.spine.tint, 0xffffff, 'the plain 源石虫 itself');
+      web0.flags = UF.FROZEN;
+      web0.update(1 / 60, cam(), 1 / 60);
+      assert.equal(web0.actor.spine.tint, 0x9fd4ff, 'a status tint wins (frozen)');
+      for (const v of all) v.destroy?.();
     });
   });
 });

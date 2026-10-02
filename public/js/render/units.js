@@ -5,8 +5,9 @@
 // with ready glow / draining skill bar, tier chip, status icons, blocked marker). The fallback shows at once and
 // cross-fades to the Spine model when it has loaded; missing or failed models keep the fallback forever (the
 // game never blocks on Spine) — except an optional local-client model (assets.js spineEntry `fallback`, DESIGN §13:
-// 灼热源石虫 / 炽焰源石虫), which falls back to the web model first. Every bar is a tinted Texture.WHITE sprite, so
-// HUDs batch into few draw calls.
+// 灼热源石虫 / 炽焰源石虫), which falls back to the web model first; that web alias (the plain 源石虫) is drawn tinted
+// toward the slug's own colours (ALIAS_TINT). Every bar is a tinted Texture.WHITE sprite, so HUDs batch into few draw
+// calls.
 //
 // Placement: feet anchored at world (x, y, z); scale = camera px-per-tile at the feet × UNIT.modelScale, so
 // chibis shrink with distance like the original. An enemy's model is also scaled by its official prefab factor
@@ -94,6 +95,13 @@ export const DOWN_LOOK = Object.freeze({
   ring: Object.freeze({ [DOWN_STATE.COUNTING]: 0x4ed8af, [DOWN_STATE.WAIT_DP]: 0xffc600, [DOWN_STATE.WAIT_TILE]: 0xff4b3e }),
   size: 0.42, height: 1.02,
 });
+/**
+ * An enemy drawn with another enemy's web model because its own is only in the local client (manifest `spineAliasOf`
+ * + `spineLocal`: 灼热 / 炽焰源石虫 → the plain 源石虫's skeleton, feedback D3 after 0.1.0): a multiply tint toward its own
+ * lava colours (orange / red-orange), so it reads apart from the plain slug where the local art was not extracted
+ * (research 07 §5.6 "a hue shift") [ASSUMED look]. Never on its official (local) model; status tints win over it.
+ */
+export const ALIAS_TINT = Object.freeze({ enemy_1305_mhslim: 0xffc48a, enemy_1305_mhslim_2: 0xff9070 });
 /**
  * Element gauge row under the bars (see header): the disc's diameter in tiles and its pixel clamp (enemies × `enemy`),
  * the gap under the bars (px). The white bar is as tall as the SP bar and fills the rest of the bars' width. During a
@@ -255,6 +263,7 @@ export class UnitView {
     this.body.addChild(this.fallback);
     this.actor = null;
     this.spineReady = false;
+    this.baseTint = 0xffffff;            // the drawn model's own tint (ALIAS_TINT), under the status tints
 
     this.hud = new P.Container();
     ctx.layers.bars.addChild(this.hud);
@@ -340,6 +349,7 @@ export class UnitView {
       if (swap) this._dropActor();
       this.actor = actor;
       this._actorEntry = entry;
+      this.baseTint = (!entry.local && ALIAS_TINT[id]) || 0xffffff;   // the web alias of a local-only model
       this.body.addChild(this.actor.spine);
       this.spineReady = true;
       this.swapT = swap ? 1 : 0;
@@ -704,7 +714,7 @@ export class UnitView {
       this.fallback.visible = this.swapT < 1;
       const sc = s * UNIT.modelScale * this.modelK;
       const flashK = this.flash > 0 ? this.flash : 0;
-      let tint = 0xffffff;
+      let tint = this.baseTint;
       if (this.down) tint = DOWN_LOOK.tint;
       else if (this.flags & UF.FROZEN) tint = 0x9fd4ff;
       else if (this.flags & UF.COLD) tint = 0xcfe6ff;

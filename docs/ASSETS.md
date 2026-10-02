@@ -226,8 +226,12 @@ Other renderer rules from research 07 §5.4–5.5:
       the extraction, it has no `/assets/local/` URL, and setup / doctor / the manifest tests never miss these files.
     - The client (`assets.js spineEntry`, with `assets.local()`, which `createFieldView` awaits with the manifest) draws
       the official model when the local manifest lists every file of it; otherwise, or when it fails to load
-      (`UnitView`: the entry's `fallback`), the web alias. A release bundle carries the models when it is zipped from a
-      checkout where the extraction ran.
+      (`UnitView`: the entry's `fallback`), the web alias, tinted toward the slug's own lava colours
+      (`render/units.js ALIAS_TINT`: 灼热 orange, 炽焰 red-orange; research 07 §5.6 "a hue shift", [ASSUMED] look) so a
+      source install without the extraction still tells them from the plain 源石虫. A release bundle carries the
+      models only when it is zipped from a checkout where the extraction ran with the `spine/enemy` job (an extraction
+      made with 0.1.0 lacks it: `node tools/setup.mjs --local` again, then check that `data/local-assets.json` lists
+      `spine/enemy/enemy_1305_mhslim` and `spine/enemy/enemy_1305_mhslim_2`).
     User feedback after 0.1.0 (D3: "所有特殊源石虫的模型全表现为普通源石虫"): the ELEMENT faction spawns up to ten of them a
     round. A 2026-10-03 audit of every enemy of `data/enemies.json` (249) against the client's battle prefabs (the
     skeleton each prefab's Spine renderer draws) found no other enemy drawn with another enemy's model; 伊利昂的木驮兽
