@@ -86,9 +86,10 @@ const CROSS_REACH = 6;
 /** 暴鸰 投弹: the target's tile and its 8 neighbours (PRTS "对目标及其周围八格的我方单位造成100%物理伤害"). */
 const BOMB_REACH = 1;
 /** 暴鸰 投弹: the bomb leaves on the OnAttack event of the cast's Attack clip (the official battle prefab's Boomb ability:
- *  animKey Attack, `_waitForAttackEvent`; the skeleton's OnAttack is at 0.267 s — data/assets.json hits.Attack). It then
- *  flies as projectile_bombd (`_speed` 5 = PROJECTILE_SPEEDS.droneBomb, homing, `_ignoreCamouflage`). */
-export const BOMBD_RELEASE = 0.267;
+ *  animKey Attack, `_waitForAttackEvent`; the skeleton's OnAttack is on frame 8 of the 30 fps clip — data/assets.json
+ *  hits.Attack 0.267, rounded — so exactly 8 sim ticks). It then flies as projectile_bombd (`_speed` 5 =
+ *  PROJECTILE_SPEEDS.droneBomb, homing, `_ignoreCamouflage`). */
+export const BOMBD_RELEASE = 8 / 30;
 /** 暴鸰 投弹: the cast ends once the bomb has landed and no sooner than this after the release (the Boomb ability:
  *  `_fireAttackFinishWhenProjectileInvalid` 1, `_minPostDelayWhenProjectileInvalid` 0.667, `_waitForAnimEndWhenProjectileInvalid`
  *  0). Then its buff bomb_s (template switch_mode_restart_fsm: mode S1 + the move-speed modifier) — PRTS "技能结束后移速最终
@@ -1486,11 +1487,14 @@ function kitRoar(ab) {
  * UnitInfo.form); on arrival the target (the ranged target by engine priority) takes 100 % ATK and every other ally of
  * the 8 tiles around where it lands 100 % ATK splash (camouflage ignored); a target gone mid-flight: the bomb lands
  * where it was. The cast ends once the bomb has landed, at least BOMBD_POST_DELAY after the release: move speed
- * ×boomb.move_speed, and it flies on.
+ * ×boomb.move_speed, and it flies on. A stun / freeze / sleep before the release interrupts the cast (Boomb
+ * `_immuneStunWhenAffecting` 0, like the other enemy channels here): nothing leaves the drone, it keeps its bomb and casts
+ * again after the skill's cooldown (1 s, counted from the interrupt) once it is free and an operator is in range.
  * [ASSUMED] no drop when the drone is dead at the release; the ATK at the release; the hover through the cast (the
  * engine pauses an enemy for its attack clip, ATTACK_PAUSE; the drop is the drone's only attack-like cast); the
  * bomb-less look from the release (the bomb leaves the drone on that frame of the Attack clip; at the cast end — 1 tick
- * before the clip ends — the client would draw the bomb back for a frame).
+ * before the clip ends — the client would draw the bomb back for a frame); an interrupted cast does not use up the one
+ * trigger (`_maxTriggerTime` 1 — the bomb is still on the drone); a stun after the release does not stop the cast end.
  */
 function kitBombd(ab) {
   const s = ab.sk.boomb;
@@ -1508,8 +1512,19 @@ function kitBombd(ab) {
     e.pauseUntil = b.time;
     if (ms > 0) b.addBuff(e, { key: 'ab:bombRun', mods: { moveMul: ms }, persist: true });
   };
+  // the cast before its release: { a: the skill ability, rel: the scheduled release }
+  let pending = null;
+  // a stun / freeze / sleep before the release: the bomb stays on; the skill re-arms with its cooldown
+  const interrupt = (b, e) => {
+    const { a, rel } = pending;
+    pending = null;
+    rel.cancel();
+    e.pauseUntil = b.time;
+    a.left = Math.max(TICK, num(s.cd, 1));
+  };
   return [
-    { spawn(b, e) { e.profile.noAttack = true; } },
+    { spawn(b, e) { e.profile.noAttack = true; },
+      tick(b, e) { if (pending && e.s.flags.stun) interrupt(b, e); } },
     skill(s, (b, e, a) => {
       const t = byPriority(e, targetsNear(b, e, reach(e)))[0];
       if (!t) return;
@@ -1519,7 +1534,10 @@ function kitBombd(ab) {
       e.pauseUntil = Math.max(e.pauseUntil, b.time + BOMBD_RELEASE + 10 + BOMBD_POST_DELAY);
       let landed = false, waited = false;
       const done = () => { if (landed && waited) finish(b, e); };
-      b.after(BOMBD_RELEASE, () => {
+      pending = { a, rel: null };
+      pending.rel = b.after(BOMBD_RELEASE, () => {
+        if (pending && e.alive && e.s.flags.stun) { interrupt(b, e); return; }  // stunned after this tick's ability pass
+        pending = null;
         if (!e.alive) return;
         const atk = e.s.atk;
         b._ev(['atk', e.id, t.id, 'droneBomb']);

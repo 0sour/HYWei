@@ -9,7 +9,9 @@
 // its end clip, and its buff bomb_s switches the drone to its bomb-less mode (S1: the *_2 clips) at ×2 speed
 // ("技能结束后移速最终提升至200%"). Now (content/enemies.js kitBombd): the drone hovers through the cast; 'atk' kind
 // 'droneBomb' + fx 'phase' { kind: 'bombed' } at the release (the view starts the *_2 clips after the Attack clip),
-// damage on arrival, the speed-up when the cast ends. Also UnitInfo.form for 掠海漂移体's crawl.
+// damage on arrival, the speed-up when the cast ends; a stun before the release interrupts the cast (Boomb
+// `_immuneStunWhenAffecting` 0: no bomb leaves a stunned drone; it casts again once free). Also UnitInfo.form for
+// 掠海漂移体's crawl.
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -74,7 +76,7 @@ describe('D4 暴鸰: the bomb leaves the drone and lands', () => {
     assert.equal(atk.length, 1, 'exactly one drop (and never a normal attack)');
     const [relT, relEv] = atk[0];
     assert.equal(relEv[3], 'droneBomb', 'drawn as the drone\'s bomb');
-    assert.ok(Math.abs(relT - castAt - RELEASE) <= TICK + 1e-9, `released ${(relT - castAt).toFixed(3)} s after the trigger (OnAttack ${RELEASE})`);
+    assert.ok(Math.abs(relT - castAt - RELEASE) < 1e-6, `released ${(relT - castAt).toFixed(3)} s after the trigger (OnAttack, frame 8 of the Attack clip)`);
     const phase = log.find(([, ev]) => ev[0] === 'fx' && ev[1] === 'phase');
     assert.ok(phase && phase[1][4].kind === 'bombed' && Math.abs(phase[0] - relT) < 1e-9, 'the bomb has left the drone: its bomb-less mode from the release');
     if (drone.alive) assert.equal(b.fieldMeta().units.find((u) => u.id === drone.id).form, 'bombed', 'a field opened later draws it bomb-less');
@@ -135,6 +137,28 @@ describe('D4 暴鸰: the bomb leaves the drone and lands', () => {
     h.run(1.5);
     assert.ok(Math.abs(h.unit('t_a').stats.taken - e.s.atk) < 1e-6, 'hit for the ATK it had at the release');
     assert.ok(!e.findBuff('ab:bombRun'), 'a dead drone gets no speed-up');
+  });
+
+  test('a stun before the release interrupts the cast: nothing leaves the drone; it casts again once free and drops its one bomb', () => {
+    const h = arena([{ chessId: 't_a', row: 10, col: 6 }]);
+    h.step();
+    const e = put(h, [10, 7]);
+    h.runUntil(() => (ability(e)?.casts ?? 0) > 0, 5);
+    const castAt = h.b.time;
+    assert.ok(h.b.applyStatus(e, 'stun', { duration: 1.5, source: null }), 'stunned mid-cast');
+    h.run(1.4);
+    const drops = () => h.events.filter((ev) => ev[0] === 'atk' && ev[1] === e.id);
+    assert.equal(drops().length, 0, 'no drop from a stunned drone (Boomb `_immuneStunWhenAffecting` 0)');
+    assert.ok(!h.events.some((ev) => ev[0] === 'fx' && ev[1] === 'phase' && ev[4]?.id === e.id), 'it keeps its bomb');
+    assert.equal(h.unit('t_a').stats.taken, 0);
+    assert.ok(!e.findBuff('ab:bombRun'), 'no speed-up');
+    h.runUntil(() => drops().length > 0, 3);
+    assert.equal(ability(e).casts, 2, 'cast again once the stun is over');
+    assert.ok(h.b.time >= castAt + 1.5 + RELEASE - 1e-6, 'after the stun');
+    h.run(2);
+    assert.equal(drops().length, 1, 'still one bomb in all');
+    assert.ok(Math.abs(h.unit('t_a').stats.taken - e.s.atk) < 1e-6, 'and it lands');
+    assert.ok(e.findBuff('ab:bombRun'), 'then the speed-up');
   });
 
   test('the drone killed before the release: no bomb, no mode change', () => {
