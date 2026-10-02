@@ -6,6 +6,8 @@
 //   → 限伤 (leaders in boss / hidden battles: a hit of ceil(final) ≥ BOSS_HIT_LIMIT is cancelled, see leaderHitCancelled)
 //   → shields (hit-negating barriers first, then HP shields) → HP loss (boss pool routing) → 'damaged' hook
 //   → SP-on-hurt / TAKE_DAMAGE trigger → fatal/kill.
+// Damage-dealt stats (the source's `stats.dmg`, the player's `damageDealt`) count only HP removed from the other side:
+// self and friendly damage (a 源石溶剂 drain, an operator's own 流失) is the target's `taken` and keeps the kill credit.
 // Phys: max(A − max(0, D×(1−defIgnorePct) − defIgnoreFlat), 5 %·A); Arts: max(A×(1 − R′/100), 5 %·A) with
 // R′ = max(0, R×(1−resIgnorePct) − resIgnoreFlat); True: A; Elemental (元素伤害): max(A×(1 − 元素抗性/100), 5 %·A)
 // (PRTS 游戏数据基础 DMG_e; 元素抗性 = the target's data `epDamageResistance`: 0 on every enemy in data/enemies.json).
@@ -277,7 +279,9 @@ export function applyHpLoss(battle, source, target, amount, dmg) {
     }
     dealt = Math.max(0, before - Math.max(0, target.hp));
   }
-  if (source) {
+  // damage dealt (unit stats, the results screen's 造成伤害) never counts a unit's own side — its own drain or 流失 (源石溶剂,
+  // 史尔特尔 S3 …), friendly damage; `taken` and the kill credit do
+  if (source && source.side !== target.side) {
     source.stats.dmg += dealt;
     if (source.side === 'ally' && source.ownerId != null) { const pp = battle._pp(source.ownerId); if (pp) pp.damageDealt += dealt; }
   }

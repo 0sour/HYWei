@@ -56,6 +56,8 @@ function partnerOf(p) {
 const isProc = (dmg) => !!(dmg && dmg.tags && dmg.tags.indexOf('item') >= 0);
 const procTags = (k) => ['item', `item:${k}`];
 const chance = (battle, p) => p > 0 && (p >= 1 || battle.rng() < p);
+/** An ally built from an enemy record — PRTS's 敌人类我方单位 (炎佑 enemy_9012_acloon). */
+const ENEMY_RECORD = /^enemy_/;
 /** 'fatal' priorities (see header). */
 export const PRIO_REVIVE = -100;
 const PRIO_FREE_UNDYING = 20;
@@ -320,10 +322,22 @@ const BY_BUFF = {
   // not a 流失 — shields, damage-taken modifiers and the target-side `hit` effects apply, and it is a "受到伤害" for 受击回复
   // SP, the 重装 TAKE_DAMAGE trigger and 信仰搅拌机 S3's counters (player report D1). 无来源: hooks see no source; the carrier
   // keeps the credit (a carrier the drain finishes off is its own kill, as before). May kill.
+  // The same 备注: "携带后，全场范围内的所有敌人类我方单位也会获得此装备的“每秒受到60真实伤害”效果（该效果的付与为我方阵营索敌，
+  // 可对空，无视目标可选性）" — every enemy-record unit on our side of the whole field (炎佑 enemy_9012_acloon, a partner's
+  // too; flying, 孤立) takes the same tick, credited to nobody, while a carrier is on the field [ASSUMED: it ends with its
+  // carriers]; one effect per unit however many carriers (PRTS 作战机制 "同名buff的默认叠加策略buff只能表现出一个").
   periodic_damage(battle, u, p, S) {
     const d = num(p.damage);
     if (!(d > 0)) return;
-    S.stat('drain', null, { interval: 1, onTick: ({ unit }) => { if (unit.deployed) battle.dealDamage(unit, unit, periodicDamage(d)); } });
+    S.stat('drain', null, { interval: 1, onTick: ({ unit }) => {
+      if (!unit.deployed) return;
+      battle.dealDamage(unit, unit, periodicDamage(d));
+      for (const a of battle.allies()) {
+        if (a === unit || !ENEMY_RECORD.test(a.defId ?? '') || battle.time - (a.mem.solventAt ?? -Infinity) < 1 - 1e-6) continue;
+        a.mem.solventAt = battle.time;
+        battle.dealDamage(null, a, periodicDamage(d));
+      }
+    } });
   },
   // 奥术法阵: 攻击使目标失去特殊能力 silence s
   silence_attachment(battle, u, p, S) {

@@ -13,6 +13,7 @@ import { makeBattle, enemyRec, checkInvariants } from '../helpers/battleHarness.
 import { makeMatch, give, giveItem, DATA } from '../match/harness.js';
 import { buildBattleSpec, createBattleFromSpec } from '../../server/sim/spec.js';
 import { getDefaultSource } from '../../server/sim/simdata.js';
+import { spawnYanyou } from '../../server/sim/content/tokens.js';
 
 const ds = getDefaultSource();
 const SOLVENT = 'chess_item_1_05_e_a', SOLVENT_B = 'chess_item_1_05_e_b';
@@ -338,4 +339,147 @@ test('audit — "受到伤害时" content counts the drain and never a 流失: �
     h.b.dealDamage(null, u, { amount: 10, type: 'true', canDodge: false });
     approx(u.mem['bond:steadShip:cd'], h.b.time, 1e-9, '无来源 damage used it');
   }
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// review follow-ups: 敌人类我方单位, the enemy-side BUFF damage, self-damage stats, the chimera aura numbers
+
+test('源石溶剂 also drains every 敌人类我方单位 on the field (炎佑): one 无来源 60 true-damage tick per second however many carriers; none once no carrier is on the field', () => {
+  // PRTS 盟约记录 源石溶剂 备注: "携带后，全场范围内的所有敌人类我方单位也会获得此装备的“每秒受到60真实伤害”效果（该效果的付与为
+  // 我方阵营索敌，可对空，无视目标可选性）"; one effect per unit (PRTS 作战机制 "同名buff的默认叠加策略buff只能表现出一个")
+  for (const carriers of [1, 2]) {
+    const units = [{ chessId: YAK, row: 10, col: 4, items: [SOLVENT], skillIndex: 1 }];
+    if (carriers > 1) units.push({ chessId: INSIDE, row: 11, col: 4, items: [SOLVENT_B] });
+    const h = makeBattle({ units, timeLimit: 60, hooks: ['damaged'], captureNoisy: true, autoFinish: false });
+    h.step();
+    const [y] = spawnYanyou(h.b, 'p1', { atk: 400, hp: 5000 });
+    assert.ok(y && y.deployed && y.s.flags.isolated, '炎佑 on the field (孤立: "无视目标可选性")');
+    const hp0 = y.hp;
+    h.run(3.02);
+    const ticks = h.hooksOf('damaged').filter((c) => c.target === y);
+    assert.equal(ticks.length, 3, `${carriers} carrier(s): one tick per second`);
+    for (const c of ticks) {
+      assert.equal(c.source, null, '无来源');
+      assert.equal(c.credit, null, 'nobody is credited with damage to an ally');
+      assert.equal(c.type, 'true');
+      assert.ok(!hpLoss(c), 'damage, not 流失');
+    }
+    approx(hp0 - y.hp, 3 * DRAIN, 1e-9);
+    // no carrier left on the field: no more ticks
+    for (const u of h.b.allyUnits.filter((a) => a.kind === 'op')) h.b.kill(u, null);
+    const n = ticks.length;
+    h.run(2.02);
+    assert.equal(h.hooksOf('damaged').filter((c) => c.target === y).length, n, 'the effect ends with its carriers');
+    assert.equal(h.b.errorCount, 0, JSON.stringify(h.b.errors));
+  }
+  // the 9-炎 炎佑 (受到的伤害 ×0.1) takes a tenth of it: a damage instance, damage-taken modifiers apply
+  const h = makeBattle({ units: [{ chessId: YAK, row: 10, col: 4, items: [SOLVENT], skillIndex: 1 }], timeLimit: 60, hooks: [], autoFinish: false });
+  h.step();
+  const [y] = spawnYanyou(h.b, 'p1', { atk: 400, hp: 5000, dmgTakenMul: 0.1 });
+  const hp0 = y.hp;
+  h.run(1.02);
+  approx(hp0 - y.hp, DRAIN * 0.1, 1e-9);
+});
+
+test('a co-op field: a carrier drains the partner\'s 炎佑 too ("全场范围内…我方单位")', () => {
+  const h = makeBattle({
+    kind: 'boss', autoFinish: false, timeLimit: 60, hooks: ['damaged'], captureNoisy: true,
+    players: [
+      { playerId: 'p1', seat: 0, side: 'L', colOffset: 0, units: [{ uid: 1, kind: 'chess', chessId: YAK, row: 12, col: 3, items: [SOLVENT], skillIndex: 1 }], bonds: {} },
+      { playerId: 'p2', seat: 1, side: 'R', colOffset: 0, units: [], bonds: {} },
+    ],
+  });
+  h.step();
+  const [y] = spawnYanyou(h.b, 'p2', { atk: 400, hp: 5000 });
+  assert.ok(y && y.ownerId === 'p2');
+  h.run(2.02);
+  assert.equal(h.hooksOf('damaged').filter((c) => c.target === y).length, 2);
+});
+
+test('self / friendly damage is not damage dealt: the 源石溶剂 carrier\'s own drain counts as taken, never as its dmg or the player\'s damageDealt; the kill stays its own', () => {
+  const h = makeBattle({ units: [{ chessId: YAK, row: 10, col: 4, items: [SOLVENT], skillIndex: 1 }], timeLimit: 60, hooks: ['kill'], autoFinish: false });
+  h.step();
+  const u = h.unit(YAK);
+  u.skill.sp = 0;
+  const [y] = spawnYanyou(h.b, 'p1', { atk: 400, hp: 5000 });
+  h.run(3.02);
+  approx(u.stats.taken, 3 * DRAIN, 1e-9, 'taken');
+  assert.equal(u.stats.dmg, 0, 'its own drain is not damage it dealt');
+  approx(y.stats.taken, 3 * DRAIN, 1e-9);
+  // an operator's own 流失 (Battle.loseHp with itself as the source) likewise
+  h.b.loseHp(u, 100, { source: u });
+  assert.equal(u.stats.dmg, 0);
+  h.b.forceEnd?.('test');
+  const r = h.b.result();
+  assert.equal(r.perPlayer.p1.damageDealt, 0, 'the results screen 造成伤害');
+  const st = r.perPlayer.p1.unitStats.find((s) => s.defId === YAK);
+  assert.equal(st.dmg, 0);
+  // the carrier finished off by its own drain is still its own kill (kill credit untouched)
+  const g = makeBattle({ units: [{ chessId: YAK, row: 10, col: 4, items: [SOLVENT], skillIndex: 1 }], timeLimit: 60, hooks: ['kill'], autoFinish: false });
+  g.step();
+  const v = g.unit(YAK);
+  v.skill.sp = 0;
+  v.hp = 10;
+  g.run(1.02);
+  assert.ok(!v.alive);
+  assert.equal(g.hooksOf('kill').find((c) => c.victim === v)?.killer, v);
+});
+
+test('enemy-side BUFF damage (PRTS 伤害分类 "深水区/涨潮水蚀", "弧光锋卫失衡状态下的自残伤害") is damage, not 流失: 码头水手 drowning, 弧光锋卫 失衡 bleed', () => {
+  // 码头水手 天赋 (PRTS): "水蚀状态下或处于清澈水域时，每秒受到1000点无来源真实伤害"
+  for (const key of ['enemy_1160_hvyslr', 'enemy_1160_hvyslr_2']) {
+    const h = makeBattle({ units: [], flat: { rows: { 11: '##hddddrrrfrrrrrrrf##' } }, timeLimit: 60, hooks: ['damaged'], captureNoisy: true, autoFinish: false });
+    h.step();
+    const e = h.spawn(key, { pos: [11, 4], routeIndex: 0, mods: { speedMul: 0 } });
+    // (the deep-water tiles' own terrain tick — devices.js, already damage — is left out: tag 'drown' only)
+    const drown = () => h.hooksOf('damaged').filter((c) => c.target === e && (c.dmg.tags || []).includes('drown'));
+    h.run(1);
+    assert.ok(drown().length >= 1);
+    for (const c of drown()) { assert.equal(c.source, null); assert.equal(c.type, 'true'); assert.ok(!hpLoss(c), `${key}: drowning is damage`); }
+    const per = DATA.enemies[key].talents.bb['Drown.damage'];
+    const sum = (l) => l.reduce((s, c) => s + c.amount, 0);
+    approx(sum(drown()), per, 0.02, 'Drown.damage per second');
+    h.b.applyStatus(e, 'fragile', { duration: 30, value: 0.5 });
+    const n = drown().length;
+    h.run(1);
+    approx(sum(drown().slice(n)), per * 1.5, 0.02, '脆弱 scales it');
+  }
+  // 弧光锋卫 天赋 (PRTS 修正 "失衡移动时持续受到真实伤害"; "处于失衡状态时，每0.066s受到400点无来源真实持续伤害")
+  const h = makeBattle({ units: [], timeLimit: 60, hooks: ['damaged'], captureNoisy: true, autoFinish: false });
+  h.step();
+  const j = h.spawn('enemy_1328_cbjedi', { pos: [10, 7], routeIndex: 0, mods: { speedMul: 0 } });
+  h.step(2);
+  const hp0 = j.hp;
+  h.b.displace(j, { x: 1, y: 0 }, 1, { force: 3 });
+  h.step();
+  const bleed = h.hooksOf('damaged').filter((c) => c.target === j);
+  assert.ok(bleed.length >= 1 && hp0 > j.hp, 'bled');
+  for (const c of bleed) { assert.equal(c.source, null); assert.equal(c.type, 'true'); assert.ok(!hpLoss(c), '失衡 bleed is damage'); }
+});
+
+test('孽罪奇美拉 污染模式 (PRTS "自身半径1.2范围内的所有单位…每0.5秒受到50真实持续伤害（同类效果取最高）"): radius 1.2, a tick every 0.5 s, never stacked by two chimeras', () => {
+  const run = (chimeras, dx = 0) => {
+    const h = makeBattle({
+      stageId: 'act1autochess_m04', units: [{ chessId: INSIDE, row: 10, col: 5 }],
+      timeLimit: 60, hooks: ['damaged'], captureNoisy: true, autoFinish: false,
+    });
+    h.step();
+    const u = h.unit(INSIDE);
+    const es = chimeras.map((pos) => { const e = h.spawn('enemy_1425_lrcmra', { pos }); h.b.applyStatus(e, 'stun', { duration: 60 }); e.x += dx; return e; });
+    h.run(0.3); // both activated on their infection tile
+    assert.ok(es.every((e) => e.mem.ab.atkType === 'arts'), 'activated (污染模式)');
+    const t0 = h.b.time;
+    h.run(2);
+    return h.hooksOf('damaged').filter((c) => c.target === u && es.includes(c.credit) && c.t > t0 + 1e-9);
+  };
+  const aura = DATA.enemies.enemy_1425_lrcmra.talents.bb['OrigAura.damage'];
+  // one chimera beside her: 4 ticks in 2 s, 0.5 s apart
+  const one = run([[10, 6]]);
+  assert.equal(one.length, 4, `ticks every 0.5 s (${one.map((c) => c.t.toFixed(2))})`);
+  for (let i = 1; i < one.length; i++) approx(one[i].t - one[i - 1].t, 0.5, 1e-6);
+  for (const c of one) approx(c.amount, aura, 1e-9);
+  // two chimeras in reach (both on the infection tile beside her): still one tick per 0.5 s (同类效果取最高)
+  assert.equal(run([[10, 6], [10, 6]]).length, 4, 'not stacked');
+  // 1.15 tiles away (inside 1.2, outside the old radius 1)
+  assert.equal(run([[10, 6]], 0.15).length, 4, 'radius 1.2');
 });
