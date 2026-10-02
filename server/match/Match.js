@@ -2794,13 +2794,16 @@ export class Match {
       for (const ps of alive) ps.lpAtFinal = Math.max(0, ps.lp);
     }
     const bossId = hidden ? this.hiddenBossId : this.bossId;
+    // BOSS_HIT tickers ("对敌方领袖造成的伤害超过20% / 50% / 80%"): the player's damage to THIS leader over its pool —
+    // the pool's own per-player tally, one pool per boss round. stats.bossDamage (the result's 领袖伤害) adds up both
+    // rounds, so it would credit the Final Assault's damage to the hidden leader ("隐藏boss还没打就出了50%播报").
     const hitSteps = new Map();
-    this.bossPool = new SharedBossPool(bossPoolHp(this.gd, bossId, alive.length), {
+    const pool = new SharedBossPool(bossPoolHp(this.gd, bossId, alive.length), {
       onHit: (pid, dmg) => {
         const ps = this.players.get(pid);
         if (!ps) return;
         ps.stats.bossDamage += dmg;
-        const share = ps.stats.bossDamage / this.bossPool.maxHp;
+        const share = (pool.byPlayer.get(pid) || 0) / pool.maxHp;
         const done = hitSteps.get(pid) || 0;
         let reached = done;
         BOSS_HIT_STEPS.forEach((s, i) => { if (share >= s) reached = Math.max(reached, i + 1); });
@@ -2810,6 +2813,7 @@ export class Match {
         }
       },
     });
+    this.bossPool = pool;
     const groups = pairPlayers(alive);
     const reuse = this.bossWaves && this.bossWaves.length === groups.length && this.bossWaves.every((w, i) => w.players.join() === groups[i].map((p) => p.playerId).join());
     this.fields = groups.map((g, i) => {

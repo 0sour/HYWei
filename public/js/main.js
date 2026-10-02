@@ -217,7 +217,9 @@ function wireNet() {
   });
   net.on('m.ticker', (msg) => {
     if (typeof msg.text !== 'string') return;
-    store.set((s) => ({ ticker: [...s.ticker.slice(-(TICKER_KEEP - 1)), { id: ++seq, text: msg.text, at: Date.now() }] }));
+    // type + the round it came in: a BOSS_HIT line is dropped once its boss round is over (ui/ticker.js tickerLineLive)
+    const type = typeof msg.type === 'string' ? msg.type : null;
+    store.set((s) => ({ ticker: [...s.ticker.slice(-(TICKER_KEEP - 1)), { id: ++seq, text: msg.text, at: Date.now(), type, round: s.match?.public?.round ?? null }] }));
   });
   net.on('m.emote', (msg) => {
     store.set((s) => ({ emotes: [...s.emotes.slice(-(EMOTE_KEEP - 1)), { seq: ++seq, playerId: msg.playerId, id: msg.id, at: Date.now() }] }));
