@@ -4,13 +4,18 @@
 // "对攻击范围内的每个可以被选中的敌人进行判定"; PRTS 林 S3 备注 "单次普攻最多触发1次效果" — one normal attack can kill
 // several), not one target plus a 1.1-tile splash. The same holds for the 轰击术师 line ("超远距离的群体法术伤害": every
 // enemy on the line — Terra Wiki Blast Caster; PRTS 作战机制: 伊芙利特's 炎爆 is a 锁定攻击范围 AoE), while the 扩散术师
-// "群体法术伤害" stays a splash of 1.1 tiles around the struck target (Terra Wiki Splash Caster). Real battles with the
-// real chess (every selectable attacking skill, normal + elite), counting the enemies each attack damages.
+// "群体法术伤害" stays a splash of 1.1 tiles around the struck target (PRTS 溅射半径一览 — no row for the 阵法术师 /
+// 轰击术师 — and Terra Wiki Splash Caster). Real battles with the real chess (every selectable attacking skill, normal +
+// elite), counting the enemies each attack damages. Her kit per PRTS 卡涅利安 备注: a charged S1 keeps the skill-off trait
+// (不攻击 + the guard), the charged S3 mark stacks before the damage and is one buff per enemy (the setter's bonus); a
+// 流形 copy takes no attack shape ('beam' → bolt); `rangeAoe` from any source means every enemy in range, instant.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBattle, enemyRec, checkInvariants } from '../helpers/battleHarness.js';
 import { getDefaultSource, spawnsFromTemplate } from '../../server/sim/simdata.js';
+import { TOKEN_IDS } from '../../server/sim/content/tokens.js';
 import { effectiveProfile } from '../../server/sim/ai.js';
+import { resolveProfile } from '../../server/sim/professions.js';
 import { getData } from '../../server/data.js';
 
 const ds = getDefaultSource();
@@ -41,7 +46,7 @@ function hitsAll(id, skillIndex, pos, { equal = true, row = 10, col = 5 } = {}) 
   const u = h.unit(id);
   const es = pos.map((p) => h.spawn('enemy_dummy', { pos: p }));
   if (u.profile.noAttackUnlessSkill) {
-    u.skill.gainSp(u.skill.spCost * Math.max(1, u.skill.maxCharges || 1));
+    u.skill.gainSp(u.skill.spCost); // one charge: an uncharged cast (a charged 卡涅利安 S1 keeps the trait's 不攻击)
     assert.ok(h.runUntil(() => u.skill.active, 10), `${id}/${skillIndex}: skill on`);
   }
   for (const e of es) assert.ok(u.rangeKeys.includes(keyOf(e)), `${id}/${skillIndex}: enemy at ${e.y},${e.x} inside the range`);
@@ -178,5 +183,133 @@ test('E3 卡涅利安 S3 食噬之印 values: ATK climbs from +0 % in 1 s steps 
       const want = bb.atk * steps / 20;
       assert.ok(Math.abs(bonus() - want) < 1e-9, `${id}: +${(bonus() * 100).toFixed(2)} % at ${at} s, want +${(want * 100).toFixed(2)} %`);
     }
+  }
+});
+
+test('E3 卡涅利安 S1 沙暴守卫 charged: the skill-off trait stays in force — the DEF/RES guard AND 不攻击 (PRTS 备注 "应用蓄力时：应用技能未开启时的特性"); uncharged she strikes every enemy in range', () => {
+  for (const id of ['chess_char_4_24_a', 'chess_char_4_24_b']) {
+    const h = makeBattle({ defs: { enemies: { enemy_dummy: dummy() } }, units: [{ chessId: id, row: 10, col: 5, skillIndex: 0 }], timeLimit: 120, hooks: ['damaged'], captureNoisy: true });
+    h.step();
+    const u = h.unit(id);
+    const es = SPREAD.map((p) => h.spawn('enemy_dummy', { pos: p }));
+    assert.equal(u.skill.maxCharges, 2, `${id}: S1 stores 2 charges`);
+    u.skill.gainSp(u.skill.spCost * u.skill.maxCharges); // every charge stored: the SEARCH cast is a charged one
+    assert.ok(h.runUntil(() => u.skill.active, 10), `${id}: charged S1 on`);
+    u.skill.charges = 0; // (the spare charge would re-cast as soon as it ends)
+    u.skill.sp = 0;
+    assert.ok(u.findBuff('billro:s1guard'), `${id}: charged — the trait guard stays`);
+    const t0 = h.b.time, dur = u.skill.timeLeft;
+    assert.ok(h.runUntil(() => !u.skill.active, dur + 1), `${id}: the charged S1 ends`);
+    assert.ok(h.b.time - t0 > dur - 0.1, `${id}: ran its ${dur} s`);
+    assert.equal(perAttack(h, u).size, 0, `${id}: no attack during a charged S1`);
+    // uncharged: the guard goes, every attack strikes all five enemies
+    u.skill.gainSp(u.skill.spCost);
+    assert.ok(h.runUntil(() => u.skill.active, 10), `${id}: uncharged S1 on`);
+    assert.ok(!u.findBuff('billro:s1guard'), `${id}: uncharged — no trait guard`);
+    h.run(5);
+    const atks = [...perAttack(h, u).values()];
+    assert.ok(atks.length >= 2, `${id}: uncharged S1 attacks (${atks.length})`);
+    for (const m of atks) assert.equal(m.size, es.length, `${id}: uncharged S1 strikes every enemy in range (${m.size}/${es.length})`);
+    checkInvariants(h.b);
+  }
+});
+
+/** `damage / ATK` of every normal attack `u` lands on `e` (0-RES dummy, ATK read at the hit). */
+function ratios(h, u, e) {
+  const out = [];
+  h.b.on('damaged', (c) => { if (c.source === u && c.target === e && c.dmg?.isAttack) out.push(c.amount / u.s.atk); }, { priority: -1000 });
+  return out;
+}
+
+test('E3 卡涅利安 S3 食噬之印 charged: each attack stacks the mark BEFORE its damage — ×1.2 on the first hit, ×2.0 from the 5th (PRTS 备注), normal + elite', () => {
+  for (const id of ['chess_char_4_24_a', 'chess_char_4_24_b']) {
+    const per = ds.getChess(id, { skillIndex: 2 }).skill.bb['attack@damage_scale'];
+    const h = makeBattle({ defs: { enemies: { enemy_dummy: dummy({ res: 0 }) } }, units: [{ chessId: id, row: 10, col: 5, skillIndex: 2 }], timeLimit: 120, hooks: [], captureNoisy: true });
+    h.step();
+    const u = h.unit(id);
+    const e = h.spawn('enemy_dummy', { pos: [10, 6] });
+    const r = ratios(h, u, e);
+    u.skill.addCharge(2);
+    assert.ok(u.skill.activate('test'));
+    u.skill.charges = 0;
+    u.skill.sp = 0;
+    assert.ok(h.runUntil(() => r.length >= 7, 20), `${id}: 7 hits (${r.length})`);
+    const want = [1, 2, 3, 4, 5, 5, 5].map((n) => 1 + per * n);
+    for (let i = 0; i < want.length; i++) assert.ok(Math.abs(r[i] - want[i]) < 1e-6, `${id}: hit ${i + 1} ×${r[i].toFixed(4)}, want ×${want[i].toFixed(2)}`);
+    assert.equal(e.findBuff('billro:mark').stacks, 5);
+    h.runUntil(() => !u.skill.active, 25);
+    assert.ok(!e.findBuff('billro:mark'), `${id}: the mark ends with her skill`);
+    // uncharged: no mark, no bonus
+    u.skill.gainSp(u.skill.spCost);
+    assert.ok(h.runUntil(() => u.skill.active, 10));
+    const n0 = r.length;
+    assert.ok(h.runUntil(() => r.length >= n0 + 2, 10));
+    for (const x of r.slice(n0)) assert.ok(Math.abs(x - 1) < 1e-6, `${id}: uncharged ×${x}`);
+    assert.ok(!e.findBuff('billro:mark'));
+  }
+});
+
+test('E3 卡涅利安 S3 charged: one mark per enemy — a second 卡涅利安 adds stacks without the bonus, the setter keeps it (PRTS 备注 popup)', () => {
+  const A = 'chess_char_4_24_a', B = 'chess_char_4_24_b';
+  const h = makeBattle({
+    defs: { enemies: { enemy_dummy: dummy({ res: 0 }) } }, timeLimit: 120, hooks: [], captureNoisy: true,
+    units: [{ chessId: A, row: 10, col: 5, skillIndex: 2 }, { chessId: B, row: 10, col: 7, skillIndex: 2 }],
+  });
+  h.step();
+  const a = h.unit(A), b = h.unit(B);
+  const e = h.spawn('enemy_dummy', { pos: [10, 6] }); // on both ranges
+  const ra = ratios(h, a, e), rb = ratios(h, b, e);
+  const charge = (u) => { u.skill.addCharge(2); assert.ok(u.skill.activate('test')); u.skill.charges = 0; u.skill.sp = 0; };
+  charge(a);
+  assert.ok(h.runUntil(() => ra.length >= 1, 5));
+  assert.equal(e.findBuff('billro:mark').source, a, 'set by the first');
+  charge(b);
+  assert.ok(h.runUntil(() => rb.length >= 4 && ra.length >= 4, 15));
+  const m = e.findBuff('billro:mark');
+  assert.equal(e.buffs.filter((x) => x.key === 'billro:mark').length, 1, 'one mark');
+  assert.equal(m.source, a, 'still the setter\'s');
+  assert.equal(m.stacks, 5, 'both stacked it');
+  for (const x of rb) assert.ok(Math.abs(x - 1) < 1e-6, `the second 卡涅利安 gets no bonus (×${x})`);
+  assert.ok(Math.abs(ra[ra.length - 1] - 2) < 1e-6, `the setter ×${ra[ra.length - 1]} with 5 stacks`);
+  // the setter's skill ends: her mark goes; the next charged hit of the other sets a mark of its own
+  a.skill.stop();
+  assert.ok(!e.findBuff('billro:mark'), 'the mark ends with the setter\'s skill');
+  const n0 = rb.length;
+  assert.ok(h.runUntil(() => rb.length > n0, 5));
+  assert.equal(e.findBuff('billro:mark').source, b);
+  assert.ok(Math.abs(rb[n0] - 1.2) < 1e-6, `its own mark ×${rb[n0]}`);
+  checkInvariants(h.b);
+});
+
+test('E3 audit: a 流形 copying a 阵法术师 / 轰击术师 fires a single-target bolt — the copy takes no attack shape (tokens.js and the 缪尔赛思 kit)', () => {
+  const MF = TOKEN_IDS.manifold;
+  for (const kit of ['managed', 'token']) {
+    for (const src of ['chess_char_4_10_a', 'chess_char_4_24_a']) {
+      const h = makeBattle({
+        defs: { enemies: { enemy_dummy: dummy() } }, timeLimit: 60, autoFinish: false, hooks: ['damaged'], captureNoisy: true,
+        ...(kit === 'token' ? { kits: { chess_char_6_11_a: () => ({ skill: null, talents: [], generic: true }) } } : {}),
+        units: [{ chessId: 'chess_char_6_11_a', row: 12, col: 2, uid: 1 }, { chessId: src, row: 12, col: 6, uid: 2 }, { kind: 'token', tokenId: MF, row: 9, col: 6, uid: 3, ownerUid: 1 }],
+      });
+      h.step();
+      const m = h.b.allyUnits.find((u) => u.defId === MF && u.alive);
+      assert.ok(h.runUntil(() => m.mem.mlyss || m.mem.copy, 10), `${kit}/${src}: copied`);
+      assert.equal((m.mem.mlyss || m.mem.copy).from ?? m.mem.copy?.id, h.unit(src).id);
+      assert.equal(m.profile.projectile, 'bolt', `${kit}/${src}: a bolt, not the instant 'beam'`);
+      assert.ok(!m.profile.allInRange && !m.profile.rangeAoe, `${kit}/${src}: single target`);
+    }
+  }
+});
+
+test('E3 profile: rangeAoe is applied after every override — from a kit trait too it means every enemy in range with instant hits', () => {
+  const def = { profession: 'CASTER', subProf: 'corecaster', attackKind: 'ranged', projectile: 'bolt', dmgType: 'arts', stats: { atk: 100 } };
+  const plain = resolveProfile(def);
+  assert.equal(plain.allInRange, false);
+  assert.equal(plain.projectile, 'bolt');
+  const aoe = resolveProfile(def, { rangeAoe: true });
+  assert.equal(aoe.allInRange, true);
+  assert.equal(aoe.projectile, 'beam');
+  for (const sub of ['phalanx', 'blastcaster']) {
+    const p = resolveProfile({ ...def, subProf: sub, attackKind: sub === 'phalanx' ? 'none' : 'ranged', projectile: sub === 'phalanx' ? 'none' : 'bolt' });
+    assert.deepEqual([p.rangeAoe, p.allInRange, p.projectile, p.splashRadius], [true, true, 'beam', 0], sub);
   }
 });

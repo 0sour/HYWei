@@ -10,7 +10,9 @@
 //                             boomerang bool (回环射手: keeps 'boomerang')
 //   canHitFly bool            maxTargets n (≥1)          hitAllBlocked bool (attack every blocked enemy)
 //   allInRange bool (every enemy on the range at once)   splashRadius tiles (around the struck target)
-//   rangeAoe bool (a 锁定攻击范围 AoE without a projectile: allInRange, instant 'beam' hits)
+//   rangeAoe bool (a 锁定攻击范围 AoE without a projectile — SUB table or kit trait, applied by resolveProfile after
+//                  every override: allInRange + instant 'beam' hits on a ranged profile; only selectable enemies are
+//                  struck — a stealthed one is not, unless revealed or blocked; PRTS 作战机制 §AOE伤害判定)
 //   splashScale (× damage for splash victims)
 //   splashOthersOnly bool     groundOnly bool            hits n (damage instances per attack)
 //   chain {count, falloff, radius, sluggish}              heal {mode:'single'|'multi'|'chain', count, falloff, farMul, elementHealRatio}
@@ -300,12 +302,12 @@ export const SUB = Object.freeze({
       return front ? (unit.profile.frontScale ?? 1.5) : 1;
     } }),
   // --- CASTER
-  // "群体法术伤害" names two shapes: the 扩散术师 splash 1.1 tiles around the struck target (Arknights Terra Wiki, Splash
-  // Caster), while the 轰击术师 ("超远距离的群体法术伤害") and the 阵法术师 strike every enemy inside the attack range at
-  // once, the same damage near and far (Terra Wiki, Blast / Phalanx Caster; PRTS 作战机制 §AOE伤害判定: 伊芙利特's 炎爆 is a
-  // 锁定攻击范围 AoE) — community report E3 after 0.1.0
+  // "群体法术伤害" names two shapes: the 扩散术师 splash 1.1 tiles around the struck target (PRTS 溅射半径一览 — which lists
+  // no splash for the 阵法术师 / 轰击术师 — and Arknights Terra Wiki, Splash Caster), while the 轰击术师 ("超远距离的群体法术
+  // 伤害") and the 阵法术师 strike every enemy inside the attack range at once, the same damage near and far (Terra Wiki,
+  // Blast / Phalanx Caster; PRTS 作战机制 §AOE伤害判定: 伊芙利特's 炎爆 is a 锁定攻击范围 AoE) — community report E3 after 0.1.0
   splashcaster: P({ splashRadius: 1.1 }),
-  blastcaster: P({ allInRange: true, rangeAoe: true }),
+  blastcaster: P({ rangeAoe: true }),
   chain: P({ chain: { count: 3, falloff: 0.15, radius: 1.8, sluggish: 0.5 } }),
   funnel: P({ projectile: 'drone', install: installFunnel,
     dmgMul: (battle, unit, target) => {
@@ -316,7 +318,7 @@ export const SUB = Object.freeze({
     } }),
   mystic: P({ install: installMystic,
     hitsFn: (battle, unit) => { const n = 1 + (unit.trait.stored ?? 0); unit.trait.stored = 0; return n; } }),
-  phalanx: P({ noAttackUnlessSkill: true, allInRange: true, rangeAoe: true, install: installPhalanx }),
+  phalanx: P({ noAttackUnlessSkill: true, rangeAoe: true, install: installPhalanx }),
   primcaster: P({}),
   corecaster: P({}),
   // --- MEDIC
@@ -483,10 +485,6 @@ export function resolveProfile(def, kitTrait = null) {
   // a boomerang thrower (回环射手) always throws its boomerang: the data's generic ranged projectile ('arrow', a
   // build-data default) would turn the out-and-back flight into a plain shot
   if (p.boomerang && p.attack === 'ranged') p.projectile = 'boomerang';
-  // a 锁定攻击范围 AoE (阵法术师, 轰击术师) has no projectile: every enemy on the range is struck at the same moment
-  // ('beam' = instant hits, drawn as a line to each victim — PRTS 作战机制 "在攻击前摇结束时选取范围内的全体目标，同时
-  // 造成伤害"); the data's generic ranged projectile ('bolt') would land them one by one
-  if (p.rangeAoe && p.attack === 'ranged') p.projectile = 'beam';
   if (def.type === 'token') {
     if (p.dmgType === 'heal') p.heal = p.heal || { mode: 'single' };
     if (def.stats.atk <= 0) p.noAttack = true;
@@ -495,6 +493,13 @@ export function resolveProfile(def, kitTrait = null) {
   if (p.dmgType !== 'heal' && p.heal) p.heal = null;
   if (p.dmgType === 'none') p.noAttack = true;
   if (kitTrait) Object.assign(p, kitTrait);
+  // a 锁定攻击范围 AoE (阵法术师, 轰击术师) strikes every enemy on its range and has no projectile: they are struck at the
+  // same moment ('beam' = instant hits, drawn as a line to each victim — PRTS 作战机制 "在攻击前摇结束时选取范围内的全体
+  // 目标，同时造成伤害"); the data's generic ranged projectile ('bolt') would land them one by one
+  if (p.rangeAoe) {
+    p.allInRange = true;
+    if (p.attack === 'ranged') p.projectile = 'beam';
+  }
   return p;
 }
 

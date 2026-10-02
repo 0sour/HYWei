@@ -1749,7 +1749,8 @@ function copyInto(battle, t, src, scale, ranged) {
   const p = t.profile;
   if (p) {
     p.attack = ranged ? 'ranged' : 'melee';
-    p.projectile = ranged ? (sp.projectile && sp.projectile !== 'none' && sp.projectile !== 'orb' ? sp.projectile : 'bolt') : 'none';
+    // (a 阵法术师 / 轰击术师's instant 'beam' is their every-enemy-in-range shape: the copy fires a plain bolt)
+    p.projectile = ranged ? (sp.projectile && sp.projectile !== 'none' && sp.projectile !== 'orb' && sp.projectile !== 'beam' ? sp.projectile : 'bolt') : 'none';
     p.canHitFly = ranged ? true : !!sp.canHitFly;
     if (!(sp.dmgType === 'heal' || sp.dmgType === 'none' || sp.noAttack || sp.noAttackUnlessSkill)) p.dmgType = sp.dmgType;
     p.heal = null;
