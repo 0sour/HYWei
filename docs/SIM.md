@@ -298,6 +298,8 @@ Guarantees content can rely on (pinned by `test/sim/robustness.test.js`):
 (board tile: auto-redeploys land there), dir ('UP'|'RIGHT'|'DOWN'|'LEFT'; getters `fwd` = forward vector, `facing` =
 horizontal sign ±1 for sprites only), hp, alive, deployed, removed, hidden, base {…}, buffs[],
 rangeKeys / rangeKeySet (current range, absolute tile keys `r × 21 + c`), baseRangeKeys (initial range, §7.1),
+liveRangeGrid (the relative grid behind rangeKeys — a running skill's range, rangeExtend grown on, `targeting.js
+extendedGrid`; no extra keys — read by the detail card through `shared/protocol.js unitStatsEntry` `range`),
 extraRangeKeys (content extra targets, `battle.setExtraRange`), blocking[] (allies), blockedBy (enemies), motion
 ('WALK'|'FLY' enemies), profile, skill (SkillRuntime), kit, items (itemIds), lpr/mods/tag/bounty/sourcePlayerId (enemies),
 stats {dmg,kills,heal,taken,attacks}, mem {} and trait {} (free scratch space), persist {redeployMul, …}.`

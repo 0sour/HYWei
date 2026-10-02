@@ -28,7 +28,7 @@ import { Grid } from './grid.js';
 import { Unit } from './units.js';
 import { makeBuff, STATUS, RESIST_STATUSES } from './buffs.js';
 import { dealDamage as pipeDamage, heal as pipeHeal, applyHpLoss, makeDamageInfo, reduceElement, palsyBuff, elementView, leaderHitCancelled } from './damage.js';
-import { absoluteRangeKeys, canTargetEnemy } from './targeting.js';
+import { absoluteRangeKeys, canTargetEnemy, extendedGrid } from './targeting.js';
 import { bodyKeys, bodyInKeys, bodyInRadius } from './body.js';
 import { normDir, mirrorDir, localOrder, localBefore } from './dir.js';
 import { ProjectileSystem } from './projectiles.js';
@@ -1592,8 +1592,11 @@ export class Battle {
    * Recompute a unit's absolute range tile keys: `rangeKeys` / `rangeKeySet` = current range (skill range override +
    * rangeExtend) ∪ `unit.extraRangeKeys` (content extra targets — setExtraRange); `baseRangeKeys` = the INITIAL range
    * of the DEFAULT skill trigger: the unit's own grid + its permanent rangeExtend (`s.baseRangeExtend`: persistent,
-   * never-expiring buffs — talents, modules, bonds), no skill range, no temporary extend, no extra keys. Rebuilt on
-   * deploy / relocate / skill range switches and whenever either extend changes (rangeChanged).
+   * never-expiring buffs — talents, modules, bonds), no skill range, no temporary extend, no extra keys;
+   * `liveRangeGrid` = the relative grid (facing RIGHT) behind `rangeKeys` without the extra keys (targeting.js
+   * extendedGrid) — the detail card's live 攻击范围 (shared/protocol.js unitStatsEntry `range`; community report E1
+   * after 0.1.0: the card kept the base grid while 烛煌 S3 attacked with 4-11). Rebuilt on deploy / relocate / skill
+   * range switches and whenever either extend changes (rangeChanged).
    */
   _refreshRange(u) {
     const tg = u.skill && u.skill.active ? u.skill.spec.targeting : null;
@@ -1607,6 +1610,7 @@ export class Battle {
     if (extra) for (const k of extra) if (!set.has(k)) { set.add(k); keys.push(k); }
     u.rangeKeys = keys;
     u.rangeKeySet = set;
+    u.liveRangeGrid = extendedGrid(grid, ext);
     if (u.kind !== 'device') u.baseRangeKeys = absoluteRangeKeys(u.rangeGrid || [[0, 0]], u.tileR, u.tileC, u.dir, u.s.baseRangeExtend);
     if (u.skill) u.skill._trigKeys = null; // CUSTOM_RANGE trigger grid is relative to the tile
   }

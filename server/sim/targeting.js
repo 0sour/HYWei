@@ -43,6 +43,29 @@ export function absoluteRangeKeys(grid, r, c, dir, extend = 0) {
   return keys;
 }
 
+/**
+ * A range grid (`[dRow, dCol]`, facing RIGHT) grown by `extend` (rangeExtend, DESIGN §3): every row gains the whole
+ * tiles 1 … ⌊extend⌋ beyond its far (+dCol) end — the relative form of what absoluteRangeKeys builds, deduplicated, junk
+ * entries dropped. Battle._refreshRange keeps it as `unit.liveRangeGrid` (the detail card's live 攻击范围).
+ * @param {Array<[number, number]>|null|undefined} grid
+ * @param {number} [extend]
+ * @returns {Array<[number, number]>}
+ */
+export function extendedGrid(grid, extend = 0) {
+  const out = [];
+  const seen = new Set();
+  const add = (dr, dc) => { const k = `${dr},${dc}`; if (!seen.has(k)) { seen.add(k); out.push([dr, dc]); } };
+  if (!Array.isArray(grid)) return out;
+  const cells = grid.filter((p) => Array.isArray(p) && Number.isInteger(p[0]) && Number.isInteger(p[1]));
+  for (const [dr, dc] of cells) add(dr, dc);
+  if (extend > 0 && Number.isFinite(extend)) {
+    const maxByRow = new Map();
+    for (const [dr, dc] of cells) maxByRow.set(dr, Math.max(maxByRow.get(dr) ?? -Infinity, dc));
+    for (const [dr, mx] of maxByRow) for (let k = 1; k <= Math.min(extend, COLS); k++) add(dr, mx + k);
+  }
+  return out;
+}
+
 /** Tile key of a unit's current position. */
 export function tileKeyOf(u) {
   const r = Math.round(u.y), c = Math.round(u.x);
