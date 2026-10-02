@@ -6,7 +6,8 @@
 // occupies is (body.js; user playtest #5 item 10). `rangeExtend` (ability_range_forward_extend) adds N tiles
 // past the furthest cell of every row, along +dCol BEFORE rotating (DESIGN §3).
 // Operator priority: (1) enemies it blocks (every blocker, ranged ones on melee tiles included — user playtest #6
-// follow-up "阻挡了就一定要能打到"; Battle.blockedTargets), (2) profile priority (fly/lowDef/…),
+// follow-up "阻挡了就一定要能打到"; Battle.blockedTargets; a healer's heal attack picks injured allies instead, blocking
+// or not — ai.js acquireTargets), (2) profile priority (fly/lowDef/…),
 // (3) higher enemy taunt, (4) least remaining path distance to the goal, (5) earliest spawned. Air units
 // (Unit.isFlying: FLY, 近地悬浮, 浮空) need a profile that can hit them (`canHitFly`, never `groundOnly`). Enemy
 // priority: sortAllyTargets.

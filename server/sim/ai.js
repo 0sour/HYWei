@@ -12,9 +12,10 @@
 // but walks the ground. An unblocked enemy touching an ally with free block capacity — within its block radius (0.7071
 // ground, 0.8944 air, devices 0.4472; Battle._checkBlock) — is blocked, moving or not, so an enemy overlapping an
 // operator is taken over once its blocker is gone. Blocked enemies fight their blocker (ranged ones may pick anyone in
-// range, blocker first); every blocker — a ranged operator on a melee tile included — may always target the enemies
-// it blocks, in range or not, whatever its facing, and targets them first (acquireTargets, Battle.blockedTargets;
-// user playtest #6: "阻挡了就一定要能打到").
+// range, blocker first); every blocker whose attack hits enemies — a ranged operator on a melee tile included — may
+// always target the enemies it blocks, in range or not, whatever its facing, and targets them first (acquireTargets,
+// Battle.blockedTargets; user playtest #6: "阻挡了就一定要能打到"); a heal attack keeps selecting injured allies while
+// its unit blocks (PRTS 卫戍协议/帮助 "对于医疗干员（咒愈师分支除外），攻击目标为需要治疗的单位").
 // Unblocked ranged enemies attack allies within their radius and pause ATTACK_PAUSE seconds after each attack; the
 // candidates pass the enemy's own rule (`e.profile.canTarget`) and are ordered blocker → taunt → latest deployed
 // (targeting.js sortAllyTargets). Reaching the final leg's end = leak. A `fear` (恐惧) status suspends the route: the
