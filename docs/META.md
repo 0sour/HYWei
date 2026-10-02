@@ -434,6 +434,12 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   to the deploy limit, `grantTokensFor`). Battle side: SIM.md §1.1 token pieces.
 * **Bonds**: bondsMeta.js (BOARD distinct, BOARD_AND_DECK, 绝技 elites, 调和 +1, 独行 downward, 助力 upper tiers,
   变形同构体 grants). Σ activated layers for the hidden core = Σ layers of active bonds at the boss round's prep end.
+  **变形同构体** (变形者集群 "与特定装备一同装备时装备者将视为特定盟约成员", 缪尔赛思's 特质 hands it out): its wearer
+  with a bond item (`giveBondId`, the 14 pairings of the item's official talent) is a member of that bond — counted like
+  any member (on the board only: the 14 bonds are BOARD; one member per operator, normal and elite copies alike), and
+  so in the battle input / battle, the views, and on the client: the bond popup lists it among the members (tagged
+  同构, `gameLogic.bondMembers` / `grantedBonds`, the same rule as `pieceBonds`) and its card shows the granted bond
+  chip; a teammate's units carry their item ids for that (UnitInfo `items`, `Match.prepFieldMeta`, SIM.md §9).
   **Layer cap** (research 11 §1; the client's `MAX_GARRISON_STACK` / `AddBondCount` = min(L + n, 999)): each bond's
   layers stop at `BOND_LAYER_CAP` = 999 (shared/constants.js; 0 / Infinity = off). Every writer clamps with
   `layerGainRoom` — `PlayerState.addLayers` (all prep-side gains: 特质, items, bands, 机变 cards, bonds; `ctx.addLayers`),

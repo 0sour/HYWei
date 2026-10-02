@@ -1,7 +1,8 @@
 // Bond strip (active-bond discs under the top bar) and the bond detail popup: the key facts first (user playtest #2
 // item 9: name, members in play / next threshold, layers, reached tier and its threshold row, the current effect with
-// layer-resolved numbers), then the full description and the member list with owned / on-board state. Opened from
-// the detail panel's bond chips it docks beside that panel (`beside`: the panel's side).
+// layer-resolved numbers), then the full description and the member list with owned / on-board state — operators that
+// are members through 变形同构体 included (tagged 同构, gameLogic bondMembers), so the list's count agrees with 在场. Opened
+// from the detail panel's bond chips it docks beside that panel (`beside`: the panel's side).
 // Research 06 §11.1: round mint discs, stack count over the disc, name below, sorted by stacks; grey =
 // present but inactive; in 联防 / boss rounds the strip is dimmed ("层数叠加已禁用").
 // Watching a teammate (DESIGN §20.15, ui/watchBonds.js) the strip and the popup show THAT player's bonds and layers:
@@ -71,7 +72,7 @@ export function BondPopup({ bondId, entry, priv, banned = [], onClose, onMember,
   const th = Array.isArray(entry?.thresholds) && entry.thresholds.length ? entry.thresholds : b.thresholds || [];
   const tier = entry?.tier ?? bondTier(count, th, b.maxCount);
   const active = entry ? !!entry.active : tier > 0;
-  const members = bondMembers(b, priv, banned, (id) => data.lookup('chess', id));
+  const members = bondMembers(b, priv, banned, (id) => data.lookup('chess', id), (id) => data.lookup('items', id));
   const countsHand = entry?.countsHand ?? b.countsHand;
   const next = nextThreshold(count, th);
   const hasNow = !!(b.effectDescRaw || b.effectDesc);
@@ -106,11 +107,13 @@ export function BondPopup({ bondId, entry, priv, banned = [], onClose, onMember,
     <section class="bpop__sec">
       <h4>成员 <small>${members.filter((x) => x.onBoard).length}/${members.length}</small></h4>
       <div class="bpop__members">
-        ${members.map((mb) => html`<button key=${mb.id} type="button" class=${cx('bpop__member', mb.onBoard && 'is-on', mb.owned && !mb.onBoard && 'is-owned', mb.banned && 'is-banned')}
-            onClick=${() => onMember?.(mb.id)} title=${`${mb.name}${mb.banned ? '（本局禁用）' : mb.onBoard ? '（在场）' : mb.owned ? '（整备区）' : ''}`}>
+        ${members.map((mb) => html`<button key=${mb.id} type="button" class=${cx('bpop__member', mb.onBoard && 'is-on', mb.owned && !mb.onBoard && 'is-owned', mb.banned && 'is-banned', mb.granted && 'is-granted')}
+            onClick=${() => onMember?.(mb.id)} data-granted=${mb.granted ? '1' : null}
+            title=${`${mb.name}${mb.granted ? '（变形同构体：视为本盟约成员）' : ''}${mb.banned ? '（本局禁用）' : mb.onBoard ? '（在场）' : mb.owned ? '（整备区）' : ''}`}>
           <${UnitThumb} kind="chess" id=${mb.id} size="sm" dim=${!mb.owned || mb.banned} />
           <span class="bpop__mname">${mb.name}</span>
           ${mb.banned ? html`<span class="bpop__ban"><${Icon} name="close" /></span>` : null}
+          ${mb.granted ? html`<span class="bpop__iso" aria-hidden="true">同构</span>` : null}
         </button>`)}
       </div>
     </section>

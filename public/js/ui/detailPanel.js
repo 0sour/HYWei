@@ -1,8 +1,9 @@
 // Detail panel (click / right-click a piece, shop card, bond member, battle unit or previewed enemy):
 // operators — portrait, name, tier, elite, class/subclass and, right under them in the header's right column (no
 // scrolling, user playtest #2 item 9), the unit's bonds (阵营 / 盟约: icon, name, member count / next threshold,
-// reached tier, active state — tap one for its popup); right under the header the operator's own effect (特质 —
-// garrison: type chip (its official type icon + eventTypeDesc such as 整备能力, garrisonTypeIconKey) + description,
+// reached tier, active state — tap one for its popup; a bond its 变形同构体 pairing grants (gameLogic pieceBondIds: its
+// piece's items, a teammate's unit: UnitInfo `items`) has a dashed chip tagged 同构 — the wearer counts for it); right
+// under the header the operator's own effect (特质 — garrison: type chip (its official type icon + eventTypeDesc such as 整备能力, garrisonTypeIconKey) + description,
 // compact, visible without scrolling: user playtest #3 items 8 / 9), the class trait (特性), stats + range mini-map, skill (the one chosen in the loadout, DESIGN §16: icon, SP
 // info, rich description, 已调配 when not the default), elite module (模组: official type icon from the local-client
 // art, else its letter), equipped items, talents (CHESS_SECTIONS); items — icon, tier,
@@ -21,7 +22,7 @@
 
 import { html, Icon, TierChip, MicroLabel, Button, confirmDialog, useTicker } from './components.js';
 import { Img, RichText, UnitThumb, BondGlyph, GIcon } from './gameComponents.js';
-import { attackInterval, rangeGridBox, fmtNum, tileKey, chessLoadout, nextThreshold, bondTier } from './gameLogic.js';
+import { attackInterval, rangeGridBox, fmtNum, tileKey, chessLoadout, nextThreshold, bondTier, pieceBondIds } from './gameLogic.js';
 import { chessPortraitUrl, skillIconUrl, skillRecordIconUrl, profIconUrl, subProfIconUrl, itemIconUrl, enemyIconUrl, tokenAvatarUrl, factionIconUrl, uiUrl, moduleTypeIconUrl } from './assetUrls.js';
 import { data } from '../data.js';
 import { attackRangeGrid } from '../../../shared/loadoutRecord.js';
@@ -129,11 +130,13 @@ function ItemRow({ itemId }) {
 
 /**
  * The unit's bonds right under the header: icon, name, the player's member count / next threshold, reached tier.
- * @param {{ bondIds: string[], bonds?: any[], onBond?: (bondId: string) => void }} props
+ * `granted`: the bonds among them the unit holds through 变形同构体 (dashed chip, 同构 tag).
+ * @param {{ bondIds: string[], bonds?: any[], onBond?: (bondId: string) => void, granted?: string[] }} props
  */
-export function BondChips({ bondIds, bonds = [], onBond = null }) {
+export function BondChips({ bondIds, bonds = [], onBond = null, granted = [] }) {
   const ids = Array.isArray(bondIds) ? bondIds.filter((b) => typeof b === 'string') : [];
   if (!ids.length) return null;
+  const iso = new Set(Array.isArray(granted) ? granted : []);
   const mine = new Map((Array.isArray(bonds) ? bonds : []).filter((b) => b && typeof b.bondId === 'string').map((b) => [b.bondId, b]));
   return html`<div class="dbonds dbonds--top" role="list" aria-label="所属盟约">
     ${ids.map((id) => {
@@ -145,16 +148,18 @@ export function BondChips({ bondIds, bonds = [], onBond = null }) {
       const active = e ? !!e.active : tier > 0;
       const next = nextThreshold(count, th);
       const cap = next ?? th[th.length - 1] ?? null;
-      const label = `${rec?.name || id}：在场 ${count}${cap != null ? `/${cap}` : ''}${active ? `，已激活 ${tier} 阶` : '，未激活'}`;
+      const label = `${rec?.name || id}${iso.has(id) ? '（变形同构体）' : ''}：在场 ${count}${cap != null ? `/${cap}` : ''}${active ? `，已激活 ${tier} 阶` : '，未激活'}`;
       const body = html`
         <${BondGlyph} bondId=${id} class="dbond__icon" />
         <span class="dbond__name">${rec?.name || id}</span>
+        ${iso.has(id) ? html`<span class="dbond__iso">同构</span>` : null}
         <span class=${cx('dbond__count', 'num', next == null && count > 0 && 'is-max')}>${count}${cap != null ? html`<small>/${cap}</small>` : null}</span>
         ${th.length ? html`<span class="dbond__tiers" aria-hidden="true">${th.map((_, i) => html`<i key=${i} class=${i < tier ? 'on' : ''}></i>`)}</span>` : null}`;
       return onBond
-        ? html`<button key=${id} type="button" role="listitem" class=${cx('dbond', active && 'is-active', rec?.isCore && 'is-core')} title=${label} aria-label=${label}
-            data-bond=${id} onClick=${() => onBond(id)}>${body}</button>`
-        : html`<span key=${id} role="listitem" class=${cx('dbond', active && 'is-active', rec?.isCore && 'is-core')} title=${label} data-bond=${id}>${body}</span>`;
+        ? html`<button key=${id} type="button" role="listitem" class=${cx('dbond', active && 'is-active', rec?.isCore && 'is-core', iso.has(id) && 'is-granted')} title=${label} aria-label=${label}
+            data-bond=${id} data-granted=${iso.has(id) ? '1' : null} onClick=${() => onBond(id)}>${body}</button>`
+        : html`<span key=${id} role="listitem" class=${cx('dbond', active && 'is-active', rec?.isCore && 'is-core', iso.has(id) && 'is-granted')} title=${label} data-bond=${id}
+            data-granted=${iso.has(id) ? '1' : null}>${body}</span>`;
     })}
   </div>`;
 }
@@ -204,7 +209,7 @@ function GarrisonBlock({ garrison, m }) {
   </section>`;
 }
 
-export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bonds, loadout, onBond, live = null, hint = null }) {
+export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bonds, loadout, onBond, live = null, hint = null, unitItems = null }) {
   const m = data.get('assets');
   const hp = hpOf(live, snapHp);
   const lo = chessLoadout(chess, loadout, (id) => data.lookup('chess', id));
@@ -220,6 +225,11 @@ export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bond
   const skSlot = sk && Number.isInteger(sk.index) ? `S${sk.index + 1}` : null;
   const garrison = Array.isArray(c.garrisonIds) && c.garrisonIds[0] ? data.lookup('garrisons', c.garrisonIds[0]) : null;
   const items = Array.isArray(piece?.items) ? piece.items : [];
+  // the bonds the unit counts for: its own + a 变形同构体 pairing's (its piece's items; a teammate's unit: UnitInfo items)
+  const carried = piece ? items : (Array.isArray(unitItems) ? unitItems : []);
+  const getItem = (id) => data.lookup('items', id);
+  const bondIds = pieceBondIds(c, carried, getItem);
+  const grantedIds = bondIds.filter((b) => !(Array.isArray(c.bonds) && c.bonds.includes(b)));
   const sell = c.sellPrice ?? 1;
   const blocks = {};
   blocks.head = html`
@@ -244,7 +254,7 @@ export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bond
           <span class="dhead__pos">${c.position === 'MELEE' ? '近战位' : '远程位'}</span>
         </div>
         ${hp ? html`<div class="dhp"><i style=${`width:${Math.max(0, Math.min(100, (hp.hp / Math.max(1, hp.max)) * 100))}%`}></i><span class="num">${fmtNum(hp.hp)} / ${fmtNum(hp.max)}</span></div>` : null}
-        <${BondChips} bondIds=${c.bonds} bonds=${bonds} onBond=${onBond} />
+        <${BondChips} bondIds=${bondIds} bonds=${bonds} onBond=${onBond} granted=${grantedIds} />
       </div>
     </div>`;
   blocks.garrison = garrison ? html`<${GarrisonBlock} key="garrison" garrison=${garrison} m=${m} />` : null;
@@ -479,7 +489,7 @@ export function resolveDetail(target, pieces) {
     const own = Number.isInteger(u.uid) ? pieces?.get(u.uid) : null;
     if (u.side === 'enemy') { const en = data.lookup('enemies', u.defId); return en ? { type: 'enemy', enemy: en, unitId: u.id } : null; }
     const c = data.lookup('chess', u.defId);
-    if (c) return { type: 'chess', chess: c, piece: own?.piece || null, unitId: u.id };
+    if (c) return { type: 'chess', chess: c, piece: own?.piece || null, unitId: u.id, unitItems: Array.isArray(u.items) ? u.items : null };
     const t = data.lookup('tokens', u.defId);
     if (t) return { type: 'token', token: t, unitId: u.id, ownerId: tokenOwnerId(own?.piece, pieces) };
     const en = data.lookup('enemies', u.defId);
@@ -521,7 +531,7 @@ export function DetailPanel({ detail, editable, snapHp, onClose, onSell, onDestr
     <button type="button" class="dpanel__close" aria-label="关闭" onClick=${onClose}><${Icon} name="close" /></button>
     <div class="dpanel__scroll">
       ${detail.type === 'chess' ? html`<${ChessDetail} chess=${detail.chess} piece=${detail.piece} snapHp=${snapHp} editable=${editable} onSell=${sellIt}
-        bonds=${bonds} loadout=${loadout} onBond=${onBond} live=${liveNow} hint=${detail.hint || null} />` : null}
+        bonds=${bonds} loadout=${loadout} onBond=${onBond} live=${liveNow} hint=${detail.hint || null} unitItems=${detail.unitItems || null} />` : null}
       ${detail.type === 'item' ? html`<${ItemDetail} item=${detail.item} piece=${detail.piece} editable=${editable} onDestroy=${destroyIt} />` : null}
       ${detail.type === 'enemy' ? html`<${EnemyDetail} enemy=${detail.enemy} snapHp=${snapHp} count=${detail.count} live=${liveNow} />` : null}
       ${detail.type === 'token' ? html`<${TokenDetail} token=${detail.token} piece=${detail.piece} ownerId=${detail.ownerId ?? null} snapHp=${snapHp} live=${liveNow} />` : null}

@@ -371,26 +371,76 @@ export function nextThreshold(count, thresholds) {
 }
 
 /**
- * Member rows of a bond popup: every visible member with owned / on-board / banned state.
+ * Bonds granted by 变形同构体: an item with `canGiveBond` worn together with an item that has a `giveBondId` makes the
+ * wearer a member of that other item's bond (band 变形者集群 "与特定装备一同装备时装备者将视为特定盟约成员"; the item's
+ * talent, character_table trap_1073_acarm073, lists the 14 pairings). The same rule as the server's count
+ * (server/match/bondsMeta.js pieceBonds) and the battle's (server/sim/content/support unitBonds).
+ * @param {Array<string|{id:string}>|null|undefined} items the carried items (ids or { id } pieces)
+ * @param {(id:string)=>any} [getItem] items.json lookup
+ * @returns {string[]}
+ */
+export function grantedBonds(items, getItem = () => null) {
+  const list = Array.isArray(items) ? items : [];
+  if (list.length < 2) return [];
+  const recs = list.map((it) => getItem(typeof it === 'string' ? it : it?.id)).filter(isObj);
+  if (!recs.some((r) => r.canGiveBond)) return [];
+  const out = [];
+  for (const r of recs) if (!r.canGiveBond && typeof r.giveBondId === 'string' && r.giveBondId && !out.includes(r.giveBondId)) out.push(r.giveBondId);
+  return out;
+}
+
+/**
+ * A chess piece's bonds: its record's + those its 变形同构体 pairing grants (grantedBonds) — the detail card's chips.
+ * @param {any} chess chess.json record @param {Array<string|{id:string}>|null|undefined} items @param {(id:string)=>any} [getItem]
+ * @returns {string[]}
+ */
+export function pieceBondIds(chess, items, getItem = () => null) {
+  const out = (Array.isArray(chess?.bonds) ? chess.bonds : []).filter((b) => typeof b === 'string');
+  for (const b of grantedBonds(items, getItem)) if (!out.includes(b)) out.push(b);
+  return out;
+}
+
+/**
+ * Member rows of a bond popup: every visible member with owned / on-board / banned state, plus the player's operators
+ * that are members through 变形同构体 (grantedBonds; `granted: true`, one row per operator — normal and elite copies are
+ * one member, like the count's distinct members), so "成员 x/y" agrees with the count the server reports (在场).
  * @param {any} bond bonds.json record
- * @param {any} priv m.private (hand/board/temp)
+ * @param {any} priv m.private (hand/board/temp) — or a teammate's field operators (ui/watchBonds.js ownerBoard)
  * @param {Set<string>|string[]} [banned] banned base chess ids
  * @param {(id:string)=>any} [getChess]
+ * @param {(id:string)=>any} [getItem] items.json lookup (the 变形同构体 pairings)
  */
-export function bondMembers(bond, priv, banned = [], getChess = () => null) {
+export function bondMembers(bond, priv, banned = [], getChess = () => null, getItem = () => null) {
   const bannedSet = banned instanceof Set ? banned : new Set(Array.isArray(banned) ? banned : []);
   const members = Array.isArray(bond?.visibleMembers) && bond.visibleMembers.length ? bond.visibleMembers : (Array.isArray(bond?.members) ? bond.members : []);
   const baseOf = (id) => getChess(id)?.baseId || (typeof id === 'string' ? id.replace(/_b$/, '_a') : id);
   const onBoard = new Set();
   const owned = new Set();
-  for (const p of Array.isArray(priv?.board) ? priv.board : []) if (p?.kind === 'chess') { onBoard.add(baseOf(p.id)); owned.add(baseOf(p.id)); }
-  for (const p of [...(Array.isArray(priv?.hand) ? priv.hand : []), ...(Array.isArray(priv?.temp) ? priv.temp : [])]) {
-    if (p?.kind === 'chess') owned.add(baseOf(p.id));
+  const memberSet = new Set(members);
+  /** base id → on the board? — operators of the player that join this bond through 变形同构体 */
+  const granted = new Map();
+  const grants = (p) => typeof bond?.bondId === 'string' && grantedBonds(p.items, getItem).includes(bond.bondId);
+  for (const p of Array.isArray(priv?.board) ? priv.board : []) {
+    if (p?.kind !== 'chess') continue;
+    const base = baseOf(p.id);
+    onBoard.add(base); owned.add(base);
+    if (!memberSet.has(base) && grants(p)) granted.set(base, true);
   }
-  return members.map((id) => {
+  for (const p of [...(Array.isArray(priv?.hand) ? priv.hand : []), ...(Array.isArray(priv?.temp) ? priv.temp : [])]) {
+    if (p?.kind !== 'chess') continue;
+    const base = baseOf(p.id);
+    owned.add(base);
+    if (!memberSet.has(base) && !granted.has(base) && grants(p)) granted.set(base, false);
+  }
+  const rows = members.map((id) => {
     const c = getChess(id);
     return { id, tier: c?.tier ?? 0, name: c?.name ?? id, onBoard: onBoard.has(id), owned: owned.has(id), banned: bannedSet.has(id) };
-  }).sort((a, b) => (b.onBoard - a.onBoard) || (b.owned - a.owned) || (a.tier - b.tier) || (a.id < b.id ? -1 : 1));
+  });
+  for (const [id, on] of granted) {
+    const c = getChess(id);
+    rows.push({ id, tier: c?.tier ?? 0, name: c?.name ?? id, onBoard: on, owned: true, banned: false, granted: true });
+  }
+  return rows.sort((a, b) => (b.onBoard - a.onBoard) || (b.owned - a.owned) || (a.tier - b.tier) || (a.id < b.id ? -1 : 1));
 }
 
 /**
