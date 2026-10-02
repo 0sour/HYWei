@@ -1,7 +1,8 @@
 // server/sim/snapshot.js — compact serialization for clients (DESIGN §8.2).
 //
 // b.snap  = { fieldId, t, units: [[id, x, y, hp, maxHp, sp, spMax, flags, anim]], dp, killed, total }
-// UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, skillIndex?, moduleId? }
+// UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?,
+//   form?, skillIndex?, moduleId? }  (form = an enemy's current model form, content/enemies.js setForm)
 //   dir = 'UP'|'RIGHT'|'DOWN'|'LEFT' (allies: the deploy direction, sim/dir.js); facing = its horizontal sign (±1).
 // flags bits & anim codes come from shared/constants.js (UF / ANIM).
 
@@ -32,6 +33,9 @@ export function unitInfo(u) {
     maxHp: Math.max(1, Math.round(u.s.maxHp)),
     motion: u.motion === 'FLY' ? 'FLY' : undefined,
     boss: u.isBoss ? true : undefined,
+    // an enemy's current model form (content/enemies.js setForm, render/units.js FORMS): a view built mid-battle
+    // (fieldMeta — a watched teammate's field, 联防 observers, a reconnect) starts on that clip set
+    form: typeof u.form === 'string' ? u.form : undefined,
     uid: u.uid ?? undefined,
     // DESIGN §16: the equipped skill's index (the renderer / audio pick that skill's Spine clip and sound)
     skillIndex: u.side === 'ally' && Number.isInteger(d.skill?.index) ? d.skill.index : undefined,

@@ -233,11 +233,15 @@ wait for the real death, the only one with a `die` event. 重生 / form changes:
 form; fx forms 'reborn' → 'form2'), `statue()` (守墓石像: melee only while blocked; first knock-out → 10 s unblockable,
 immobile statue → a flyer with ranged arts attacks that skip flyers; forms 'stone' → 'fly'), `husk()` (talent
 Revive[Trigger], every knock-out: 1 s 重生 — 无敌, 无法阻挡, immobile — then a hit-count husk that
-walks its route on: the 深池逐火 余烬 / 火灰 are 隐匿 and disarmed, so only a blocked one can be targeted and beaten; 假想敌：
-再生's 傀儡 is unblockable; a husk still standing after `Revive[Trigger].interval` s stands up again with full HP),
-转译基底·α (its original form cancels every damage instance; the 4th physical / arts instance or a block starts a 2 s
-change). The model's clip set follows a 'phase' fx kind or the `form` of the 'ember' / 'revive' fx (render/units.js
-FORMS).
+walks its route on: the 深池逐火 余烬 / 火灰 are 隐匿 and disarmed, so only a blocked one can be targeted by operators (area
+damage still reaches it); 假想敌：再生's 傀儡 is unblockable and, as it begins, shields the other enemies within 1.8; a husk
+still standing after `Revive[Trigger].interval` s stands up again with full HP),
+转译基底·α (its original form cancels every damage instance, and an HP loss stops at 1 HP; the 4th physical / arts
+instance or a block starts a 2 s change). Each form change goes through `setForm(b, e, form, fxKind, params)`: the
+unit keeps it (`e.form`, published as UnitInfo `form`, so a view built mid-battle from `fieldMeta()` — a watched
+teammate's field, 联防 observers, a reconnect — starts in it) and the fx announces it: the `kind` of a form 'phase' fx
+(crawl, translator_*), else the `form` of the 'ember' ('husk'), 'revive' ('revived' / 'form2' / 'fly'), 'telegraph'
+('reborn') or 'stone' ('stone') fx — render/units.js FORMS. Barrier / charge 'phase' kinds are no forms.
 
 **Ownership** (`enemy.ownerId`, used for `killed/total` and leak attribution): `ownerPlayerId` if given, else the
 player whose half contains the spawn tile (cols ≥ 11 = right half / player with colOffset 8 or side R). A leak is
@@ -970,7 +974,7 @@ Unknown subprofessions fall back to the profession default (test `professions.te
   `['heal', tgt, amount]`, `['skill', id, 1|0]`, `['die', id, reason]`, `['leak', id]`, `['status', id, key, 1|0]`,
   `['fx', kind, x, y, extra]` (`hitCap` `{ id, n }`: a leader's hit cancelled by 限伤 — the renderer draws nothing),
   `['layer', playerId, bondId, n]` (n = the layers actually added, capped at 999), `['bounty', playerId, coins]`.
-- `UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?, skillIndex? }` (`skillIndex`: an ally's equipped skill, DESIGN §16)
+- `UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?, form?, skillIndex? }` (`skillIndex`: an ally's equipped skill, DESIGN §16; `form`: an enemy's current model form — `content/enemies.js setForm` — so a view built mid-battle from `fieldMeta()` starts on that clip set)
   (`dir` = the unit direction, allies meaningful, enemies 'RIGHT'; `facing` = its horizontal sign for sprite flipping)
   (`spine`/`avatar` are asset ids from data).
 - flags: UF bits (blocked 1, stunned 2, frozen 4, stealth 8 — 隐匿 or an ally's 迷彩 — skill 16, shield 32, invuln 64, cold 128, sleep 256, flying 512);

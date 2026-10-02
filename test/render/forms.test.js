@@ -5,8 +5,9 @@
 // after the change (render/app.js keeps the mode on the unit info). Headless fake PIXI (test/render/fakepixi.js).
 // Player reports after 0.1.0 (#5, #8): 转译基底·α changes on its 2 s A_Die_B / _C / _D clip into the 寻仇者 B_*, 幽灵 C_* or
 // 特战术师 D_* set (it used to stay on A_Idle / A_Move and die on B_Die — "加载变身动画然后就没了"); a knocked-out 逐火 plays
-// 'Die' (its 1 s 重生) and walks as the ember on Idle_2 / Move_2, dying on Die_2, and 'Revive' brings the warrior back
-// (sim fx 'ember' / 'revive' { form: 'husk' | 'revived' }); 假想敌：再生's 傀儡 the same with A_Die / B_* / B_Revive.
+// 'Die' (its 1 s 重生) and walks as the ember on Idle_2 / Move_2, dying on Die_2, and 'Revive' — timed from the 'ember'
+// fx's `dur` to end as it stands up — brings the warrior back (sim fx 'ember' / 'revive' { form: 'husk' | 'revived' });
+// 假想敌：再生's 傀儡 the same with A_Die / B_* / B_Revive; the leaders' 重生 close on their last clip as the 重生 ends.
 
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { installFakePixi, fakeViewCtx } from './fakepixi.js';
 import { presetCamera } from '../../public/js/render/projection.js';
 import { UF, ANIM } from '../../shared/constants.js';
+import { makeBattle, chessRec } from '../helpers/battleHarness.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const assets = JSON.parse(readFileSync(path.join(ROOT, 'data/assets.json'), 'utf8'));
@@ -172,43 +174,59 @@ describe('转译基底·α forms (user report after 0.1.0, #5)', () => {
 
 describe('逐火 embers and the 再生 puppet (user report after 0.1.0, #8)', () => {
   for (const id of ['enemy_1288_duskls', 'enemy_1288_duskls_2', 'enemy_1292_duskld']) {
-    test(`${id}: knocked out ⇒ 'Die' once, the ember on Idle_2 / Move_2 / Die_2; revived ⇒ 'Revive', then the warrior's clips`, async () => {
+    test(`${id}: knocked out ⇒ 'Die' once, the ember on Idle_2 / Move_2 / Die_2; 'Revive' ends as it stands up, then the warrior's clips`, async () => {
       const anims = assets.enemies[id].spine.animations;
       for (const name of ['Die', 'Idle_2', 'Move_2', 'Die_2', 'Revive']) assert.ok(name in anims, name);
       const v = await enemy(id);
       v.sync(sample(0, ANIM.MOVE), 1);
       assert.equal(clip(v), 'Move');
-      v.setForm('husk');
+      const dur = 4;                                   // the 'ember' fx: 1 s 重生 + the husk (10 s officially)
+      v.setForm('husk', { dur });
       assert.equal(clip(v), 'Die', 'the knock-out (its 1 s 重生)');
       frames(v, 65);
       assert.equal(clip(v), 'Move_2', 'the ember walks');
       v.sync(sample(UF.STEALTH, ANIM.IDLE), 2);
       assert.equal(clip(v), 'Idle_2');
-      v.setForm('revived');
-      assert.equal(clip(v), 'Revive');
-      frames(v, 80);
+      frames(v, Math.round((dur - anims.Revive - 65 / 60) * 60) + 3);
+      assert.equal(clip(v), 'Revive', 'the stand-up clip starts so that it ends with the husk');
+      frames(v, Math.round(anims.Revive * 60) - 6);
+      v.setForm('revived');                            // the sim's 'revive' fx
+      assert.equal(clip(v), 'Revive', 'plays out, not restarted');
+      frames(v, 10);
       assert.equal(clip(v), 'Idle', 'the warrior again');
-      v.onAttack(null, 4);
-      assert.equal(clip(v), 'Attack');
-      v.setForm('husk');
+      v.onAttack(null, 6);
+      assert.equal(clip(v), 'Attack', 'it attacks at once');
+      v.setForm('husk', { dur });
       frames(v, 65);
       v.die();
       assert.equal(clip(v), 'Die_2', 'the ember dies on its own clip');
+      frames(v, 300);
+      assert.equal(clip(v), 'Die_2', 'no stand-up clip after its death');
     });
   }
 
   test('假想敌：再生: A_Die, the 傀儡 on B_Idle / B_Move / B_Die; B_Revive back to the A_* clips', async () => {
     const v = await enemy('enemy_9010_acpupp');
-    v.setForm('husk');
+    v.setForm('husk', { dur: 3 });
     assert.equal(clip(v), 'A_Die');
     frames(v, 65);
     assert.equal(clip(v), 'B_Idle');
     v.sync(sample(0, ANIM.MOVE), 2);
     assert.equal(clip(v), 'B_Move');
+    frames(v, 60);
+    assert.equal(clip(v), 'B_Revive', 'its last second');
+    frames(v, 57);
     v.setForm('revived');
-    assert.equal(clip(v), 'B_Revive');
-    frames(v, 65);
+    frames(v, 6);
     assert.equal(clip(v), 'A_Move');
+  });
+
+  test('a view built mid-husk (UnitInfo form, no timing) shows the husk; the revival lands in the manifest clips', async () => {
+    const v = await enemy('enemy_1288_duskls', { form: 'husk' });
+    v.sync(sample(UF.STEALTH, ANIM.MOVE), 1);
+    assert.equal(clip(v), 'Move_2');
+    v.setForm('revived');
+    assert.equal(clip(v), 'Move', 'no stand-up clip without the timing');
   });
 });
 
@@ -224,15 +242,21 @@ describe('the leaders\' 重生 and 守墓石像 (audit of the knock-out forms af
       for (const name of [begin, hold, end, idle2, die2]) assert.ok(name in anims, name);
       const v = await enemy(id);
       v.sync(sample(UF.STUNNED, ANIM.STUN), 1);
-      v.setForm('reborn');
+      const dur = 6;                                   // the 'telegraph' fx's dur (Reborn.duration)
+      v.setForm('reborn', { dur });
       assert.equal(clip(v), begin);
       frames(v, Math.ceil(anims[begin] * 60) + 5);
       assert.equal(clip(v), hold, 'held (its stun role) while the sim keeps it stunned');
-      v.sync(sample(0, ANIM.IDLE), 6);
+      const at = Math.ceil(anims[begin] * 60) + 5;
+      frames(v, Math.round((dur - anims[end]) * 60) - at + 3);
+      assert.equal(clip(v), end, 'the closing clip starts so that it ends with the 重生');
+      frames(v, Math.round(anims[end] * 60) - 6);
+      v.sync(sample(0, ANIM.IDLE), dur + 1);           // the sim's 'revive' fx: the 重生 is over
       v.setForm('form2');
-      assert.equal(clip(v), end);
-      frames(v, Math.ceil(anims[end] * 60) + 5);
-      assert.equal(clip(v), idle2);
+      frames(v, 6);
+      assert.equal(clip(v), idle2, 'the second form at once');
+      v.onAttack(null, dur + 1.2);
+      assert.notEqual(clip(v), idle2, 'its first attack is drawn, not swallowed by a change clip');
       v.die();
       assert.equal(clip(v), die2);
     });
@@ -273,7 +297,38 @@ describe('the leaders\' 重生 and 守墓石像 (audit of the knock-out forms af
   });
 });
 
-test('render/app.js hands the sim\'s fx \'phase\' kind — or the `form` of any fx — to the view and keeps the mode on the unit info', () => {
+test('a view built mid-battle from the real sim\'s fieldMeta (fx dropped by a silent catch-up) starts in the current form: the changed 转译基底·α on D_Idle, the 逐火 ember on Idle_2, 锏 after its 重生 on B_Idle', async () => {
+  const mage = chessRec({ id: 't_mage', profession: 'CASTER', stats: { atk: 50, blockCnt: 0 }, rangeGrid: [[0, 0]], skill: null });
+  const h = makeBattle({
+    stageId: 'act2autochess_m01', content: 'full', seed: 7, autoFinish: false, timeLimit: 600, modeId: 'mode_multi_hard', round: 3,
+    defs: { chess: { t_mage: mage } }, units: [{ chessId: 't_mage', row: 12, col: 2 }], kits: { t_mage: () => ({ trait: { noAttack: true } }) },
+  });
+  h.step();
+  const still = { mods: { speedMul: 0 } };
+  const tr = h.b.spawnEnemy('enemy_10081_mpplai', { pos: [9, 8], ...still });
+  const ember = h.b.spawnEnemy('enemy_1288_duskls', { pos: [10, 8], ...still });
+  const mace = h.b.spawnEnemy('enemy_1525_blkswb', { pos: [11, 8], ...still });
+  const m = h.unit('t_mage');
+  for (let i = 0; i < 4; i++) h.b.dealDamage(m, tr, { amount: 1, type: 'arts' });   // the 4th arts hit ⇒ 特战术师
+  h.b.kill(ember, m);
+  h.b.kill(mace, m);
+  const until = h.b.time + 6;
+  while (h.b.time < until) { h.b.step(); h.b.drainEvents(); }
+  const meta = h.b.fieldMeta();
+  const view = async (u) => {
+    const info = meta.units.find((x) => x.id === u.id);
+    const ctx = fakeViewCtx(fake.P, { assets: store(info.spine), cam });
+    const v = new UnitView(ctx, info);
+    await tick(); await tick();
+    v.sync(sample(), 1);
+    return v;
+  };
+  assert.equal(clip(await view(tr)), 'D_Idle', '特战术师, not the A model');
+  assert.equal(clip(await view(ember)), 'Idle_2', 'the ember, not the warrior');
+  assert.equal(clip(await view(mace)), 'B_Idle', '锏\'s second form');
+});
+
+test('render/app.js hands the sim\'s fx \'phase\' kind — or the `form` of any fx, with the fx — to the view and keeps the mode on the unit info', () => {
   const src = readFileSync(path.join(ROOT, 'public/js/render/app.js'), 'utf8');
-  assert.match(src, /e\[1\] === 'phase' \? ex4\.kind : 'form' in ex4 \? ex4\.form[\s\S]{0,200}inf\.form = [\s\S]{0,120}setForm\?\.\(form\)/);
+  assert.match(src, /e\[1\] === 'phase' \? ex4\.kind : 'form' in ex4 \? ex4\.form[\s\S]{0,200}inf\.form = [\s\S]{0,120}setForm\?\.\(form, ex4\)/);
 });

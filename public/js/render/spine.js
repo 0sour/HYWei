@@ -12,8 +12,10 @@
 //   deploy()                              'Start' once, then base
 //   die()                                 die clip once (callers fade out afterwards)
 //   stunned (setBase('stun'))             stun clip, or the current track frozen at timeScale 0
-//   setForm(roles, change)                another clip set of the skeleton (an enemy's mode), after a change clip
-//                                         (no attack cuts the change clip short)
+//   setForm(roles, change, end)           another clip set of the skeleton (an enemy's mode), after a change clip
+//                                         (no attack cuts the change clip short); `end` = { clip, in, roles? }: a
+//                                         closing clip timed to end `in` s from now (a 重生's last clip ends with the
+//                                         重生), landing in `roles`
 //   update(dt)                            advances the skeleton (autoUpdate is off: one clock for everything)
 // Attack mode lasts until ~1.4 attack intervals without a new attack, then the end clip (if any) and base.
 
@@ -81,7 +83,10 @@ export class SpineActor {
     }
     try { this.spine.stateData.defaultMix = 0.12; } catch { /* ignore */ }
     this.base = 'idle';
-    this.mode = 'base';           // base | attack | skillBegin | deploy | die | stun
+    this.mode = 'base';           // base | attack | skillBegin | deploy | die | stun | change
+    this.endClip = null;          // setForm's closing clip, played as a change clip once the clock reaches endAt,
+    this.endAt = 0;               // landing in endRoles (the next form's) when given
+    this.endRoles = null;
     this.skillOn = false;
     this.attackUntil = 0;
     this.clock = 0;
@@ -119,20 +124,32 @@ export class SpineActor {
   /**
    * Another clip set of the same skeleton — an enemy's mode (render/units.js FORMS: 掠海漂移体's 爬行模式 plays its *_02
    * clips): `roles` override the manifest roles (null = back to them); `change` = a transition clip played once first
-   * (also while stunned: the pose it ends in is the one a stun then holds).
+   * (also while stunned: the pose it ends in is the one a stun then holds). `end` = { clip, in, roles? } (game s): a
+   * closing clip played the same way so that it ends `in` s from now, landing in `roles` — a leader's 重生 ends on its
+   * last clip while the sim still holds it, and the next form starts on its own clips.
    */
-  setForm(roles, change = null) {
+  setForm(roles, change = null, end = null) {
     const anims = this.entry?.anims || {};
     this.roles = roles ? { ...anims, ...roles } : anims;
+    this.endClip = null;
     if (this.dead) return;
-    if (change && this.has(change)) {
-      this.stunWanted = this.mode === 'stun';
-      this.frozen = false;
-      this.mode = 'change';
-      this._play(change, false, { mix: 0.08 });
-      this.changeUntil = this.clock + this.dur(change);
-    } else if (this.mode === 'base') this._play(this._baseName(), true);
+    if (end && this.has(end.clip) && end.in > 0) {
+      this.endClip = end.clip;
+      this.endAt = this.clock + Math.max(0, end.in - this.dur(end.clip));
+      this.endRoles = end.roles || null;
+    }
+    if (change && this.has(change)) this._change(change);
+    else if (this.mode === 'base') this._play(this._baseName(), true);
     else if (this.mode === 'stun' && this.has(this.roles.stun?.loop)) this._play(this.roles.stun.loop, true);
+  }
+
+  /** Play a form's transition clip once; attacks and the resting state wait for it (mode 'change'). */
+  _change(clip) {
+    if (this.mode !== 'change') this.stunWanted = this.mode === 'stun';
+    this.frozen = false;
+    this.mode = 'change';
+    this._play(clip, false, { mix: 0.08 });
+    this.changeUntil = this.clock + this.dur(clip);
   }
 
   has(name) { return !!name && this.names.has(name); }
@@ -339,6 +356,12 @@ export class SpineActor {
 
   update(dt) {
     this.clock += dt;
+    if (this.endClip && this.clock >= this.endAt) {
+      const clip = this.endClip;
+      this.endClip = null;
+      if (this.endRoles) this.roles = { ...(this.entry?.anims || {}), ...this.endRoles };
+      if (!this.dead) this._change(clip);
+    }
     if (this.windUntil != null && this.clock >= this.windUntil) {
       // a compressed wind-up reached its strike frame: back to the rhythm speed (attack() also does it)
       this.windUntil = null;

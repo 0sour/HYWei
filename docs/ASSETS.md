@@ -204,9 +204,18 @@ The resolver's full precedence list is in the header of `tools/assets/anim-roles
 
 The manifest roles describe an enemy's first form. Enemies whose skeleton holds another form's clip set get it from
 `public/js/render/units.js FORMS` (keyed by Spine id, switched by the sim's 'phase' fx kind or the `form` of its
-'ember' / 'revive' fx; a `change` clip plays once first): 掠海漂移体's crawl (`Change`, `*_02`), 转译基底·α's three forms
-(`A_Die_B` / `_C` / `_D`, 2 s each, then `B_*` 寻仇者, `C_*` 幽灵, `D_*` 特战术师), the 深池逐火 embers (`Die`, then
-`Idle_2` / `Move_2` / `Die_2`; `Revive` back) and 假想敌：再生's puppet (`A_Die`, `B_*`, `B_Revive`).
+'ember' / 'revive' / 'telegraph' / 'stone' fx — or, for a view built mid-battle, UnitInfo `form`; a `change` clip plays
+once first, an `end` clip is timed from the fx's `dur` to finish as that state ends):
+- 掠海漂移体's crawl (`Change`, then `*_02`);
+- 转译基底·α's three forms (`A_Die_B` / `_C` / `_D`, 2 s each, then `B_*` 寻仇者, `C_*` 幽灵, `D_*` 特战术师);
+- the 深池逐火 embers (`Die`, then `Idle_2` / `Move_2` / `Die_2`; `Revive` ends as it stands up) and 假想敌：再生's puppet
+  (`A_Die`, then `B_*`; `B_Revive`);
+- the leaders' 重生: 锏 (`Revive1`, `Revive2` held, `Revive3`, then `B_*`), 扎罗 (`A_revive_1` / `_2` / `_3`, then `B_*`),
+  “复仇者” (`Revive_Begin` / `_Loop` / `_End`), 杰斯顿 (`C1_Die`, then `C2_*`);
+- 守墓石像 (the statue on `Sleep` [ASSUMED by name], then the flyer's `*_2`).
+
+Not mapped (clip names ambiguous): “自在”, “巨大的丑东西”, 主角阵营角色 and “余音” (`*_A` / `*_B`: which of its two forms is A
+is not known) keep their manifest clips.
 
 Other renderer rules from research 07 §5.4–5.5:
 - **Choosing the model:** Front when the unit faces right or down; Front mirrored when facing left; Back when facing up.

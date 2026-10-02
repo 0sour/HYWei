@@ -1429,7 +1429,7 @@ export async function createFieldView(host, options = {}) {
         if (form !== undefined) {
           const inf = infos.get(ex4.id);
           if (inf && (typeof form !== 'string' || FORMS[inf.spine || inf.defId]?.[form])) inf.form = typeof form === 'string' ? form : null;
-          views.get(ex4.id)?.setForm?.(form);
+          views.get(ex4.id)?.setForm?.(form, ex4);
         }
         fx.simFx(e[1], Number(e[2]), Number(e[3]), e[4]);
         break;
