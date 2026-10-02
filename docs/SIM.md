@@ -243,7 +243,10 @@ tick, damage-taken modifiers scale it and it counts for 受击回复 SP and TAKE
 excepted). 【污染秽蚀】 (萨卡兹枯朽战车's 秽蚀轰击,
 萨卡兹枯朽战士's death) is **true** damage, 50 / 25 per second on low / high ground (PRTS "每秒受到50/25点真实普通伤害 …
 同名效果不叠加", user playtest #6): a unit covered by several zones takes one tick per second (`unit.mem.pollutedAt`), so
-a crowd of dying 萨卡兹枯朽战士 totals 50 / s, not 50 × n.
+a crowd of dying 萨卡兹枯朽战士 totals 50 / s, not 50 × n. An activated 孽罪奇美拉's aura (`kitChimera`, PRTS "自身半径1.2
+范围内的所有单位持续视为受到源石污染区影响，技力自然回复速度倍率-80%，每0.5秒受到50真实持续伤害（同类效果取最高）") is the same
+kind of damage — 无来源 true (like the terrain it stands for [ASSUMED]), the chimera credited — not a 流失 (player report
+D1 audit): radius 1.2, a tick every 0.5 s, one tick per unit per 0.5 s however many chimeras reach it (`mem.chimeraAt`).
 
 **Knock-outs that are not deaths** (`content/enemies.js`; player reports after 0.1.0): a `killed` ability that keeps the
 enemy alive hides the knock-out from every later `kill` handler, the kill count, kill credit and the bounty — they all
@@ -297,6 +300,9 @@ recorded for the player whose half contains the goal it reached, with `sourcePla
 - `battleEnd {result}` fires before the result is frozen: handlers may still call `addLayers`/`addCoins`.
 - `layerGains` holds what `addLayers` actually added — never more than a bond's room under `BOND_LAYER_CAP` (999) from
   its starting layers; `bossDamage` / `damageDealt` never include a leader hit cancelled by 限伤 (§4).
+- `damageDealt` and `unitStats[].dmg` count only HP removed from the other side: a unit's own drain or 流失 (源石溶剂,
+  史尔特尔 S3 …) and friendly damage (the drain on 炎佑) count as the target's `taken`, never as damage dealt; the kill
+  credit is unchanged (`damage.js applyHpLoss`).
 
 ### 1.4 Robustness
 
@@ -541,8 +547,22 @@ unit at ≥ 1 HP) → **`damaged`** → SP-on-hurt / TAKE_DAMAGE → `kill` + `d
 × source `healingDealtMul` × target `healingTakenMul`; **`heal`** hook (mutable amount); capped at max HP; `overheal`
 turns the excess into an `overheal` shield. `battle.loseHp(target, amount, { source, from, tags, silent, sourceless })` = HP
 loss ignoring DEF/RES/shields/dodge (流失); `sourceless: true` makes it 无来源 ("受到等量的无来源生命流失": hooks see no source,
-`source` keeps the credit — stats and the per-player shared-pool tally), as does a 无来源 `from`. On a leader in a boss /
-hidden battle a loss of ≥ `BOSS_HIT_LIMIT` (a part's 传递, a drone's death) is cancelled like a hit. Every HP-damage kind
+`source` keeps the credit — stats and the per-player shared-pool tally), as does a 无来源 `from`. A 流失 skips the damage
+events (PRTS 作战机制 "生命流失不会触发反伤、受击回复等受到攻击触发的时点"): no `hit`, no 受击回复 SP, no TAKE_DAMAGE; its
+`damaged` ctx carries the tag `'hpLoss'` (and `noSp`; `damage.js isHpLoss`), and "受到伤害时" content skips it (信仰搅拌机 S3
+counters, 雷蛇 战术防御, 乌尔比安 本性的坚守, 录武官's guard, 远牙's 未受伤害 timer, 伪装服, 坚守 thorn chances, 机变 自愈) —
+while it counts every real damage instance, 无来源 ones included (a zone tick, the 源石溶剂 drain; 蒂比 S2 "受到伤害前
+触发"). Use it only for what the official calls 流失 — operator skill / trait 流失 (华法琳, 史尔特尔, 瑰盐 …), 阿戈尔's 物理流失,
+a leader part's 传递 and the 胄 drone link ("无来源生命流失") — and, [ASSUMED] for want of an official word, 心烛's transfer
+and 扎罗's 溶血骇惧; "受到N真实伤害" over time is damage (PRTS 伤害分类: BUFF damage, "自残类型" included) — the official
+`periodic_damage` template (源石溶剂: PRTS 盟约记录 修正 "并非流失", "造成无来源真实持续环境伤害"; 狂暴宿主 "自身每秒受到N无来源
+真实伤害"), 码头水手's drowning ("每秒受到1000点无来源真实伤害"), 弧光锋卫's 失衡 bleed (修正 "失衡移动时持续受到真实伤害") and
+孽罪奇美拉's aura are `dealDamage(credit, target, damage.js periodicDamage(n))`: 无来源 true, `canDodge: false`, tags
+`'dot'` / `'periodic'` (player report D1). The 源石溶剂 drain also ticks on every 敌人类我方单位 of the field (炎佑, a
+partner's too: PRTS 备注 "全场范围内的所有敌人类我方单位也会获得此装备的…效果…无视目标可选性"), credited to nobody, once per
+second however many carriers (PRTS 作战机制 "同名buff的默认叠加策略buff只能表现出一个"), while a carrier is on the field
+[ASSUMED]. On a leader
+in a boss / hidden battle a loss of ≥ `BOSS_HIT_LIMIT` (a part's 传递, a drone's death) is cancelled like a hit. Every HP-damage kind
 meets the limit (phys / arts / true / 元素伤害 incl. element bursts, DoT ticks); element 损伤 (the gauge, `type: 'element'`)
 removes no HP and never does.
 

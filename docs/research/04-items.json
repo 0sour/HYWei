@@ -1670,7 +1670,7 @@
    ],
    "flavor": "“经典的工业材料军事化应用案例。”",
    "talentNotes": [],
-   "implFormula": "ATK% += atk; in battle carrier loses `damage` HP per second (periodic self-damage, true/unmitigated [ASSUMED], can kill the carrier [ASSUMED]).",
+   "implFormula": "ATK% += atk; in battle the carrier takes `damage` true damage per second — 无来源 持续 damage, not a 流失 (PRTS 盟约记录 修正 \"并非流失\", 备注 \"造成无来源真实持续环境伤害\"): shields and damage-taken modifiers apply, it counts as 受到伤害 (受击回复 SP, the 重装 skill trigger, 信仰搅拌机 S3 counters); can kill the carrier. Every 敌人类我方单位 of the field (炎佑, a partner's too) takes the same tick while a carrier is on the field — once per second however many carriers (PRTS 备注 \"全场范围内的所有敌人类我方单位也会获得此装备的…效果\").",
    "normal": {
     "chessId": "chess_item_1_05_e_a",
     "isGolden": false,

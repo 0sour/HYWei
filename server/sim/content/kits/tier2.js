@@ -592,11 +592,13 @@ export default {
   },
 
   // ---------------------------------------------------------------------------------------------------------------
-  // 2_13 蒂比 紧急赶场通知 (AUTO): "受到攻击后触发" — any incoming enemy attack sets it off (the kit is the only
-  // trigger: the engine rule is disabled so non-attack damage never fires it) and a physical/arts one is dodged; takes
-  // off for the duration: skill range, ATK +atk, attacks become 3 shots, blocks flying (not ground) enemies. Trait
-  // "起飞后能够阻挡2个飞行敌人": flying enemies are blocked only while airborne. 片场工作指南: if not attacked for
-  // stack_time s, the next physical/arts attack is dodged (prob); every attack restarts that timer.
+  // 2_13 蒂比 紧急赶场通知 (AUTO): "受到攻击后触发" is officially "受到伤害前触发" (PRTS 修正 原因 6; 备注 "在受到伤害前自动
+  // 触发技能…若本次伤害为物理或法术，再将本次伤害闪避") — any incoming damage instance (an attack, a zone tick, the 源石溶剂
+  // drain; never a 流失, which has no `hit`) sets it off (the kit is the only trigger: the engine rule is disabled) and a
+  // physical/arts one is dodged; takes off for the duration: skill range, ATK +atk, attacks become 3 shots, blocks flying
+  // (not ground) enemies. Trait "起飞后能够阻挡2个飞行敌人": flying enemies are blocked only while airborne. 片场工作指南
+  // ("若最近N秒内未受伤害" — 修正 原文 攻击): if no damage for stack_time s, the next physical/arts damage is dodged (prob);
+  // every damage instance restarts that timer (dodged or not; a 流失 does not — PRTS 备注).
   // S1 专业喷绘技巧 (alt, DEFAULT trigger from data): takes off at once for its duration — skill range, ATK +atk, blocks
   // flyers only; no triple shot, and incoming attacks never set it off.
   chess_char_2_13_a: (bb, chess, def) => {
@@ -627,7 +629,7 @@ export default {
         battle.on('deploy', ({ unit: u }) => { if (u === unit) last = battle.time - st; }, { owner: unit });
         onHitOn(battle, unit, (ctx) => {
           const { dmg } = ctx;
-          if (!byEnemyAttack(ctx) || dmg.cancel || !up(unit)) return;
+          if (!dmg || dmg.cancel || !up(unit)) return;
           const dodgeable = dmg.type === 'phys' || dmg.type === 'arts';
           const sk = unit.skill;
           let dodged = false;

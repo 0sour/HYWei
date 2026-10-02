@@ -35,7 +35,7 @@ import { COLS } from '../../constants.js';
 import { bodyInKeys, bodyInRadius, bodyKeys } from '../../body.js';
 import { absoluteRangeKeys, sortEnemyTargets } from '../../targeting.js';
 import { frontOf, rotateOffset, toLocal } from '../../dir.js';
-import { mitigate, hasHp } from '../../damage.js';
+import { mitigate, hasHp, isHpLoss } from '../../damage.js';
 
 // ---- text-only constants (the official blackboards carry no key for these) --------------------------------------
 /** 华法琳 S1 "只当目标生命值不满一半时才会触发"; 塞雷娅 S1 "血量小于等于一半"; 山 module "生命值高于50%时". */
@@ -834,7 +834,7 @@ const KITS = {
       talents: [
         { install(battle, unit) { // 本性的坚守
           battle.on('damaged', (c) => {
-            if (c.target !== unit || !on(unit) || unit.hp <= 0 || !(c.amount > 0) || c.type === 'element') return;
+            if (c.target !== unit || !on(unit) || unit.hp <= 0 || !(c.amount > 0) || c.type === 'element' || isHpLoss(c.dmg)) return; // (not a 流失)
             const v = (unit.hpRatio < num(t0.hp_ratio, 0.5) ? num(t0.value2) : num(t0.value1)) * (unit.skill?.active ? t0Scale : 1);
             if (v > 0) battle.heal(unit, unit, v, { self: true });
           }, { owner: unit });
@@ -2496,7 +2496,7 @@ const KITS = {
       install(battle, unit) {
         battle.on('damaged', (c) => {
           const a = c.target;
-          if (a.side !== 'ally' || !(c.amount > 0) || a.hp <= 0 || c.type === 'element') return;
+          if (a.side !== 'ally' || !(c.amount > 0) || a.hp <= 0 || c.type === 'element' || isHpLoss(c.dmg)) return; // (not a 流失)
           const b = a.findBuff('reckpr:guard');
           if (b && b.data.src === unit) battle.heal(unit, a, num(b.data.value));
         }, { owner: unit });

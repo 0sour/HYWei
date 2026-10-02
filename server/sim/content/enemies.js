@@ -70,7 +70,7 @@
 
 import { TICK, MOVE_SCALE, ELEMENT, ATTACK_PAUSE, PROJECTILE_SPEEDS } from '../constants.js';
 import { canTargetAlly, sortAllyTargets, aggroCmp } from '../targeting.js';
-import { mitigate } from '../damage.js';
+import { mitigate, periodicDamage } from '../damage.js';
 
 // ---------------------------------------------------------------------------------------------------------------
 // constants (numbers that exist nowhere in the data)
@@ -120,8 +120,9 @@ const SHELL_FLIGHT = 3, SHELL_RADIUS = 1.2;
 /** 假想敌：黑云 抓取: the blackboard radius counts ×2.5 (PRTS "2.5倍可变半径": range_radius 1.5 → 3.75), at most 3 prey,
  *  "短暂延迟后" the 延迟吞噬 lands (delay [ASSUMED] 0.5 s); its SP (= 全弹发射 hits) caps at the data's spData.maxSp. */
 const GRAB_RADIUS_SCALE = 2.5, GRAB_MAX_PREY = 3, GRAB_DELAY = 0.5;
-/** 源石污染区 aura radius of an activated 奇美拉 [ASSUMED]. */
-const CHIMERA_AURA_RADIUS = 1;
+/** 孽罪奇美拉 污染模式 aura (PRTS 天赋 "自身半径1.2范围内的所有单位…每0.5秒受到50真实持续伤害（同类效果取最高）"): radius,
+ *  damage period (s). */
+const CHIMERA_AURA_RADIUS = 1.2, CHIMERA_AURA_EVERY = 0.5;
 /** Bombardments per 自行炮 Cannon cast ("数次") [ASSUMED]. */
 const CANNON_SHOTS = 3;
 /** 枯朽之种 summoned per BornBugs cast ("数个") [ASSUMED]. */
@@ -1074,7 +1075,9 @@ function kitDeepsea(ab, { swim = false, drown = false }) {
         if (!wet && a.wet) b.removeBuff(e, 'ab:swim');
         if (wet) b.removeBuff(e, 'terrain:deepsea');   // 免疫水蚀: drop devices.js' deep-water debuff
       }
-      if (drown && wet) { const v = T(ab, 'Drown.damage') ?? 0; if (v > 0) b.loseHp(e, v * dt, { source: null }); }
+      // PRTS 码头水手 "水蚀状态下或处于清澈水域时，每秒受到1000点无来源真实伤害" (伤害分类: 深水区/涨潮水蚀 is BUFF damage):
+      // damage, not a 流失 — 脆弱 scales it (player report D1 audit)
+      if (drown && wet) { const v = T(ab, 'Drown.damage') ?? 0; if (v > 0) b.dealDamage(null, e, { ...periodicDamage(v * dt), tags: ['dot', 'periodic', 'drown'] }); }
       a.wet = wet;
     },
     hitIn(c, b, e, a) { if (swim && a.wet && c.dmg.tags && c.dmg.tags.some((t) => t === 'terrain' || t === 'deepsea' || t === 'drown')) c.dmg.cancel = true; },
@@ -1101,11 +1104,16 @@ function kitChimera(ab) {
       activate(b, e, a);
       if (!a.on) return;
       a.acc = (a.acc ?? 0) + 0.25;
-      const pulse = a.acc >= 1 - 1e-9;
-      if (pulse) a.acc -= 1;
+      const pulse = a.acc >= CHIMERA_AURA_EVERY - 1e-9;
+      if (pulse) a.acc -= CHIMERA_AURA_EVERY;
       for (const u of b.alliesInRadius(e.x, e.y, CHIMERA_AURA_RADIUS)) {
         auraBuff(b, u, 'ab:originium', 0.25, { spRecoveryMul: Math.max(0, 1 + spr) }, null, true);
-        if (pulse && dmg > 0) b.loseHp(u, dmg, { source: e });
+        // PRTS "持续视为受到源石污染区影响…每0.5秒受到50真实持续伤害": a damage instance (受击回复, the 重装 trigger), not a
+        // 流失 — 无来源 like the 源石污染区 terrain it stands for [ASSUMED], the chimera keeps the credit; "同类效果取最高": one
+        // tick per unit per period however many chimeras reach it (`mem.chimeraAt`; every chimera's is 50)
+        if (!pulse || !(dmg > 0) || b.time - (u.mem.chimeraAt ?? -Infinity) < CHIMERA_AURA_EVERY - 1e-6) continue;
+        u.mem.chimeraAt = b.time;
+        b.dealDamage(e, u, { ...periodicDamage(dmg), tags: ['dot', 'pollution'] });
       }
     },
   }];
@@ -2493,7 +2501,7 @@ export const KITS = Object.freeze({
   enemy_1067_snslime: (ab, e) => [deathBoom({ scale: T(ab, 'boom.atk_scale') ?? 0, r: (e.def.raw.stats && e.def.raw.stats.rawRangeRadius) || BOOM_RADIUS, status: { key: 'cold', dur: T(ab, 'boom.freeze') ?? 0 } })], // 冰爆源石虫 · death: phys blast + cold
   enemy_1069_icebrk_2: (ab) => [{ hitOut(c, b, e) { if (c.dmg.isAttack && c.target.s.flags.freeze) c.dmg.amount *= T(ab, 'atkup.atk_scale') ?? 1; } }], // 雪怪小队破冰者 · ×3 vs frozen
   enemy_1026_aghost: () => [unblockable()],                          // 幽灵组长 · unblockable
-  enemy_1062_rager_2: (ab) => [{ iv: 1, tick(b, e) { b.loseHp(e, T(ab, 'periodic_damage.damage') ?? 0, { source: null }); } }], // 狂暴宿主组长 · loses HP over time
+  enemy_1062_rager_2: (ab) => [{ iv: 1, tick(b, e) { const v = T(ab, 'periodic_damage.damage') ?? 0; if (v > 0) b.dealDamage(null, e, periodicDamage(v)); } }], // 狂暴宿主组长 · "自身每秒受到500无来源真实伤害" (damage, not 流失)
   enemy_1183_mlasrt: (ab) => [ep('erosion', T(ab, 'EpDamage.attack@ep_damage_ratio') ?? 0), nthAttackPower(nthOf(ab.sk.PowerAttack), (ab.sk.PowerAttack && ab.sk.PowerAttack.bb.atk_scale) || 1)], // 无胄盟清扫小队 · erosion; every 4th attack ×1.5
   enemy_1273_stmgun_2: (ab) => [skill(ab.sk.Cannon, (b, e) => {     // 高准度伦蒂尼姆城防自行炮 · locks the highest max-HP unit, bombards the highest HP% around it
     const lock = allTargets(b, e).sort((p, q) => q.s.maxHp - p.s.maxHp)[0];
@@ -2672,9 +2680,11 @@ export const KITS = Object.freeze({
   enemy_2085_skzjxd: (ab) => [unblockable(), frontGuard(T(ab, 'Weakness.damage_resistance') ?? 0, faceCrowd)],
   enemy_2085_skzjxd_2: (ab) => [unblockable(), frontGuard(T(ab, 'Weakness.damage_resistance') ?? 0, faceCrowd)], // (鸭爵 strategy) same
   // 失衡 (pushed / pulled by operators)
-  enemy_1328_cbjedi: (ab) => [unbalanced((b, e, a, d) => {           // 弧光锋卫 · loses HP in proportion to the distance moved while unbalanced
+  enemy_1328_cbjedi: (ab) => [unbalanced((b, e, a, d) => {           // 弧光锋卫 · takes damage in proportion to the distance moved while unbalanced
+    // PRTS 修正 "失衡移动时持续受到真实伤害", "处于失衡状态时，每0.066s受到400点无来源真实持续伤害" (伤害分类: 弧光锋卫失衡状态下的自残
+    // 伤害 is BUFF damage): damage, not a 流失 (player report D1 audit)
     const v = T(ab, 'unbalanced_bleed.damage') ?? 0, iv = T(ab, 'unbalanced_bleed.interval') ?? 1;
-    if (v > 0 && iv > 0) b.loseHp(e, (v * d) / (iv * UNBALANCE_SPEED), { source: null, tags: ['unbalanced'] });
+    if (v > 0 && iv > 0) b.dealDamage(null, e, { ...periodicDamage((v * d) / (iv * UNBALANCE_SPEED)), tags: ['dot', 'periodic', 'unbalanced'] });
   })],
   enemy_10112_ymgds: (ab) => [unbalanced((b, e) => {                 // 冒失的小弟 · stunned after being unbalanced
     const st = T(ab, 'StunAfterUnbalance.stun') ?? 0;

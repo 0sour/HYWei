@@ -19,7 +19,8 @@
 //                      instances multiplied (×5.4 × ×5.6 on a leader at ~250 layers, DESIGN §20.10)
 //   坚守 steadShip     all operators max HP +(base + per·L); tier 2: 40 % of a non-member operator's damage is borne by
 //                      the members on the field (split evenly, sourceless true damage — already mitigated), members’ thorns
-//                      (base + per·L arts, sourceless but credited to the member hit, ≤ 1 per cd_duration per member)
+//                      (base + per·L arts, sourceless but credited to the member hit, ≤ 1 per cd_duration per member;
+//                      无来源 damage uses the chance and hits nobody, a 流失 never does — PRTS 备注 / 作战机制)
 //                      + 脆弱 ×damage_scale for weak[limit] s
 //   助力 deputShip     all operators DEF +(base + per·L), redeploy time ×(1 + respawn_time)
 //   突袭 raidShip      member idle ≥ no_attack_duration s (or skill ready) with no enemy in range → "保留技力立即再部署"
@@ -43,6 +44,7 @@
 
 import { absoluteRangeKeys, canTargetEnemy } from '../../../targeting.js';
 import { localOrder, localBefore } from '../../../dir.js';
+import { isHpLoss } from '../../../damage.js';
 import {
   num, bondRecord, buffParams, bondTier, bondLayers, isMember, isElite, isGroundOp, onField, playerOps, passiveBuff,
   fxOn, N4, N8, bodyInKeys, directMods,
@@ -442,7 +444,9 @@ export function install(battle) {
           }
           return;
         }
-        if (dmg.steadShare || dmg.steadThorn || c.type === 'element' || !st.members[ID.stead].has(t)) return;
+        // a 流失 never uses a thorn chance (PRTS 作战机制 "生命流失不会触发反伤"); 无来源 damage does, hitting nobody (备注
+        // "可被无来源伤害消耗反伤机会")
+        if (dmg.steadShare || dmg.steadThorn || c.type === 'element' || isHpLoss(dmg) || !st.members[ID.stead].has(t)) return;
         const bb = st.bb[ID.stead];
         const last = t.mem[STEAD_CD] ?? -Infinity;
         if (battle.time - last < num(bb.cd_duration) - 1e-9) return;

@@ -96,7 +96,7 @@ test('stat equipment: percentages are 直接乘算 — additive with each other 
   checkInvariants(h2.b);
 });
 
-test('源石溶剂: −60 HP per second on the field (流失), ATK +40 %', () => {
+test('源石溶剂: −60 HP per second on the field (无来源真实伤害, not 流失 — feedback1d-solvent.test.js), ATK +40 %', () => {
   for (const id of [A('1_05'), B('1_05')]) {
     const h = fight({ units: [{ chessId: 't_op', row: 10, col: 4, items: [id] }] });
     h.step(1);

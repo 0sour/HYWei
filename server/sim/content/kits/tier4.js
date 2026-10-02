@@ -31,6 +31,7 @@ import { absoluteRangeKeys, canTargetEnemy, sortEnemyTargets } from '../../targe
 import { normalizeChess } from '../../simdata.js';
 import { aggregateMods } from '../../buffs.js';
 import { CAT_SHIELD_KEY } from '../tokens.js';
+import { isHpLoss } from '../../damage.js';
 
 const TICK_EPS = 0.01;     // minimal status duration (s)
 const AURA = 0.2;          // aura refresh period (s)
@@ -286,18 +287,27 @@ const kits = {
         // module SPT-X (elite default): 攻击范围内敌人的隐匿效果失效
         if (moduleIs(def, 'uniequip_002_rmixer')) whileDeployed(battle, unit, AURA, () => reveal(battle, enemiesOnRange(battle, unit)));
         if (!S3) return;
-        // S3 counter: when hit, fire one volley at ≤ 3 enemies in range (min interval = interval × ratio)
+        // S3 counter (PRTS 备注 "反击受到任何伤害后均可触发，无需目标，视为普通攻击，受各类无法触发普通攻击效果的影响"): ANY damage
+        // she takes — an enemy's attack, a zone, the 无来源 源石溶剂 tick (items/battle.js periodic_damage) — fires one volley at
+        // ≤ 3 enemies in range (the attacker first), at most once per actual interval × ratio. With no enemy in range the
+        // counter still happens and spends its bullet (无需目标: the drain alone empties the skill — 莫斯提马's 特质 turns those
+        // bullets into 拉特兰 layers, player report D1). A 流失 (Battle.loseHp, tag 'hpLoss': it skips every damage event —
+        // PRTS 作战机制) and an element 损伤 never counter; stunned / disarmed: no counter
         battle.on('damaged', (c) => {
-          if (c.target !== unit || !unit.canAct || !skillActive(unit) || !c.source || c.source.side !== 'enemy' || !c.dmg?.isAttack) return;
+          const d = c.dmg;
+          if (c.target !== unit || !unit.canAct || unit.s.flags.disarm || !skillActive(unit) || !d || c.type === 'element') return;
+          if (isHpLoss(d)) return;
           if (battle.time < (unit.mem.counterReady ?? -Infinity) - 1e-9) return;
           const list = targetsInRange(battle, unit);
-          const i = list.indexOf(c.source);
+          const i = c.source ? list.indexOf(c.source) : -1;
           if (i > 0) { list.splice(i, 1); list.unshift(c.source); }
           const targets = list.slice(0, counterMax);
-          if (!targets.length) return;
           unit.mem.counterReady = battle.time + unit.s.interval * counterRatio;
           unit.mem.inCounter = true;
-          try { battle.forceAttack(unit, targets); } finally { unit.mem.inCounter = false; }
+          try {
+            if (targets.length) battle.forceAttack(unit, targets);
+            else { unit.stats.attacks++; unit.skill.onAttackPerformed([], true); } // a counter into nothing: its bullet goes
+          } finally { unit.mem.inCounter = false; }
           battle.fx('counter', { x: unit.x, y: unit.y, id: unit.id, n: targets.length });
         }, { owner: unit });
       },
@@ -1151,7 +1161,7 @@ const kits = {
       install(battle, unit) {
         battle.on('damaged', (c) => {
           const t = c.target;
-          if (t.side !== 'ally' || !t.alive || !(c.amount > 0) || !t.findBuff(`reckpr:guard:${unit.id}`)) return;
+          if (t.side !== 'ally' || !t.alive || !(c.amount > 0) || isHpLoss(c.dmg) || !t.findBuff(`reckpr:guard:${unit.id}`)) return;
           battle.heal(unit, t, num(bb['attack@fixed_heal_value'], 80));
         }, { owner: unit });
         installLowHpHealBonus(battle, unit, tb);
@@ -1544,7 +1554,7 @@ const kits = {
         onStart({ battle, unit }) { battle.fx('featherArrow', { x: unit.x, y: unit.y, id: unit.id }); } },
       talents: [
         { install(battle, unit) { // 凝神: ATK +15 % when not hurt for 10 s
-          battle.on('damaged', (c) => { if (c.target === unit && c.amount > 0) unit.mem.lastHurt = battle.time; }, { owner: unit });
+          battle.on('damaged', (c) => { if (c.target === unit && c.amount > 0 && !isHpLoss(c.dmg)) unit.mem.lastHurt = battle.time; }, { owner: unit }); // (a 流失 is not 受伤害)
           battle.on('deploy', (c) => { if (c.unit === unit) unit.mem.lastHurt = -Infinity; }, { owner: unit });
           whileDeployed(battle, unit, 0.1, () => toggleBuff(battle, unit, 'fartth:focus', battle.time - (unit.mem.lastHurt ?? -Infinity) >= num(t0.delay, 10) - 1e-9, { atkPct: num(t0.atk, 0.15) }));
         } },

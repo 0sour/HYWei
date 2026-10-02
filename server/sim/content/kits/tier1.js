@@ -61,6 +61,11 @@ export const cheb = (a, b) => (b.hitArea ? bodyTileReach(b, Math.round(a.y), Mat
 export const isMainHit = (dmg) => !!dmg && dmg.isAttack && !dmg.isSplash && !(dmg.tags && dmg.tags.includes('chain'));
 /** Damage ctx caused by an enemy's attack. */
 export const byEnemyAttack = (ctx) => !!ctx.source && ctx.source.side === 'enemy' && !!ctx.dmg && ctx.dmg.isAttack;
+/**
+ * `damaged` ctx of a damage that removed HP and can give 受击回复 SP — the engine's rule (damage.js applyHpLoss: not a 流失
+ * (`noSp`, Battle.loseHp), not an element 损伤), whatever its source: an attack, a zone, the 无来源 源石溶剂 tick.
+ */
+export const hurtSpDamage = (ctx) => !!ctx.dmg && !ctx.dmg.noSp && ctx.type !== 'element' && ctx.amount > 0;
 /** A timed skill is running (no SP may be gained). */
 export const skillBusy = (u) => !!(u.skill && u.skill.active && u.skill.isTimed);
 /** Give SP unless a timed skill is running (AK: no SP gain during a skill). */
@@ -1039,8 +1044,10 @@ export default {
       talents: [{ install(battle, unit) {
         const sp = num(t.sp);
         if (sp > 0) {
+          // PRTS 备注 "仅伤害量不为0且能够触发受击回复的伤害才能触发此天赋": any such damage, not only an enemy attack
+          // (a zone tick, the 源石溶剂 drain — player report D1 audit)
           onDamagedOn(battle, unit, (ctx) => {
-            if (!byEnemyAttack(ctx) || !up(unit)) return;
+            if (!hurtSpDamage(ctx) || !up(unit)) return;
             giveSp(unit, sp);
             const mates = alliesInGridOf(battle, unit, grid ?? [[1, 0], [0, -1], [0, 1], [-1, 0]]).filter((a) => a !== unit && a.skill && !a.skill.noSkill);
             const m = battle.rng.pick(mates);
