@@ -833,6 +833,7 @@ function husk({ hits, delay, stealthy = true, unblock = false, onHusk = null, ke
       a.noAtk = e.profile.noAttack;
       a.max = a.max ?? e.base.maxHp;
       e.profile.noAttack = true;
+      e.lastAttackAt = -Infinity;                         // the snapshot shows no attack of the fallen warrior
       setHits(e, hits);
       hitCount(b, e, true);
       b.addBuff(e, { key, visible: true, persist: true, flags: { disarm: true, ...(stealthy ? { stealth: true } : {}), ...(unblock ? { unblockable: true } : {}) } });

@@ -13,6 +13,7 @@
 //   die()                                 die clip once (callers fade out afterwards)
 //   stunned (setBase('stun'))             stun clip, or the current track frozen at timeScale 0
 //   setForm(roles, change)                another clip set of the skeleton (an enemy's mode), after a change clip
+//                                         (no attack cuts the change clip short)
 //   update(dt)                            advances the skeleton (autoUpdate is off: one clock for everything)
 // Attack mode lasts until ~1.4 attack intervals without a new attack, then the end clip (if any) and base.
 
@@ -212,7 +213,7 @@ export class SpineActor {
    * false when it is still too early (call again next frame) or there is nothing to wind up.
    */
   windUp(interval, lead) {
-    if (this.dead || this.mode === 'stun' || this.mode === 'die' || !(lead >= 0)) return false;
+    if (this.dead || this.mode === 'stun' || this.mode === 'die' || this.mode === 'change' || !(lead >= 0)) return false;
     const clip = this._attackClip();
     if (!clip) return false;
     if (this.mode === 'attack' && this.current === clip.loop) return false; // in rhythm: attack() re-phases
@@ -232,7 +233,7 @@ export class SpineActor {
 
   /** An attack happened now. `interval` = seconds between attacks (game time already scaled to real). */
   attack(interval) {
-    if (this.dead || this.mode === 'stun' || this.mode === 'die') return;
+    if (this.dead || this.mode === 'stun' || this.mode === 'die' || this.mode === 'change') return;   // a form change plays out
     this.interval = clampN(Number.isFinite(interval) && interval > 0 ? interval : this.interval, 0.08, 8);
     const clip = this._attackClip();
     if (!clip) return;
