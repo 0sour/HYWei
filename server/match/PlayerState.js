@@ -477,7 +477,8 @@ export class PlayerState {
    * grows. Otherwise the elite goes to the hand, overflow temp — outside PREP too (a SETTLE merge's elite waits in temp
    * through the next prep, tempDue). The copies' equipment returns to the hand ("干员晋级后已配发装备会回收至整备区";
    * overflow temp; with both full it stays on the elite, up to its equipPerChess (2) slots — any further item is
-   * destroyed with a log warning, as before the official rule); their summons are removed, and an elite on the board
+   * destroyed with a log warning, as before the official rule) and an identical normal pair among it merges like any gain
+   * (checkItemMerges); their summons are removed, and an elite on the board
    * gets its own summon stack (grantTokensFor: its loadout, like any deployment). Returns the elite piece (or null if
    * the elite could not be stored).
    * @param {string} baseId
@@ -515,6 +516,8 @@ export class PlayerState {
       if (where && elite.items.length < this.gd.equipPerChess) { elite.items.push(it); continue; }
       this.m.log.warn?.(`[match ${this.m.roomCode}] ${this.playerId}: returned item ${it.id} destroyed (no space)`);
     }
+    // the returned equipment follows the auto-merge rule like any other gain ("已拥有2件同一初始装备时…自动合并")
+    this.checkItemMerges();
     // deployed like any operator placed by hand: its manually deployable summons join the hand (after the returned
     // equipment, which would be lost in temp — a summon stack removed there comes back at the next round start)
     if (where === 'board') this.grantTokensFor(elite);

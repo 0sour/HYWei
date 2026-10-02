@@ -506,6 +506,7 @@ export function makeCtx(m, ps, source, hook, ev = null) {
         for (const it of l.piece.items || []) ps.stow(it, { allowTemp: true });
         l.piece.items = [];
         ps.returnCopies(l.piece);
+        ps.checkItemMerges(); // the returned equipment auto-merges like any gain
       }
       ps.recompute();
       return true;

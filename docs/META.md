@@ -331,7 +331,9 @@ Other equipment: 2 slots; a third replaces the equipped item the player picks in
 equipped on the target ⇒ `BAD_TARGET`, nothing changes) — and the replaced item is destroyed. Equipped items are
 otherwise locked (research 04 §2 / addendum: they leave the operator only on promotion, merge or sale): `g.destroy`
 refuses them (`BAD_TARGET 'equipped items are locked'`). A second copy of an equipped normal item merges into the golden
-item in the hand.
+item in the hand. Every path that hands an item to the player (buy, reward, 机变, grants, equip, the equipment a sale,
+a promotion or `ctx.destroyPiece` returns) ends with the auto-merge (`acquireItem` / `checkItemMerges`: "已拥有2件同一初始
+装备时…自动合并"), so a player never holds two identical mergeable normal items (`test/match/feedback1b-items.test.js`).
 
 Built-ins (builtinMeta.js, overridable): 盟约之币 / 骑士储蓄罐 (random funds), 随身身份牌 (layers of the target's bonds),
 紧急调度券 (take shop chess), 精打细算玩偶 (+funds each round), 简易通讯机 / 拟态物质 (same-bond chess), 见钱眼开玩偶
