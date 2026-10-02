@@ -220,7 +220,7 @@ describe('#7 audit: every stage × deploy field (server = official level data = 
 
   test('independent check against the raw official level files (buildableType / heightType + non-hidden devices)', { skip: !HAS_LEVELS && 'no .cache/gamedata level files (run node tools/build-data.mjs once)' }, () => {
     // trap_040_canoe 特制水上平台 "在水上建立可以部署任意单位的平台"; tile_deepsea refuses deployment whatever its
-    // buildableType (PRTS 地形 深水区 "地形机制：拒绝部署" — player report #3 after 0.1.0, 战场#08's pool)
+    // buildableType (PRTS 深水区 地形信息 "地形机制：拒绝部署（待补充）" — player report #3 after 0.1.0, 战场#08's pool)
     const ROLE = { trap_1105_accrate: 'block', trap_032_mound: 'block', trap_1106_achplat: 'platform', trap_040_canoe: 'water' };
     for (const [id, st] of Object.entries(DATA.stages)) {
       const lv = JSON.parse(readFileSync(levelFile(id), 'utf8'));

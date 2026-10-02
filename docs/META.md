@@ -418,12 +418,13 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   the boss field (board coordinates unchanged). `onMerge` carries `area` ('board' | 'hand' | 'temp').
 * **Board**: rows 9–12 × cols 2–10, legality from `stages[id].tiles` + devices (board.js); deploy cap 8 (+effects);
   summons don't use slots; board↔hand swaps always allowed. The legend's `buildable` is the effective deploy type: the
-  深水区 (`tile_deepsea`, 战场#08's pool — level buildableType ALL) refuses deployment (PRTS 地形 深水区 "拒绝部署"; a
-  特制水上平台 device makes its tile deployable for any unit; player report #3 after 0.1.0). A terrain change (terrain 机变 cards such as 模拟战场演变·
-  模式二 "阻隔工事变为射击台", content `setDeviceActive` / `setTileOverride`) is checked at the next `recompute()` (at the
-  latest when the battle input is built): a piece left on a tile it may no longer occupy — a melee operator on a new
-  射击台 — is withdrawn to the hand (overflow temp: re-placed during the prep; its summons leave with it), a summon back
-  onto its stack, with a toast (`PlayerState._evictIllegal`).
+  深水区 (`tile_deepsea`, 战场#08's pool — level buildableType ALL) refuses deployment (PRTS 深水区 地形信息
+  "拒绝部署（待补充）"; a 特制水上平台 device makes its tile deployable for any unit; player report #3 after 0.1.0). A
+  terrain change (terrain 机变 cards such as 模拟战场演变·模式二 "阻隔工事变为射击台", content `setDeviceActive` /
+  `setTileOverride`) is checked at the next `recompute()` (at the latest when the battle input is built): a piece left
+  on a tile it may no longer occupy — a melee operator on a new 射击台 — is withdrawn to the hand (overflow temp:
+  re-placed during the prep; its summons leave with it), a summon back onto its stack, with a toast
+  (`PlayerState._evictIllegal`).
 * **Summons** (PRTS 卫戍协议/帮助 §战斗部署, user playtest #6): an operator placed on the board sends its manually deployable
   summons (tokens.json `placeable`: 赫默 S2 医疗探机, 巫恋 S2 诅咒娃娃, 凯瑟琳 爬行号·防护单元, 浊心斯卡蒂 海嗣, 伺夜 狼群,
   缪尔赛思 流形 — only those its equipped skill / module makes, `gamedata.placeableTokens(chessId, loadout)`) to the hand as
@@ -439,8 +440,11 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   (`PlayerState._legal` / `summonRange`, `board.js ownerRangeKeys`; a summon dragged onto its own owner is checked from
   the owner's new tile, an operator dragged onto the summon from the summon's new tile). When the owner is re-oriented in
   place (or promoted) a summon its new range leaves out goes back onto its stack with a toast (`_liftOutOfRange` in
-  `recompute`) — one still inside stays [ASSUMED]. The client lights and accepts the same tiles (`ui/gameLogic.js
-  summonRange`), the bot plans inside them. Battle side: SIM.md §1.1 token pieces.
+  `recompute`) — one still inside stays [ASSUMED]. A re-orientation that would leave such a summon with no stack and no
+  free hand / temp slot is refused (HAND_FULL, like withdrawing a summon into a full hand); in the other cases (a
+  promotion, an owner moved while hand and temp are full) the summon leaves the board and its stack comes back at the
+  next round start (`grantTokensFor`), so no out-of-range placement reaches the battle. The client lights and accepts
+  the same tiles (`ui/gameLogic.js summonRange`), the bot plans inside them. Battle side: SIM.md §1.1 token pieces.
 * **Bonds**: bondsMeta.js (BOARD distinct, BOARD_AND_DECK, 绝技 elites, 调和 +1, 独行 downward, 助力 upper tiers,
   变形同构体 grants). Σ activated layers for the hidden core = Σ layers of active bonds at the boss round's prep end.
   **Layer cap** (research 11 §1; the client's `MAX_GARRISON_STACK` / `AddBondCount` = min(L + n, 999)): each bond's

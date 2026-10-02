@@ -1,10 +1,10 @@
 // Player report #3 after the 0.1.0 release: "有水池的那张图干员可以错误的被部署到水里，突袭分队干员也会自动落到水里".
 // The pool is the 深水区 (tile_deepsea) of 战场#08(下半) 涨潮控制 (act2autochess_m04: board (10–12, 6), the partner's
 // (10–12, 14), boss (3–5, 6) / (3–5, 14)). The level file says buildableType ALL, but the tile refuses deployment
-// officially: PRTS 地形 深水区 "地形机制：拒绝部署", and the season-1 战场#05 puts a 特制水上平台 ("在水上建立可以部署任意单位
-// 的平台") on every one of its 深水区 tiles. The sim side: `grid.canStand` refuses it, so no automatic placement (the
-// 突袭 landing tile, a tactician's tactical point, summon tiles) ever picks a water tile. The prep side (placement on
-// the board) is test/match/feedback1-placement.test.js.
+// officially: PRTS 深水区 地形信息 "地形机制：拒绝部署（待补充）", and the season-1 战场#05 puts a 特制水上平台
+// ("在水上建立可以部署任意单位的平台") on every one of its 深水区 tiles. The sim side: `grid.canStand` refuses it, so
+// no automatic placement (the 突袭 landing tile, a tactician's tactical point, summon tiles) ever picks a water tile.
+// The prep side (placement on the board) is test/match/feedback1-placement.test.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBattle, chessRec, enemyRec, checkInvariants } from '../helpers/battleHarness.js';
@@ -22,7 +22,7 @@ test('the stage data: 战场#08\'s 深水区 refuses deployment (effective build
   const raw = st.raw ?? st;
   const d = raw.tiles.d;
   assert.equal(d.tileKey, 'tile_deepsea');
-  assert.equal(d.buildable, 'NONE', 'PRTS 地形 深水区: 拒绝部署');
+  assert.equal(d.buildable, 'NONE', 'PRTS 深水区 地形信息: 拒绝部署');
   assert.equal(d.buildableType, 'ALL', 'the level file\'s own value is kept');
   const deploy = new Set([...raw.deployTiles.normal.melee, ...raw.deployTiles.normal.rangedOnly].map(([r, c]) => `${r},${c}`));
   for (const [r, c] of WATER) assert.ok(!deploy.has(`${r},${c}`), `deployTiles.normal excludes ${r},${c}`);

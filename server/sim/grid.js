@@ -6,10 +6,12 @@
 // Legend entries are normalised from either the research format (heightType/buildableType/passableMask/tileKey)
 // or the build-data format (height/build/passable/terrain); missing glyphs fall back to DEFAULT_LEGEND.
 // `build` is the EFFECTIVE deploy type: a tile whose mechanism refuses deployment (DEPLOY_REFUSED_TILES: 深水区
-// tile_deepsea — PRTS 地形 深水区 "地形机制：拒绝部署"; player report after 0.1.0: operators stood in 战场#08's pool and
-// 突袭 members jumped into it) is NONE whatever its level buildableType (ALL), so `canStand` — every automatic
-// placement: the 突袭 landing tile, tactical points, summon tiles — and the path tie-break below treat it as ground no
-// operator can stand on. data/stages.json legends already carry the effective value (tools/build-data.mjs).
+// tile_deepsea — PRTS 深水区 地形信息 "地形机制：拒绝部署（待补充）"; player report after 0.1.0: operators stood in
+// 战场#08's pool and 突袭 members jumped into it) is NONE whatever its level buildableType (ALL), so `canStand` — every
+// automatic placement: the 突袭 landing tile, tactical points, summon tiles — and the path tie-break below treat it as
+// ground no operator can stand on. data/stages.json legends already carry the effective value (tools/build-data.mjs).
+// Known limit [ASSUMED]: the 特制水上平台 that makes a 深水区 deployable (act1 m05, weight 0 this season) exists only in
+// the match's deploy map; the sim does not model those canoes (content/devices.js), so here their tiles stay NONE.
 //
 // Pathfinding = the official client's (`Torappu.Battle.SPFA`, research 08 §3.1/§3.4): one FLOW FIELD per destination,
 // a FIFO SPFA from the destination over the rect with the 4 neighbours UP (row+1), RIGHT, DOWN, LEFT (in that order,
@@ -24,7 +26,8 @@
 // every grid route length) stays exactly the official one:
 //   * tie-break: the SPFA relaxes on (dist, pen) lexicographically, `pen` = number of NON-BLOCKABLE walkable tiles
 //     (floor / gate / goal / teleport / 深水区 tiles — `blockable()` false: not LOW ground buildable for melee) on the
-//     chain (the 深水区 on 战场#08's routes is unavoidable: no route there changed when it became non-buildable).
+//     chain (no gate route of 战场#08 changed when its 深水区 became non-buildable; a few off-route smoothed steps of its
+//     boss field, rows 4–5, now go around the water instead of cutting across it).
 //     Among equal-length chains the one with the fewest non-blockable tiles wins; remaining ties go to the first
 //     parent in SPFA order (the official order unless a pen improvement re-queued a tile).
 //   * smoothing: a line of sight may only cross a non-blockable tile (including the corner tiles of a diagonal step)
@@ -79,8 +82,10 @@ export const DEFAULT_LEGEND = Object.freeze({
 
 /**
  * Tile keys whose mechanism refuses deployment although the level's buildableType allows it: 深水区 tile_deepsea (PRTS
- * 地形 深水区 "部署类型 全部位 … 地形机制 拒绝部署"; the season-1 战场#05 puts a 特制水上平台 — "在水上建立可以部署任意单位
- * 的平台" — on every one of its 深水区 tiles). Shared with tools/build-data.mjs (the stages.json legend's `buildable`).
+ * 深水区 地形信息 "部署类型 全部位 … 地形机制 拒绝部署（待补充）"; PRTS 作战机制: the 地形标记 AdvancedBuildableMask —
+ * 深水 among them — "限制玩家仅能部署匹配的单位于其上"; the season-1 战场#05 puts a 特制水上平台 — "在水上建立可以部署
+ * 任意单位的平台" — on every one of its 深水区 tiles). Shared with tools/build-data.mjs (the stages.json legend's
+ * `buildable`).
  */
 export const DEPLOY_REFUSED_TILES = Object.freeze(new Set(['tile_deepsea']));
 

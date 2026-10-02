@@ -6,12 +6,12 @@
 //   Board = own normal field (GEO.FIELD rows 9–12, cols 2–10). Melee chess stand on `melee` deploy tiles
 //   (LOW, buildable ALL/MELEE); ranged chess on `melee ∪ rangedOnly` (stages.json → deployTiles.normal,
 //   derived from the tile legend when missing — the legend's `buildable` is the effective type: 深水区 tile_deepsea
-//   refuses deployment, PRTS 地形 深水区 "拒绝部署", player report #3 after 0.1.0). Tokens follow their own `position`;
-//   a summon whose text reads "只能部署在召唤者攻击范围内" (tokens.json `ownerRange`: 伺夜's 狼群, 缪尔赛思's 流形) also
-//   needs a tile of its owner's attack range (`summonRange`, player report #9). In the prep of a boss round
-//   (最终攻势 / 隐秘核心) the tiles are the player's half of the boss field (`deployFieldOf`: 'bossL' / mirrored
-//   'bossR', board (r, c) = stage tile (r − 7, c) / (r − 7, 20 − c)) like the server's deploy map (server/match/
-//   board.js field; user playtest #5 item 7) — board coordinates stay the same.
+//   refuses deployment, PRTS 深水区 地形信息 "拒绝部署（待补充）", player report #3 after 0.1.0). Tokens follow their
+//   own `position`; a summon whose text reads "只能部署在召唤者攻击范围内" (tokens.json `ownerRange`: 伺夜's 狼群,
+//   缪尔赛思's 流形) also needs a tile of its owner's attack range (`summonRange`, player report #9). In the prep of a
+//   boss round (最终攻势 / 隐秘核心) the tiles are the player's half of the boss field (`deployFieldOf`: 'bossL' /
+//   mirrored 'bossR', board (r, c) = stage tile (r − 7, c) / (r − 7, 20 − c)) like the server's deploy map
+//   (server/match/board.js field; user playtest #5 item 7) — board coordinates stay the same.
 //   Hand = 10 slots (index = col). Temp slots are server-filled only (no move target).
 //   Dropping onto an occupied tile/slot swaps (both pieces must be legal at their new spots);
 //   an EQUIP item dropped onto a chess piece equips it (tokens can't carry items); an Arts (MAGIC) item
@@ -23,7 +23,7 @@
 import { GEO, PHASE, UF } from '../../../shared/constants.js';
 import { resolveLoadout, loadoutOptions, MODULE_NONE } from '../../../shared/protocol.js';
 import { resolveRecordLoadout, loadoutRecord, attackRangeGrid } from '../../../shared/loadoutRecord.js';
-import { rotateOffset, pieceDir } from './facing.js';
+import { rangeTiles, pieceDir } from './facing.js';
 import { layoutPen } from '../render/pen.js';
 import { BOSS_ROW_SHIFT, MAX_COL } from '../render/prepfield.js';
 import { bossLevelSeconds } from './matchStatus.js';
@@ -809,13 +809,7 @@ export function summonRange(ctx, piece, owner = null) {
   if (!rec) return null;
   let grid = null;
   try { grid = attackRangeGrid(chessLoadout(rec, ctx.priv?.loadout ?? null, ctx.getChess)?.record || rec); } catch { /* the data grid */ }
-  const out = new Set();
-  for (const g of grid || rec.rangeGrid || []) {
-    if (!Array.isArray(g)) continue;
-    const [dr, dc] = rotateOffset(g[0], g[1], pieceDir(at.piece));
-    out.add(tileKey(at.row + dr, at.col + dc));
-  }
-  return out;
+  return new Set(rangeTiles(grid || rec.rangeGrid, at.row, at.col, pieceDir(at.piece)).map(([r, c]) => tileKey(r, c)));
 }
 
 /** tileAllows plus the owner-range rule of a range-bound summon (summonRange). */

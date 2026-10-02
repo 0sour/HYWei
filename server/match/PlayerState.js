@@ -47,7 +47,9 @@
 //     0.1.0) only goes on a tile of its owner's attack range (_legal / summonRange: the loadout's grid rotated by the
 //     owner's facing); a swap with its owner is checked from the owner's new tile, and one an in-place re-orientation
 //     (or a promotion) leaves outside goes back onto its stack (recompute → _liftOutOfRange) [ASSUMED: kept when still
-//     inside].
+//     inside]. A re-orientation that would leave such a summon with no stack and no free hand / temp slot is refused
+//     (HAND_FULL); elsewhere (a promotion, an owner moved with no room) it leaves the board and its stack comes back at
+//     the next round start (grantTokensFor) — no out-of-range placement reaches the battle.
 //   * Facing (DESIGN §3, research 09 §1.2): every board piece has `dir` ∈ UP|RIGHT|DOWN|LEFT (server/sim/dir.js), set
 //     by g.move {…, dir} (absent ⇒ RIGHT) and kept across rounds. g.move onto the piece's OWN tile re-orients it in
 //     place; a swap keeps the occupant's dir; pieces put on the board by effects (a merge elite taking a consumed
@@ -989,22 +991,42 @@ export class PlayerState {
 
   /**
    * Range-bound summons left outside their owner's attack range (the owner re-oriented in place, promoted, its loadout
-   * changed) go back onto their stack — a summon still inside stays [ASSUMED: the official moves every summon of a
-   * MOVED owner back, PRTS 卫戍协议/帮助 "移动干员时，其所属召唤物全部退场并重置至手牌区"; an in-place re-orientation keeps
-   * the ones it can]. Returns the number lifted; a toast names them.
+   * changed, moved with no room to take its summons back) go back onto their stack — a summon still inside stays
+   * [ASSUMED: the official moves every summon of a MOVED owner back, PRTS 卫戍协议/帮助 "移动干员时，其所属召唤物全部退场
+   * 并重置至手牌区"; an in-place re-orientation keeps the ones it can]. One with no stack and no free hand / temp slot
+   * leaves the board: its stack comes back at the next round start like a summon stack removed from temp at a prep
+   * deadline (startRound → grantTokensFor, "干员所属召唤物会于下一回合返还"), so no illegal placement reaches the
+   * battle. Returns the number taken off the board; a toast names them.
    */
   _liftOutOfRange() {
-    const names = [];
+    const back = [], gone = [];
     for (const [k, p] of [...this.board]) {
       if (p.kind !== 'token') continue;
       const range = this.summonRange(p);
       if (!range || range.has(k)) continue;
       this.board.delete(k);
-      if (!this._returnToken(p, null, { allowTemp: true })) { this.board.set(k, p); continue; } // nowhere to go: it stays put
-      names.push(this.gd.token(p.id)?.name || p.id);
+      (this._returnToken(p, null, { allowTemp: true }) ? back : gone).push(this.gd.token(p.id)?.name || p.id);
     }
-    if (names.length) this.m.toast(this, 'warn', `${names.join('、')}只能部署在召唤者攻击范围内，已退回整备区`);
-    return names.length;
+    if (back.length) this.m.toast(this, 'warn', `${back.join('、')}只能部署在召唤者攻击范围内，已退回整备区`);
+    if (gone.length) this.m.toast(this, 'warn', `${gone.join('、')}只能部署在召唤者攻击范围内，整备区已满，下回合返还`);
+    return back.length + gone.length;
+  }
+
+  /**
+   * Whether every range-bound summon of `owner` that the range from (ownerKey, dir) leaves out can go back onto its
+   * stack or into a free hand / temp slot (_reorient refuses otherwise: the player's own re-orientation never costs a
+   * summon, like withdrawing one into a full hand gives HAND_FULL).
+   */
+  _roomForOutOfRange(owner, ownerKey, dir) {
+    const at = { key: ownerKey, piece: owner, dir };
+    const stacks = [...this.hand, ...this.temp].filter((p) => p && p.kind === 'token' && p.ownerUid === owner.uid);
+    const needSlot = new Set();
+    for (const [k, p] of this.board) {
+      if (p.kind !== 'token' || p.ownerUid !== owner.uid || stacks.some((s) => s.id === p.id)) continue;
+      const range = this.summonRange(p, at);
+      if (range && !range.has(k)) needSlot.add(p.id);
+    }
+    return needSlot.size <= [...this.hand, ...this.temp].filter((p) => p == null).length;
   }
 
   _moveChessToBoard(loc, r, c, dir = 'RIGHT') {
@@ -1055,10 +1077,17 @@ export class PlayerState {
 
   /**
    * In-place re-orientation (g.move onto the piece's own tile with a new direction). An owner's range-bound summons the
-   * new range leaves out go back onto their stack (recompute → _liftOutOfRange).
+   * new range leaves out go back onto their stack (recompute → _liftOutOfRange); HAND_FULL (nothing changes) when one
+   * of them would have nowhere to go.
    */
   _reorient(piece, dir) {
-    if (pieceDir(piece) !== dir) { piece.dir = dir; this.recompute(); }
+    if (pieceDir(piece) === dir) return OK;
+    if (piece.kind === 'chess') {
+      const loc = this.find(piece.uid);
+      if (loc && loc.area === 'board' && !this._roomForOutOfRange(piece, loc.key, dir)) return fail(ERR.HAND_FULL);
+    }
+    piece.dir = dir;
+    this.recompute();
     return OK;
   }
 

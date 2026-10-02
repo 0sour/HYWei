@@ -47,7 +47,8 @@ function official(sid, { crates: extraCrates = [], blocks: extraBlocks = [], rec
   const inside = (r, c) => (rect ? r >= rect.r0 && r <= rect.r1 && c >= rect.c0 && c <= rect.c1 : r >= 0 && r < H && c >= 0 && c < W);
   const passable = (r, c) => inside(r, c) && ['ALL', 'WALK_ONLY'].includes(tile(r, c).passableMask) && !blocked.has(`${r},${c}`);
   // non-blockable walkable terrain: not LOWLAND buildable for melee (floor, gates, goal, teleports) — and the 深水区,
-  // which refuses deployment whatever its buildableType (PRTS 地形 深水区 "拒绝部署"; player report #3 after 0.1.0)
+  // which refuses deployment whatever its buildableType (PRTS 深水区 地形信息 "拒绝部署（待补充）"; player report #3
+  // after 0.1.0)
   const nb = (r, c) => {
     const t = tile(r, c);
     if (t.tileKey === 'tile_deepsea') return true;

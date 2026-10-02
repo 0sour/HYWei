@@ -6,8 +6,9 @@
 //              部署任意单位的平台"): melee AND ranged chess may stand here ("所有行动内远程干员可部署在近战位").
 //   'ranged' — HIGH tile with buildable ALL/RANGED, or a tile under an active platform (射击台): ranged only.
 //   (absent) — not deployable (NONE, forbidden, road lanes, tiles under active crates/mounds, the 深水区 — the legend's
-//              `buildable` is the effective type: tile_deepsea refuses deployment, PRTS 地形 深水区 "拒绝部署",
-//              although its level buildableType is ALL; player report #3 after 0.1.0, 战场#08's pool).
+//              `buildable` is the effective type: tile_deepsea refuses deployment, PRTS 深水区 地形信息
+//              "拒绝部署（待补充）", although its level buildableType is ALL; player report #3 after 0.1.0, 战场#08's
+//              pool).
 // Per-player overrides (terrain 机变 cards, content): `deviceOverrides { alias: active }` toggles stage devices,
 // `tileOverrides { 'r,c': 'melee'|'ranged'|'none' }` force a class. The result equals stages[id].deployTiles.normal
 // for the unmodified stage (asserted in test/match/board.test.js).

@@ -2006,9 +2006,9 @@ const BLOCKING_ROLES = new Set(['crate', 'platform', 'mound']);
 
 /**
  * The deploy type the game applies to a level tile: its buildableType, except tiles whose mechanism refuses deployment
- * (server/sim/grid.js DEPLOY_REFUSED_TILES — 深水区 tile_deepsea: PRTS 地形 深水区 "地形机制：拒绝部署"; player report after
- * 0.1.0: operators could be placed in 战场#08's pool), which are NONE. The stages.json legend's `buildable` is this
- * value; `buildableType` keeps the level's own where they differ.
+ * (server/sim/grid.js DEPLOY_REFUSED_TILES — 深水区 tile_deepsea: PRTS 深水区 地形信息 "地形机制：拒绝部署（待补充）";
+ * player report after 0.1.0: operators could be placed in 战场#08's pool), which are NONE. The stages.json legend's
+ * `buildable` is this value; `buildableType` keeps the level's own where they differ.
  */
 const effectiveBuildable = (t) => (DEPLOY_REFUSED_TILES.has(t.tileKey) ? 'NONE' : t.buildableType);
 

@@ -1,19 +1,21 @@
 // Player reports after the 0.1.0 release, placement legality on the server (PlayerState / board.js), the client's
 // mirror (ui/gameLogic.js canPlace / boardTargets = the drag highlights) and the bots:
 //   #3 "有水池的那张图干员可以错误的被部署到水里" — 战场#08(下半) 涨潮控制 (act2autochess_m04): the 深水区 (tile_deepsea,
-//      board (10–12, 6)) refuses deployment (PRTS 地形 深水区 "地形机制：拒绝部署"; 特制水上平台 "在水上建立可以部署任意
-//      单位的平台" on every 深水区 of the season-1 战场#05) although the level's buildableType says ALL.
+//      board (10–12, 6)) refuses deployment (PRTS 深水区 地形信息 "地形机制：拒绝部署（待补充）"; 特制水上平台
+//      "在水上建立可以部署任意单位的平台" on every 深水区 of the season-1 战场#05) although the level's buildableType
+//      says ALL.
 //   #9 "干员伺夜这样的战术家的战术点能被错误的被放到攻击范围之外" — the tacticians' summons (伺夜's 狼群, 缪尔赛思's 流形)
 //      read "只能部署在召唤者攻击范围内" (token description; PRTS 狼群 特性): the piece may only stand on a tile of its
 //      owner's attack range (the rotated grid of its board tile and facing). Re-orienting the owner in place keeps the
-//      piece while it is still inside, else sends it back to its stack [ASSUMED]; moving the owner sends it back anyway
-//      (PRTS 卫戍协议/帮助 "移动干员时，其所属召唤物全部退场并重置至手牌区").
+//      piece while it is still inside, else sends it back to its stack [ASSUMED] (refused, HAND_FULL, when it would have
+//      nowhere to go); moving the owner sends it back anyway (PRTS 卫戍协议/帮助 "移动干员时，其所属召唤物全部退场并重置
+//      至手牌区") — with no room it leaves the board until the next round start.
 // The sim side (突袭 landing tile, tactical point) is test/sim/feedback1-water.test.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildDeployMap, canPlace as boardCanPlace, legalTiles, positionClass, tileKey, ownerRangeKeys } from '../../server/match/board.js';
 import { ERR } from '../../shared/constants.js';
-import { DATA, makeMatch, give, checkInvariants, chessOfTier } from './harness.js';
+import { DATA, makeMatch, give, giveItem, checkInvariants, chessOfTier } from './harness.js';
 import { botPrep, planLayout } from '../../server/match/bot.js';
 import { placementContext, canPlace as clientCanPlace, boardTargets, deployMap as clientDeployMap } from '../../public/js/ui/gameLogic.js';
 
@@ -167,6 +169,41 @@ test('#9 re-orienting the tactician: a summon still inside the new range stays, 
   const stack = stackOf(ps, WOLF);
   assert.ok(stack && stack.count === 1, 'back in the hand');
   assert.equal(ps.battleInput().units.filter((u) => u.kind === 'token').length, 0);
+  checkInvariants(m);
+  m.dispose();
+});
+
+test('#9 hand and temp full: a re-orientation that would push 狼群 out is refused (HAND_FULL); a move drops it until the next round', () => {
+  const { h, m, ps } = prep();
+  const vigil = give(m, ps, VIGIL);
+  assert.deepEqual(move(m, vigil.uid, board(10, 4), 'RIGHT'), { ok: true });
+  assert.deepEqual(move(m, stackOf(ps, WOLF).uid, board(11, 5)), { ok: true });
+  const wolf = ps.board.get('11,5');
+  assert.equal(stackOf(ps, WOLF), null, 'its only copy is placed: no stack left to return onto');
+  const toasts = [];
+  const toast = m.toast.bind(m);
+  m.toast = (p, kind, text) => { toasts.push(text); return toast(p, kind, text); };
+  const golden = Object.keys(DATA.items).find((id) => DATA.items[id].isGolden && DATA.items[id].itemType === 'EQUIP');
+  while (ps.hand.includes(null)) giveItem(m, ps, golden);
+  while (ps.temp.includes(null)) giveItem(m, ps, golden, 'temp');
+  // facing LEFT would leave (11,5) outside her range and the wolf has nowhere to go: refused, nothing changes
+  assert.equal(move(m, vigil.uid, board(10, 4), 'LEFT').error, ERR.HAND_FULL);
+  assert.equal(ps.board.get('10,4').dir, 'RIGHT');
+  assert.equal(ps.board.get('11,5'), wolf);
+  // facing UP keeps it inside: allowed
+  assert.deepEqual(move(m, vigil.uid, board(10, 4), 'UP'), { ok: true });
+  assert.equal(ps.board.get('11,5'), wolf);
+  checkInvariants(m);
+  // moving her (her summons go back to the hand; with no room a normal summon stays put) to (9,9) facing RIGHT, whose
+  // range (rows 8–10, cols 9–12) leaves the wolf out: it leaves the board — no illegal placement reaches the battle
+  assert.deepEqual(move(m, vigil.uid, board(9, 9), 'RIGHT'), { ok: true });
+  assert.equal(ps.board.get('11,5'), undefined, 'outside her range with nowhere to go: removed');
+  assert.ok(toasts.some((t) => t.includes('狼群') && t.includes('下回合返还')), toasts.join(' / '));
+  assert.equal(ps.battleInput().units.filter((u) => u.kind === 'token').length, 0);
+  checkInvariants(m);
+  // …and its stack comes back at the next round start (grantTokensFor, "干员所属召唤物会于下一回合返还")
+  h.toPrep(2);
+  assert.ok(stackOf(ps, WOLF), 'the wolf is back in the hand / temp');
   checkInvariants(m);
   m.dispose();
 });
