@@ -1129,13 +1129,16 @@ function refreshValue(m, ps, ctx) {
   return v;
 }
 
-/** Sell the weakest bench chess that is not part of a merge pair (or anything when keepPairs is false). */
+/**
+ * Sell the weakest bench chess that is not part of a merge pair (or anything when keepPairs is false) and does not
+ * carry a 突变细胞 (its transformation after the battle is the point).
+ */
 function sellWeakestHand(m, ps, { keepPairs = true, below = Infinity } = {}) {
   const ctx = context(m, ps);
   let worst = null;
   let worstV = Infinity;
   for (const p of [...ps.temp, ...ps.hand]) {
-    if (!p || p.kind !== 'chess') continue;
+    if (!p || p.kind !== 'chess' || (p.items || []).some((it) => isMutationCell(m.gd, it.id))) continue;
     const base = m.gd.baseIdOf(p.id);
     if (keepPairs && !m.gd.isGolden(p.id) && (ctx.copies.get(base) || 0) >= 2) continue;
     const v = pieceValue(m, ps, p, ctx);
