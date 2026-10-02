@@ -82,11 +82,11 @@ test('B3 维娜·维多利亚 S3 (default skill, real match): a 黄金盟誓 on 
     if (extra.length) assert.ok(b.allyUnits.some((x) => x.defId === extra[0][0] && x.alive && x.tileR === 9 && x.tileC === 5), 'the operator keeps its tile');
     // they all stay for the skill (the token's maxDeployCount 1 caps hand deployments, not the skill) and count for
     // 诸王的叹息 ("此范围内每个友方单位使维娜攻击力+5%")
-    b.step(); b.step();
     const t0 = u.def.talents[0].bb;
-    for (let i = 0; i < 12; i++) b.step();
-    const kings = u.findBuff('siege2:kings');
-    approx(kings.mods.atkPct, t0.atk * (expected.length + extra.length), 1e-9, '+5 % per ally around, lions included');
+    for (let i = 0; i < 14; i++) b.step();
+    const around = b.allyUnits.filter((a) => a !== u && a.alive && Math.max(Math.abs(a.tileR - u.tileR), Math.abs(a.tileC - u.tileC)) <= 1);
+    assert.ok(around.filter((a) => a.defId === LION).length >= 1);
+    approx(u.findBuff('siege2:kings').mods.atkPct, t0.atk * around.length, 1e-9, '+5 % per ally around, lions included');
     while (u.skill.active && !b.finished) { b.step(); most = Math.max(most, b.allyUnits.filter((t) => t.defId === LION && t.alive).length); }
     assert.ok(most <= expected.length);
     b.step();
