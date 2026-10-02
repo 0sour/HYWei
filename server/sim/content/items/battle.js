@@ -19,11 +19,14 @@
 // core bond is active). Combo partners (bbStr.equip_chess_id / other_equip) are item keys without the _a/_b suffix:
 // either quality satisfies them; lent items count as carried. Both are evaluated live, at the moment of use.
 //
-// Hook priorities (non-default): 'fatal' — consumable death savers (坚固维式重锤's first lethal hit, M3茧甲 revives)
-// run LAST (PRIO_REVIVE −100: "被击倒时" = nothing else prevented the knock-down, so a skill's / talent's own undying
-// (kits use 10 … −60) never wastes a charge); 骑士戒律's free in-skill undying runs early (20). Flat damage reduction
-// 'hit' −10 (after the other damage modifiers). Proc damage dealt by items carries the tag 'item' and never
-// re-triggers item procs.
+// Hook priorities (non-default): 'fatal' — consumable death savers run LAST, so a skill's / talent's own undying (kits
+// use 10 … −60) never wastes a charge: 坚固维式重锤's first-lethal-hit lock (异常效果 不死) at PRIO_REVIVE −100, then the
+// M3茧甲 revive at PRIO_RESPAWN −101 — PRTS 卫戍协议：盟约 下半/PRTS盟约记录 备注 "“复活”的实现方式为：受益者因移动之外的
+// 原因退场时下次部署的再部署时间和费用归零": a revive acts on a knock-out, which a 不死 prevents, so the lock always comes
+// first whatever the equip order (player report F1 after 0.1.0: with the 茧甲 equipped first the revive ran first and
+// the first lethal hit showed no lock); 埃芒加德's band revive follows (bands/battle.js PRIO_BAND_REVIVE −110).
+// 骑士戒律's free in-skill undying runs early (20). Flat damage reduction 'hit' −10 (after the other damage modifiers).
+// Proc damage dealt by items carries the tag 'item' and never re-triggers item procs.
 //
 // 蒸汽之心 (Victoria carrier) — LIVE model: the hammer types (灼燃/坚固/加速/战栗维式重锤) carried by the owner's operators
 // that are on the field right now (cached ≤ 0.5 s, dropped whenever an operator deploys or leaves) are granted to the
@@ -58,6 +61,8 @@ const procTags = (k) => ['item', `item:${k}`];
 const chance = (battle, p) => p > 0 && (p >= 1 || battle.rng() < p);
 /** 'fatal' priorities (see header). */
 export const PRIO_REVIVE = -100;
+/** The items' 复活 (M3茧甲): acts on a knock-out, so after every 不死 (PRIO_REVIVE) — see header. */
+export const PRIO_RESPAWN = PRIO_REVIVE - 1;
 const PRIO_FREE_UNDYING = 20;
 
 /** Stat keys of a stat buff → mods (直接乘算, see header). */
@@ -532,7 +537,7 @@ const BY_ITEM = {
       c.prevented = true;
       u.hp = u.s.maxHp;
       fxOn(battle, 'revive', u, 'item:chess_item_4_12_e', rec.id, { left: max - used });
-    }, PRIO_REVIVE);
+    }, PRIO_RESPAWN); // after the hammer's 不死 lock, whatever the equip order (header)
   },
   // 催泪瓦斯: on attack prob ⇒ 1 麻痹 stack
   chess_item_5_01_e(battle, u, rec, S) {
