@@ -302,10 +302,12 @@ export const SUB = Object.freeze({
       return front ? (unit.profile.frontScale ?? 1.5) : 1;
     } }),
   // --- CASTER
-  // "群体法术伤害" names two shapes: the 扩散术师 splash 1.1 tiles around the struck target (PRTS 溅射半径一览 — which lists
-  // no splash for the 阵法术师 / 轰击术师 — and Arknights Terra Wiki, Splash Caster), while the 轰击术师 ("超远距离的群体法术
-  // 伤害") and the 阵法术师 strike every enemy inside the attack range at once, the same damage near and far (Terra Wiki,
-  // Blast / Phalanx Caster; PRTS 作战机制 §AOE伤害判定: 伊芙利特's 炎爆 is a 锁定攻击范围 AoE) — community report E3 after 0.1.0
+  // "群体法术伤害" names two shapes: the 扩散术师 splash 1.1 tiles around the struck target (PRTS 溅射半径一览; Arknights
+  // Terra Wiki, Splash Caster), while the 轰击术师 ("超远距离的群体法术伤害") and the 阵法术师 strike every enemy inside the
+  // attack range at once, the same damage near and far — community report E3 after 0.1.0. Primary for the 轰击术师: PRTS
+  // 作战机制 §AOE伤害判定 names 伊芙利特's 炎爆 a 锁定攻击范围 AoE, and 炎爆 is her next-attack skill ("下次攻击造成…",
+  // PRTS 伊芙利特 S2); for the 阵法术师: Terra Wiki, Phalanx Caster (secondary) and PRTS 林 S3 备注. PRTS 溅射半径一览
+  // documents no splash radius for either (supporting only: it omits the 撼地者 too)
   splashcaster: P({ splashRadius: 1.1 }),
   blastcaster: P({ rangeAoe: true }),
   chain: P({ chain: { count: 3, falloff: 0.15, radius: 1.8, sluggish: 0.5 } }),

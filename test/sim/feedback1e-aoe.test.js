@@ -3,10 +3,11 @@
 // enemies within their range … equal damage to all enemies in range, regardless of distance"; PRTS 作战机制 §AOE伤害判定
 // "对攻击范围内的每个可以被选中的敌人进行判定"; PRTS 林 S3 备注 "单次普攻最多触发1次效果" — one normal attack can kill
 // several), not one target plus a 1.1-tile splash. The same holds for the 轰击术师 line ("超远距离的群体法术伤害": every
-// enemy on the line — Terra Wiki Blast Caster; PRTS 作战机制: 伊芙利特's 炎爆 is a 锁定攻击范围 AoE), while the 扩散术师
-// "群体法术伤害" stays a splash of 1.1 tiles around the struck target (PRTS 溅射半径一览 — no row for the 阵法术师 /
-// 轰击术师 — and Terra Wiki Splash Caster). Real battles with the real chess (every selectable attacking skill, normal +
-// elite), counting the enemies each attack damages. Her kit per PRTS 卡涅利安 备注: a charged S1 keeps the skill-off trait
+// enemy on the line — PRTS 作战机制: 伊芙利特's 炎爆, her next-attack skill, is a 锁定攻击范围 AoE; Terra Wiki Blast
+// Caster), while the 扩散术师 "群体法术伤害" stays a splash of 1.1 tiles around the struck target (PRTS 溅射半径一览, which
+// documents no splash radius for the 阵法术师 / 轰击术师 — supporting only — and Terra Wiki Splash Caster). Real
+// battles with the real chess (every selectable attacking skill, normal + elite), counting the enemies each attack
+// damages. Her kit per PRTS 卡涅利安 备注: a charged S1 keeps the skill-off trait
 // (不攻击 + the guard), the charged S3 mark stacks before the damage and is one buff per enemy (the setter's bonus); a
 // 流形 copy takes no attack shape ('beam' → bolt); `rangeAoe` from any source means every enemy in range, instant.
 import { test } from 'node:test';
@@ -128,7 +129,7 @@ test('E3 audit: a 扩散术师 still splashes 1.1 tiles around its target — no
   }
 });
 
-test('E3 real stage + real wave: 卡涅利安 targets every enemy on her range with each attack (act2 m01, round 10)', () => {
+test('E3 real stage + real wave: 卡涅利安 targets AND damages every enemy on her range with each attack (act2 m01, round 10)', () => {
   const data = getData({ log: { warn() {}, error() {}, info() {} } });
   const mode = data.config.modes.mode_multi_normal;
   const round = '10';
@@ -150,19 +151,31 @@ test('E3 real stage + real wave: 卡涅利安 targets every enemy on her range w
     });
     const u = h.unit(id);
     const rows = [];
-    // (beforeAttack, after every content hook: the targets of the attack and the enemies on her range at that moment)
+    const hit = new Map(); // attackId → the enemies its damage reached
+    // (beforeAttack, after every content hook: the targets of the attack and the enemies on her range at that moment;
+    // the attack that follows takes the next attackId)
     h.b.on('beforeAttack', (c) => {
       if (c.attacker !== u) return;
       const p = effectiveProfile(u);
       const want = new Set(h.b.enemiesInKeys(u.rangeKeys, u, p));
       for (const e of h.b.blockedTargets(u, p)) want.add(e);
-      rows.push({ got: c.targets.length, want: want.size, all: [...want].every((e) => c.targets.includes(e)) });
+      rows.push({ attackId: h.b._attackSeq + 1, got: c.targets.length, want, all: [...want].every((e) => c.targets.includes(e)) });
+    }, { priority: -2000 });
+    h.b.on('damaged', (c) => {
+      if (c.source !== u || !c.dmg?.isAttack) return;
+      if (!hit.has(c.dmg.attackId)) hit.set(c.dmg.attackId, new Set());
+      hit.get(c.dmg.attackId).add(c.target);
     }, { priority: -2000 });
     h.runToEnd(rc.combatTimeLimit + 5);
     assert.equal(h.b.errors.length, 0, JSON.stringify(h.b.errors[0]));
-    const crowded = rows.filter((r) => r.want >= 3);
+    const crowded = rows.filter((r) => r.want.size >= 3);
     assert.ok(crowded.length >= 1, `S${skillIndex + 1}: attacks into a crowd (${crowded.length}/${rows.length})`);
-    for (const r of rows) assert.ok(r.all && r.got === r.want, `S${skillIndex + 1}: ${r.got} targets of ${r.want} enemies on her range`);
+    for (const r of rows) {
+      assert.ok(r.all && r.got === r.want.size, `S${skillIndex + 1}: ${r.got} targets of ${r.want.size} enemies on her range`);
+      // the damage itself: one instant hit on every one of them, in the same attack (no projectile, no splash)
+      const got = hit.get(r.attackId) ?? new Set();
+      assert.ok(got.size === r.want.size && [...r.want].every((e) => got.has(e)), `S${skillIndex + 1}: attack ${r.attackId} damaged ${got.size} of the ${r.want.size} enemies on her range`);
+    }
   }
 });
 
