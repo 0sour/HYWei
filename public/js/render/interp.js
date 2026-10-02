@@ -23,8 +23,9 @@
 //   * `elem` [[id, element, fill, cooldownEnd, cooldown]] — the element gauge a unit shows: appended to that unit's
 //     normalised tuple (EL…EL_DUR) and handed out by sample() as `el`, `elFill`, `elUntil`, `elDur` (from the older
 //     snapshot, like flags);
-//   * `down` [[id, respawnAt, respawnTime, state]] — knocked-out operators waiting to redeploy (they are no longer in
-//     `units`): downAt(time) returns the list of the snapshot at `time`.
+//   * `down` [[id, respawnAt, respawnTime, state, row?, col?]] — knocked-out operators waiting to redeploy (they are no
+//     longer in `units`) and the tile they lie on (where they fell, or their home — sim Battle._layBody; kept only when
+//     both are integers): downAt(time) returns the list of the snapshot at `time`.
 // Game times in both (`cooldownEnd`, `respawnAt`) are on the snapshots' clock, so a view compares them with renderT.
 
 export const TUPLE = Object.freeze({ ID: 0, X: 1, Y: 2, HP: 3, MAXHP: 4, SP: 5, SPMAX: 6, FLAGS: 7, ANIM: 8, EL: 9, EL_FILL: 10, EL_UNTIL: 11, EL_DUR: 12 });
@@ -52,7 +53,7 @@ export function frameTime(msg) {
 
 /**
  * Validate & normalise a b.snap payload. Returns `{ t, units: Map<id, tuple>, down: [[id, respawnAt, respawnTime,
- * state]] | null, raw }` or null when unusable. Tuples with a non-finite id/x/y are skipped; other numbers default
+ * state, row?, col?]] | null, raw }` or null when unusable. Tuples with a non-finite id/x/y are skipped; other numbers default
  * to 0; a unit's `elem` entry (see header) is appended to its tuple; malformed `elem` / `down` entries are dropped.
  */
 export function normalizeSnapshot(snap) {
@@ -80,7 +81,9 @@ export function normalizeSnapshot(snap) {
   if (Array.isArray(snap.down)) {
     for (const d of snap.down) {
       if (!Array.isArray(d) || !(typeof d[0] === 'number' || typeof d[0] === 'string')) continue;
-      (down || (down = [])).push([d[0], finite(d[1]), Math.max(0, finite(d[2])), finite(d[3]) | 0]);
+      const e = [d[0], finite(d[1]), Math.max(0, finite(d[2])), finite(d[3]) | 0];
+      if (Number.isInteger(d[4]) && Number.isInteger(d[5])) e.push(d[4], d[5]);
+      (down || (down = [])).push(e);
     }
   }
   return { t, units, down, raw: snap };
