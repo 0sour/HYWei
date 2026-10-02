@@ -539,6 +539,29 @@ export function completesMerge(priv, slot, { getChess = () => null, getItem = ()
 }
 
 /**
+ * How the shop bar names a free pick-one offer (m.private shop.rewardOffer): the promotion reward (`source` 'merge')
+ * reads 晋升奖励 / PROMOTION; any other offer — a strategy's special refresh (凯瑟琳 定向投放, 娜仁图亚 见者有份), an item
+ * (寻呼模块, 信标) or a 特质 (松果) — reads its `label` with the refresh icon (player report #6 after 0.1.0: 凯瑟琳's three
+ * items showed up as nameless operator cards under 晋升奖励). `items` = the offer holds items (cards drawn as item cards).
+ * `queued` = offers waiting behind this one (shop.rewardOffer.queued, e.g. a 定向投放 behind a promotion reward put
+ * off): `more` (header) and the pill's "+N" say so, null / no suffix when none.
+ * @param {any} offer
+ * @returns {{ title: string, micro: string, sub: string, icon: string, items: boolean, pill: string, queued: number, more: string|null }}
+ */
+export function offerHeader(offer) {
+  const slots = isObj(offer) && Array.isArray(offer.slots) ? offer.slots : [];
+  const items = slots.some((s) => isObj(s) && s.kind === 'item');
+  const label = isObj(offer) && typeof offer.label === 'string' && offer.label ? offer.label : null;
+  const queued = isObj(offer) && Number.isInteger(offer.queued) && offer.queued > 0 ? offer.queued : 0;
+  const tail = { queued, more: queued ? `之后还有 ${queued} 项` : null };
+  if (!items && (!isObj(offer) || offer.source === 'merge' || offer.source == null) && !label) {
+    return { title: '晋升奖励', micro: 'PROMOTION', sub: '免费选择 1 名', icon: 'crown', items: false, pill: '晋升奖励待选择', ...tail };
+  }
+  const title = label || (items ? '装备补给' : '特殊招募');
+  return { title, micro: 'SPECIAL', sub: items ? '免费选择 1 件' : '免费选择 1 名', icon: 'refresh', items, pill: `${title}待选择`, ...tail };
+}
+
+/**
  * Why a shop action is unavailable (null when available).
  * @param {'buy'|'reward'|'refresh'|'freeze'|'levelUp'|'ready'} kind
  * @param {{ priv:any, editable:boolean, slot?:any, getChess?:(id:string)=>any, getItem?:(id:string)=>any }} ctx

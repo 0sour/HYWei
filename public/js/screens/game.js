@@ -559,9 +559,10 @@ function MatchScreen() {
   const spMine = !!sp && !solo && sp.turnPid === myId && !sp.pickOf.has(myId);
   useEffect(() => { if (spMine) audio.sfx('yourTurn'); }, [spMine]);
 
-  // promotion (merge reward offered) and bond activation cues
-  const hasOffer = !!priv?.shop?.rewardOffer;
-  useEffect(() => { if (hasOffer) audio.sfx('merge'); }, [hasOffer]);
+  // promotion (merge reward offered) and bond activation cues; a special refresh's offer (凯瑟琳 定向投放 …) plays the
+  // shop's refresh sound instead of the promotion cue
+  const offerCue = priv?.shop?.rewardOffer ? (priv.shop.rewardOffer.source === 'special' ? 'refresh' : 'merge') : null;
+  useEffect(() => { if (offerCue) audio.sfx(offerCue); }, [offerCue]);
   // a shop / reward card armed for a purchase that completes a merge lights the tile its elite will take (the deployed
   // copy that deploys first — PRTS 卫戍协议/帮助 "若消耗已部署至作战区的干员，则发送至作战区对应位置", gameLogic.mergeTarget)
   const mergeAt = armedCard?.kind === 'chess' && editable && showPrep ? mergeTarget(priv, armedCard.id, gd.chess) : null;
