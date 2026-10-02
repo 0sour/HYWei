@@ -4,9 +4,12 @@
 // for the rest of its life: nothing ever left the drone. Official (PRTS 暴鸰; the client's battle prefab
 // enemy_1040_bombd + projectile_bombd): the cast plays the Attack clip, the bomb leaves on its OnAttack event (0.267 s,
 // `_waitForAttackEvent`), flies to the target as a projectile (`_speed` 5, homing, `_ignoreCamouflage`) and explodes
-// there on the target and the 8 tiles around it; the drone switches to its bomb-less mode (S1 `bomb_s`: the *_2
-// clips) and flies on at ×2. Now (content/enemies.js kitBombd): 'atk' kind 'droneBomb' + fx 'phase' { kind: 'bombed' }
-// at the release, damage on arrival, the speed-up after the blast.
+// there on the target and the 8 tiles around it; the cast ends once the bomb has landed, at least 0.667 s after the
+// release (`_fireAttackFinishWhenProjectileInvalid`, `_minPostDelayWhenProjectileInvalid`), with the bomb-less Idle_2 as
+// its end clip, and its buff bomb_s switches the drone to its bomb-less mode (S1: the *_2 clips) at ×2 speed
+// ("技能结束后移速最终提升至200%"). Now (content/enemies.js kitBombd): the drone hovers through the cast; 'atk' kind
+// 'droneBomb' + fx 'phase' { kind: 'bombed' } at the release (the view starts the *_2 clips after the Attack clip),
+// damage on arrival, the speed-up when the cast ends. Also UnitInfo.form for 掠海漂移体's crawl.
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,6 +20,7 @@ import { PROJECTILE_SPEEDS, TICK } from '../../server/sim/constants.js';
 
 const KEY = 'enemy_1040_bombd';
 const RELEASE = enemiesMod.BOMBD_RELEASE;
+const POST = enemiesMod.BOMBD_POST_DELAY;
 const ability = (e) => e.mem.ab.list.find((a) => a && a.fire);
 
 /** A real round: solo 绝境 match, real stage and wave, seven real operators, the 悬赏·飞行II bounty (one 暴鸰). */
@@ -40,10 +44,10 @@ function realRound(seed = 3, round = 4) {
 }
 
 describe('D4 暴鸰: the bomb leaves the drone and lands', () => {
-  test('real wave: trigger → release on the OnAttack frame (atk droneBomb + bomb-less mode) → damage on arrival → ×2 speed', () => {
+  test('real wave: trigger (hover) → release on the OnAttack frame (atk droneBomb, bomb-less mode) → damage on arrival → cast end: ×2 speed', () => {
     const { m, b } = realRound();
     const log = [];
-    let drone = null, castAt = null, hitAt = null, firstHit = null;
+    let drone = null, castAt = null, hitAt = null, firstHit = null, castPos = null, endPos = null, runAt = null, prev = null;
     const hits = [];
     b.on('damaged', (c) => {
       if (c.source !== drone || !drone) return;
@@ -51,15 +55,18 @@ describe('D4 暴鸰: the bomb leaves the drone and lands', () => {
       if (hitAt == null) { hitAt = b.time; firstHit = c.target; }
     });
     while (!b.finished && b.time < 200) {
+      prev = drone ? { x: drone.x, y: drone.y } : null;   // where it is when the next tick starts
       b.step();
       if (!drone) drone = b.enemies.find((x) => x.defId === KEY) || null;
       if (drone && castAt == null && (ability(drone)?.casts ?? 0) > 0) {
         castAt = b.time;
+        castPos = { x: drone.x, y: drone.y };
         assert.equal(hits.length, 0, 'nothing is hit in the tick of the trigger');
-        assert.ok(!drone.findBuff('ab:bombRun'), 'no speed-up before the bomb went off');
       }
       for (const ev of b.drainEvents()) if (drone && ((ev[0] === 'atk' && ev[1] === drone.id) || (ev[0] === 'fx' && ev[4]?.id === drone.id))) log.push([b.time, ev]);
-      if (hitAt != null && b.time > hitAt + 1) break;
+      if (castAt != null && runAt == null && drone.findBuff('ab:bombRun')) { runAt = b.time; endPos = prev; }
+      if (runAt != null && b.time > runAt + 1) break;
+      if (castAt != null && b.time > castAt + 5) break;
     }
     assert.ok(drone, 'the drone spawned');
     assert.ok(castAt != null, 'it triggered its bomb near the operators');
@@ -69,7 +76,7 @@ describe('D4 暴鸰: the bomb leaves the drone and lands', () => {
     assert.equal(relEv[3], 'droneBomb', 'drawn as the drone\'s bomb');
     assert.ok(Math.abs(relT - castAt - RELEASE) <= TICK + 1e-9, `released ${(relT - castAt).toFixed(3)} s after the trigger (OnAttack ${RELEASE})`);
     const phase = log.find(([, ev]) => ev[0] === 'fx' && ev[1] === 'phase');
-    assert.ok(phase && phase[1][4].kind === 'bombed' && Math.abs(phase[0] - relT) < 1e-9, 'the model drops to its bomb-less mode at the release');
+    assert.ok(phase && phase[1][4].kind === 'bombed' && Math.abs(phase[0] - relT) < 1e-9, 'the bomb has left the drone: its bomb-less mode from the release');
     if (drone.alive) assert.equal(b.fieldMeta().units.find((u) => u.id === drone.id).form, 'bombed', 'a field opened later draws it bomb-less');
     assert.ok(hitAt != null, 'the bomb lands');
     assert.equal(firstHit.id, relEv[2], 'on the operator it was dropped on');
@@ -80,8 +87,13 @@ describe('D4 暴鸰: the bomb leaves the drone and lands', () => {
     for (const x of hits.filter((y) => y.splash)) {
       assert.ok(Math.max(Math.abs(x.target.tileR - firstHit.tileR), Math.abs(x.target.tileC - firstHit.tileC)) <= 1, 'splash only on the 8 tiles around the target');
     }
+    assert.ok(drone.alive, 'the drone outlives its cast in this round');
     const run = drone.findBuff('ab:bombRun');
-    if (drone.alive) assert.equal(run?.mods?.moveMul, DATA.enemies[KEY].skills[0].bb.move_speed, '移速最终提升至200% after the blast');
+    assert.equal(run?.mods?.moveMul, DATA.enemies[KEY].skills[0].bb.move_speed, '技能结束后移速最终提升至200%');
+    const castEnd = Math.max(hitAt, relT + POST);
+    assert.ok(Math.abs(runAt - castEnd) <= TICK + 1e-9, `when the cast ends (${(runAt - castAt).toFixed(3)} s after the trigger; landed ${(hitAt - castAt).toFixed(3)})`);
+    assert.ok(Math.hypot(endPos.x - castPos.x, endPos.y - castPos.y) < 1e-9, 'hovering in place through the cast (its Attack clip)');
+    assert.ok(Math.hypot(drone.x - endPos.x, drone.y - endPos.y) > 0.5, 'then flies on');
     assert.equal(drone.stats.attacks, 0, 'no normal attack');
     m.dispose();
   });
@@ -122,6 +134,7 @@ describe('D4 暴鸰: the bomb leaves the drone and lands', () => {
     h.b.kill(e, null);
     h.run(1.5);
     assert.ok(Math.abs(h.unit('t_a').stats.taken - e.s.atk) < 1e-6, 'hit for the ATK it had at the release');
+    assert.ok(!e.findBuff('ab:bombRun'), 'a dead drone gets no speed-up');
   });
 
   test('the drone killed before the release: no bomb, no mode change', () => {
@@ -134,5 +147,21 @@ describe('D4 暴鸰: the bomb leaves the drone and lands', () => {
     assert.equal(h.unit('t_a').stats.taken, 0);
     assert.ok(!h.events.some((ev) => ev[0] === 'atk' && ev[1] === e.id), 'no drop');
     assert.ok(!h.events.some((ev) => ev[0] === 'fx' && ev[1] === 'phase' && ev[4]?.id === e.id), 'no bomb-less mode');
+  });
+});
+
+describe('UnitInfo.form: every mode the renderer draws is recorded (a field opened later)', () => {
+  test('掠海漂移体 stunned → 爬行模式: UnitInfo.form \'crawl\' (render/units.js FORMS starts a later view on the *_02 clips)', () => {
+    const h = makeBattle({ content: 'generic', extraContent: [enemiesMod], seed: 7, autoFinish: false, timeLimit: 60, captureNoisy: true,
+      defs: { chess: { t_a: chessRec({ id: 't_a', profession: 'TANK', stats: { atk: 0, maxHp: 1e7, blockCnt: 3 }, rangeGrid: [[0, 0]], skill: null }) } },
+      kits: { t_a: () => ({ trait: { noAttack: true } }) }, units: [{ chessId: 't_a', row: 10, col: 3 }] });
+    h.step();
+    const e = h.spawn('enemy_2025_syufo', { pos: [10, 6], routeIndex: 0, mods: { speedMul: 0, atkMul: 0 } });
+    const form = () => h.b.fieldMeta().units.find((u) => u.id === e.id)?.form;
+    assert.equal(form(), undefined, 'hovering');
+    assert.ok(h.b.applyStatus(e, 'stun', { duration: 0.2, source: null }));
+    h.step();
+    assert.ok(h.events.some((ev) => ev[0] === 'fx' && ev[1] === 'phase' && ev[4]?.kind === 'crawl'), 'it dropped');
+    assert.equal(form(), 'crawl');
   });
 });

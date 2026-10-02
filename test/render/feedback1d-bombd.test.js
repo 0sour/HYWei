@@ -2,9 +2,11 @@
 // 暴鸰's skeleton (enemy_1040_bombd) carries its bomb (slot Bottle) in Idle / Move_Loop / Die and has bomb-less twins
 // (Idle_2 / Move_Begin_2 / Move_Loop_2 / Move_End_2 / Die_2: Bottle null) — the official battle prefab switches to them
 // after the drop (mode S1, buff bomb_s, replaceAnimPairs Move→Move_2, Idle→Idle_2, Die→Die_2). The view kept the
-// bottle under the drone for good and no bomb ever left it. Now: the sim's fx 'phase' { kind: 'bombed' } switches the
-// view to those clips (render/units.js FORMS) with no fx of its own, and the drop's 'atk' kind 'droneBomb' flies a
-// falling bomb (render/style.js PROJ.droneBomb, the sim's PROJECTILE_SPEEDS.droneBomb) from the drone to the target.
+// bottle under the drone for good and no bomb ever left it. Now: the drop's 'atk' kind 'droneBomb' plays the Attack
+// clip once (its OnAttack on the event) and flies a falling bomb (render/style.js PROJ.droneBomb, the sim's
+// PROJECTILE_SPEEDS.droneBomb) from the drone to the target; the sim's fx 'phase' { kind: 'bombed' } on the same frame
+// switches the view to those clips (render/units.js FORMS) with no fx of its own — they start once the Attack clip is
+// over (the official cast's end clip Idle_2), never cutting the drop short.
 
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -67,7 +69,7 @@ describe('D4 暴鸰: the drone lets go of its bomb on screen', () => {
     assert.equal(w.actor.current, 'Move_Loop_2');
   });
 
-  test('the drop plays the Attack clip once at its own speed (its OnAttack on the event), then the bomb-less flight', async () => {
+  test('the drop plays the Attack clip once at its own speed (its OnAttack on the event); the cast end → Idle_2, then the bomb-less flight', async () => {
     // the client's lookupDef: the drone's data BAT 5 s (it never attacks normally; its attack rhythm used to drive the drop)
     const ctx = fakeViewCtx(fake.P, { assets: store(KEY), cam, lookupDef: () => ({ stats: { bat: 5, aspd: 100 } }) });
     const v = new UnitView(ctx, { id: 5, side: 'enemy', kind: 'enemy', defId: KEY, spine: KEY, tier: 2, x: 6, y: 10, maxHp: 4000, motion: 'FLY' });
@@ -81,10 +83,15 @@ describe('D4 暴鸰: the drone lets go of its bomb on screen', () => {
     frames(12);                                       // 0.2 s: the event is rendered
     v.onAttack({ x: 5, y: 10 }, 1.2, 'droneBomb');
     v.setForm('bombed');
-    v.sync(sample(ANIM.MOVE), 1.2);
-    assert.equal(v.actor.current, 'Attack', 'the release frame');
-    frames(50);                                       // the rest of the 1 s clip at speed 1 (0.733 s) and a little
-    assert.equal(v.actor.current, 'Move_Loop_2', 'back to flying, without the bomb (not a 5 s attack rhythm from its BAT)');
+    v.sync(sample(ANIM.IDLE), 1.2);                   // the drone hovers through its cast
+    assert.equal(v.actor.current, 'Attack', 'the release frame: the mode change does not cut the drop short');
+    frames(40);                                       // 0.667 s (BOMBD_POST_DELAY): the cast ends, 0.067 s of the clip left
+    assert.equal(v.actor.current, 'Attack');
+    frames(6);
+    assert.equal(v.actor.current, 'Idle_2', 'the cast\'s end clip (official _endAnimKey Idle_2), not a 5 s attack rhythm from its BAT');
+    v.sync(sample(ANIM.MOVE), 2.2);
+    frames(30);
+    assert.equal(v.actor.current, 'Move_Loop_2', 'flying on without the bomb');
     assert.equal(v.atkInterval, 5, 'a one-off drop leaves the attack rhythm alone');
   });
 

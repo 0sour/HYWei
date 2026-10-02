@@ -52,7 +52,8 @@
 // fx kinds emitted (battle.fx(kind, {x, y, …})): 'explode' {r, kind} · 'zone' {r, dur, kind} · 'telegraph' {r, dur,
 //   kind, tiles?} (delayed strikes, charges, 'reborn') · 'beam' {from, to, kind} · 'summon' {id, key} · 'ember'/'revive'/
 //   'stone' {id} · 'blink' {id, fx, fy} · 'charge' {id, tx, ty} · 'expose' {id} · 'shieldBreak' {id} · 'liberate' {id}
-//   · 'phase' {id, kind} (form / barrier changes) · 'lpLoss' {value, reason} · 'steal' · 'ignite'.
+//   · 'phase' {id, kind} (form / barrier changes; a mode with its own clip set — render/units.js FORMS: 掠海漂移体
+//   'crawl', 暴鸰 'bombed' — is also kept in `e.form` → UnitInfo.form) · 'lpLoss' {value, reason} · 'steal' · 'ignite'.
 // Custom hook: 'lpLoss' {amount, reason, source} — leader "扣除目标生命" effects; also summed into result.lpLoss.
 
 import { TICK, MOVE_SCALE, ELEMENT, ATTACK_PAUSE, PROJECTILE_SPEEDS } from '../constants.js';
@@ -88,6 +89,11 @@ const BOMB_REACH = 1;
  *  animKey Attack, `_waitForAttackEvent`; the skeleton's OnAttack is at 0.267 s — data/assets.json hits.Attack). It then
  *  flies as projectile_bombd (`_speed` 5 = PROJECTILE_SPEEDS.droneBomb, homing, `_ignoreCamouflage`). */
 export const BOMBD_RELEASE = 0.267;
+/** 暴鸰 投弹: the cast ends once the bomb has landed and no sooner than this after the release (the Boomb ability:
+ *  `_fireAttackFinishWhenProjectileInvalid` 1, `_minPostDelayWhenProjectileInvalid` 0.667, `_waitForAnimEndWhenProjectileInvalid`
+ *  0). Then its buff bomb_s (template switch_mode_restart_fsm: mode S1 + the move-speed modifier) — PRTS "技能结束后移速最终
+ *  提升至200%"; the cast's end clip is already the bomb-less Idle_2 (`_endAnimKey`). */
+export const BOMBD_POST_DELAY = 0.667;
 /** 帝国炮火先兆者 shell (PRTS "普通攻击向目标所在位置发射一枚于3秒后命中的弹道，弹道对半径1.2范围内的所有我方单位造成攻击力
  *  100%的无来源物理伤害 … ※弹道始终使用缓存攻击力"): flight time and blast radius. */
 const SHELL_FLIGHT = 3, SHELL_RADIUS = 1.2;
@@ -1082,6 +1088,7 @@ function kitSyufo(ab) {
       setFloat(b, e, false);
       e.profile.melee = true;
       b.applyStatus(e, 'stun', { duration: SYUFO_CRAWL_STUN, source: null });
+      e.form = 'crawl';                                    // UnitInfo.form: a view built later draws it crawling
       b.fx('phase', { x: e.x, y: e.y, id: e.id, kind: 'crawl' });
     },
   }];
@@ -1473,12 +1480,17 @@ function kitRoar(ab) {
  * projectile: the cast plays the Attack clip, the bomb leaves on its OnAttack event (BOMBD_RELEASE) and flies to the
  * target (projectile_bombd), and the drone switches to its bomb-less mode (S1, buff bomb_s: the *_2 clips, no bottle).
  * User feedback after 0.1.0 (D4 "炸弹无法正常投放"): the damage used to land in the tick of the trigger while the drone
- * kept its bomb on screen. Now: at the release an 'atk' event of kind 'droneBomb' (the client winds the Attack clip up
- * to it and flies the bomb) and fx 'phase' {kind: 'bombed'} (render FORMS: the *_2 clips); on arrival the target (the
- * ranged target by engine priority) takes 100 % ATK and every other ally of the 8 tiles around where it lands 100 % ATK
- * splash (camouflage ignored); then move speed ×boomb.move_speed. A target gone mid-flight: the bomb lands where it was.
- * [ASSUMED] no drop when the drone is dead at the release; the ATK at the release; the speed-up when the bomb lands;
- * the drone keeps flying during the cast.
+ * kept its bomb on screen. Now: the drone hovers through its cast; at the release an 'atk' event of kind 'droneBomb'
+ * (the client winds the Attack clip up to it and flies the bomb) and fx 'phase' {kind: 'bombed'} (render FORMS: the
+ * *_2 clips, which the view starts once the Attack clip is over — the official end clip Idle_2; `e.form` →
+ * UnitInfo.form); on arrival the target (the ranged target by engine priority) takes 100 % ATK and every other ally of
+ * the 8 tiles around where it lands 100 % ATK splash (camouflage ignored); a target gone mid-flight: the bomb lands
+ * where it was. The cast ends once the bomb has landed, at least BOMBD_POST_DELAY after the release: move speed
+ * ×boomb.move_speed, and it flies on.
+ * [ASSUMED] no drop when the drone is dead at the release; the ATK at the release; the hover through the cast (the
+ * engine pauses an enemy for its attack clip, ATTACK_PAUSE; the drop is the drone's only attack-like cast); the
+ * bomb-less look from the release (the bomb leaves the drone on that frame of the Attack clip; at the cast end — 1 tick
+ * before the clip ends — the client would draw the bomb back for a frame).
  */
 function kitBombd(ab) {
   const s = ab.sk.boomb;
@@ -1489,7 +1501,12 @@ function kitBombd(ab) {
     b.fx('explode', { x, y, r: BOMB_REACH + 0.5, kind: 'bomb', tiles: 'box' });
     if (t) hurt(b, e, t, atk, 'phys');
     for (const u of alliesInTiles(b, r, c, 'box', BOMB_REACH)) if (u !== t) hurt(b, e, u, atk, 'phys', { tags: ['splash'] });
-    if (ms > 0 && e.alive) b.addBuff(e, { key: 'ab:bombRun', mods: { moveMul: ms }, persist: true });   // 移速最终提升至200%
+  };
+  // the end of the cast (bomb_s): 移速最终提升至200%; it flies on
+  const finish = (b, e) => {
+    if (!e.alive) return;
+    e.pauseUntil = b.time;
+    if (ms > 0) b.addBuff(e, { key: 'ab:bombRun', mods: { moveMul: ms }, persist: true });
   };
   return [
     { spawn(b, e) { e.profile.noAttack = true; } },
@@ -1498,14 +1515,19 @@ function kitBombd(ab) {
       if (!t) return;
       a.cd = Infinity; a.left = Infinity;                               // 仅能触发一次
       e.skillAnimUntil = -1;           // the cast is drawn through its 'atk' event: the client winds the Attack clip up to it
+      // hovers through the cast, until `finish` (bounded: the bomb lands within its projectile's maxAge, 10 s)
+      e.pauseUntil = Math.max(e.pauseUntil, b.time + BOMBD_RELEASE + 10 + BOMBD_POST_DELAY);
+      let landed = false, waited = false;
+      const done = () => { if (landed && waited) finish(b, e); };
       b.after(BOMBD_RELEASE, () => {
         if (!e.alive) return;
         const atk = e.s.atk;
         b._ev(['atk', e.id, t.id, 'droneBomb']);
-        e.form = 'bombed';                                   // UnitInfo.form: a view built later draws it bomb-less
+        e.form = 'bombed';                                 // UnitInfo.form: a view built later draws it bomb-less
         b.fx('phase', { x: e.x, y: e.y, id: e.id, kind: 'bombed' });
         b.addProjectile({ from: e, target: t, speed: PROJECTILE_SPEEDS.droneBomb, visual: 'droneBomb', source: e, hitDead: true,
-          onHit: (c) => land(b, e, atk, c.target, c.x, c.y) });
+          onHit: (c) => { land(b, e, atk, c.target, c.x, c.y); landed = true; done(); } });
+        b.after(BOMBD_POST_DELAY, () => { waited = true; done(); }, { owner: e });
       }, { owner: e });
     }, { cond: (b, e) => targetsNear(b, e, reach(e)).length > 0 }),
   ];

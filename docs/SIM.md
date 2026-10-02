@@ -213,12 +213,13 @@ never attack; `dmgType 'heal'` enemies heal the lowest-HP% enemy in their radius
 enemy's attack: `enemy.profile.deferHit` = the engine makes the attack (target, timing, the `'atk'` event) but deals no
 damage — the content's `attack` handler resolves it (帝国炮火先兆者's shells landing 3 s later, `content/enemies.js
 kitShell`); `enemy.profile.shot` = the `'atk'` event's projectile kind (`'mortar'`: no projectile drawn). 暴鸰 (`kitBombd`,
-no normal attack) drops its one bomb as a projectile: the cast (trigger: an ally within its range 2) releases it
-`BOMBD_RELEASE` (0.267 s, the Attack clip's OnAttack) later — `'atk'` kind `'droneBomb'` and fx `'phase'` {kind
-`'bombed'`}: the model flies on without it — and it hits on arrival (target 100 % ATK, the other allies of the 8 tiles
-around its landing tile 100 % splash, camouflage ignored; a target gone mid-flight: it lands where it was), then the
-drone's speed ×2 (feedback D4 after 0.1.0: the damage used to land in the trigger tick with the bomb still on the
-drone). Crates (stage devices with
+no normal attack) drops its one bomb as a projectile: the cast (trigger: an ally within its range 2; the drone hovers
+through it) releases it `BOMBD_RELEASE` (0.267 s, the Attack clip's OnAttack) later — `'atk'` kind `'droneBomb'` — and
+it hits on arrival (target 100 % ATK, the other allies of the 8 tiles around its landing tile 100 % splash, camouflage
+ignored; a target gone mid-flight: it lands where it was). The cast ends once the bomb has landed and at least
+`BOMBD_POST_DELAY` (0.667 s) after the release: fx `'phase'` {kind `'bombed'`} (the model flies on without it), the
+drone's speed ×2, and it moves again (feedback D4 after 0.1.0: the damage used to land in the trigger tick with the
+bomb still on the drone). Crates (stage devices with
 role `crate`, 100 HP) are ground obstacles; an enemy forced through one is blocked by it and destroys it. A device is
 present when data/stages.json says `active: true` (this wins over the level file's `hidden`: act1 m02's crates);
 research stages without `active` use `!hidden`. Active platforms/mounds (射击台, act1 m03) [ASSUMED, DATA §15.11] are
@@ -963,7 +964,7 @@ Unknown subprofessions fall back to the profession default (test `professions.te
   `['heal', tgt, amount]`, `['skill', id, 1|0]`, `['die', id, reason]`, `['leak', id]`, `['status', id, key, 1|0]`,
   `['fx', kind, x, y, extra]` (`hitCap` `{ id, n }`: a leader's hit cancelled by 限伤 — the renderer draws nothing),
   `['layer', playerId, bondId, n]` (n = the layers actually added, capped at 999), `['bounty', playerId, coins]`.
-- `UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?, skillIndex?, form? }` (`skillIndex`: an ally's equipped skill, DESIGN §16; `form`: an enemy's mode recorded by content as `unit.form` — 暴鸰 `'bombed'` after its drop — for views built later)
+- `UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?, skillIndex?, form? }` (`skillIndex`: an ally's equipped skill, DESIGN §16; `form`: an enemy's mode recorded by content as `unit.form` — 掠海漂移体 `'crawl'`, 暴鸰 `'bombed'` after its drop — for views built later)
   (`dir` = the unit direction, allies meaningful, enemies 'RIGHT'; `facing` = its horizontal sign for sprite flipping)
   (`spine`/`avatar` are asset ids from data).
 - flags: UF bits (blocked 1, stunned 2, frozen 4, stealth 8 — 隐匿 or an ally's 迷彩 — skill 16, shield 32, invuln 64, cold 128, sleep 256, flying 512);
