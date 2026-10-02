@@ -55,7 +55,7 @@
 //   · 'phase' {id, kind} (form / barrier changes) · 'lpLoss' {value, reason} · 'steal' · 'ignite'.
 // Custom hook: 'lpLoss' {amount, reason, source} — leader "扣除目标生命" effects; also summed into result.lpLoss.
 
-import { TICK, MOVE_SCALE, ELEMENT, ATTACK_PAUSE } from '../constants.js';
+import { TICK, MOVE_SCALE, ELEMENT, ATTACK_PAUSE, PROJECTILE_SPEEDS } from '../constants.js';
 import { canTargetAlly, sortAllyTargets, aggroCmp } from '../targeting.js';
 import { mitigate } from '../damage.js';
 
@@ -84,6 +84,10 @@ const ACPUPP_AURA_RADIUS = 2;
 const CROSS_REACH = 6;
 /** 暴鸰 投弹: the target's tile and its 8 neighbours (PRTS "对目标及其周围八格的我方单位造成100%物理伤害"). */
 const BOMB_REACH = 1;
+/** 暴鸰 投弹: the bomb leaves on the OnAttack event of the cast's Attack clip (the official battle prefab's Boomb ability:
+ *  animKey Attack, `_waitForAttackEvent`; the skeleton's OnAttack is at 0.267 s — data/assets.json hits.Attack). It then
+ *  flies as projectile_bombd (`_speed` 5 = PROJECTILE_SPEEDS.droneBomb, homing, `_ignoreCamouflage`). */
+export const BOMBD_RELEASE = 0.267;
 /** 帝国炮火先兆者 shell (PRTS "普通攻击向目标所在位置发射一枚于3秒后命中的弹道，弹道对半径1.2范围内的所有我方单位造成攻击力
  *  100%的无来源物理伤害 … ※弹道始终使用缓存攻击力"): flight time and blast radius. */
 const SHELL_FLIGHT = 3, SHELL_RADIUS = 1.2;
@@ -1465,22 +1469,43 @@ function kitRoar(ab) {
 /**
  * 暴鸰 (PRTS): "不进行普通攻击"; 投弹 (boomb, cooldown / initCooldown 1) "仅攻击范围内存在我方单位时可触发：对目标及其周围八格
  * 的我方单位造成100%物理伤害（对主目标造成物理普通伤害，对溅射目标造成物理溅射伤害，伤害无视迷彩）技能结束后移速最终提升至200%
- * ※此技能仅能触发一次，不可沉默" — one bomb on the ranged target (engine priority), then move speed ×boomb.move_speed.
+ * ※此技能仅能触发一次，不可沉默". The official battle prefab (enemy_1040_bombd, read from the client) drops the bomb as a
+ * projectile: the cast plays the Attack clip, the bomb leaves on its OnAttack event (BOMBD_RELEASE) and flies to the
+ * target (projectile_bombd), and the drone switches to its bomb-less mode (S1, buff bomb_s: the *_2 clips, no bottle).
+ * User feedback after 0.1.0 (D4 "炸弹无法正常投放"): the damage used to land in the tick of the trigger while the drone
+ * kept its bomb on screen. Now: at the release an 'atk' event of kind 'droneBomb' (the client winds the Attack clip up
+ * to it and flies the bomb) and fx 'phase' {kind: 'bombed'} (render FORMS: the *_2 clips); on arrival the target (the
+ * ranged target by engine priority) takes 100 % ATK and every other ally of the 8 tiles around where it lands 100 % ATK
+ * splash (camouflage ignored); then move speed ×boomb.move_speed. A target gone mid-flight: the bomb lands where it was.
+ * [ASSUMED] no drop when the drone is dead at the release; the ATK at the release; the speed-up when the bomb lands;
+ * the drone keeps flying during the cast.
  */
 function kitBombd(ab) {
   const s = ab.sk.boomb;
   const ms = (s && s.bb.move_speed) || 0;
   const reach = (e) => e.base.rangeRadius || 2;
+  const land = (b, e, atk, t, x, y) => {
+    const r = t ? t.tileR : Math.round(y), c = t ? t.tileC : Math.round(x);
+    b.fx('explode', { x, y, r: BOMB_REACH + 0.5, kind: 'bomb', tiles: 'box' });
+    if (t) hurt(b, e, t, atk, 'phys');
+    for (const u of alliesInTiles(b, r, c, 'box', BOMB_REACH)) if (u !== t) hurt(b, e, u, atk, 'phys', { tags: ['splash'] });
+    if (ms > 0 && e.alive) b.addBuff(e, { key: 'ab:bombRun', mods: { moveMul: ms }, persist: true });   // 移速最终提升至200%
+  };
   return [
     { spawn(b, e) { e.profile.noAttack = true; } },
     skill(s, (b, e, a) => {
       const t = byPriority(e, targetsNear(b, e, reach(e)))[0];
       if (!t) return;
       a.cd = Infinity; a.left = Infinity;                               // 仅能触发一次
-      b.fx('explode', { x: t.x, y: t.y, r: BOMB_REACH + 0.5, kind: 'bomb', tiles: 'box', id: e.id });
-      hurt(b, e, t, e.s.atk, 'phys');
-      for (const u of alliesInTiles(b, t.tileR, t.tileC, 'box', BOMB_REACH)) if (u !== t) hurt(b, e, u, e.s.atk, 'phys', { tags: ['splash'] });
-      if (ms > 0) b.addBuff(e, { key: 'ab:bombRun', mods: { moveMul: ms }, persist: true });   // 移速最终提升至200%
+      e.skillAnimUntil = -1;           // the cast is drawn through its 'atk' event: the client winds the Attack clip up to it
+      b.after(BOMBD_RELEASE, () => {
+        if (!e.alive) return;
+        const atk = e.s.atk;
+        b._ev(['atk', e.id, t.id, 'droneBomb']);
+        b.fx('phase', { x: e.x, y: e.y, id: e.id, kind: 'bombed' });
+        b.addProjectile({ from: e, target: t, speed: PROJECTILE_SPEEDS.droneBomb, visual: 'droneBomb', source: e, hitDead: true,
+          onHit: (c) => land(b, e, atk, c.target, c.x, c.y) });
+      }, { owner: e });
     }, { cond: (b, e) => targetsNear(b, e, reach(e)).length > 0 }),
   ];
 }

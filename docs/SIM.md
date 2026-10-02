@@ -212,7 +212,13 @@ and pause `ATTACK_PAUSE` (0.35 s) after each unblocked attack; `fear`/`disarm` s
 never attack; `dmgType 'heal'` enemies heal the lowest-HP% enemy in their radius instead. Content can take over an
 enemy's attack: `enemy.profile.deferHit` = the engine makes the attack (target, timing, the `'atk'` event) but deals no
 damage — the content's `attack` handler resolves it (帝国炮火先兆者's shells landing 3 s later, `content/enemies.js
-kitShell`); `enemy.profile.shot` = the `'atk'` event's projectile kind (`'mortar'`: no projectile drawn). Crates (stage devices with
+kitShell`); `enemy.profile.shot` = the `'atk'` event's projectile kind (`'mortar'`: no projectile drawn). 暴鸰 (`kitBombd`,
+no normal attack) drops its one bomb as a projectile: the cast (trigger: an ally within its range 2) releases it
+`BOMBD_RELEASE` (0.267 s, the Attack clip's OnAttack) later — `'atk'` kind `'droneBomb'` and fx `'phase'` {kind
+`'bombed'`}: the model flies on without it — and it hits on arrival (target 100 % ATK, the other allies of the 8 tiles
+around its landing tile 100 % splash, camouflage ignored; a target gone mid-flight: it lands where it was), then the
+drone's speed ×2 (feedback D4 after 0.1.0: the damage used to land in the trigger tick with the bomb still on the
+drone). Crates (stage devices with
 role `crate`, 100 HP) are ground obstacles; an enemy forced through one is blocked by it and destroys it. A device is
 present when data/stages.json says `active: true` (this wins over the level file's `hidden`: act1 m02's crates);
 research stages without `active` use `!hidden`. Active platforms/mounds (射击台, act1 m03) [ASSUMED, DATA §15.11] are
@@ -886,7 +892,7 @@ PRTS 选择器, is not in the data): "地面敌人" / "不可对空" ⇒ `!e.isF
 风丸 折纸生花, 乌尔比安 S3, 缄默德克萨斯 S2, 余 S2, 见行者 S2, 耀骑士临光 不畏苦暗 and the token appear bursts — “耀阳”,
 沙之碑, 迷迭香的战术装备's stun, 纸偶). A stun / freeze / sleep from any of them drops a hovering 掠海漂移体 for good. Ranged attacks fly as projectiles
 (`constants.js PROJECTILE_SPEEDS`: arrow 14, bolt 11, bomb/lob 8, orb 10, drone 16, enemy 10 tiles/s; boomerang 15 out,
-3.75 back = `BOOMERANG_RETURN_SPEED`, PRTS 跃跃); melee/`none` hits are instant. Kit-settable profile flags beyond the
+3.75 back = `BOOMERANG_RETURN_SPEED`, PRTS 跃跃; droneBomb 5 = 暴鸰's bomb, the official projectile_bombd); melee/`none` hits are instant. Kit-settable profile flags beyond the
 table: `hitSleep` (targets and damages sleeping enemies — "可以攻击沉睡的敌人"), `onEachHit(b, u, victim, hctx)`, `dmgMul`,
 `afterHit`, `afterAttack`, `canAttack`, `hitsFn`, `priority`, `blockFly`, `noHeal`, `boomerang` (the projectile stays
 `'boomerang'` whatever the data's generic ranged projectile says) (see the header of professions.js).
@@ -951,7 +957,7 @@ Unknown subprofessions fall back to the profession default (test `professions.te
   cooldownEnd, cooldown]]` (only when non-empty) = `elementView` of every unit with a gauge or a running 爆发冷却 (§3).
   `fieldMeta()` lists the knocked-out operators too (a client joining mid-battle shows them; DESIGN §18.3).
 - `drainEvents()` tuples: `['spawn', UnitInfo]` (first appearance), `['deploy', id]` (every (re)deploy), `['atk', src, tgt, projKind]`
-  (`none|arrow|bolt|bomb|lob|orb|drone|enemy|boomerang|chain|chainHeal`; a boomerang's way back has no event — the
+  (`none|arrow|bolt|bomb|lob|orb|drone|enemy|boomerang|droneBomb|chain|chainHeal`; a boomerang's way back has no event — the
   renderer flies it back to the thrower at `BOOMERANG_RETURN_SPEED`; an enemy's `profile.shot` may name another kind,
   e.g. `mortar` for 帝国炮火先兆者, which the renderer does not draw — its fx `bombardShell` is the shell), `['dmg', tgt, amount, type]` (`phys|arts|true|burn|neural|necrosis|apoptosis`),
   `['heal', tgt, amount]`, `['skill', id, 1|0]`, `['die', id, reason]`, `['leak', id]`, `['status', id, key, 1|0]`,

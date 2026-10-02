@@ -189,8 +189,8 @@ describe('shots', () => {
       assert.equal(fx.projs.length, 1, kind);
       const pr = fx.projs[0];
       fx.update(DT);
-      assert.equal(pr.shadow.visible, kind === 'bomb' || kind === 'lob' || kind === 'boomerang', `${kind} shadow`);
-      if (kind === 'bomb') {
+      assert.equal(pr.shadow.visible, PROJ[kind].look === 'shell' || kind === 'boomerang', `${kind} shadow`);
+      if (kind === 'bomb' || kind === 'droneBomb') {
         run(fx, pr.dur);
         assert.ok(fx.rings.some((r) => r.sp.texture === fx.tex.shock), 'bomb explosion shockwave');
       }

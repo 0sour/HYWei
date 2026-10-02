@@ -25,7 +25,8 @@
 // An operator that enters a battle already knocked out (联防, user playtest #5 item 2: sim 'die' reason 'forcedExit')
 // goes down with `die(true)`: straight to the held end of the clip, no fall.
 // Enemy modes (sim fx 'phase' { id, kind } → `setForm(kind)`): 掠海漂移体 dropping to 爬行模式 (user playtest #5 item 1)
-// plays its skeleton's 'Change' clip once, then the crawl set (*_02) — FORMS; a view built later keeps the mode.
+// plays its skeleton's 'Change' clip once, then the crawl set (*_02); 暴鸰 flies on without its bomb (*_2) after the drop
+// (feedback D4) — FORMS; a view built later keeps the mode.
 // Element gauges (b.snap `elem` → sample `el` / `elFill` / `elUntil` / `elDur`), the official form (PRTS 元素: "模型
 // 下部会显示对应的元素图标，并以白条显示剩余的元素值"; enemies "小尺寸图标（不显示元素图标，仅根据元素种类改变背景色）"): a row
 // right under the unit's own HP / SP bars and inside their span — the element's disc at the left (operators with its
@@ -53,7 +54,7 @@
 import { UF, ANIM } from '../../../shared/constants.js';
 import { SpineActor } from './spine.js';
 import { diamondTexture, shadowTexture, fxAtlas, tierChip, statusTexture, itemTexture, hudRings, ringArc, HUD_DISC, ELEMENT_RING } from './textures.js';
-import { COLORS, TIER_COLORS, ENEMY_FRAME, UNIT, statusIconKey } from './style.js';
+import { COLORS, TIER_COLORS, ENEMY_FRAME, UNIT, PROJ, statusIconKey } from './style.js';
 import { drawCrate, rowDepthKey, ROW_KEY, deviceBoxOf, DEVICE_BOX } from './tiles.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
@@ -101,10 +102,20 @@ export const EL_BAR = Object.freeze({ icon: 0.15, min: 8, max: 15, enemy: 0.8, g
 
 /**
  * Enemy modes drawn with another clip set of the same skeleton (sim fx 'phase' kind → UnitView.setForm), per Spine
- * id: 掠海漂移体 (PRTS: 受晕眩/沉睡/冻结影响后进入爬行模式 — for good) crawls on its *_02 clips after 'Change'. The mode's
- * roles override the manifest's (data/assets.json anims); 吉兆飞鳞's 晕眩模式 is its Stun clip already.
+ * id: 掠海漂移体 (PRTS: 受晕眩/沉睡/冻结影响后进入爬行模式 — for good) crawls on its *_02 clips after 'Change'; 暴鸰 flies on
+ * its bomb-less *_2 clips once its one bomb left (the official prefab's mode S1: Move→Move_2, Idle→Idle_2, Die→Die_2;
+ * user feedback after 0.1.0, D4: the bomb used to stay under the drone — no change clip, the drop is its Attack clip).
+ * The mode's roles override the manifest's (data/assets.json anims); 吉兆飞鳞's 晕眩模式 is its Stun clip already.
  */
 export const FORMS = Object.freeze({
+  enemy_1040_bombd: Object.freeze({
+    bombed: Object.freeze({
+      roles: Object.freeze({
+        idle: 'Idle_2', deploy: 'Idle_2', die: 'Die_2',
+        move: Object.freeze({ begin: 'Move_Begin_2', loop: 'Move_Loop_2', end: 'Move_End_2' }),
+      }),
+    }),
+  }),
   enemy_2025_syufo: Object.freeze({
     crawl: Object.freeze({
       change: 'Change',
@@ -514,13 +525,17 @@ export class UnitView {
   }
 
   /** An attack was made (b.ev 'atk'). `target` = view or null. */
-  onAttack(target, now) {
+  onAttack(target, now, kind) {
     if (!this.alive) return;
-    if (this.lastAtk >= 0) {
-      const d = now - this.lastAtk;
-      if (d > 0.05 && d < 6) this.atkInterval = this.atkInterval * 0.6 + d * 0.4;
+    // a one-off cast (PROJ[kind].once: 暴鸰's bomb drop) is no attack rhythm: its clip plays once at its own speed
+    const once = !!PROJ[kind]?.once;
+    if (!once) {
+      if (this.lastAtk >= 0) {
+        const d = now - this.lastAtk;
+        if (d > 0.05 && d < 6) this.atkInterval = this.atkInterval * 0.6 + d * 0.4;
+      }
+      this.lastAtk = now;
     }
-    this.lastAtk = now;
     if (target && !this.isEnemy && this.info.kind !== 'device') {
       // operators keep their deploy direction (research 09 §1.2); enemies may turn towards their target
     } else if (target && this.isEnemy) {
@@ -532,17 +547,18 @@ export class UnitView {
       this.lungeDir.x = dx / len; this.lungeDir.y = dy / len;
     }
     this.lunge = 1;
-    if (this.actor) this.actor.attack(this.atkInterval); // game seconds: the actor's clock runs in game time
+    if (this.actor) this.actor.attack(this.atkInterval, once); // game seconds: the actor's clock runs in game time
     if (this.imp) this.imp.dirty = true;
   }
 
   /**
    * An attack by this unit is `lead` game seconds ahead in the snapshot buffer: start the Spine attack wind-up now
-   * so the strike frame lines up with the attack. True once started (then stop calling for that attack).
+   * so the strike frame lines up with the attack. True once started (then stop calling for that attack). `kind` = the
+   * 'atk' projKind (a one-off cast winds up at the clip's own speed).
    */
-  windUp(lead) {
+  windUp(lead, kind) {
     if (!this.alive || !this.actor || !this.spineReady) return false;
-    const ok = this.actor.windUp(this.atkInterval, lead);
+    const ok = this.actor.windUp(this.atkInterval, lead, !!PROJ[kind]?.once);
     if (ok && this.imp) this.imp.dirty = true;
     return ok;
   }

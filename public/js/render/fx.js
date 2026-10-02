@@ -237,9 +237,16 @@ const FX_GUESS = [
   [/stealth|hide|vanish|cloak/i, 'vanish'], [/pull|push|knock|dash|leap/i, 'move'], [/pulse|wave|ring|sonic/i, 'wave'],
 ];
 
+/**
+ * 'phase' (an enemy's mode change, render/units.js FORMS) kinds the model shows on its own: 暴鸰 'bombed' — its bomb is
+ * the 'droneBomb' projectile of the same moment, a puff on the drone would read as something else (feedback D4).
+ */
+const SILENT_PHASES = new Set(['bombed']);
+
 /** Visual spec of an fx kind (see FX_KINDS); `extra.kind` / `extra.element` may pick a better colour. */
 export function fxSpec(kind, extra = {}) {
   const k = typeof kind === 'string' ? kind : '';
+  if (k === 'phase' && SILENT_PHASES.has(extra && extra.kind)) return { a: 'none', c: 0xffffff };
   let spec = FX_KINDS[k];
   if (!spec) {
     const g = FX_GUESS.find(([re]) => re.test(k));

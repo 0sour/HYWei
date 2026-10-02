@@ -719,11 +719,12 @@ test(`${nm('enemy_1042_frostd')}: operators within ${tb('enemy_1042_frostd', 'de
 
 test(`${nm('enemy_1040_bombd')}: no normal attack; ONE bomb on the target + its 8 tiles, then move speed ×${skb('enemy_1040_bombd', 'boomb').bb.move_speed}`, () => {
   // PRTS 暴鸰: "不进行普通攻击" · 投弹 "对目标及其周围八格的我方单位造成100%物理伤害 … 技能结束后移速最终提升至200% ※此技能仅能触发一次"
+  // (the bomb leaves on the Attack clip's OnAttack and flies 1 tile at 5 tiles/s — feedback D4, test/sim/feedback1d-bombd)
   const h = arena({ units: [{ chessId: 't_wall', row: 10, col: 5 }, { chessId: 't_wall2', row: 10, col: 6 }, { chessId: 't_wall3', row: 12, col: 6 }] });
   h.step();
   const e = put(h, 'enemy_1040_bombd', [10, 7], { route: 2 });
   const s = skb('enemy_1040_bombd', 'boomb');
-  h.run(s.initCooldown + 0.2);
+  h.run(s.initCooldown + enemiesMod.BOMBD_RELEASE + 1 / 5 + 0.1);
   const [w1, w2, w3] = ['t_wall', 't_wall2', 't_wall3'].map((id) => h.unit(id));
   approx(w2.stats.taken, e.s.atk, 1e-6, 'the target (latest deployed in range): 100 % ATK');
   approx(w1.stats.taken, e.s.atk, 1e-6, 'a tile next to it: splash 100 %');
