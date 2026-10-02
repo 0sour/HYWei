@@ -21,7 +21,10 @@
 // getter re-read 4× a second: current HP, max HP, ATK, DEF, RES, attack interval, block), in prep the stats the own
 // board's units start their next battle with (m.unitStats: equipment, bonds / layers, 特质, band and 机变 effects). Each
 // value is coloured against the unit's base like the official card — green when it helps (higher, or a shorter attack
-// interval) with the difference beside it, red when it hurts — and a 实时 / 开战时 tag says which it is.
+// interval) with the difference beside it, red when it hurts — and a 实时 / 开战时 tag says which it is. The 攻击范围
+// mini-map follows the live entry's `range` too (cardRangeGrid: the grid the unit attacks with now — a running skill's
+// range such as 烛煌 S3's 4-11, rangeExtend included; community report E1 after 0.1.0, it used to stay the base grid);
+// a grid larger than the box (RANGE_FIT) draws smaller cells (rangeGridStyle), a whole-field one reads 全场.
 
 import { html, Icon, TierChip, MicroLabel, Button, confirmDialog, useTicker } from './components.js';
 import { Img, RichText, UnitThumb, BondGlyph, GIcon } from './gameComponents.js';
@@ -42,8 +45,40 @@ const EVENT_ICON = { IN_BATTLE: 's_icon_battle', SERVER_GAIN: 's_icon_bond', SER
 const RANK = { NORMAL: '普通', ELITE: '精英', BOSS: '领袖' };
 const DMG = { phys: '物理', arts: '法术', heal: '治疗', true: '真实', none: '无' };
 
+/** A range grid of at least this many tiles covers the field (纯烬艾雅法拉 S3 "攻击范围扩大至整个战场"): named, not drawn. */
+export const FIELD_WIDE_CELLS = 400;
+/**
+ * Columns × rows of the mini-map's own cells (.14rem, 2px apart) the card's range box holds without growing: the widest
+ * record attack range (灰毫's 6 columns) and the tallest live one (银灰 S3's 7 rows). A larger grid — a live skill range
+ * such as 远牙 S3's line to the field's edge (21 tiles) — draws smaller cells, edge to edge, in that space, so the box keeps
+ * its size and the stats beside it stay readable.
+ */
+export const RANGE_FIT = Object.freeze({ cols: 6, rows: 7 });
+
+/** Inline style of the mini-map (rangeGridBox `box`): its columns, and smaller cells when the grid exceeds RANGE_FIT. */
+export function rangeGridStyle(box) {
+  const cols = `grid-template-columns:repeat(${box.cols}, var(--rg))`;
+  if (box.cols <= RANGE_FIT.cols && box.rows <= RANGE_FIT.rows) return cols;
+  const fit = (n, k) => `calc((${k} * .14rem + ${(k - 1) * 2}px) / ${n})`;
+  return `${cols};gap:0;--rg:max(1px, min(.14rem, ${fit(box.cols, RANGE_FIT.cols)}, ${fit(box.rows, RANGE_FIT.rows)}))`;
+}
+
+/**
+ * The grid the card's 攻击范围 shows: the live entry's `range` (shared/protocol.js unitStatsEntry — what the unit attacks
+ * with now: a running skill's range, rangeExtend included), else the loadout record's attack range at deployment
+ * (shared/loadoutRecord.js attackRangeGrid: an elite's module grid, a passive range skill, the 特性's 攻击距离 — the same
+ * tiles as the board overlay and the deploy wheel), else the record's own.
+ * @param {any} live unitStatsEntry (+ src) or null @param {any} rec loadout-resolved record @param {any} chess
+ * @returns {number[][]|null}
+ */
+export function cardRangeGrid(live, rec, chess) {
+  if (live && Array.isArray(live.range) && live.range.length) return live.range;
+  return attackRangeGrid(rec) || chess?.rangeGrid || null;
+}
+
 /** Mini range map. */
 export function RangeGrid({ grid, class: cls }) {
+  if (Array.isArray(grid) && grid.length >= FIELD_WIDE_CELLS) return html`<span class=${cx('rgrid-all', cls)} aria-label="攻击范围">全场</span>`;
   const box = rangeGridBox(grid);
   if (!box.cells.size) return html`<span class="t-dim">—</span>`;
   const cells = [];
@@ -53,7 +88,7 @@ export function RangeGrid({ grid, class: cls }) {
       cells.push(html`<i key=${`${r},${c}`} class=${cx(box.cells.has(tileKey(r, c)) && 'on', self && 'self')}></i>`);
     }
   }
-  return html`<div class=${cx('rgrid', cls)} style=${`grid-template-columns:repeat(${box.cols}, var(--rg))`} aria-label="攻击范围">${cells}</div>`;
+  return html`<div class=${cx('rgrid', cls)} style=${rangeGridStyle(box)} aria-label="攻击范围">${cells}</div>`;
 }
 
 function Stat({ k, v, sub, tone = null, title }) {
@@ -293,7 +328,7 @@ export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bond
         <${Stat} k="部署费用" v=${s.cost ?? '—'} />
         <${Stat} k="再部署" v=${s.respawnTime != null ? `${s.respawnTime}s` : '—'} />
       </div>
-      <div class="drange"><span class="dstat__k">攻击范围</span><${RangeGrid} grid=${attackRangeGrid(fr) || c.rangeGrid} /></div>
+      <div class="drange"><span class="dstat__k">攻击范围</span><${RangeGrid} grid=${cardRangeGrid(live, fr, c)} /></div>
     </div>`;
   blocks.skill = sk ? html`<${Section} key="skill" title="技能" micro="SKILL" class="dsec--skill">
       <div class="dskill" data-skill=${sk.skillId || ''}>

@@ -12,10 +12,11 @@
 //   × elementalTakenMul = 元素脆弱), with `element` set for the client colour.
 // - Mechanics missing from the chess text follow the PRTS 备注 of the base operator (verified 2026-09-28): 号角 S3 overload
 //   is the second half of the 24 s duration; 圣约送葬人's extra attack consumes no ammo; 夕 S1 splash 1.7; 烛煌 revive stun
-//   radius 1.7; 寒檀 icicles splash 1.5 and cycle left row → right row → own row; 失重 = weight −1 level; 魔王 motes orbit
-//   at 1.15 (30°/s, hit radius 0.4); 铃兰 T2 is an aura (sluggish enemies in range are 脆弱 while sluggish); 缇缇's chain
-//   sleep picks the highest-aggro enemy within 1.5; 乌尔比安 lands on the anchor tile > the tile beyond > his own tile;
-//   引星棘刺 throws at the farthest forward tile when no enemy is in range; 夕 T2 summons only on a deployable target tile.
+//   radius 1.7, S3 splash 1.7 and its refilled ammo capped at the skill's ammo; 寒檀 icicles splash 1.5 and cycle left
+//   row → right row → own row; 失重 = weight −1 level; 魔王 motes orbit at 1.15 (30°/s, hit radius 0.4); 铃兰 T2 is an
+//   aura (sluggish enemies in range are 脆弱 while sluggish); 缇缇's chain sleep picks the highest-aggro enemy within
+//   1.5; 乌尔比安 lands on the anchor tile > the tile beyond > his own tile; 引星棘刺 throws at the farthest forward tile
+//   when no enemy is in range; 夕 T2 summons only on a deployable target tile.
 // - Non-stacking auras refresh a short buff with a fixed key every 0.25 s while the source is on the field.
 //   SP auras ("同类效果取最高") share the buff key `aura:spRecovery` (mods.spRecoveryFlat): the highest value wins.
 // - Skills whose auto-cast needs a condition the engine rules can't express use the NEVER trigger (CUSTOM_RANGE with an
@@ -48,6 +49,8 @@ const CANDLE_MIN_ATK = 0.35;
 const CANDLE_KEY = 'enemy_5601_entlec';
 /** 烛煌 绝处重燃 "使附近的敌人晕眩" radius (tiles). PRTS 备注: 1.7. */
 const NEARBY_RADIUS = 1.7;
+/** 烛煌 S3 "攻击变为群体攻击": splash radius around the target (tiles). PRTS 技能3 备注 "攻击溅射半径1.7". */
+const BLAZE_S3_SPLASH = 1.7;
 /** 玛恩纳 游侠 "周围存在3名及以上敌人" radius (8-neighbourhood). */
 const AROUND_RADIUS = 1.5;
 /** 安洁莉娜 S3 失重: weight (massLevel) reduction while weightless. PRTS: "重量下降一个等级". */
@@ -556,8 +559,13 @@ const KITS = {
   },
 
   // ---------------------------------------------------------------------------------------------------------------
-  // 烛煌 — S3 众恶的焚场 (ammo): skill range, ATK +, BAT −1.3 s, hits every enemy in range, +attack@atk_scale ATK
-  // elemental damage vs targets in a burn burst; loses 3 % max HP/s; any burn burst on the field refills ammo.
+  // 烛煌 — S3 众恶的焚场 (ammo): skill range 4-11 (the targets; the DEFAULT cast still needs an enemy in 3-1), ATK +,
+  // BAT −1.3 s, "攻击变为群体攻击" = one target + a BLAZE_S3_SPLASH (1.7) splash around it (PRTS 备注 "攻击溅射半径1.7",
+  // 中点判定 — so the fire reaches past the diamond; it used to hit every enemy inside it instead, community report E1
+  // after 0.1.0), +attack@atk_scale ATK elemental damage to every enemy of the attack in a burn burst (main and splash),
+  // dealt BEFORE the attack's own damage ("于攻击造成伤害前判定元素爆发并造成元素伤害": a 'hit' hook — so a hit that kills
+  // or starts the burst keeps / does not get it); loses 3 % max HP/s; any burn burst on the field refills ammo_recover
+  // bullets, never above the skill's ammo ("补充后的弹药数量无法超过上限"). Each landed bolt shows its splash (fx 'splash' r 1.7).
   // T1 熔点引爆: burn burst anywhere → 350 % ATK elemental damage to it + heal 12 % max HP. T2 绝处重燃: downed instead of
   // dying (6000 shield, no attack, no heal, 3 %/s regen) → revives at full HP and stuns nearby enemies.
   // Module (elite): ×damage_scale vs enemies in an element burst.
@@ -624,9 +632,11 @@ const KITS = {
         mods: mods({ atkPct: num(bb.atk), batPct: batPct(bb.base_attack_time, chess) }),
         targeting: skillGrid(chess, def) ? { rangeGrid: skillGrid(chess, def) } : undefined,
         attack: {
-          allInRange: true,
-          onHit({ battle, unit, target }) {
-            if (target && target.alive && target.findBuff('burnBurst')) elementHit(battle, unit, target, unit.s.atk * num(bb['attack@atk_scale']), 'blazeBurn', 'burn');
+          splashRadius: BLAZE_S3_SPLASH,
+          // the fire of each landed bolt (the screen rings splash attacks by sub-profession; 本源术师 is not one): once
+          // per attack at the main target / its spot — from the profile it was fired with, so the last bolt too
+          onHit({ battle, unit, target, x, y }) {
+            battle.fx('splash', { x, y, ...(target && target.alive ? { id: target.id } : {}), src: unit.id, r: BLAZE_S3_SPLASH, element: 'burn' });
           },
         },
         onStart({ unit }) { unit.mem.blazeAcc = 0; },
@@ -679,8 +689,20 @@ const KITS = {
         burstSpUp(battle, unit, 'blaze2:module', num(tm.sp_recovery_per_sec));
         if (sid === 'skchr_blaze2_2') whileOn(battle, unit, AURA_IV, () => burnTiles(battle, unit));
         if (sid && sid !== 'skchr_blaze2_3') return;
-        battle.on('elementBurst', (c) => { // S3: burn bursts refill ammo
-          if (c.element === 'burn' && unit.skill?.active && unit.skill.kind === 'ammo' && on(unit)) unit.skill.addAmmo(num(bb.ammo_recover));
+        // S3: each hit of her skill attack (main and splash) on an enemy in a burn burst deals the bonus first (PRTS 备注).
+        // Gated on the attack's own isSkill (captured when the bolt was fired), not on the live skill: her bolts land after
+        // the last bullet's end('ammo') / an early end (downed), and those still carry it. Only S3 runs here (sid gate).
+        battle.on('hit', (c) => {
+          const d = c.dmg, t = c.target;
+          if (c.source !== unit || !d.isAttack || !d.isSkill || d.cancel) return;
+          if (t.side === 'enemy' && t.alive && t.findBuff('burnBurst')) elementHit(battle, unit, t, unit.s.atk * num(bb['attack@atk_scale']), 'blazeBurn', 'burn');
+        }, { owner: unit });
+        const maxAmmo = num(bb['attack@trigger_time'], 18);
+        battle.on('elementBurst', (c) => { // S3: burn bursts refill ammo, up to the skill's ammo
+          const sk = unit.skill;
+          if (c.element !== 'burn' || !sk?.active || sk.kind !== 'ammo' || !on(unit)) return;
+          const n = Math.min(num(bb.ammo_recover), maxAmmo - sk.ammoLeft);
+          if (n > 0) sk.addAmmo(n);
         }, { owner: unit });
       },
     };

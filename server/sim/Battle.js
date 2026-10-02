@@ -28,7 +28,7 @@ import { Grid } from './grid.js';
 import { Unit } from './units.js';
 import { makeBuff, STATUS, RESIST_STATUSES } from './buffs.js';
 import { dealDamage as pipeDamage, heal as pipeHeal, applyHpLoss, makeDamageInfo, reduceElement, palsyBuff, elementView, leaderHitCancelled } from './damage.js';
-import { absoluteRangeKeys, canTargetEnemy } from './targeting.js';
+import { absoluteRangeKeys, canTargetEnemy, extendedGrid } from './targeting.js';
 import { bodyKeys, bodyInKeys, bodyInRadius } from './body.js';
 import { normDir, mirrorDir, localOrder, localBefore } from './dir.js';
 import { ProjectileSystem } from './projectiles.js';
@@ -1594,15 +1594,21 @@ export class Battle {
 
   /**
    * Recompute a unit's absolute range tile keys: `rangeKeys` / `rangeKeySet` = current range (skill range override +
-   * rangeExtend) ∪ `unit.extraRangeKeys` (content extra targets — setExtraRange); `baseRangeKeys` = the INITIAL range
-   * of the DEFAULT skill trigger: the unit's own grid + its permanent rangeExtend (`s.baseRangeExtend`: persistent,
-   * never-expiring buffs — talents, modules, bonds), no skill range, no temporary extend, no extra keys. Rebuilt on
-   * deploy / relocate / skill range switches and whenever either extend changes (rangeChanged).
+   * rangeExtend — the unit's own 攻击距离 unless the running skill's range ignores it, `targeting.noRangeExtend`: 信仰搅拌机
+   * S3, PRTS 备注 "此技能的攻击范围不受'攻击距离'属性影响" — plus the skill's own `targeting.rangeExtend`) ∪
+   * `unit.extraRangeKeys` (content extra targets — setExtraRange); `baseRangeKeys` = the INITIAL range of the DEFAULT
+   * skill trigger: the unit's own grid + its permanent rangeExtend (`s.baseRangeExtend`: persistent, never-expiring
+   * buffs — talents, modules, bonds), no skill range, no temporary extend, no extra keys; `liveRangeGrid` = the
+   * relative grid (facing RIGHT) of the 攻击范围 the detail card shows (shared/protocol.js unitStatsEntry `range`;
+   * community report E1 after 0.1.0: the card kept the base grid while 烛煌 S3 attacked with 4-11): the grid behind
+   * `rangeKeys` without the extra keys (targeting.js extendedGrid; the grid itself when nothing extends it), or the
+   * unit's own range while a skill's grid only selects targets (`targeting.showOwnRange`: 荒芜拉普兰德 S1, no official
+   * range change). Rebuilt on deploy / relocate / skill range switches and whenever either extend changes (rangeChanged).
    */
   _refreshRange(u) {
     const tg = u.skill && u.skill.active ? u.skill.spec.targeting : null;
     const grid = (tg && tg.rangeGrid) || u.rangeGrid || [[0, 0]];
-    const ext = u.s.rangeExtend + ((tg && tg.rangeExtend) || 0);
+    const ext = (tg && tg.noRangeExtend ? 0 : u.s.rangeExtend) + ((tg && tg.rangeExtend) || 0);
     u._rangeExtend = u.s.rangeExtend;
     u._baseExtend = u.s.baseRangeExtend;
     const keys = absoluteRangeKeys(grid, u.tileR, u.tileC, u.dir, ext);
@@ -1611,6 +1617,9 @@ export class Battle {
     if (extra) for (const k of extra) if (!set.has(k)) { set.add(k); keys.push(k); }
     u.rangeKeys = keys;
     u.rangeKeySet = set;
+    const own = !!(tg && tg.showOwnRange);
+    const lg = own ? u.rangeGrid || [[0, 0]] : grid, le = own ? u.s.rangeExtend : ext;
+    u.liveRangeGrid = le > 0 ? extendedGrid(lg, le) : lg;
     if (u.kind !== 'device') u.baseRangeKeys = absoluteRangeKeys(u.rangeGrid || [[0, 0]], u.tileR, u.tileC, u.dir, u.s.baseRangeExtend);
     if (u.skill) u.skill._trigKeys = null; // CUSTOM_RANGE trigger grid is relative to the tile
   }

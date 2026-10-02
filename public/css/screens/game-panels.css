@@ -129,6 +129,7 @@
 .rgrid i { width: var(--rg); height: var(--rg); border: 1px solid rgba(255, 255, 255, .06); }
 .rgrid i.on { background: rgba(246, 163, 41, .25); border-color: var(--amber); }
 .rgrid i.self { background: var(--mint-500); border-color: var(--mint-400); }
+.rgrid-all { font-size: .16rem; font-weight: 700; color: var(--amber); padding: .02rem .06rem; border: 1px solid var(--amber); background: rgba(246, 163, 41, .25); }
 .dsec { display: flex; flex-direction: column; gap: .08rem; }
 .dsec__title { display: flex; align-items: baseline; gap: .1rem; font-size: .17rem; font-weight: 700; color: var(--mint-400); padding-bottom: .04rem; border-bottom: 1px solid var(--line); }
 .dtext { font-size: .15rem; line-height: 1.65; color: var(--text-md); }

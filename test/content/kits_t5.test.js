@@ -125,7 +125,7 @@ test('缇缇 T2 勇气的报偿: Sargon/Minos ops above 50 % HP get +20 ASPD', (
 });
 
 // ------------------------------------------------------------------------------------------------------------------
-test('烛煌 S3: hits every enemy in the skill range, BAT −1.3 s, burn bursts refill ammo; T1 熔点引爆 350 % + heal; T2 downed → revive', () => {
+test('烛煌 S3: its target and the enemies within the 1.7 splash, BAT −1.3 s, burn bursts refill ammo; T1 熔点引爆 350 % + heal; T2 downed → revive', () => {
   const h = makeBattle({
     defs: { enemies: { enemy_dummy: dummy() } },
     units: [{ chessId: 'chess_char_5_03_a', row: 10, col: 3 }],
@@ -142,7 +142,7 @@ test('烛煌 S3: hits every enemy in the skill range, BAT −1.3 s, burn bursts 
   approx(u.s.interval, u.base.bat + bb.base_attack_time, 1e-6, 'BAT 1.6 − 1.3 s');
   h.run(1);
   const hitIds = new Set(h.hooksOf('damaged').filter((c) => c.source === u && c.dmg.isSkill && c.dmg.isAttack).map((c) => c.target.id));
-  assert.equal(hitIds.size, 3, 'group attack');
+  assert.equal(hitIds.size, 3, 'group attack: the three stand within 1.7 of each other (PRTS 备注 "攻击溅射半径1.7")');
   // a burn burst anywhere: +ammo, 熔点引爆 elemental damage and heal
   const e = h.b.enemies[0];
   u.hp = 100;

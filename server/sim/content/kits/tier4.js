@@ -167,7 +167,11 @@ function lonely(battle, unit, diag = false) {
   }
   return true;
 }
-/** Permanent forward range extension ("攻击距离+1（不受技能攻击范围变化影响）": every range, skill ranges included). */
+/**
+ * Permanent forward range extension (攻击距离 +n): every range, skill ranges included — except a skill whose range ignores
+ * 攻击距离 (`targeting.noRangeExtend`). SPT-Y's "攻击距离+1（不受技能攻击范围变化影响）" reads, as PRTS 修正 it, "（部分技能不受
+ * 此影响）" (原因: 语序颠倒、表述模糊) — 信仰搅拌机 S3 备注 "此技能的攻击范围不受'攻击距离'属性影响".
+ */
 const rangeUp = (battle, unit, n = 1) => battle.addBuff(unit, { key: 'module:range', mods: { rangeExtend: n }, persist: true, allowDead: true });
 /**
  * Module "攻击范围扩大" given as a new range (the selected module's data-only talent `rangeGrid`, e.g. SPC-X / RIN-X:
@@ -198,7 +202,7 @@ function pullToFront(battle, unit, e, force) {
 const kits = {
   // ===== 信仰搅拌机 (shotprotector) S3 退休前布道 — ammo 30 counters; talents 扫射迎宾仪礼 / 架盾送客仪礼; module: reveal
   //       S1 铳骑主考官 (自动触发 ⇒ DEFAULT: next attack ×3 hits + reload an adjacent 拉特兰 ammo skill), S2 八臂电锯侠 (ammo;
-  //       a fatal hit is blocked for `ammo_cost` bullets); module SPT-Y 老朋友: range +1
+  //       a fatal hit is blocked for `ammo_cost` bullets); module SPT-Y 老朋友: range +1 (not on S3's range, PRTS 备注)
   chess_char_4_01_a: (bb, chess, def) => {
     const t0 = tbb(def, 0), t1 = tbb(def, 1);
     const counterMax = Math.max(1, Math.floor(num(bb['attack@max_target'], 3)));
@@ -234,7 +238,8 @@ const kits = {
       skill: {
         kind: 'ammo', ammo: num(bb['attack@trigger_time'], 30),
         mods: { hpPct: num(bb.max_hp), atkPct: num(bb.atk), defPct: num(bb.def) },
-        targeting: g ? { rangeGrid: g } : undefined,
+        // 3-13 exactly: SPT-Y's 攻击距离+1 does not reach it (PRTS 备注; reviewer of community report E1 after 0.1.0)
+        targeting: g ? { rangeGrid: g, noRangeExtend: true } : undefined,
         attack: { noAttack: true },                 // 停止主动攻击敌人 (ammo is spent by counters)
         onStart({ battle, unit }) {
           unit.mem.counterReady = -Infinity;
@@ -282,7 +287,7 @@ const kits = {
             if (sk.ammoLeft <= 0) sk.end('ammo');
           }, { owner: unit });
         }
-        // module SPT-Y (elite, 老朋友): 攻击距离+1 (kept whatever range the skill sets)
+        // module SPT-Y (elite, 老朋友): 攻击距离+1 — S1 / S2 keep it, S3's 3-13 does not (noRangeExtend above)
         if (num(def.traitBb?.ability_range_forward_extend, 0) > 0) rangeUp(battle, unit, num(def.traitBb.ability_range_forward_extend, 1));
         // module SPT-X (elite default): 攻击范围内敌人的隐匿效果失效
         if (moduleIs(def, 'uniequip_002_rmixer')) whileDeployed(battle, unit, AURA, () => reveal(battle, enemiesOnRange(battle, unit)));

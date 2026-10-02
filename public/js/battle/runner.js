@@ -46,9 +46,11 @@
 //   battleRunner.stats()  → { ticks, stepMs, avgTickMs, maxFrameMs, catchups, errors, battles }
 //   battleRunner.unitStats(unitId, fieldId?) → the live stats of a unit of the battle on screen (shared/protocol.js
 //                           unitStatsEntry: current HP, effective max HP / ATK / DEF / RES / interval / block / move
-//                           speed next to its base) | null — the detail card reads it a few times a second (user
-//                           playtest #4 item 7). Read-only: it takes the stats the sim computed last (`unit._s`) and
-//                           never makes the unit recompute them, so looking never changes the battle's floats.
+//                           speed next to its base; an ally also its live attack range `range` — unit.liveRangeGrid,
+//                           facing RIGHT, never a kit's target-selection grid) | null — the detail card reads it a few
+//                           times a second (user playtest #4 item 7; the range mini-map, community report E1 after
+//                           0.1.0). Read-only: it takes the stats the sim computed last (`unit._s`) and the range grid it
+//                           keeps, and never makes the unit recompute them, so looking never changes the battle's floats.
 //   battleRunner.unitIdOf(uid, ownerId, fieldId?) → the id of an own board piece's unit in that battle | null
 //   battleRunner.ownerOps(ownerId, fieldId?) → [{ kind: 'op', ownerId, defId, items? }] that player's operators in the
 //                           battle on screen with their equipment (a teammate's bond popup: the members in play, DESIGN

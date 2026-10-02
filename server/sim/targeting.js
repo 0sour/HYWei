@@ -43,6 +43,10 @@ export function absoluteRangeKeys(grid, r, c, dir, extend = 0) {
   return keys;
 }
 
+// extendedGrid(grid, extend): the relative form of absoluteRangeKeys' rangeExtend — one implementation with the card's
+// record range (shared/loadoutRecord.js attackRangeGrid), re-exported here for the battle (Battle._refreshRange).
+export { extendedGrid } from '../../shared/loadoutRecord.js';
+
 /** Tile key of a unit's current position. */
 export function tileKeyOf(u) {
   const r = Math.round(u.y), c = Math.round(u.x);
