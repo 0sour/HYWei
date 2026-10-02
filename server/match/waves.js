@@ -122,9 +122,7 @@ function placeholderMap(gd) {
   return out;
 }
 
-/** Last round of the official generator's first half (factions.generation.firstHalfMaxRound: maxLevelCnt / 2 = 7); also
- * the half of the 悬赏决策 drafts (choices.js bountyDraftHalf). */
-export const firstHalfMax = (gd) => intOr(gd && gd.factions ? gen(gd).firstHalfMaxRound : null, Math.floor(intOr(gd && gd.factions ? gen(gd).maxLevelCnt : null, 15) / 2));
+const firstHalfMax = (gd) => intOr(gen(gd).firstHalfMaxRound, Math.floor(intOr(gen(gd).maxLevelCnt, 15) / 2));
 
 /** The special entry list (factions.json entries) sorted by key. */
 function entryList(gd) {

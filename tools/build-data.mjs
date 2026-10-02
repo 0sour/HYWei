@@ -2319,11 +2319,15 @@ const ROMAN = { I: 1, II: 2, III: 3 };
  *              "※以下悬赏任务仅由法术教鞭生成"
  *   'hidden'   鸭爵 / 高普尼克 / 流泪小子 / 圆仔·悬赏 (enemyeffect_5..8): commented out of the table (the 鸭爵 strategy
  *              “神秘顾客” swaps those enemies into the waves instead)
- * Everything else is drafted, as the table lists it: the "下场作战" and "接下来两场作战" kill bounties, 源石虫·特训
- * ("但不获得资金") and the 7 multi-round cards ("之后 / 后续的每场作战": 山海众头目·多轮悬赏, 多轮悬赏·假想敌 ×6), whose
+ *   'unseen'   kill bounties no official draft showed (33 screenshots of 11 official matches, player feedback after
+ *              0.1.0 report #2 — see BOUNTY_INITIAL_SETS below): the 7 multi-round cards ("之后 / 后续的每场作战": 山海众头目·
+ *              多轮悬赏, 多轮悬赏·假想敌 ×6), the pre-series cards enemyeffect_3_* and the boss bounties of no seen R9 group
+ *              (凋零骑士, “遗弃者”, 锏, 扎罗, 迷路的巨像) [ASSUMED: not offered]
+ * The rest is drafted, by the kind of draft it belongs to (`draftPool`, bountyDraftPool): the "接下来两场作战" cards at R3,
+ * the boss bounties and 源石虫·特训 ("但不获得资金") at R9, the faction / 特异 "下场战斗" cards at R11. A multi-round card's
  * official text carries the red "每场" (`multiRound`, `rounds` 99 kept as the data has them; the server makes such a
  * card last MULTI_ROUND_BOUNTY_BATTLES = 2 battles and rewrites its text — server/match/choices.js bountyBattles /
- * bountyText, the user's call after playtest #6). The 战术特训 cards are what the
+ * bountyText, the user's call after playtest #6; 教鞭's 法术大师A2·多轮战术特训 is one). The 战术特训 cards are what the
  * 教鞭 Art offers (PRTS 法术 教鞭 "于3个战术特训的悬赏任务中选择一项"; server/sim/content/items/meta.js); nothing in
  * act2 offers the 鸭爵 set.
  */
@@ -2335,36 +2339,70 @@ function bountyDraftExclusion(e, main) {
 }
 
 /**
- * The half of the match whose 悬赏决策 drafts offer a drafted bounty card (player feedback after 0.1.0, report #2: "本来应该
- * 后期出的悬赏的怪物在前期的悬赏就出现了"): 1 = the drafts of rounds ≤ firstHalfMaxRound (7: co-op / solo 绝境 · 终极 R3,
- * 险境 co-op R3 / R6), 2 = the drafts from R8 on (R9). The official card list of each draft event (enemy_initial_1..10,
- * bounty_hunter_1..15, bossInitial_1..6) is server-side; no table (activity_table, PRTS 敌人轮选, BWIKI) gives rounds.
- * Evidence for the split:
- *   - the one official co-op 悬赏决策 screenshot (Bahamut 12294, research 06 §15 "Wrkhtxv") holds six boss bounties —
- *     “复仇者” 6, “庞贝” 2, W 1, 萨卡兹百夫长 2, “邪魔的利刃” 3, 碎骨 1 — with the team at LP 6 / 10 / 9 / 15: a late
- *     draft, coin values 1–6 together;
- *   - a trend, not a rule, in the six faction series against the wave generator's halves (specialEnemyInfoDict
- *     isInFirstHalf and the attached keys): of the 18 "接下来两场作战" cards (_4–_6) 12 bring an enemy of the first half
- *     (妖怪, 磨砻, 逐腐兽, 萨卡兹枯朽战车, 山海众头目, 深池伙友卫队 …), 5 one outside the wave tables (暴鸰, 烹泉, 清明,
- *     术师快艇, 隐形术师) and 1 (enemyeffect_12_4 底海滑动者) an enemy attached only to second-half specials; of the 12
- *     "下场作战" cards (_7 / _8) 6 bring a second-half special (法术大师A2, 灼藤, 假想敌：蚀裂, 尖端萨卡兹枯朽战车 …) and 6
- *     an enemy outside the wave tables (新硎, 家族暗影灭迹人, 异光体孽生者 …), none a first-half one;
- *   - strength: the half-1 enemies have at most 16000 base HP (median 5000), the half-2 ones up to 100000 (median 22000);
- *   - the user's playtest #6 report "悬赏决策的敌人…正常只会在选择之后出现两回合" (DESIGN §20.6): the bounty met most
- *     often — the R3 draft every 绝境 / 终极 match has — lasts two battles.
- * Counter-evidence, not reconciled: the multi-round 假想敌 cards are enemyInitial_1..6, a name like the enemy_initial_*
- * events (used here as the first-half header); a community guide "第三回合懸賞怪机制,数值及对策" (NGA tid 46551276,
- * linked from Bahamut 12316; NGA needs a login, unread) may describe the R3 pool. The pre-series cards follow the
- * battle count too, so the next-battle and multi-round cards of the first-half specials “萨科塔之眼” and 山海众头目
- * (enemyeffect_3_2_e / 3_4 / 4) go to the late drafts, while 山海众头目 is offered early through enemyeffect_14_6.
- * Rule [ASSUMED beyond the evidence above]: a "接下来两场作战" card (data `round` 2) is a first-half card; a "下场作战"
- * card (the boss bounties, the 特异 giants, the faction _7 / _8 cards, the e3_* cards, 源石虫·特训) and a multi-round card
- * (山海众头目·多轮悬赏, the 6 假想敌 — second-half specials, 12000–36000 base HP) a second-half one. Not a drafted card ⇒
- * null. Flip for the multi-round cards: return 1 for `main.rounds >= 99`.
+ * The official 悬赏决策 drafts (player feedback after 0.1.0, report #2: "本来应该后期出的悬赏的怪物在前期的悬赏就出现了，导致选了
+ * 打不过"), read from 33 screenshots of 11 official co-op 绝境 / 终极 matches at the start of rounds 3, 9 and 11 (collected
+ * by the user, 2026-10-03; the readings are test/fixtures/official-bounty-drafts.json). Every card's title, enemy and coin
+ * value is an act2autochess (下半) effect. A card's enemy is fixed by its effect (blackboard `enemy_id`); the title only
+ * names the category and tier, so 悬赏·损伤I is 底海滑动者 in enemyeffect_12_4 and 临时收音师 in enemyeffect_18_1. The draft
+ * of a round is one of three kinds (the event ids are the data's; which event lists which cards is server-side):
+ *   initial  R3 (enemy_initial_1..10): six "接下来两场作战" cards, always 3 × I (1 coin) + 2 × II + 1 × III. All 11 R3
+ *            drafts are one of 7 fixed sets (BOUNTY_INITIAL_SETS): a whole series 17 / 18 / 19 (18 in 4 matches) or one
+ *            card from each of 6 of the series 10–15 and 20 (one such set in two matches). The 3 other events of the 10
+ *            are unseen: built by that rule (BOUNTY_INITIAL_MIXED) [ASSUMED].
+ *   boss     R9 (bossInitial_1..6): the boss bounties "X·悬赏" and 源石虫·特训, all "下场作战". All 12 drafts (11 matches +
+ *            the Bahamut 12294 co-op screenshot) are a group of 0–3 named bosses that always come together, filled up to 6
+ *            with cheap ones (W / 碎骨 / 弑君者 1, 大鲍勃 2, 庞贝 or 鼠王 2, 源石虫·特训 0): BOUNTY_BOSS_TEMPLATES. 7 groups
+ *            were seen for 6 events (庞贝 and 鼠王 never in one draft: perhaps two versions); uniform [ASSUMED]. 凋零骑士,
+ *            “遗弃者”, 锏, 扎罗 and 迷路的巨像 never appeared: not offered [ASSUMED].
+ *   hunter   R11 (bounty_hunter_*; R11 is a 悬赏决策 in 5 of the 11 matches): six "下场战斗" cards, exactly one 特异III giant
+ *            (enemyeffect_16_1..8, 3 coins) and 5 of the faction _7 / _8 cards and enemyeffect_16_9..12, at most one per
+ *            faction series 10–15 (5 of 5 drafts): BOUNTY_HUNTER.
+ * In none of the 27 bounty drafts: the 7 multi-round cards (山海众头目·多轮悬赏, 多轮悬赏·假想敌 ×6), the pre-series cards
+ * enemyeffect_3_* (法术大师A2·悬赏 …), 战术特训 (法术教鞭 only) and the 鸭爵 set; no card twice in one draft.
  */
-function bountyDraftHalf(main, draftExcluded) {
+const EE = (s) => `enemyeffect_${s}`;
+const seriesIds = (n) => [1, 2, 3, 4, 5, 6].map((i) => EE(`${n}_${i}`));
+/** The R3 sets seen (`seen` = match numbers of test/fixtures/official-bounty-drafts.json). */
+const BOUNTY_INITIAL_SETS = [
+  { cards: seriesIds(18), seen: [1, 3, 5, 9] },
+  { cards: seriesIds(19), seen: [2] },
+  { cards: seriesIds(17), seen: [7] },
+  { cards: ['10_5', '11_4', '12_5', '13_6', '15_4', '20_3'].map(EE), seen: [4, 10] },
+  { cards: ['10_4', '11_5', '12_6', '14_4', '15_5', '20_2'].map(EE), seen: [6] },
+  { cards: ['10_4', '11_5', '12_4', '14_6', '15_4', '20_4'].map(EE), seen: [8] },
+  { cards: ['10_4', '11_6', '12_4', '13_4', '14_5', '15_5'].map(EE), seen: [11] },
+];
+/** An unseen R3 set: one card from each of `count` of these series, with these tiers (the seen mixed sets' rule). */
+const BOUNTY_INITIAL_MIXED = { series: [10, 11, 12, 13, 14, 15, 20], count: 6, tiers: [1, 1, 1, 2, 2, 3] };
+const BOSS_FILL_A = ['b_1', 'b_3', 'b_10', 'b_12', 'b_13', '5_1'].map(EE); // 碎骨 弑君者 W 庞贝 大鲍勃 源石虫·特训
+const BOSS_FILL_B = ['b_1', 'b_3', 'b_10', 'b_11', 'b_13', '5_1'].map(EE); // 鼠王 in place of 庞贝
+/** The R9 groups seen: `featured` always all on the card row, `fill` drawn to make 6. */
+const BOUNTY_BOSS_TEMPLATES = [
+  { featured: [], fill: BOSS_FILL_A, seen: [4] },
+  { featured: ['b_8', 'b_24'].map(EE), fill: BOSS_FILL_A, seen: [1, 5] }, // 喷气人 纠缠藤蔓
+  { featured: ['b_4', 'b_19'].map(EE), fill: BOSS_FILL_A, seen: [2] }, // 泥岩 澪
+  { featured: ['b_5', 'b_17', 'b_20'].map(EE), fill: BOSS_FILL_A, seen: [3] }, // 腐败骑士 “墓碑” “巨大的丑东西”
+  { featured: ['b_22', 'b_21', 'b_2'].map(EE), fill: BOSS_FILL_A, seen: [6, 'bahamut-12294'] }, // “邪魔的利刃” “复仇者” 萨卡兹百夫长
+  { featured: ['b_9', 'b_23'].map(EE), fill: BOSS_FILL_B, seen: [7, 11] }, // 杰斯顿·威廉姆斯 陷落雪祀
+  { featured: ['b_9', 'b_14'].map(EE), fill: BOSS_FILL_B, seen: [8, 9, 10] }, // 杰斯顿·威廉姆斯 “自在”
+];
+/** The R11 rule: `anchorCount` of `anchors` + the rest from `rest`, at most one card per series of `onePerSeries`. */
+const BOUNTY_HUNTER = {
+  anchors: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => EE(`16_${i}`)), anchorCount: 1,
+  rest: [...[10, 11, 12, 13, 14, 15].flatMap((n) => [EE(`${n}_7`), EE(`${n}_8`)]), ...[9, 10, 11, 12].map((i) => EE(`16_${i}`))],
+  onePerSeries: [10, 11, 12, 13, 14, 15], count: 6,
+};
+/** The kind of a round's 悬赏决策: R3 (and 险境 R6, [ASSUMED]) initial, R9 boss, R11 hunter. */
+const bountyDraftOf = (r) => (r < 8 ? 'initial' : r < 11 ? 'boss' : 'hunter');
+
+/** The draft kind a bounty card belongs to by its shape, null when no draft offers it (see above). */
+function bountyDraftPool(e, main, draftExcluded) {
   if (draftExcluded) return null;
-  return main.rounds === 2 ? 1 : 2;
+  if (main.rounds === 2) return 'initial';
+  if (main.rounds !== 1) return null; // multi-round
+  if (/^enemyeffect_b_\d+$/.test(e.effectId) || e.effectId === 'enemyeffect_5_1') return 'boss';
+  if (/^enemyeffect_1[0-5]_[78]$/.test(e.effectId) || /^enemyeffect_16_\d+$/.test(e.effectId)) return 'hunter';
+  return null; // the pre-series cards enemyeffect_3_*
 }
 
 /** Classify a 机变 choice event id into a family. */
@@ -2415,15 +2453,27 @@ function buildChoices(ctx, effects, items, chess) {
     if (multiRound) tier = 2;
     for (const a of adds) if (a.enemyKey && !ctx.enemyDb.has(a.enemyKey)) warn(`bounty ${e.effectId}: unknown enemy ${a.enemyKey}`);
     const coin = e.enemyPrice || main.coin;
-    const draftExcluded = bountyDraftExclusion(e, main);
+    let draftExcluded = bountyDraftExclusion(e, main);
     if (draftExcluded === 'hidden' && !/鸭爵|高普尼克|流泪小子|圆仔/.test(e.name || '')) warn(`bounty ${e.effectId} "${e.name}": expected one of the 鸭爵 set`);
+    let draftPool = bountyDraftPool(e, main, draftExcluded);
+    // a boss bounty is offered only through a seen R9 group (BOUNTY_BOSS_TEMPLATES)
+    if (draftPool === 'boss' && !BOUNTY_BOSS_TEMPLATES.some((t) => t.featured.includes(e.effectId) || t.fill.includes(e.effectId))) draftPool = null;
+    if (!draftExcluded && !draftPool) draftExcluded = 'unseen';
+    const sm = /^enemyeffect_(\d+)_\d+$/.exec(e.effectId);
     bounty.push({
       effectId: e.effectId, name: e.name, desc: e.desc, tier, coin,
       payout: main.payout, rounds: main.rounds, multiRound, enemyKey: main.enemyKey, count: main.count, adds,
-      draft: !draftExcluded, draftExcluded, draftHalf: bountyDraftHalf(main, draftExcluded),
+      draft: !draftExcluded, draftExcluded, draftPool, series: sm ? Number(sm[1]) : null,
     });
   }
   bounty.sort((a, b) => naturalCmp(a.effectId, b.effectId));
+  // the official draft structures (see BOUNTY_INITIAL_SETS) only name cards of their own kind
+  const bountyById = new Map(bounty.map((c) => [c.effectId, c]));
+  const checkKind = (ids, kind, what) => { for (const id of ids) if (bountyById.get(id)?.draftPool !== kind) warn(`bounty draft ${what}: ${id} is not a "${kind}" card`); };
+  for (const s of BOUNTY_INITIAL_SETS) checkKind(s.cards, 'initial', 'R3 set');
+  for (const t of BOUNTY_BOSS_TEMPLATES) checkKind([...t.featured, ...t.fill], 'boss', 'R9 group');
+  checkKind([...BOUNTY_HUNTER.anchors, ...BOUNTY_HUNTER.rest], 'hunter', 'R11 rule');
+  for (const c of bounty) if (c.draftPool === 'hunter' && !BOUNTY_HUNTER.anchors.includes(c.effectId) && !BOUNTY_HUNTER.rest.includes(c.effectId)) warn(`bounty ${c.effectId}: an R11 card outside BOUNTY_HUNTER`);
 
   // Tactic cards (BUFF_GAIN effects).
   const tactic = [];
@@ -2445,9 +2495,8 @@ function buildChoices(ctx, effects, items, chess) {
   // Per-mode schedule of families (research 01 A4).
   const schedule = {};
   const supplyWindow = { 3: [1, 4], 6: [2, 5], 9: [3, 6], 11: [4, 6] };
-  // the 悬赏决策 draft of a round offers the cards of its half (cards.bounty `draftHalf`, bountyDraftHalf): the official
-  // wave generator's first half ends at maxLevelCnt / 2 (factions.generation.firstHalfMaxRound)
-  const firstHalfMaxRound = Math.floor((ctx.ac.constData.maxLevelCnt ?? 15) / 2);
+  // the 悬赏决策 of a round is the kind of official draft its round has (bountyDraftOf: R3 initial, R9 boss, R11 hunter)
+  const bountyEventRe = { initial: /^enemy_initial_/, boss: /^bossInitial_/, hunter: /^bounty_hunter_/ };
   for (const [modeId, rounds] of Object.entries(act.battleDataDict)) {
     const mode = act.modeDataDict[modeId];
     const solo = mode.modeType === 'SINGLE';
@@ -2458,17 +2507,19 @@ function buildChoices(ctx, effects, items, chess) {
       let families;
       if (diff === 'TRAINING') families = [{ family: 'supply', weight: 100 }];
       else if (diff === 'HARD' || diff === 'ABYSS') {
-        families = r === 11 ? [{ family: 'supply', weight: 50 }, { family: 'shop', weight: 50 }] : [{ family: 'bounty', weight: 100 }];
+        // R11 of the 11 official co-op matches (player feedback after 0.1.0 report #2, the screenshots of BOUNTY_INITIAL_SETS):
+        // 悬赏决策 5, 机密商店 4, 战术决策 2, 道具补给 0 — the weights follow those counts [ASSUMED]
+        families = r === 11 ? [{ family: 'bounty', weight: 45 }, { family: 'shop', weight: 35 }, { family: 'tactic', weight: 20 }] : [{ family: 'bounty', weight: 100 }];
       } else if (diff === 'NORMAL') {
         families = solo
           ? [{ family: r === 9 ? 'tactic' : 'supply', weight: 100 }]
           : [{ family: 'bounty', weight: 50 }, { family: 'supply', weight: 25 }, { family: 'shop', weight: 10 }, { family: 'tactic', weight: 15 }];
       } else families = [{ family: 'supply', weight: 45 }, { family: 'tactic', weight: 35 }, { family: 'shop', weight: 20 }];
-      const bountyHalf = r <= firstHalfMaxRound ? 1 : 2;
-      const bountyEvents = bountyHalf === 1 ? eventsOf('bounty', (e) => /^enemy_initial/.test(e.id) && e.solo === solo) : eventsOf('bounty', (e) => /^(bounty_hunter|bossInitial)/.test(e.id) && e.solo === solo);
+      const bountyDraft = bountyDraftOf(r);
+      const bountyEvents = eventsOf('bounty', (e) => bountyEventRe[bountyDraft].test(e.id) && e.solo === solo);
       m[r] = {
         families, cards: solo ? 3 : 6,
-        supplyTiers: supplyWindow[r] || [1, 6], bountyHalf,
+        supplyTiers: supplyWindow[r] || [1, 6], bountyDraft,
         events: {
           bounty: bountyEvents,
           supply: diff === 'TRAINING' ? eventsOf('supply', (e) => e.training) : eventsOf('supply', (e) => !e.training && e.solo === solo),
@@ -2484,7 +2535,7 @@ function buildChoices(ctx, effects, items, chess) {
   return {
     events,
     families: {
-      bounty: { name: '悬赏决策', desc: '选定悬赏目标，获取额外奖励。', cards: 'cards.bounty entries with draft: true (PRTS 敌人轮选: no 战术特训 — the 教鞭 Art offers those — and no 鸭爵 set) and draftHalf = schedule[*].bountyHalf (1: the "接下来两场作战" cards, rounds ≤ firstHalfMaxRound; 2: the "下场作战" and multi-round cards)' },
+      bounty: { name: '悬赏决策', desc: '选定悬赏目标，获取额外奖励。', cards: 'bountyDrafts[schedule[*].bountyDraft] — the official draft structure of the round (initial: one of the R3 sets; boss: an R9 group + cheap fill; hunter: one 特异III giant + 5 next-battle cards, one per faction series), over cards.bounty entries with draft: true and that draftPool' },
       supply: { name: '道具补给', desc: '无需消耗资金，获得装备补给。', cards: 'random normal EQUIP items in schedule[*].supplyTiers (duplicates allowed)' },
       shop: { name: '机密商店', desc: '无需消耗资金，获得装备补给。', cards: 'random normal EQUIP items of any tier I–VI (duplicates allowed)' },
       tactic: { name: '战术决策', desc: '选择战术增益。', cards: 'cards.tactic (terrain cards only for the match stage)' },
@@ -2495,6 +2546,13 @@ function buildChoices(ctx, effects, items, chess) {
       opensAfterIncome: true,
     },
     cards: { bounty, tactic },
+    // the official 悬赏决策 structures by kind (tools/build-data.mjs BOUNTY_INITIAL_SETS; `seen` = the match numbers of
+    // test/fixtures/official-bounty-drafts.json; `slots` = the official events, the unseen ones built by `mixed`)
+    bountyDrafts: {
+      initial: { events: eventsOf('bounty', (e) => bountyEventRe.initial.test(e.id) && !e.solo), slots: eventsOf('bounty', (e) => bountyEventRe.initial.test(e.id) && !e.solo).length, sets: BOUNTY_INITIAL_SETS, mixed: BOUNTY_INITIAL_MIXED, count: 6, assumed: ['the unseen slots built by `mixed`', '险境 R6 drafts like R3'] },
+      boss: { events: eventsOf('bounty', (e) => bountyEventRe.boss.test(e.id) && !e.solo), templates: BOUNTY_BOSS_TEMPLATES, count: 6, assumed: ['a uniform pick among the seen groups', 'boss bounties of no seen group are not offered'] },
+      hunter: { events: eventsOf('bounty', (e) => bountyEventRe.hunter.test(e.id) && !e.solo), ...BOUNTY_HUNTER, assumed: ['uniform draws within the rule'] },
+    },
     schedule,
     pools: {
       pool_equip_normal: { kind: 'equip', rule: 'shopEligible', maxTier: 'shopLevel', assumed: true },

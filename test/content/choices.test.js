@@ -27,9 +27,9 @@ function dataWith(modeId, round, family, { tactic = null, bounty = null, cards =
   const out = { ...DATA, choices: { ...ch, schedule: { ...ch.schedule, [modeId]: { ...sch, rounds: { ...sch.rounds, [String(round)]: r } } }, cards: { ...ch.cards } } };
   if (tactic) out.choices.cards.tactic = ch.cards.tactic.filter((c) => tactic.includes(c.effectId));
   // the listed bounty cards are offered by this draft even when the real one would not (战术特训 comes from 法术教鞭
-  // only — choices.json `draft`, user playtest #6 item 4; a "下场作战" card belongs to the drafts from R8 on —
-  // `draftHalf`, player feedback #2): these tests drive the payouts through the draft
-  if (bounty) out.choices.cards.bounty = ch.cards.bounty.filter((c) => bounty.includes(c.effectId)).map((c) => ({ ...c, draft: true, draftHalf: null }));
+  // only — choices.json `draft`, user playtest #6 item 4; each card belongs to one kind of official draft —
+  // `draftPool`, player feedback #2; a card without one fits every draft): these tests drive the payouts through the draft
+  if (bounty) out.choices.cards.bounty = ch.cards.bounty.filter((c) => bounty.includes(c.effectId)).map(({ draftPool, ...c }) => ({ ...c, draft: true }));
   return out;
 }
 
