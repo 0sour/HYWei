@@ -53,7 +53,8 @@
 //                while they roam; 头狼 stage 2 "特殊能力失效" = silence; stage 3 = +1 drone (normal attacks hit once
 //                more, S3 releases one more drone). Base drone count 1.
 //  6_19 锏       10 slashes every d_hit_interval, pulls every p_hit_interval, final blow (skill range) at the end;
-//                S3 slashes and pulls air units too (PRTS 备注 "可对空").
+//                S3 slashes and pulls air units too (PRTS 备注 "可对空"; a 静态刚体 — every drone of the mode — is hit
+//                but stays put: Battle._displaceable).
 //  6_20 纯烬艾雅法拉 5 shots are padded by cycling targets when fewer injured allies exist.
 //
 // Operator loadouts (DESIGN §16): every visible chess also authors its selectable NON-default skills in `skills`
@@ -2939,7 +2940,7 @@ function blkkgt(bb, chess, def) {
   // removes the skill's range
   const skillKeys = (unit) => unit.rangeKeys || [];
   // S3 hits and pulls air units too — PRTS 锏 S3 备注 "※可对空。不会拖拽自身中心半径0.6708范围内的敌人" (her attacks and S1 /
-  // S2 stay ground-only: "地面敌人")
+  // S2 stay ground-only: "地面敌人"); the air units of the mode are 静态刚体, so the pull leaves them in place (Battle.pull)
   const victims = (battle, unit) => {
     const c = battle.enemiesInKeys(skillKeys(unit), unit, { ...unit.profile, canHitFly: true, groundOnly: false });
     sortEnemyTargets(battle, unit, c, null);

@@ -1873,16 +1873,24 @@ export class Battle {
     return this.pull(e, force, { to: { x: unit.x + f[1] * PULL_ORIGIN, y: unit.y + f[0] * PULL_ORIGIN }, center: unit, stop: PULL_STOP_RADIUS });
   }
 
-  /** Can `e` be displaced at all: a living enemy, not a leader part of the boss pool, not 失衡免疫 (近地悬浮, 浮空). */
+  /**
+   * Can `e` be displaced at all: a living enemy, not a leader part of the boss pool, not 失衡免疫 (flag `noDisplace`:
+   * 近地悬浮, 浮空, the 胄 parts …) and not a 静态刚体 (data `staticBody`). PRTS 特殊机制 静态刚体: such a unit "可以进入
+   * 失衡状态 … 但物理层面上无法产生任何速度或移动" — every air unit of the mode except “炎佑”, plus the boss 昆图斯 (build-data
+   * STATIC_BODIES; player report after 0.1.0, "飞机可以被薄绿的技能拉走"). A skill that reaches it still hits it (its targeting
+   * is the skill's own: 锏 S3, 薄绿, the 钩索师 …); only the movement is 0, so distance-based effects (drag damage, 见行者 S2's
+   * wall stun) come to nothing. [ASSUMED] the 0.1 s 失衡硬直 a 静态刚体 still gets is not modelled (no displacement models it).
+   */
   _displaceable(e) {
-    return !!(e && e.alive && e.side === 'enemy' && !e.isBoss && !e.s.flags.noDisplace);
+    return !!(e && e.alive && e.side === 'enemy' && !e.isBoss && !e.s.flags.noDisplace && !(e.def && e.def.staticBody));
   }
 
   /**
    * Move an enemy `distance` tiles along `dir` = {x, y} (normalised internally) over passable tiles — the raw mover of
    * push() / pull(), which apply the official 力度 − 重量 rules (content uses those; the old `force` option is gone).
-   * 失衡免疫 (flag `noDisplace`: 近地悬浮, 浮空 — PRTS 异常效果 "不会被位移影响") and leaders ⇒ no movement. The tiles it may
-   * cross follow its movement (`motion`): a hovering enemy walks the ground, so it stays on ground-passable tiles.
+   * 失衡免疫 (flag `noDisplace`: 近地悬浮, 浮空 — PRTS 异常效果 "不会被位移影响"), 静态刚体 (data `staticBody`) and leaders
+   * ⇒ no movement (_displaceable). The tiles it may cross follow its movement (`motion`): a hovering enemy walks the
+   * ground, so it stays on ground-passable tiles.
    */
   displace(e, dir, distance) {
     if (!this._displaceable(e) || !dir) return 0;
