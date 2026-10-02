@@ -340,12 +340,13 @@ test('helpers validate their inputs: spawnDevice / relocate / spawnToken / spawn
   assert.ok(g.baseRangeKeys.includes(10 * 21 + 6), 'initial (DEFAULT trigger) range follows the unit');
   b.kill(g);
   assert.equal(b.relocate(g, 12, 6), false, 'dead units stay put');
-  b.redeploy(g);
+  b.redeploy(g); // back on the tile it was knocked out on, (10,6) (PRTS 卫戍协议/帮助: 自动部署至该位置)
   // spawnToken on a busy tile (even with force) → null, no half-built token left behind
   const aliveBefore = b.allyUnits.filter((u) => u.alive).length;
   const hooks = hookCount(b);
   assert.equal(g.alive, true);
-  assert.equal(b.spawnToken('p1', 'x_token', 9, 5, { def: { name: 't', stats: { maxHp: 100 } }, force: true }), null);
+  assert.deepEqual([g.tileR, g.tileC], [10, 6]);
+  assert.equal(b.spawnToken('p1', 'x_token', 10, 6, { def: { name: 't', stats: { maxHp: 100 } }, force: true }), null);
   assert.equal(b.allyUnits.filter((u) => u.alive).length, aliveBefore, 'no half-built token');
   assert.ok(hookCount(b) <= hooks);
   const t = b.spawnToken('p1', 'x_token', 12, 8, { def: { name: 't', stats: { maxHp: 100 } }, hp: NaN, stats: { atk: NaN, def: 50 } });

@@ -301,11 +301,12 @@ test('user playtest #4 (DESIGN §18): picking by tile, timers, 机变 two taps, 
   assert.deepEqual(ELEMENT_ORDER.slice(0, 4), ['neural', 'erosion', 'burn', 'apoptosis']);
   assert.deepEqual({ ...DOWN_STATE }, { COUNTING: 0, WAIT_DP: 1, WAIT_TILE: 2 });
   assert.match(DESIGN, /\*\*爆发冷却\*\*/);
-  assert.match(DESIGN, /`down: \[\[id, respawnAt \(game s\), respawnTime \(s\), state\]\]`/);
+  // player report F5 after 0.1.0: the entries carry the tile the operator lies on (DESIGN §8.2 follows at integration)
+  assert.match(DESIGN, /`down: \[\[id, respawnAt \(game s\), respawnTime \(s\), state(, row, col)?\]\]`/);
   assert.match(SIM, /`burstLocked\(unit\)` in damage\.js/);
   assert.match(SIM, /损伤抵抗 = the target's data `epResistance`/);
   assert.ok(!/800 phys; no lock/.test(SIM), 'SIM §3: operators\' 侵蚀 locks too');
-  assert.match(SIM, /`down: \[\[id, respawnAt, respawnTime, state\]\]`/);
+  assert.match(SIM, /`down: \[\[id, respawnAt, respawnTime, state, row, col\]\]`/);
   // #5 / #11 / #12 data rules
   const special = DATA.items.chess_item_4_09_e_a;
   assert.ok(special.shopExcluded && special.shopExcludedBy, '灼燃维式重锤 is never sold');
