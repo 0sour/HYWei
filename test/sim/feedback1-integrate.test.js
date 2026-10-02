@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBattle, enemyRec, checkInvariants } from '../helpers/battleHarness.js';
+import { getDefaultSource } from '../../server/sim/simdata.js';
 
 const dummy = (key, o = {}) => enemyRec({ key, hp: 1e7, speed: 0, ...o });
 
@@ -28,4 +29,30 @@ test('隐德来希 S3: candles still standing at the time limit are no leaks (th
   assert.equal(leaked.filter((k) => /e_a|e_b/.test(k)).length, 2, 'both originals count');
   assert.deepEqual(h.b.errors.map((e) => e.message), []);
   checkInvariants(h.b);
+});
+
+// WH (维娜·维多利亚 S3: a 黄金盟誓 on every free melee tile around her) × WC (战场#08's 深水区 refuses deployment): the
+// lions go through grid.canStand, so none lands in the water — e.g. 维娜 on (9,5) skips (10,6).
+test('维娜·维多利亚 S3 on 战场#08 (涨潮控制): no 黄金盟誓 in the 深水区', () => {
+  const VINA = 'chess_char_6_07_a', LION = 'token_10040_siege2_vlion', STAGE = 'act2autochess_m04';
+  const st = getDefaultSource().getStage(STAGE);
+  const water = new Set();
+  st.raw.rows.forEach((row, r) => [...row].forEach((ch, c) => { if (st.raw.tiles[ch]?.tileKey === 'tile_deepsea') water.add(`${r},${c}`); }));
+  assert.ok(water.has('10,6') && water.has('11,6') && water.has('12,6'), `the board's pool: ${[...water].join(' ')}`);
+  let lions = 0;
+  for (const [r, c] of [[9, 5], [11, 5], [10, 5], [10, 7], [11, 7]]) {
+    const h = makeBattle({
+      stageId: STAGE, defs: { enemies: { e_d: dummy('e_d', { hp: 1e9 }) } },
+      units: [{ chessId: VINA, row: r, col: c }], enemies: [{ key: 'e_d', pos: [r, c + 1] }], autoFinish: false, timeLimit: 30,
+    });
+    h.step();
+    const u = h.unit(VINA);
+    u.skill.gainSp(1000);
+    assert.ok(h.runUntil(() => u.skill.active, 8), `S3 at (${r},${c})`);
+    const placed = h.b.allyUnits.filter((a) => a.alive && a.defId === LION);
+    lions += placed.length;
+    for (const l of placed) assert.ok(!water.has(`${l.tileR},${l.tileC}`), `a lion of 维娜 (${r},${c}) in the water at (${l.tileR},${l.tileC})`);
+    checkInvariants(h.b);
+  }
+  assert.ok(lions >= 20, `${lions} lions placed`);
 });
