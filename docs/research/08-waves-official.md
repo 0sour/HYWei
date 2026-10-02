@@ -347,15 +347,21 @@ Example B. Types DOT / TIMES / ELEMENT.
 
 The raw BFS chains and smoothed waypoints are in scratch `lanes_official.txt`.
 
-**Remake deviation (user playtest #2, 2026-09-29).** The user reported the 战场#01 lower-gate enemies walking up the
-col-9 floor lane, where no operator can block them. `server/sim/grid.js` keeps every official route LENGTH but breaks
-ties between equal-length routes towards the fewest non-blockable (floor / gate) tiles, and its smoothing never cuts
-across floor the grid route does not walk. Lanes that change against the table above:
-- act1 m01 #01, lower gate: (9,10) → (9,8) → **col 8 road up** → (12,8) → row 12 → col 4 → E (was col 9 floor).
-- act1 m04 #04, lower gate: (9,10) → (9,8) → (10,8) → **row 10** → (10,4) → (9,4) → E (no longer cuts across (10,9)).
-- Boss fields: the exits from (2,10) take the road on 战场#01 / #04 and the right half of 战场#05, and cross less floor on
-  战场#02 / #07. Floor the terrain forces stays (gates, (12,9) beside the upper gate, the col-9 floor where walls or a
-  crate block the road: #02 lower (10,9)/(11,9), #04 upper (11,9), #05 upper (11,9)/(10,9), #07 lower (10,9)).
+**Remake deviation (user playtest #2, 2026-09-29; narrowed after the community report D5, 2026-10-03).** The user
+reported the 战场#01 lower-gate enemies walking up the col-9 floor lane, where no operator can block them.
+`server/sim/grid.js` keeps every official route LENGTH and the official route itself unless a road-over-floor
+preference route (equal-length ties to the chain with the fewest non-blockable floor / gate tiles, smoothing that never
+cuts across floor its grid route does not walk) crosses fewer non-blockable tiles; a segment that only touches a floor
+tile's corner does not cross it. The first version (2026-09-29) counted those corner tiles as crossed and so also bent
+official diagonals into L shapes — the D5 report after 0.1.0: on 战场#04 the lower-gate enemies walked (9,10) → (9,8)
+→ (10,8) instead of the official diagonal (9,10) → (10,7), which only brushes the corner of the floor (10,9). Lanes that
+still differ from the table above (14 of the 154 stage × gate × field routes, test/sim/pathing-official.test.js):
+- act1 m01 #01, lower gate: (9,10) → (9,8) → **col 8 road up** → (12,8) → row 12 → col 4 → E (official: (9,9) → (12,8)
+  through the floor (10,9)); the 联防 partner routes pass the same exit.
+- Boss fields: the exits from (2,10) on 战场#01 / #02 avoid part of the arena's central floor; 战场#02's 联防 partner
+  lower gate avoids (12,17); the inactive 战场#07 (上半) 联防 partner upper gate takes row 9 instead of row 12's floor.
+  Floor the terrain forces stays (gates, (12,9) beside the upper gate, the col-9 floor where walls or a crate block the
+  road: #02 lower (10,9)/(11,9), #04 upper (11,9), #05 upper (11,9)/(10,9), #07 lower (10,9)).
   Full audit: test/sim/pathing-blockable.test.js.
 
 ### 3.3 What we do and the root cause of "upper-gate enemies walk the lower lane"
