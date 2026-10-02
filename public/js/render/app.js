@@ -24,7 +24,7 @@
 //                                               user playtest #5 item 2) goes straight to the held pose, no burst; an
 //                                               fx with a `form` (shared/protocol.js fxForm) switches the enemy's
 //                                               model to that clip set (render/units.js FORMS)
-//   view.setLocalFeed({ on, speed })          frames come from the local sim every frame (client-side combat):
+//   view.setLocalFeed({ on, speed })            frames come from the local sim every frame (client-side combat):
 //                                               ~2-frame buffer at the battle's game speed
 //   view.highlightTiles(tiles, style)           [[r,c]] | [{row,col}]; style 'legal'|'illegal'|'range'|'rangeStand'|
 //                                               'hover'|'target'|{color,fill,line,group}; highlightTiles(null) clears all
@@ -1376,9 +1376,12 @@ export async function createFieldView(host, options = {}) {
   }
 
   const EVS = [];
+  /** State events handed out more than 1.5 game s late (a stall, a hidden tab, a field entered late) → how late. */
+  const LATE = new Map();
   function processEvents(renderT) {
     EVS.length = 0;
-    interp.takeEvents(renderT, EVS, renderT - 1.5);
+    LATE.clear();
+    interp.takeEvents(renderT, EVS, renderT - 1.5, LATE);
     for (const e of EVS) {
       try { handleEvent(e, renderT); } catch (err) { if (!handleEvent.warned) { handleEvent.warned = true; console.warn('[render] event failed', e, err); } }
     }
@@ -1446,15 +1449,19 @@ export async function createFieldView(host, options = {}) {
         // an enemy's mode change — the `form` of a sim setForm fx (shared/protocol.js fxForm: 掠海漂移体 → 爬行模式, user
         // playtest #5 item 1; 转译基底's forms, a 逐火 ember and its revival, the leaders' 重生, 守墓石像 — user report after
         // 0.1.0) — switches the view's clip set (UnitView.setForm; a kind without a clip set of that skeleton changes
-        // nothing); the info keeps it for a view built later. The client runner never drops these fx (catch-up frames,
-        // hidden-tab backlog), nor does the game screen's pre-entry buffer.
+        // nothing); the info keeps it for a view built later. No client stage drops these fx: battle/runner.js
+        // keepsState (catch-up frames, hidden-tab backlog), screens/game.js keepEarly (the pre-entry buffer) and
+        // render/interp.js isCosmeticEvent (stale-event drop, full-queue shed). One handed out late switches the model
+        // without its telegraph, its closing clip shortened by the lateness.
         const form = fxForm(e);
+        const late = form !== undefined ? LATE.get(e) || 0 : 0;
         if (form !== undefined) {
           const inf = infos.get(e[4].id);
           if (inf && (form === null || FORMS[inf.spine || inf.defId]?.[form])) inf.form = form;
-          views.get(e[4].id)?.setForm?.(form, e[4]);
+          const x = late > 0 && Number(e[4].dur) > 0 ? { ...e[4], dur: Math.max(0, Number(e[4].dur) - late) } : e[4];
+          views.get(e[4].id)?.setForm?.(form, x);
         }
-        fx.simFx(e[1], Number(e[2]), Number(e[3]), e[4]);
+        if (!(late > 0)) fx.simFx(e[1], Number(e[2]), Number(e[3]), e[4]);
         break;
       }
       case 'layer': {

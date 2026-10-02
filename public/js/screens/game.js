@@ -328,6 +328,10 @@ function MatchScreen() {
   // m.field re-render): kept per fieldId and replayed on enter so no unit's 'spawn' UnitInfo is ever lost.
   const evBufRef = useRef(new Map());   // fieldId → ev tuples since that field's m.field
   const snapBufRef = useRef(new Map()); // fieldId → latest snapshot
+  // a new m.field for the field already on screen (a resync, or the runner re-showing it after a hidden-tab backlog
+  // overflowed): its frames are buffered like a new field's until the enter effect re-enters it — enterBattle resets
+  // the view, so a 'spawn' or form fx pushed in between used to be lost (placeholder views, the old model)
+  const reentryRef = useRef(null);
 
   // prep rendering (own board) vs battle rendering (m.field). The field object present when prep starts is stale
   // (last round's battle): combat only enters an m.field pushed after that (a new object), and every new m.field
@@ -361,6 +365,7 @@ function MatchScreen() {
         viewModeRef.current = 'prep';
         lastFieldRef.current = null;
         enteredFieldRef.current = null;
+        reentryRef.current = null;
         setHud(null);
       }
       if (priv) {
@@ -376,6 +381,7 @@ function MatchScreen() {
     if (lastFieldRef.current && lastFieldRef.current !== field.fieldId) setDetail((d) => (d?.kind === 'unit' ? null : d));
     enteredFieldRef.current = field;
     lastFieldRef.current = field.fieldId;
+    reentryRef.current = null;
     viewModeRef.current = 'battle';
     snapUnitsRef.current = new Map();
     view.enterBattle(field);
@@ -423,10 +429,15 @@ function MatchScreen() {
     let pending = null;
     const flush = () => { pending = null; last = performance.now(); setHud(hudRef.current); };
     const onFieldMeta = (msg) => {
-      if (msg && typeof msg.fieldId === 'string') { evBufRef.current.set(msg.fieldId, []); snapBufRef.current.delete(msg.fieldId); }
+      if (!msg || typeof msg.fieldId !== 'string') return;
+      evBufRef.current.set(msg.fieldId, []);
+      snapBufRef.current.delete(msg.fieldId);
+      if (msg.fieldId === lastFieldRef.current) reentryRef.current = msg.fieldId;
     };
+    // the field the view shows now (null while a re-entry of it is pending: its frames are buffered)
+    const shownId = () => (reentryRef.current && reentryRef.current === lastFieldRef.current ? null : lastFieldRef.current);
     const onSnap = (snap) => {
-      const cur = lastFieldRef.current;
+      const cur = shownId();
       if (!snap || typeof snap !== 'object') return;
       if (!cur || (snap.fieldId && snap.fieldId !== cur)) {
         if (typeof snap.fieldId === 'string') snapBufRef.current.set(snap.fieldId, snap);
@@ -444,7 +455,7 @@ function MatchScreen() {
       else if (!pending) pending = setTimeout(flush, HUD_HZ_MS - dt);
     };
     const onEv = (msg) => {
-      const cur = lastFieldRef.current;
+      const cur = shownId();
       if (!msg || !Array.isArray(msg.ev)) return;
       if (!cur || (msg.fieldId && msg.fieldId !== cur)) {
         if (typeof msg.fieldId !== 'string') return;

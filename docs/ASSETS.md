@@ -209,8 +209,9 @@ The resolver's full precedence list is in the header of `tools/assets/anim-roles
 
 The manifest roles describe an enemy's first form. Enemies whose skeleton holds another form's clip set get it from
 `public/js/render/units.js FORMS` (keyed by Spine id, switched by the `form` of the sim's 'phase' / 'ember' / 'revive'
-/ 'telegraph' / 'stone' fx — `shared/protocol.js fxForm`; the client runner keeps these fx through catch-up frames and
-hidden tabs — or, for a view built mid-battle, UnitInfo `form`, which `render/app.js renderInfo` passes to the view; a
+/ 'telegraph' / 'stone' fx — `shared/protocol.js fxForm`; no client stage drops these fx: the runner keeps them through
+catch-up frames and hidden tabs (`keepsState`), the game screen's pre-entry buffer (`keepEarly`) and the render engine's
+event queue (`render/interp.js isCosmeticEvent`) too — or, for a view built mid-battle, UnitInfo `form`, which `render/app.js renderInfo` passes to the view; a
 `change` clip plays once first, an `end` clip is timed from the fx's `dur` to finish as that state ends, keeping the
 current form's death clip until the next form's fx). A blocked or revealed 隐匿 enemy is drawn solid: the sim sends the
 stealth bit only while its 隐匿 is on:

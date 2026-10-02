@@ -9,8 +9,10 @@
 //      field watched later, 联防 observers or a reconnect — starts in the current forms (UnitInfo `form` → render/app.js
 //      renderInfo): it used to draw the warrior / the A model again (the look of report #5) and 掠海漂移体 hovering;
 //   the real client runner (battle/runner.js createBattleRunner) feeding the view the way screens/game.js does, with
-//      janky 0.7 s frames (every frame a catch-up) across the change of a 转译基底·α that walks into 百炼嘉维尔's block:
-//      the view turns 幽灵 (C_*) — the catch-up filter used to drop the form fx, so it stayed on A_Move and died on B_Die.
+//      blocking 1 s long tasks (every frame a catch-up, and the render clock jumps past its 1.5 game s stale-event
+//      window) across the change of a 转译基底·α that walks into 百炼嘉维尔's block: the view turns 幽灵 (C_*) — the
+//      catch-up filter, and then render/interp.js's stale-event drop, used to lose the form fx, so it stayed on A_Move
+//      and died on B_Die.
 //
 // Opt-in (starts Chrome): RENDER_E2E=1 node --test test/render/feedback1-forms.browser.test.js
 // Chrome path: $CHROME_PATH or the macOS default. Screenshots → test/e2e/out/feedback1-*.png.
@@ -126,8 +128,8 @@ async function lateViewInPage(page, port, s, atSecs, setupSrc) {
 
 /**
  * The real client runner in the page (fake socket / store, its default sim loader and clock) feeds the demo's view like
- * screens/game.js (field → enterBattle, snap → pushSnapshot, ev → pushEvents); its animation frames come every `jankMs`
- * real ms for `secs` real s. Returns samples { t, simForm, form, clip, spine, alive } of the 转译基底·α's view and the
+ * screens/game.js (field → enterBattle, snap → pushSnapshot, ev → pushEvents); every frame follows a blocking `jankMs`
+ * real ms long task, for `secs` real s. Returns samples { t, simForm, form, clip, spine, alive } of the 转译基底·α's view and the
  * runner's catch-up count.
  */
 async function runnerInPage(page, port, s, jankMs, secs) {
@@ -155,7 +157,11 @@ async function runnerInPage(page, port, s, jankMs, secs) {
     const out = [];
     const end = performance.now() + secs * 1000;
     while (performance.now() < end) {
-      await sleep(jankMs);
+      // a blocking long task (the main thread stalls: the render engine's own ticker stalls too, so its clock jumps
+      // jankMs × 2 game s at once — past the 1.5 game s stale-event window), then one free frame
+      const until = performance.now() + jankMs;
+      while (performance.now() < until) { /* stall */ }
+      await sleep(16);
       for (const fn of queue.splice(0)) fn(performance.now());
       const tr = e.battle.units.find((u) => u.defId === 'enemy_10081_mpplai');
       const view = tr && v.debug.views.get(tr.id);
@@ -271,10 +277,10 @@ describe('player reports after 0.1.0: the models follow the knock-out forms (hea
       await p.close();
     }
   });
-  test('the real client runner with janky frames (every frame a catch-up): 转译基底·α blocked by 百炼嘉维尔 turns 幽灵 in the view (C_*), never back to A_Move / B_Die', async () => {
+  test('the real client runner with blocking 1 s long tasks (every frame a catch-up, the render clock jumps 2 game s): 转译基底·α blocked by 百炼嘉维尔 turns 幽灵 in the view (C_*), never back to A_Move / B_Die', async () => {
     const { p, problems } = await page();
     try {
-      const { out, catchups } = await runnerInPage(p, srv.port, spec('enemy_10081_mpplai', 'runner', 9, 7), 700, 9);
+      const { out, catchups } = await runnerInPage(p, srv.port, spec('enemy_10081_mpplai', 'runner', 9, 7), 1000, 12);
       await p.screenshot({ path: path.join(OUT, 'feedback1-runner.png') });
       assert.ok(catchups >= 5, `catch-up frames (${catchups})`);
       const changed = out.find((x) => x.simForm === 'translator_youling');

@@ -5,15 +5,18 @@
 // frame (a stall of more than ≈0.53 s real at 2×: only spawn / die / deploy / status / skill / leak passed) and every
 // event while the tab was hidden, so the view kept the first form and the 转译基底·α died on the 寻仇者's B_Die (the
 // review's headless-Chrome repro). Now a catch-up keeps them (keepsState), a hidden tab holds the battle on screen's
-// state-bearing events for the first frame back (≤ HELD_MAX, else the view re-enters from the field meta), and the game
-// screen's pre-entry buffer keeps them too (screens/game.js keepEarly, same predicate).
+// state-bearing events for the first frame back (compacted past HELD_MAX; still past it, the view re-enters from the field
+// meta) — a battle that ended while hidden delivers them when the tab is shown — the game screen's pre-entry buffer keeps
+// them too (screens/game.js keepEarly, same predicate) and so does the render engine's event queue (render/interp.js
+// isCosmeticEvent: never dropped as stale, never shed).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createBattleRunner, keepsState, HELD_MAX } from '../../public/js/battle/runner.js';
+import { createBattleRunner, keepsState, compactHeld, HELD_MAX } from '../../public/js/battle/runner.js';
+import { SnapshotBuffer } from '../../public/js/render/interp.js';
 import { createStore, initialState } from '../../public/js/store.js';
 import * as specMod from '../../server/sim/spec.js';
 import { DataSource } from '../../server/sim/simdata.js';
@@ -157,7 +160,51 @@ test('a hidden tab across the change: nothing rendered meanwhile, the first fram
   r.runner.dispose();
 });
 
-test('a hidden-tab backlog beyond HELD_MAX: the first frame back re-enters the view from the field meta (UnitInfo `form`)', async () => {
+test('compactHeld: a long hidden fight\'s status / skill toggles shrink to the last per unit, everything else stays in order', () => {
+  const list = [['spawn', { id: 1 }], ['status', 1, 'stun', 1], ['skill', 2, 1], ['status', 1, 'stun', 0], ['fx', 'phase', 0, 0, { id: 1, form: 'husk' }],
+    ['status', 1, 'cold', 1], ['skill', 2, 0], ['die', 1, 'killed'], ['status', 1, 'stun', 1]];
+  assert.deepEqual(compactHeld(list), [list[0], list[4], list[5], list[6], list[7], list[8]]);
+});
+
+test('a hidden-tab backlog of status toggles beyond HELD_MAX is compacted: no re-entry, the last state arrives', async () => {
+  const r = rig({ hidden: true });
+  r.net.emit('b.start', start(true));
+  await r.settle();
+  const e = r.runner._entries.get('fb1.runner');
+  for (let i = 0; i < 12 && trOf(e)?.form == null; i++) r.advance(1000, 250);
+  const tr = trOf(e);
+  e.held.push(...Array.from({ length: HELD_MAX }, (_, i) => ['status', tr.id, 'stun', i % 2]));
+  r.advance(500, 250);
+  assert.ok(!e.stale && e.held.length < 100, `compacted (${e.held.length})`);
+  r.show();
+  r.advance(1000 / 60);
+  assert.equal(r.feed.fields.length, 1, 'no re-entry');
+  const first = r.feed.evs[0]?.ev || [];
+  assert.deepEqual(first.filter((x) => x[0] === 'status' && x[2] === 'stun'), [['status', tr.id, 'stun', 1]], 'the last toggle only');
+  assert.deepEqual(formsOf(first, tr.id), ['translator_youling'], 'the form fx kept');
+  r.runner.dispose();
+});
+
+test('the own battle ends while the tab is hidden: showing it delivers the backlog and a last snapshot (no frame runs for a finished battle)', async () => {
+  const r = rig({ hidden: true });
+  r.net.emit('b.start', start(true));
+  await r.settle();
+  const e = r.runner._entries.get('fb1.runner');
+  for (let i = 0; i < 60 && !e.battle.finished; i++) r.advance(1000, 250);
+  assert.ok(e.battle.finished && e.done, 'it ended while hidden');
+  assert.ok(e.held.length > 0, 'its state events wait');
+  const snaps = r.feed.snaps;
+  r.show();
+  const list = all(r.feed);
+  const tr = trOf(e) || { id: list.find((x) => x[0] === 'spawn' && x[1].defId === TR)?.[1].id };
+  assert.ok(list.some((x) => x[0] === 'spawn' && x[1].id === tr.id), 'the spawn');
+  assert.ok(list.some((x) => (x[0] === 'die' && x[1] === tr.id) || (x[0] === 'leak' && x[1] === tr.id)), 'and its end');
+  assert.ok(r.feed.snaps > snaps, 'a last snapshot');
+  assert.equal(e.held.length, 0);
+  r.runner.dispose();
+});
+
+test('a hidden-tab backlog still beyond HELD_MAX after compaction: the first frame back re-enters the view from the field meta (UnitInfo `form`)', async () => {
   const r = rig({ hidden: true });
   r.net.emit('b.start', start(true));
   await r.settle();
@@ -165,7 +212,7 @@ test('a hidden-tab backlog beyond HELD_MAX: the first frame back re-enters the v
   for (let i = 0; i < 12 && trOf(e)?.form == null; i++) r.advance(1000, 250);
   const tr = trOf(e);
   assert.ok(tr?.form, 'changing');
-  e.held.push(...Array.from({ length: HELD_MAX }, () => ['status', tr.id, 'stun', false]));
+  e.held.push(...Array.from({ length: HELD_MAX }, (_, i) => ['spawn', { id: 100000 + i }]), ['status', tr.id, 'stun', 1]);
   r.advance(500, 250);
   assert.ok(e.stale && e.held.length === 0, 'overflow: dropped, marked stale');
   r.show();
@@ -183,4 +230,72 @@ test('screens/game.js buffers the form fx with the state-bearing events it repla
   const src = readFileSync(path.join(ROOT, 'public/js/screens/game.js'), 'utf8');
   assert.match(src, /const keepEarly = \(e\) => Array\.isArray\(e\) && \(STATE_EV\.has\(e\[0\]\) \|\| fxForm\(e\) !== undefined\);/);
   assert.match(src, /for \(const e of msg\.ev\) if \(keepEarly\(e\)\) buf\.push\(e\);/);
+  // a new m.field for the field on screen buffers its frames until the enter effect re-enters it (enterBattle resets)
+  assert.match(src, /if \(msg\.fieldId === lastFieldRef\.current\) reentryRef\.current = msg\.fieldId;/);
+  assert.match(src, /const onEv = \(msg\) => \{\s+const cur = shownId\(\);/);
+  assert.match(src, /lastFieldRef\.current = field\.fieldId;\s+reentryRef\.current = null;/);
+});
+
+/**
+ * The view's side too (render/app.js): the runner's frames go into the render engine's SnapshotBuffer, whose clock
+ * follows the snapshots, and processEvents takes the due events with the 1.5 game s stale-cosmetic window — a form fx
+ * must come out of it (review of the final WD fix: a stall > ≈0.78 s real used to drop it there, the fourth place).
+ */
+function viewRig({ hidden = false } = {}) {
+  const r = rig({ hidden });
+  const interp = new SnapshotBuffer({ delay: 0.034, rate: 2 });
+  const handled = [];
+  let clock = 0;
+  r.runner.on('field', () => interp.reset());
+  r.runner.on('snap', (x) => interp.push(x, clock));
+  r.runner.on('ev', (m) => interp.pushEvents(m.ev, clock, m.gt));
+  const render = (tSec) => {
+    clock = tSec;
+    const rT = interp.update(tSec);
+    if (Number.isFinite(rT)) interp.takeEvents(rT, handled, rT - 1.5);
+  };
+  const advance = r.advance;
+  let realMs = 1000;
+  r.advance = (ms, step = 1000 / 60) => {
+    const end = realMs + ms;
+    while (realMs < end) {
+      const d = Math.min(step, end - realMs);
+      advance(d, d);
+      realMs += d;
+      if (!r.doc.hidden) render(realMs / 1000);
+    }
+  };
+  return { ...r, handled, interp };
+}
+
+test('runner → render engine: one 1.2 s stall right after the change — the view still handles the 幽灵 form fx', async () => {
+  const r = viewRig();
+  r.net.emit('b.start', start(true));
+  await r.settle();
+  const e = r.runner._entries.get('fb1.runner');
+  for (let i = 0; i < 2000 && trOf(e)?.form == null; i++) r.advance(1000 / 60);
+  r.advance(1000 / 60);
+  r.advance(1200, 1200);
+  r.advance(1500);
+  const tr = trOf(e);
+  assert.equal(tr?.form, 'translator_youling');
+  assert.deepEqual(formsOf(r.handled, tr.id), ['translator_youling']);
+  r.runner.dispose();
+});
+
+test('runner → render engine: a watched replica hidden 20 s across the change (catch-up frames of 8 game s on return) — the view handles the form fx', async () => {
+  const r = viewRig();
+  r.net.emit('b.start', start(false));
+  await r.settle();
+  r.advance(300);
+  r.doc.hidden = true;
+  r.advance(20000, 250);
+  r.show();
+  r.advance(4000);
+  const e = r.runner._entries.get('fb1.runner');
+  const id = all(r.feed).find((x) => x[0] === 'spawn' && x[1].defId === TR)?.[1].id;
+  assert.ok(id != null, 'the translator was announced');
+  assert.ok(r.runner.stats().catchups > 0, 'caught up on return');
+  assert.deepEqual(formsOf(r.handled, id), ['translator_youling'], `the view learnt the form (sim: ${trOf(e)?.form ?? 'gone'})`);
+  r.runner.dispose();
 });

@@ -277,8 +277,12 @@ fx announces it as its `form`: a 'phase' fx (crawl, translator_* — also its `k
 ('revived' / 'form2' / 'fly'), 'telegraph' ('reborn') or 'stone' ('stone') — render/units.js FORMS. Barrier / charge
 'phase' kinds carry no `form` and are no forms. A form is state, not decoration (b.snap tuples carry none): the client
 keeps every fx with a `form` (`shared/protocol.js fxForm`) where it drops other events — the runner's catch-up frames
-and its hidden-tab backlog (`battle/runner.js keepsState`), the game screen's events buffered before a field is entered
-(`screens/game.js`); dropping them was report #5's look again after a stall or a background tab.
+and its hidden-tab backlog (`battle/runner.js keepsState`; a backlog past `HELD_MAX` drops only superseded status /
+skill toggles, and a battle that ended while hidden delivers it when the tab is shown), the game screen's events
+buffered before a field is entered (`screens/game.js keepEarly`, also while a re-sent field meta re-enters the field on
+screen) and the render engine's event queue (`render/interp.js isCosmeticEvent`: a form fx is never dropped as stale,
+more than 1.5 game s behind the render clock, nor shed from a full queue; one handed out late switches the model
+without its telegraph); dropping them was report #5's look again after a stall or a background tab.
 
 **Ownership** (`enemy.ownerId`, used for `killed/total` and leak attribution): `ownerPlayerId` if given, else the
 player whose half contains the spawn tile (cols ≥ 11 = right half / player with colOffset 8 or side R). A leak is

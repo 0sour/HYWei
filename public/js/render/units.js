@@ -27,7 +27,7 @@
 // redeploy) plays the deploy clip and restores the normal look; `setDown(null)` on a dead view lets it fade out.
 // An operator that enters a battle already knocked out (联防, user playtest #5 item 2: sim 'die' reason 'forcedExit')
 // goes down with `die(true)`: straight to the held end of the clip, no fall.
-// Enemy modes (sim fx 'phase' { id, kind } or another fx's `form` → `setForm(kind, fx)`): 掠海漂移体 dropping to 爬行模式
+// Enemy modes (the `form` of a sim fx — shared/protocol.js fxForm — → `setForm(form, fx)`): 掠海漂移体 dropping to 爬行模式
 // (user playtest #5 item 1) plays its skeleton's 'Change' clip once, then the crawl set (*_02); 暴鸰 flies on without its
 // bomb (*_2) after the drop (feedback D4); 转译基底's forms, the 逐火 embers, 再生's puppet, the leaders' 重生 and 守墓石像
 // likewise (user report after 0.1.0) — FORMS. A view built later (`info.form` = UnitInfo `form`, the sim's current form,
@@ -113,7 +113,7 @@ export const ALIAS_TINT = Object.freeze({ enemy_1305_mhslim: 0xffc48a, enemy_130
 export const EL_BAR = Object.freeze({ icon: 0.15, min: 8, max: 15, enemy: 0.8, gap: 1, pulse: 0.45, pulseHz: 1.5 });
 
 /**
- * Enemy modes drawn with another clip set of the same skeleton (sim fx 'phase' kind, or the `form` of another sim fx
+ * Enemy modes drawn with another clip set of the same skeleton (the `form` of a sim fx — shared/protocol.js fxForm —
  * → UnitView.setForm), per Spine id; the mode's roles override the manifest's (data/assets.json anims), `change` plays
  * once first:
  * - 掠海漂移体 (PRTS: 受晕眩/沉睡/冻结影响后进入爬行模式 — for good) crawls on its *_02 clips after 'Change';

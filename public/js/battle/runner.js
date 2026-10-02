@@ -15,9 +15,10 @@
 //     ~1 Hz, the bounded fast-forward absorbs that); the server deadline + takeover cover anything worse.
 // A frame that fast-forwards (catch-up) passes on only the state-bearing events (keepsState: spawns, deaths, deploys,
 // statuses, skills, leaks and the fx that change an enemy's model form — shared/protocol.js fxForm); while the tab is
-// hidden the battle on screen keeps the same events (≤ HELD_MAX, else the view re-enters from the field meta) and the
-// first frame back delivers them, so the view still knows every unit and every enemy's current form (player report #5
-// after 0.1.0: a 转译基底·α that changed form during a stall or in a background tab died in its first-form model).
+// hidden the battle on screen keeps the same events (compacted past HELD_MAX; a backlog still past it makes the view
+// re-enter from the field meta) and the first frame back delivers them — or, for a battle that ended while hidden, the
+// visibilitychange itself — so the view still knows every unit and every enemy's current form (player report #5 after
+// 0.1.0: a 转译基底·α that changed form during a stall or in a background tab died in its first-form model).
 // Display replicas (a teammate's field after the own battle, 联防 observers, the partner of a boss pair) run the same
 // spec fast-forwarded to the server's clock (`elapsed`) and never report.
 // A b.result lost with the socket (the request failed DISCONNECTED / OFFLINE, or timed out twice) is kept and sent
@@ -75,8 +76,26 @@ const STATE_EV = new Set(['spawn', 'die', 'deploy', 'status', 'skill', 'leak']);
  * enemy's model form (shared/protocol.js fxForm — dropped, the view kept the old model: player report #5 after 0.1.0).
  */
 export const keepsState = (x) => Array.isArray(x) && (STATE_EV.has(x[0]) || fxForm(x) !== undefined);
-/** Hidden-tab backlog cap (tuples) of the battle on screen; beyond it the view re-enters from the field meta. */
+/**
+ * Hidden-tab backlog cap (tuples) of the battle on screen. Past it the backlog is compacted (compactHeld: only the last
+ * 'status' per unit and status, the last 'skill' per unit — what the view ends up showing); only a backlog still past it
+ * (thousands of spawns) makes the view re-enter from the field meta.
+ */
 export const HELD_MAX = 3000;
+
+/**
+ * A hidden-tab backlog without the superseded toggles: of the 'status' tuples only the last per (unit, status), of the
+ * 'skill' tuples only the last per unit, every other tuple (spawn / die / deploy / leak / form fx — bounded by the units)
+ * kept; order preserved. A long hidden boss fight toggles statuses thousands of times, the rest stays small.
+ */
+export function compactHeld(list) {
+  const last = new Map();
+  list.forEach((x, i) => {
+    if (x[0] === 'status') last.set(`s:${x[1]}:${x[2]}`, i);
+    else if (x[0] === 'skill') last.set(`k:${x[1]}`, i);
+  });
+  return list.filter((x, i) => (x[0] === 'status' ? last.get(`s:${x[1]}:${x[2]}`) === i : x[0] === 'skill' ? last.get(`k:${x[1]}`) === i : true));
+}
 /** Data files the simulation reads (DataSource + content/support gameData()). */
 export const SIM_DATA_FILES = Object.freeze(['chess', 'enemies', 'tokens', 'stages', 'waves', 'bonds', 'items', 'garrisons', 'bands', 'effects']);
 
@@ -343,7 +362,19 @@ export function createBattleRunner(deps) {
     try { ev = e.battle.drainEvents() || []; } catch { ev = []; }
     if (e !== cur || e.stale) return;
     for (const x of ev) if (keepsState(x)) e.held.push(x);
-    if (e.held.length > HELD_MAX) { e.held = []; e.stale = true; }
+    if (e.held.length > HELD_MAX) {
+      e.held = compactHeld(e.held);
+      if (e.held.length > HELD_MAX) { e.held = []; e.stale = true; }
+    }
+  }
+
+  /**
+   * The tab is visible again: the battle on screen that ended while it was hidden (advance() no longer runs for it)
+   * delivers its backlog and last snapshot now — else the view kept the pre-hide state for the rest of the phase.
+   */
+  function flushHidden() {
+    const e = cur;
+    if (e && e.battle.finished && (e.held.length || e.stale)) emitFrame(e, false);
   }
 
   function progress(e, force = false) {
@@ -671,7 +702,7 @@ export function createBattleRunner(deps) {
     }));
   }
   if (doc && typeof doc.addEventListener === 'function') {
-    doc.addEventListener('visibilitychange', () => { if (!hidden()) schedule(); });
+    doc.addEventListener('visibilitychange', () => { if (hidden()) return; flushHidden(); schedule(); });
   }
 
   return {
