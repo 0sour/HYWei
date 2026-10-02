@@ -350,10 +350,11 @@ DPS, bounty picks from the exposure model, item carriers by effect, a tactician'
 | 同盟 绝境 (4 AI) | 5 → 11 / 40 | 11.85 → 12.22 | 5.1 → 10.9 | 224.6 → 215.2 | 155 → 142 of ≈ 310 picks | 2.00 → 3.05 | 2.3 → 2.4 |
 
 绝境 leaks per alive bot in R12 / R13: solo 8.0 / 9.2 → 5.7 / 4.9, co-op 20.5 / 20.7 → 17.6 / 17.8. Decision time per
-bot prep is unchanged (CPU p50 / p95, the rehearsal included: solo 绝境 520 / 1302 → 531 / 1216 ms, co-op 绝境
-405 / 884 → 404 / 910 ms; the heuristics alone 94 / 234 → 93 / 212 and 71 / 186 → 71 / 185 ms — a heavily loaded host,
-so the absolute values are ≈ 3–4× a quiet one; Σ per match within ± 2 %). The tuning sweeps used seeds 101–148 with the
-rehearsal off; the table is a separate seed range.
+bot prep is unchanged (one thread, back to back, seeds 1–6 — solo 绝境 / co-op 绝境; the rehearsal included): wall clock
+p50 / p95 87 / 175 → 82 / 191 ms and 84 / 172 → 80 / 157 ms, CPU 125 / 315 → 120 / 305 ms and 92 / 198 → 90 / 180 ms;
+the heuristics alone (CPU) 30 / 74 → 26 / 64 ms and 17 / 41 → 16 / 35 ms (the lineup search tries identical pieces
+once and reuses the lineup across refreshes); a 机变 pick 0.07 → 0.14 ms (p50). The tuning sweeps used seeds 101–148
+with the rehearsal off; the table above is a separate seed range.
 
 ---
 

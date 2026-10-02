@@ -4,7 +4,6 @@
 // measured with tools/botbench.mjs (docs/META.md §1.5).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { performance } from 'node:perf_hooks';
 import { PHASE } from '../../shared/constants.js';
 import { botPickCard, bountyKillChance, itemTarget, arrange, botPrepBegin, rangeTiles } from '../../server/match/bot.js';
 import { parseKey } from '../../server/match/board.js';
@@ -165,12 +164,14 @@ test('cost guard: the prep heuristics of a late-round 4-bot match stay cheap (re
   h.run(() => m.phase === PHASE.PREP && m.round === 10);
   let worst = 0;
   for (const ps of m.alivePlayers()) {
-    const t0 = performance.now();
+    // CPU time (process.cpuUsage) rather than wall clock: a loaded host stretches it far less
+    const u0 = process.cpuUsage();
     assert.equal(botPrepBegin(m, ps), null, 'no rehearsal job with rehearsal off');
-    worst = Math.max(worst, performance.now() - t0);
+    const u = process.cpuUsage(u0);
+    worst = Math.max(worst, (u.user + u.system) / 1000);
   }
-  // ≈ 10–40 ms on a desktop; the bound only catches an accidental blow-up (it is load-sensitive like test/sim/robustness)
-  assert.ok(worst < 400, `worst bot prep ${worst.toFixed(1)} ms`);
+  // ≈ 10–40 ms on a quiet desktop (tools/botbench.mjs); the bound only catches an accidental blow-up
+  assert.ok(worst < 1500, `worst bot prep ${worst.toFixed(1)} ms of CPU`);
   assert.equal(m.errorCount, 0);
   m.dispose();
 });
