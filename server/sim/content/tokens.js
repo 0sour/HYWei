@@ -1404,7 +1404,7 @@ const SKILL_SUMMONS = Object.freeze({
  */
 const SKILL_SUMMON_PER_CAST = Object.freeze({ [TOKEN_IDS.rosmonGear]: 2, [TOKEN_IDS.goldenOath]: 8 });
 /**
- * Skill summons the per-owner deploy limit does not apply to: the data `deployLimit` (character_table maxDeployCount 1)
+ * Skill summons the per-owner deploy limit does not apply to: the data `deployLimit` (character_table phase maxDeployCount 1)
  * of 黄金盟誓 is a hand count, while 维娜 S3 summons one on every free deployable tile of her talent-1 area at once.
  */
 const SKILL_SUMMON_UNCAPPED = new Set([TOKEN_IDS.goldenOath]);

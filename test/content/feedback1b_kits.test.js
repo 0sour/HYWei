@@ -18,7 +18,7 @@ import { makeMatch, DATA } from '../match/harness.js';
 import { checkLoadout } from '../../shared/protocol.js';
 import { buildBattleSpec, createBattleFromSpec } from '../../server/sim/spec.js';
 import { COLS } from '../../server/sim/constants.js';
-import { makeBattle, enemyRec, checkInvariants } from '../helpers/battleHarness.js';
+import { makeBattle, enemyRec, chessRec, checkInvariants } from '../helpers/battleHarness.js';
 
 const VINA = 'chess_char_6_07_a';
 const MLYNAR = 'chess_char_5_19_a';
@@ -85,7 +85,7 @@ test('B3 维娜·维多利亚 S3 (default skill, real match): a 黄金盟誓 on 
     const t0 = u.def.talents[0].bb;
     for (let i = 0; i < 14; i++) b.step();
     const around = b.allyUnits.filter((a) => a !== u && a.alive && Math.max(Math.abs(a.tileR - u.tileR), Math.abs(a.tileC - u.tileC)) <= 1);
-    assert.ok(around.filter((a) => a.defId === LION).length >= 1);
+    assert.equal(around.filter((a) => a.defId === LION).length, expected.length, 'every lion still around her');
     approx(u.findBuff('siege2:kings').mods.atkPct, t0.atk * around.length, 1e-9, '+5 % per ally around, lions included');
     while (u.skill.active && !b.finished) { b.step(); most = Math.max(most, b.allyUnits.filter((t) => t.defId === LION && t.alive).length); }
     assert.ok(most <= expected.length);
@@ -269,5 +269,76 @@ test('B4 玛恩纳: a kill by the damage his attack carries (卡西米尔 bond t
       approx(bonus() - atCast, 5 * bb.per_kill_reduce, 1e-9, `${label}: 5 kills: −50 points (ramp ${ramp})`);
       assert.deepEqual(h.b.errors.map((e) => `${e.label}: ${e.message}`), []);
     }
+  }
+});
+
+test('B4 玛恩纳: a kill outside his attack does not count, even of an enemy his attack hit — 无动于衷 reflection, a mark another operator set off (PRTS 备注 exclusions)', () => {
+  const tough = enemyRec({ key: 'enemy_tough', hp: 1e9, def: 0, speed: 0, atk: 0 });
+  // a Kazimierz teammate without attacks of its own here: the reflection's target and the mark's trigger
+  const kaz = chessRec({ id: 'test_kaz_a', bonds: ['kazimierzShip'], skill: null, stats: { atk: 1 }, rangeGrid: [[0, 0]] });
+  const setup = (skillIndex) => {
+    const h = makeBattle({
+      defs: { enemies: { enemy_tough: tough }, chess: { test_kaz_a: kaz } },
+      units: [{ chessId: MLYNAR, row: 10, col: 4, dir: 'RIGHT', skillIndex }, { chessId: 'test_kaz_a', row: 9, col: 4, dir: 'RIGHT' }],
+      autoFinish: false, timeLimit: 200,
+    });
+    const u = h.unit(MLYNAR), mate = h.unit('test_kaz_a');
+    let attacked = 0;
+    h.b.on('attack', (c) => { if (c.attacker === u) attacked++; }, { priority: -1000 });
+    const kills = [];
+    h.b.on('kill', (c) => kills.push(c));
+    // his attack has hit `foe` and is over (the hit set is closed): the moment between two of his attacks
+    const afterHisAttackOn = (foe) => {
+      let hitFoe = false;
+      const off = h.b.on('damaged', (c) => { if (c.source === u && c.target === foe && c.dmg?.isAttack) hitFoe = true; });
+      for (let i = 0; i < 300 && !(hitFoe && attacked); i++) { if (!hitFoe) attacked = 0; h.step(); }
+      h.b.off(off);
+      assert.ok(hitFoe && attacked, 'his attack hit the enemy');
+    };
+    const nextAttack = () => { attacked = 0; assert.ok(h.runUntil(() => attacked > 0, 5), 'his next attack'); };
+    return { h, u, mate, kills, afterHisAttackOn, nextAttack };
+  };
+  const killOutside = (h, u, mate, foe, how) => {
+    foe.hp = 1;
+    if (how === 'reflect') h.b.dealDamage(foe, mate, { amount: 1, type: 'phys', isAttack: true }); // 无动于衷 reflects onto it
+    else h.b.dealDamage(mate, foe, { amount: 0.01, type: 'true', isAttack: true }); // the mate's attack sets off his mark
+  };
+  // S3: the bonus stays where it is
+  for (const how of ['reflect', 'mark']) {
+    const { h, u, mate, kills, afterHisAttackOn, nextAttack } = setup(2);
+    h.run(10.5);
+    const A = h.spawn('enemy_tough', { pos: [10, 5] });
+    h.spawn('enemy_tough', { pos: [10, 7] }); // keeps him attacking
+    u.skill.gainSp(1000);
+    assert.ok(h.runUntil(() => u.skill.active, 2));
+    afterHisAttackOn(A);
+    const before = u.s.atk / u.base.atk - 1;
+    killOutside(h, u, mate, A, how);
+    assert.equal(A.alive, false, `S3 ${how}: the enemy is knocked out`);
+    const k = kills.find((c) => c.victim === A);
+    assert.equal(k?.killer, u, `S3 ${how}: by 玛恩纳`);
+    nextAttack();
+    h.step();
+    assert.ok(u.skill.active);
+    assert.equal(u.mem.mlyKills, 0, `S3 ${how}: not a kill of his own attack`);
+    approx(u.s.atk / u.base.atk - 1, before, 1e-9, `S3 ${how}: trait bonus unchanged`);
+    assert.deepEqual(h.b.errors.map((e) => `${e.label}: ${e.message}`), []);
+  }
+  // S2: a reflection kill of an enemy he hit does not keep the ramp
+  {
+    const { h, u, mate, kills, afterHisAttackOn } = setup(1);
+    h.run(20.5);
+    approx(u.trait.ramp, 1, 1e-9, 'ramp after 20 s');
+    const A = h.spawn('enemy_tough', { pos: [10, 5] });
+    h.spawn('enemy_tough', { pos: [10, 6] });
+    u.skill.gainSp(1000);
+    assert.ok(h.runUntil(() => u.skill.active, 2));
+    afterHisAttackOn(A);
+    killOutside(h, u, mate, A, 'reflect');
+    assert.equal(A.alive, false);
+    assert.equal(kills.find((c) => c.victim === A)?.killer, u);
+    assert.ok(h.runUntil(() => !u.skill.active, 40));
+    assert.ok(u.trait.ramp < 0.05, `S2: the ramp resets at the skill end (${u.trait.ramp})`);
+    assert.deepEqual(h.b.errors.map((e) => `${e.label}: ${e.message}`), []);
   }
 });
