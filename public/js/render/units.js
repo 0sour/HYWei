@@ -27,7 +27,7 @@
 // Enemy modes (sim fx 'phase' { id, kind } or another fx's `form` → `setForm(kind, fx)`): 掠海漂移体 dropping to 爬行模式
 // (user playtest #5 item 1) plays its skeleton's 'Change' clip once, then the crawl set (*_02); 转译基底's forms, the 逐火
 // embers, 再生's puppet, the leaders' 重生 and 守墓石像 likewise (user report after 0.1.0) — FORMS. A view built later
-// (UnitInfo `form`, the sim's current form) starts in the mode.
+// (`info.form` = UnitInfo `form`, the sim's current form, through render/app.js renderInfo) starts in the mode.
 // Element gauges (b.snap `elem` → sample `el` / `elFill` / `elUntil` / `elDur`), the official form (PRTS 元素: "模型
 // 下部会显示对应的元素图标，并以白条显示剩余的元素值"; enemies "小尺寸图标（不显示元素图标，仅根据元素种类改变背景色）"): a row
 // right under the unit's own HP / SP bars and inside their span — the element's disc at the left (operators with its

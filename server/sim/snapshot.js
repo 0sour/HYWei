@@ -4,7 +4,8 @@
 // UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?,
 //   form?, skillIndex?, moduleId? }  (form = an enemy's current model form, content/enemies.js setForm)
 //   dir = 'UP'|'RIGHT'|'DOWN'|'LEFT' (allies: the deploy direction, sim/dir.js); facing = its horizontal sign (±1).
-// flags bits & anim codes come from shared/constants.js (UF / ANIM).
+// flags bits & anim codes come from shared/constants.js (UF / ANIM); an enemy's stealth bit = its 隐匿 is on (not while it
+// is blocked or revealed), an ally's = 隐匿 / 迷彩 whatever it blocks.
 
 import { UF, ANIM } from '../../shared/constants.js';
 import { DIE_ANIM_TIME, ATTACK_ANIM_TIME, DEPLOY_ANIM_TIME } from './constants.js';
@@ -52,8 +53,10 @@ export function flagsOf(u) {
   if (u.side === 'enemy' ? !!u.blockedBy : u.blocking.length > 0) bits |= UF.BLOCKED;
   if (f.stun && !f.freeze && !f.sleep) bits |= UF.STUNNED;
   if (f.freeze) bits |= UF.FROZEN;
-  // 隐匿 or 迷彩 (buffs.js camou): both shown the see-through way, blocking or not (targeting.js canTargetAlly)
-  if (f.stealth || f.camou) bits |= UF.STEALTH;
+  // 隐匿 or 迷彩 (buffs.js camou), shown the see-through way. An ally keeps it while blocking (targeting.js
+  // canTargetAlly); an enemy's 隐匿 is off while it is blocked or revealed (PRTS 作战机制 §隐匿 "在被阻挡时开关会被关掉从而
+  // 失去隐匿"; targeting.js canTargetEnemy): a blocked 逐火 余烬 is drawn solid while the team beats it
+  if (u.side === 'enemy' ? (f.stealth && !f.reveal && !u.blockedBy) || f.camou : f.stealth || f.camou) bits |= UF.STEALTH;
   if (u.skill && u.skill.active && u.skill.kind !== 'passive') bits |= UF.SKILL;
   if (u.s.shield > 0 || u.buffs.some((b) => b.shieldHits > 0)) bits |= UF.SHIELD;
   if (f.invulnerable) bits |= UF.INVULN;

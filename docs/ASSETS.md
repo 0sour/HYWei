@@ -204,8 +204,10 @@ The resolver's full precedence list is in the header of `tools/assets/anim-roles
 
 The manifest roles describe an enemy's first form. Enemies whose skeleton holds another form's clip set get it from
 `public/js/render/units.js FORMS` (keyed by Spine id, switched by the sim's 'phase' fx kind or the `form` of its
-'ember' / 'revive' / 'telegraph' / 'stone' fx — or, for a view built mid-battle, UnitInfo `form`; a `change` clip plays
-once first, an `end` clip is timed from the fx's `dur` to finish as that state ends):
+'ember' / 'revive' / 'telegraph' / 'stone' fx — or, for a view built mid-battle, UnitInfo `form`, which
+`render/app.js renderInfo` passes to the view; a `change` clip plays once first, an `end` clip is timed from the fx's
+`dur` to finish as that state ends). A blocked or revealed 隐匿 enemy is drawn solid: the sim sends the stealth bit only
+while its 隐匿 is on:
 - 掠海漂移体's crawl (`Change`, then `*_02`);
 - 转译基底·α's three forms (`A_Die_B` / `_C` / `_D`, 2 s each, then `B_*` 寻仇者, `C_*` 幽灵, `D_*` 特战术师);
 - the 深池逐火 embers (`Die`, then `Idle_2` / `Move_2` / `Die_2`; `Revive` ends as it stands up) and 假想敌：再生's puppet

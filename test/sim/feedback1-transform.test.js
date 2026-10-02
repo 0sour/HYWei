@@ -492,3 +492,81 @@ test('every enemy starts with the same profile fields and `moving` / `form` (one
   }
   assert.equal(shapes.size, 1, 'one key order for every enemy');
 });
+
+// ---------------------------------------------------------------------------------------------------------------
+// second review: a 重生 clears the statuses; a blocked 隐匿 enemy is drawn solid
+
+describe('a 重生 clears what operators put on the enemy (PRTS 特殊机制 §重生 "清空自身身上除白名单外所有Buff")', () => {
+  test('a 深池逐火战士 knocked out while feared and slowed (叙拉古-style 恐惧 makes it unblockable) is an ember without them: blocked again, beaten by the gun — its own talents stay', () => {
+    const h = arena({ units: [{ chessId: 't_gun', row: 10, col: 4 }, { chessId: 't_wall', row: 9, col: 7 }] });
+    h.step();
+    const e = put(h, 'enemy_1288_duskls', { mods: { speedMul: 1 } });
+    const gun = h.unit('t_gun');
+    assert.ok(h.runUntil(() => !!e.blockedBy, 20), 'blocked by the wall');
+    assert.ok(h.b.applyStatus(e, 'fear', { duration: 30, source: gun }), 'feared');
+    assert.ok(h.b.applyStatus(e, 'slow', { duration: 30, source: gun, value: 0.5 }), 'slowed');
+    h.b.addBuff(e, { key: 'test:opDebuff', duration: 30, mods: { defFlat: -50 }, source: gun });   // a skill's debuff
+    assert.ok(e.s.flags.fear && e.s.flags.unblockable && !e.blockedBy, 'the fear releases it');
+    h.b.kill(e, gun);
+    assert.ok(e.alive && e.form === 'husk', 'knocked out: its 重生');
+    for (const k of ['fear', 'slow', 'test:opDebuff']) assert.equal(e.findBuff(k), null, `${k} cleared by the 重生`);
+    assert.ok(e.findBuff('ab:ember') && e.findBuff('ab:hitCount'), 'the ember\'s own buffs');
+    assert.ok(h.eventsOf('status').some((ev) => ev[1] === e.id && ev[2] === 'fear' && ev[3] === 0), 'the fear icon goes');
+    h.run(HUSK_REBIRTH + 0.1);
+    assert.ok(!e.s.flags.fear && !e.s.flags.unblockable && e.s.flags.stealth, 'a 隐匿 ember that can be blocked');
+    assert.ok(h.runUntil(() => !e.alive, 8), 'blocked, it is beaten before it could stand up');
+    assert.equal(e.removeReason, 'killed');
+    assert.ok(h.b.time < 2 + HUSK_REBIRTH + tb('enemy_1288_duskls', 'Revive[Trigger].interval') + 10);
+  });
+
+  test('锏\'s 重生 clears an operator\'s slow and 脆弱 but keeps its 抵抗 (a self-applied talent status); 守墓石像\'s instant 重生 too', () => {
+    const h = arena({ units: [{ chessId: 't_gun', row: 10, col: 4 }], kits: QUIET_GUNS });
+    h.step();
+    const still = { mods: { speedMul: 0 } };
+    const mace = put(h, 'enemy_1525_blkswb', { pos: [10, 7], ...still });
+    const stone = put(h, 'enemy_1172_dugago', { pos: [11, 7], ...still });
+    const gun = h.unit('t_gun');
+    assert.ok(mace.findBuff('resist'), '锏 has its 抵抗');
+    for (const u of [mace, stone]) {
+      assert.ok(h.b.applyStatus(u, 'slow', { duration: 30, source: gun, value: 0.5 }));
+      assert.ok(h.b.applyStatus(u, 'fragile', { duration: 30, source: gun, value: 0.3 }));
+      h.b.kill(u, gun);
+      assert.ok(u.alive, 'a 重生, not a death');
+      assert.equal(u.findBuff('slow'), null, `${u.defId}: slow cleared`);
+      assert.equal(u.findBuff('fragile'), null, `${u.defId}: 脆弱 cleared`);
+    }
+    assert.ok(mace.findBuff('resist'), '锏 keeps its 抵抗');
+    assert.ok(stone.findBuff('ab:stone'), 'the statue form starts');
+  });
+});
+
+describe('a blocked 隐匿 enemy is drawn solid (b.snap stealth bit: PRTS 作战机制 §隐匿 "在被阻挡时开关会被关掉")', () => {
+  test('the 逐火 ember: see-through while it walks unblocked, solid while blocked or revealed; an ally keeps its 迷彩 / 隐匿 look while blocking', async () => {
+    const { flagsOf } = await import('../../server/sim/snapshot.js');
+    const { UF } = await import('../../shared/constants.js');
+    const h = arena({ units: [{ chessId: 't_wall', row: 9, col: 7 }] });
+    h.step();
+    const e = put(h, 'enemy_1288_duskls', { mods: { speedMul: 1 } });
+    h.run(0.5);
+    h.b.kill(e, null);
+    h.run(HUSK_REBIRTH + 0.1);
+    assert.ok(e.s.flags.stealth && !e.blockedBy);
+    assert.ok(flagsOf(e) & UF.STEALTH, 'unblocked: see-through');
+    const tuple = () => h.b.snapshot().units.find((t) => t[0] === e.id);
+    assert.ok(tuple()[7] & UF.STEALTH, 'in b.snap too');
+    assert.ok(h.runUntil(() => !!e.blockedBy, 10), 'walks into the wall');
+    assert.ok(e.s.flags.stealth, 'the sim keeps the 隐匿 flag (it returns once the block ends)');
+    assert.equal(flagsOf(e) & UF.STEALTH, 0, 'blocked: drawn solid');
+    assert.equal(tuple()[7] & UF.STEALTH, 0);
+    assert.ok(flagsOf(e) & UF.BLOCKED);
+    const g = put(h, 'enemy_1288_duskls', { pos: [11, 9], mods: { speedMul: 0 } });
+    h.b.kill(g, null);
+    h.run(HUSK_REBIRTH + 0.1);
+    assert.ok(flagsOf(g) & UF.STEALTH);
+    h.b.addBuff(g, { key: 'test:reveal', duration: 5, flags: { reveal: true } });
+    assert.equal(flagsOf(g) & UF.STEALTH, 0, 'revealed: drawn solid');
+    const wall = h.unit('t_wall');
+    h.b.addBuff(wall, { key: 'test:stealth', duration: 5, flags: { stealth: true } });
+    assert.ok(wall.blocking.length > 0 && flagsOf(wall) & UF.STEALTH, 'an ally keeps its 隐匿 look while blocking');
+  });
+});

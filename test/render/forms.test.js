@@ -8,6 +8,7 @@
 // 'Die' (its 1 s 重生) and walks as the ember on Idle_2 / Move_2, dying on Die_2, and 'Revive' — timed from the 'ember'
 // fx's `dur` to end as it stands up — brings the warrior back (sim fx 'ember' / 'revive' { form: 'husk' | 'revived' });
 // 假想敌：再生's 傀儡 the same with A_Die / B_* / B_Revive; the leaders' 重生 close on their last clip as the 重生 ends.
+// A view built mid-battle gets the current form from UnitInfo `form` through render/app.js renderInfo (enterBattle).
 
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,10 +24,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const assets = JSON.parse(readFileSync(path.join(ROOT, 'data/assets.json'), 'utf8'));
 const SYUFO = 'enemy_2025_syufo';
 
-let fake, UnitView, FORMS;
+let fake, UnitView, FORMS, renderInfo;
 before(async () => {
   fake = installFakePixi();
   ({ UnitView, FORMS } = await import('../../public/js/render/units.js'));
+  ({ renderInfo } = await import('../../public/js/render/app.js'));
 });
 after(() => fake.restore());
 
@@ -297,26 +299,32 @@ describe('the leaders\' 重生 and 守墓石像 (audit of the knock-out forms af
   });
 });
 
-test('a view built mid-battle from the real sim\'s fieldMeta (fx dropped by a silent catch-up) starts in the current form: the changed 转译基底·α on D_Idle, the 逐火 ember on Idle_2, 锏 after its 重生 on B_Idle', async () => {
+test('a view built mid-battle from the real sim\'s fieldMeta (fx dropped by a silent catch-up), through render/app.js renderInfo — what enterBattle(meta) hands the views — starts in the current form: the changed 转译基底·α on D_Idle / C_Idle, the 逐火 ember on Idle_2, 锏 after its 重生 on B_Idle, 掠海漂移体 crawling', async () => {
   const mage = chessRec({ id: 't_mage', profession: 'CASTER', stats: { atk: 50, blockCnt: 0 }, rangeGrid: [[0, 0]], skill: null });
+  const wall = chessRec({ id: 't_wall', profession: 'TANK', stats: { atk: 0, maxHp: 1e7, blockCnt: 3 }, rangeGrid: [[0, 0]], skill: null });
+  const quiet = () => ({ trait: { noAttack: true } });
   const h = makeBattle({
     stageId: 'act2autochess_m01', content: 'full', seed: 7, autoFinish: false, timeLimit: 600, modeId: 'mode_multi_hard', round: 3,
-    defs: { chess: { t_mage: mage } }, units: [{ chessId: 't_mage', row: 12, col: 2 }], kits: { t_mage: () => ({ trait: { noAttack: true } }) },
+    defs: { chess: { t_mage: mage, t_wall: wall } }, units: [{ chessId: 't_mage', row: 12, col: 2 }, { chessId: 't_wall', row: 9, col: 4 }],
+    kits: { t_mage: quiet, t_wall: quiet },
   });
   h.step();
   const still = { mods: { speedMul: 0 } };
-  const tr = h.b.spawnEnemy('enemy_10081_mpplai', { pos: [9, 8], ...still });
-  const ember = h.b.spawnEnemy('enemy_1288_duskls', { pos: [10, 8], ...still });
-  const mace = h.b.spawnEnemy('enemy_1525_blkswb', { pos: [11, 8], ...still });
+  const tr = h.b.spawnEnemy('enemy_10081_mpplai', { pos: [10, 8], ...still });
+  const ghost = h.b.spawnEnemy('enemy_10081_mpplai', { pos: [9, 4.4], ...still });   // walks into the wall: blocked ⇒ 幽灵
+  const ember = h.b.spawnEnemy('enemy_1288_duskls', { pos: [11, 8], ...still });
+  const mace = h.b.spawnEnemy('enemy_1525_blkswb', { pos: [12, 8], ...still });
+  const drift = h.b.spawnEnemy(SYUFO, { pos: [11, 10], ...still });
   const m = h.unit('t_mage');
   for (let i = 0; i < 4; i++) h.b.dealDamage(m, tr, { amount: 1, type: 'arts' });   // the 4th arts hit ⇒ 特战术师
   h.b.kill(ember, m);
   h.b.kill(mace, m);
+  h.b.applyStatus(drift, 'stun', { duration: 1, source: m });                       // 掠海漂移体 drops to 爬行模式
   const until = h.b.time + 6;
   while (h.b.time < until) { h.b.step(); h.b.drainEvents(); }
   const meta = h.b.fieldMeta();
   const view = async (u) => {
-    const info = meta.units.find((x) => x.id === u.id);
+    const info = renderInfo(meta.units.find((x) => x.id === u.id));
     const ctx = fakeViewCtx(fake.P, { assets: store(info.spine), cam });
     const v = new UnitView(ctx, info);
     await tick(); await tick();
@@ -324,8 +332,20 @@ test('a view built mid-battle from the real sim\'s fieldMeta (fx dropped by a si
     return v;
   };
   assert.equal(clip(await view(tr)), 'D_Idle', '特战术师, not the A model');
-  assert.equal(clip(await view(ember)), 'Idle_2', 'the ember, not the warrior');
+  assert.equal(clip(await view(ghost)), 'C_Idle', '幽灵 (blocked first), not the A model');
+  const e = await view(ember);
+  assert.equal(clip(e), 'Idle_2', 'the ember, not the warrior');
+  e.die();
+  assert.equal(clip(e), 'Die_2', 'and it dies on the ember\'s clip');
   assert.equal(clip(await view(mace)), 'B_Idle', '锏\'s second form');
+  assert.equal(clip(await view(drift)), 'Idle_02', '掠海漂移体 crawls (DESIGN §19.1: a reload used to hover)');
+});
+
+test('render/app.js renderInfo keeps UnitInfo `form` (it used to drop it: views built from fieldMeta drew the first form)', () => {
+  assert.equal(renderInfo({ id: 3, kind: 'enemy', side: 'enemy', defId: 'enemy_1288_duskls', form: 'husk' }).form, 'husk');
+  assert.equal(renderInfo({ id: 3, kind: 'enemy', side: 'enemy', defId: 'enemy_1288_duskls' }).form, undefined);
+  assert.equal(renderInfo({ id: 3, form: 7 }).form, undefined, 'only a string');
+  assert.equal(renderInfo({ kind: 'enemy' }), null, 'no id: no info');
 });
 
 test('render/app.js hands the sim\'s fx \'phase\' kind — or the `form` of any fx, with the fx — to the view and keeps the mode on the unit info', () => {

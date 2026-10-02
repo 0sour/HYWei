@@ -25,7 +25,9 @@
 //   (absorbs arts after RES); frontGuard() — "来自正面的伤害降低" (facing = walking direction or the bigger crowd);
 //   unbalanced() — 失衡 detection (displacement beyond the enemy's own speed; engine displace() has no hook);
 //   husk() — "被击倒时暂时变为…，一段时间后重生" (Revive[Trigger]: every knock-out of the first form ⇒ 1 s 重生 ⇒ a walking
-//   hit-count husk — 隐匿 逐火 embers, the unblockable 再生 puppet — until the real death or its revival); a data-unarmed
+//   hit-count husk — 隐匿 逐火 embers, the unblockable 再生 puppet — until the real death or its revival); every 重生
+//   (reborn / husk / statue) clears the enemy's statuses and the buffs allies gave it (rebirthCleanse, PRTS 特殊机制
+//   §重生 "清空自身身上除白名单外所有Buff"); a data-unarmed
 //   enemy armed by a form (转译基底) sets `e.profile` noAttack / melee / dmgType / maxTargets and attacks through the
 //   engine (ai.js enemyAttack); float() — 近地悬浮 (an air unit that
 //   keeps its ground path, Unit.isFlying; kitSyufo / kitParrot lose it when stunned). `e.profile.canTarget(ally)` = the
@@ -43,7 +45,10 @@
 //                gauge whose burst is the official one (termDescription ba.dt.erosion: "永久降低100点防御力并受到800点物理伤害").
 //   DOT        — damage zones (污染秽蚀: true damage, one tick per second however many cover a unit; 毒雾, 燃烧区域),
 //                bleeding (removed by healing), pulsing auras.
-//   INVISIBLE  — permanent `stealth` flag (engine: untargetable unless blocked or revealed; AoE still hits).
+//   INVISIBLE  — permanent `stealth` flag (engine: untargetable unless blocked or revealed). Radius area damage
+//                (Battle.enemiesInRadius: profession splash around a struck target, many skills' circles) still hits
+//                an unblocked one — a known deviation: officially an AoE only judges the enemies it can select (PRTS
+//                作战机制 §AOE伤害判定; ba.invisible vs ba.camou); tile selectors (enemiesInKeys) already skip it.
 //   REFLECTION — 折射 (ba.refraction "生效时，法术抗性+70"): RES +refracting.magic_resistance while NOT silenced
 //                (the ability line is SILENCE-flagged: silencing turns it off); 镜膜 also gets max HP +100 % while on.
 //   SPECIAL    — mostly stats; prisoners, 穿刺手, 暴虐兵长, 镜卫, 动力装甲 … below.
@@ -705,8 +710,25 @@ function freeAllPrisoners(b) {
 }
 
 /**
+ * 重生 "清空自身身上除白名单外所有Buff" (PRTS 特殊机制 §重生): at a 重生 (reborn(), husk(), statue()) the enemy loses every
+ * buff an operator / summon / device put on it and every source-less catalogue status (晕眩, 减速, 恐惧, 脆弱, 诱导 … —
+ * buffs.js STATUS). Kept [ASSUMED: the whitelist]: its talents and traits (`persist` buffs, and what it or another enemy
+ * gave it — 锏's 抵抗 is a self-applied status, enemy auras refresh every few tenths of a second anyway) and the field's
+ * state buffs without a source (terrain, airflow — re-applied by position — and element burst locks). Without it a 逐火
+ * knocked out while feared (叙拉古 / 妮芙: 恐惧 makes it unblockable) stayed unblockable — so, 隐匿, untargetable — as an
+ * ember until the fear ran out.
+ */
+function rebirthCleanse(b, e) {
+  for (const x of e.buffs.slice()) {
+    if (x.persist || (x.source && x.source.side === 'enemy')) continue;
+    if (x.source || x.status) b.removeBuff(e, x);
+  }
+}
+
+/**
  * "首次被击倒后重生 / 进入第二形态": the first knock-out is hidden (kill credit and bounty wait for the real death) and starts
- * a rebirth of `dur` s — invulnerable, untargetable, released by its blocker, inert (no move / attack / skill).
+ * a rebirth of `dur` s — statuses cleared (rebirthCleanse), invulnerable, untargetable, released by its blocker, inert
+ * (no move / attack / skill).
  * `onKo(b, e, a)` runs at once (self-destruct, freeing prisoners …), `during(b, e, a, elapsed)` every tick of it; then the
  * enemy stands up with `hpRatio` of its max HP, `onReborn(b, e, a)` switches the form and `invincible` s of 无敌 follow.
  * `a.state`: undefined → 'reborn' → 'form2'. The 'telegraph' fx of the knock-out carries `form: 'reborn'` and the 'revive'
@@ -731,6 +753,7 @@ function reborn({ dur = 0, hpRatio = 1, invincible = 0, onKo = null, during = nu
       a.state = 'reborn';
       a.t0 = b.time;
       a.noAtk = e.profile.noAttack;
+      rebirthCleanse(b, e);
       e.hp = Math.min(1, e.s.maxHp);
       if (onKo) safe(b, e, () => onKo(b, e, a));
       if (!(dur > 0)) { finish(b, e, a); return true; }
@@ -811,11 +834,12 @@ function artsBarrier(amount, { key = 'ab:artsBarrier', whileUp = null } = {}) {
 
 /**
  * "被击倒时暂时变为…，一段时间后重生" (talent Revive[Trigger]: 逐火 embers, 假想敌：再生's puppet). A knock-out of the first form is
- * no kill (credit, bounty and the kill count wait for the real death): HUSK_REBIRTH s of 重生 first — invulnerable,
- * untargetable, unblockable, immobile, 失衡免疫 (PRTS 深池逐火战士 天赋 "被击倒后重生，持续1s，随后变为怨恨的余烬，1s内不移动且持有
- * 无敌+无法阻挡+失衡免疫"; PRTS 特殊机制 §重生) — then the husk until `delay` s after that: `hits` HP of 特殊生命值机制 (every
- * damage instance removes 1 — PRTS 特殊机制 §特殊生命值机制; engine flag hitCount), no attack (缴械), walking its route on —
- * 隐匿 (`stealthy`: targetable only while blocked, targeting.js canTargetEnemy — the 余烬 must be blocked to be beaten)
+ * no kill (credit, bounty and the kill count wait for the real death): HUSK_REBIRTH s of 重生 first — statuses cleared
+ * (rebirthCleanse: a feared warrior is no unblockable ember), invulnerable, untargetable, unblockable, immobile, 失衡免疫
+ * (PRTS 深池逐火战士 天赋 "被击倒后重生，持续1s，随后变为怨恨的余烬，1s内不移动且持有无敌+无法阻挡+失衡免疫"; PRTS 特殊机制 §重生) —
+ * then the husk until `delay` s after that: `hits` HP of 特殊生命值机制 (every damage instance removes 1 — PRTS 特殊机制
+ * §特殊生命值机制; engine flag hitCount), no attack (缴械), walking its route on — 隐匿 (`stealthy`: targetable only while
+ * blocked, targeting.js canTargetEnemy — the 余烬 must be blocked to be beaten; drawn solid while blocked)
  * and / or unblockable (`unblock`: 再生's 傀儡 "不可被阻挡"). Killing the husk is the real death; a husk still standing
  * after `delay` s stands up in its first form with full HP, and every later knock-out starts it again ("一次又一次地站起").
  * `onHusk(b, e)` runs as the husk begins, after the 重生 ("进入此形态时": 再生's shields).
@@ -848,6 +872,7 @@ function husk({ hits, delay, stealthy = true, unblock = false, onHusk = null, ke
       a.rebornUntil = b.time + HUSK_REBIRTH;
       a.noAtk = e.profile.noAttack;
       a.max = a.max ?? e.base.maxHp;
+      rebirthCleanse(b, e);
       e.profile.noAttack = true;
       e.lastAttackAt = -Infinity;                         // the snapshot shows no attack of the fallen warrior
       setHits(e, hits);
@@ -864,9 +889,10 @@ function husk({ hits, delay, stealthy = true, unblock = false, onHusk = null, ke
 }
 
 /**
- * 守墓石像 (PRTS 守墓石像 天赋): 地面模式 — melee attacks only while blocked; the first defeat is an instant 重生 to 100 % HP
- * into 转换模式 for stone.duration s — unblockable, 自缚 (immobile), 失衡免疫, immune to 浮空, DEF +stone.def, RES
- * +stone.magic_resistance, no attack [ASSUMED: PRTS lists none] — then 飞行模式: a flyer (失衡免疫) whose ranged attacks (the
+ * 守墓石像 (PRTS 守墓石像 天赋): 地面模式 — melee attacks only while blocked; the first defeat is an instant 重生 (statuses
+ * cleared: rebirthCleanse) to 100 % HP into 转换模式 for stone.duration s — unblockable, 自缚 (immobile), 失衡免疫, immune
+ * to 浮空, DEF +stone.def, RES +stone.magic_resistance, no attack [ASSUMED: PRTS lists none] — then 飞行模式: a flyer
+ * (失衡免疫) whose ranged attacks (the
  * data's 1.6 radius) deal arts damage and never target flyers; the HP is not refilled again. fx forms 'stone' / 'fly'
  * (its Sleep and *_2 clips, render/units.js FORMS). <破碎支柱> (an event device) has no counterpart in this mode.
  */
@@ -878,6 +904,7 @@ function statue(ab) {
       if (a.done || !(dur > 0)) return false;
       a.done = true;
       a.noAtk = e.profile.noAttack;
+      rebirthCleanse(b, e);                                 // "进行重生。重生瞬间完成"
       e.profile.noAttack = true;
       e.hp = e.s.maxHp;
       ab2.immune = new Set([...(ab2.immune || []), 'levitate']);

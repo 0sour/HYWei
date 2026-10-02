@@ -4,7 +4,10 @@
 //   #5 转译基底·α walks on its A_* clips, takes 4 physical hits without losing HP, plays its 2 s A_Die_B change and goes on
 //      as 寻仇者 (B_*), dying on B_Die — it used to die in its first form, on B_Die ("加载变身动画然后就没了");
 //   #8 a 深池逐火战士 knocked out in front of 百炼嘉维尔 plays 'Die' (its 1 s 重生), stands there as the 隐匿 ember on
-//      Idle_2 (blocked, so its blocker beats it) and dies on Die_2 — it used to stay an untargetable ember forever.
+//      Idle_2 (blocked, so its blocker beats it) and dies on Die_2 — it used to stay an untargetable ember forever;
+//   a view built mid-battle — the real `view.enterBattle(b.fieldMeta())` after a silent catch-up, as for a teammate's
+//      field watched later, 联防 observers or a reconnect — starts in the current forms (UnitInfo `form` → render/app.js
+//      renderInfo): it used to draw the warrior / the A model again (the look of report #5) and 掠海漂移体 hovering.
 //
 // Opt-in (starts Chrome): RENDER_E2E=1 node --test test/render/feedback1-forms.browser.test.js
 // Chrome path: $CHROME_PATH or the macOS default. Screenshots → test/e2e/out/feedback1-*.png.
@@ -74,6 +77,48 @@ async function runInPage(page, port, s, enemyKey, secs, actSrc) {
     }
     return { out, state };
   }, s, enemyKey, secs, actSrc);
+}
+
+/**
+ * The late view: `spec` runs silently in the page (events drained and dropped, like the client runner's catch-up) while
+ * `setupSrc(b, ally)` changes the enemies' forms; at `atSecs` the field view enters the battle from `b.fieldMeta()` and
+ * follows the feed. Returns { [name]: { clip, form, alive } } of the views of the enemies `setupSrc` returns by name.
+ */
+async function lateViewInPage(page, port, s, atSecs, setupSrc) {
+  await page.goto(`http://127.0.0.1:${port}/dev/render-demo.html?scene=normal-m01&paused=1&panel=0`);
+  await page.waitForFunction('window.__demo && (window.__demo.ready || window.__demo.error)', { timeout: 30000 });
+  return page.evaluate(async (spec, atSecs, setupSrc) => {
+    const setup = new Function('b', 'ally', setupSrc);
+    const { loadBrowserSim } = await import('/js/battle/runner.js');
+    const { data } = await import('/js/data.js');
+    const { spec: S, ds } = await loadBrowserSim();
+    const b = S.createBattleFromSpec(spec, ds, { quiet: true });
+    const v = window.__demo.view;
+    v.setStage(data.lookup('stages', spec.stageId));
+    b.step();
+    const named = setup(b, b.allyUnits[0]);
+    while (b.time < atSecs) { b.step(); b.drainEvents(); }
+    const meta = b.fieldMeta();
+    v.enterBattle(meta);
+    v.setCamera('normal', { rect: meta.rect, side: 'L', instant: true });
+    v.setLocalFeed({ on: true, speed: 2 });
+    const raf = () => new Promise((r) => requestAnimationFrame(() => r()));
+    const read = () => Object.fromEntries(Object.entries(named).map(([k, u]) => {
+      const view = v.debug.views.get(u.id);
+      return [k, { clip: view?.actor?.current ?? null, form: view?.form ?? null, spine: !!view?.spineReady, alive: u.alive, simForm: u.form }];
+    }));
+    for (let i = 0; i < 30; i++) {
+      b.step();
+      if (i % 3 === 2) {
+        const ev = b.drainEvents();
+        if (ev.length) v.pushEvents({ t: 'b.ev', fieldId: meta.fieldId, gt: b.time, ev });
+        v.pushSnapshot(b.snapshot());
+        await raf();
+      }
+      if (i === 15) await new Promise((r) => setTimeout(r, 2500));   // the Spine models load
+    }
+    return read();
+  }, s, atSecs, setupSrc);
 }
 
 describe('player reports after 0.1.0: the models follow the knock-out forms (headless Chrome, real sim)', { skip }, () => {
@@ -146,6 +191,35 @@ describe('player reports after 0.1.0: the models follow the knock-out forms (hea
       assert.ok(ember.some((x) => x.hp < 5), 'its hit counter runs down');
       const dead = out.filter((x) => x.t > state.dead + LAG);
       assert.ok(dead.length > 0 && dead.every((x) => x.clip === 'Die_2'), `dies on Die_2 (${[...new Set(dead.map((x) => x.clip))]})`);
+      assert.deepEqual(problems, []);
+    } finally {
+      await p.close();
+    }
+  });
+
+  test('a view built mid-battle (enterBattle(fieldMeta) after a silent catch-up) starts in the current forms: 特战术师 D_*, 幽灵 C_*, the ember Idle_2 / Move_2, 掠海漂移体 *_02', async () => {
+    const { p, problems } = await page();
+    try {
+      const got = await lateViewInPage(p, srv.port, spec('enemy_1007_slime', 'late', 9, 8), 7.5, `
+        ally.base.atk = 0; ally.markDirty();                              // 百炼嘉维尔 only blocks
+        const still = { mods: { speedMul: 0 } };
+        const shushi = b.spawnEnemy('enemy_10081_mpplai', { pos: [11, 9], ...still });
+        const youling = b.spawnEnemy('enemy_10081_mpplai', { pos: [9, 8.4], ...still });   // blocked ⇒ 幽灵
+        const ember = b.spawnEnemy('enemy_1288_duskls', { pos: [12, 9], ...still });
+        const drift = b.spawnEnemy('enemy_2025_syufo', { pos: [11, 6], ...still });
+        for (let i = 0; i < 4; i++) b.dealDamage(ally, shushi, { amount: 1, type: 'arts' });
+        b.kill(ember, ally);
+        b.applyStatus(drift, 'stun', { duration: 1, source: ally });
+        return { shushi, youling, ember, drift };
+      `);
+      await p.screenshot({ path: path.join(OUT, 'feedback1-lateview.png') });
+      assert.deepEqual(Object.fromEntries(Object.entries(got).map(([k, x]) => [k, x.simForm])),
+        { shushi: 'translator_shushi', youling: 'translator_youling', ember: 'husk', drift: 'crawl' }, 'the sim\'s forms');
+      for (const [k, x] of Object.entries(got)) assert.ok(x.spine && x.alive && x.form === x.simForm, `${k}: a live Spine view in the sim's form (${JSON.stringify(x)})`);
+      assert.match(got.shushi.clip, /^D_/, `特战术师 (${got.shushi.clip})`);
+      assert.match(got.youling.clip, /^C_/, `幽灵 (${got.youling.clip})`);
+      assert.match(got.ember.clip, /^(Idle|Move)_2$/, `the ember (${got.ember.clip})`);
+      assert.match(got.drift.clip, /_02$/, `crawling (${got.drift.clip})`);
       assert.deepEqual(problems, []);
     } finally {
       await p.close();

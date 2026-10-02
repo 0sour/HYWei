@@ -12,7 +12,9 @@
 //                                               new board piece flashes (fx.deploy); a merge's elite — on the tile of
 //                                               the deployed copy it replaced, or on its bench slot — gets the
 //                                               promotion cue instead (render/promote.js, fx.promote)
-//   view.enterBattle(fieldMeta)                 m.field { fieldId, kind, rect, stageId, units: [UnitInfo] }
+//   view.enterBattle(fieldMeta)                 m.field { fieldId, kind, rect, stageId, units: [UnitInfo] } — each
+//                                               unit through renderInfo(UnitInfo) (an enemy's `form`: a view built
+//                                               mid-battle starts in the current model form)
 //   view.pushSnapshot(snap); view.pushEvents(ev | { ev, gt })  b.snap / b.ev wire frames as received (game time in
 //                                               `gt`; a numeric `t` is accepted for raw Battle snapshots / recordings)
 //                                               — 100 ms interpolation buffer; b.snap `down` keeps knocked-out
@@ -242,6 +244,32 @@ export const FORCED_EXIT = 'forcedExit';
  * not a knock-out), nor for an operator entering the battle knocked out (FORCED_EXIT).
  */
 export const showsDeathFx = (info, consumed = false, reason = null) => !consumed && reason !== FORCED_EXIT && info?.kind !== 'device';
+
+/**
+ * The views' info of a battle unit from its UnitInfo (m.field / fieldMeta `units`, a 'spawn' event; snapshot.js
+ * unitInfo), sanitised; null for a malformed entry. `form` — an enemy's current model form (content/enemies.js setForm:
+ * 转译基底·α's forms, a 逐火 余烬, a leader after its 重生, 掠海漂移体's crawl) — makes a view built mid-battle (a teammate's
+ * field watched later, 联防 observers, a reconnect, server-run watchers: no fx of the change is replayed) start on that
+ * clip set (render/units.js FORMS); it used to be dropped here, so such views drew the first form (player report #5).
+ */
+export function renderInfo(u) {
+  if (!u || typeof u !== 'object' || (typeof u.id !== 'number' && typeof u.id !== 'string')) return null;
+  return {
+    id: u.id, uid: u.uid ?? null, kind: u.kind || 'enemy', side: u.side === 'ally' ? 'ally' : 'enemy', ownerId: u.ownerId ?? null,
+    defId: u.defId ?? null, name: u.name ?? '', tier: u.tier ?? 1, golden: !!u.golden, spine: u.spine ?? u.defId ?? null,
+    avatar: u.avatar ?? u.defId ?? null, x: Number(u.x) || 0, y: Number(u.y) || 0, facing: u.facing === -1 ? -1 : 1,
+    maxHp: Number(u.maxHp) || 1, boss: !!u.boss, motion: u.motion,
+    // deploy direction of allies (UnitInfo.dir, DESIGN §3): the model (Back for UP, mirrored for LEFT) and the
+    // ground wedge follow it; absent = unknown (legacy frames) → derived from `facing`, no wedge
+    dir: typeof u.dir === 'string' ? u.dir : undefined,
+    // an enemy's current model form (UnitInfo.form): the view starts in it (UnitView reads info.form)
+    form: typeof u.form === 'string' ? u.form : undefined,
+    // DESIGN §16 loadout of an ally (UnitInfo.skillIndex / moduleId): the Spine actor plays that skill's clip, and a
+    // tap hands them to the detail card (a teammate's unit shows its owner's skill / module)
+    skillIndex: Number.isInteger(u.skillIndex) ? u.skillIndex : undefined,
+    moduleId: typeof u.moduleId === 'string' ? u.moduleId : undefined,
+  };
+}
 
 /** '2d' | '3d' | 'auto' board preference: `?board=` in the page URL (dev), else the view option. */
 export function boardPreference(opt) {
@@ -1283,21 +1311,8 @@ export async function createFieldView(host, options = {}) {
   }
 
   function addInfo(u) {
-    if (!u || typeof u !== 'object' || (typeof u.id !== 'number' && typeof u.id !== 'string')) return null;
-    const info = {
-      id: u.id, uid: u.uid ?? null, kind: u.kind || 'enemy', side: u.side === 'ally' ? 'ally' : 'enemy', ownerId: u.ownerId ?? null,
-      defId: u.defId ?? null, name: u.name ?? '', tier: u.tier ?? 1, golden: !!u.golden, spine: u.spine ?? u.defId ?? null,
-      avatar: u.avatar ?? u.defId ?? null, x: Number(u.x) || 0, y: Number(u.y) || 0, facing: u.facing === -1 ? -1 : 1,
-      maxHp: Number(u.maxHp) || 1, boss: !!u.boss, motion: u.motion,
-      // deploy direction of allies (UnitInfo.dir, DESIGN §3): the model (Back for UP, mirrored for LEFT) and the
-      // ground wedge follow it; absent = unknown (legacy frames) → derived from `facing`, no wedge
-      dir: typeof u.dir === 'string' ? u.dir : undefined,
-      // DESIGN §16 loadout of an ally (UnitInfo.skillIndex / moduleId): the Spine actor plays that skill's clip, and a
-      // tap hands them to the detail card (a teammate's unit shows its owner's skill / module)
-      skillIndex: Number.isInteger(u.skillIndex) ? u.skillIndex : undefined,
-      moduleId: typeof u.moduleId === 'string' ? u.moduleId : undefined,
-    };
-    infos.set(info.id, info);
+    const info = renderInfo(u);
+    if (info) infos.set(info.id, info);
     return info;
   }
 
