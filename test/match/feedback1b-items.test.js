@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { DATA, makeMatch, give, giveItem, legalTileFor, checkInvariants } from './harness.js';
 import { tileKey } from '../../server/match/board.js';
 import { applyCard } from '../../server/match/choices.js';
+import { makeCtx } from '../../server/match/effectsMeta.js';
 
 const WHITE = 'chess_item_1_05_e_a';
 const GOLD = 'chess_item_1_05_e_b';
@@ -132,6 +133,22 @@ test('a promotion that returns equipment merges a returned pair (latent: no norm
   assert.ok([...ps.board.values()].some((p) => p.id === DATA.chess[op].goldenId), 'the elite formed');
   assert.deepEqual(count(ps), { white: 0, gold: 1 }, '"干员晋级后已配发装备会回收至整备区" + the auto-merge');
   checkInvariants(m);
+});
+
+test('an effect that removes an operator (ctx.destroyPiece) merges a returned pair (latent: no normal state holds a pair)', () => {
+  const { m, ps } = prep();
+  const [a] = deploy(m, ps, [OP]);
+  // built directly: the carrier's white and a white in the hand — every entry path would have merged them at once
+  a.items = [ps.newPiece('item', WHITE)];
+  ps.hand[ps.hand.findIndex((x) => x == null)] = ps.newPiece('item', WHITE);
+  ps.recompute();
+  // the path of 突变细胞 / the recruit-and-gift item / the round-start promotion item (builtinMeta, content/items/meta.js)
+  const ctx = makeCtx(m, ps, { kind: 'item', key: 'item:test' }, 'onRoundStart');
+  assert.equal(ctx.destroyPiece(a.uid), true);
+  assert.equal(ps.find(a.uid), null, 'the operator is gone');
+  assert.deepEqual(count(ps), { white: 0, gold: 1 }, '"在失去该干员…" returns the equipment, then the auto-merge');
+  checkInvariants(m);
+  m.dispose();
 });
 
 test('random intents around 源石溶剂 (buy, equip / replace, sell, move, destroy) conserve W + 2·G and never leave a pair', () => {

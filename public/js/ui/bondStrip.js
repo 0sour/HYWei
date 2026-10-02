@@ -60,10 +60,11 @@ export function BondStrip({ bonds, layersDisabled = false, onOpen, openId = null
 /**
  * Bond detail popup.
  * @param {{ bondId: string, entry?: any, priv?: any, banned?: string[], onClose: Function, onMember?: (chessId:string)=>void,
- *   place?: 'left'|'beside'|'besideR'|'right'|null, over?: boolean, beside?: 'left'|'right'|null, owner?: string|null }} props —
+ *   place?: 'left'|'beside'|'besideR'|'right'|null, over?: boolean, beside?: 'left'|'right'|null, owner?: string|null, off?: boolean }} props —
  *   `place`: where it opens (gameLogic bondPopupPlace; `beside: 'left'` = the older spelling of 'beside'); `over`: above the
  *   detail card; `owner`: the watched teammate's name (`entry` / `priv` are then theirs: ui/watchBonds.js); `off`: the mode
- *   never activates this bond (gameLogic modeOffBonds — 标准's 10 inactive bonds): 本局禁用 instead of 未激活, with a note
+ *   never activates this bond (gameLogic modeOffBonds — 标准's 10 inactive bonds): 本局禁用 instead of 未激活, with a note, no
+ *   在场 count and no 当前效果 block (its numbers would promise an effect the mode never gives; the bond text stays)
  */
 export function BondPopup({ bondId, entry, priv, banned = [], onClose, onMember, place = null, over = false, beside = null, owner = null, off = false }) {
   const b = data.lookup('bonds', bondId);
@@ -76,7 +77,7 @@ export function BondPopup({ bondId, entry, priv, banned = [], onClose, onMember,
   const members = bondMembers(b, priv, banned, (id) => data.lookup('chess', id));
   const countsHand = entry?.countsHand ?? b.countsHand;
   const next = nextThreshold(count, th);
-  const hasNow = !!(b.effectDescRaw || b.effectDesc);
+  const hasNow = !off && !!(b.effectDescRaw || b.effectDesc);
   const at = place || (beside === 'left' ? 'beside' : 'left');
   return html`<div class=${cx('bpop', 'brackets', `bpop--${at}`, over && 'is-over', owner && 'is-other')} data-place=${at} data-owner=${owner || null}
       role="dialog" aria-label=${owner ? `${owner} 的盟约：${b.name}` : `盟约：${b.name}`}>

@@ -19,9 +19,11 @@
 //                      instances multiplied (×5.4 × ×5.6 on a leader at ~250 layers, DESIGN §20.10). PRTS 盟约记录's own
 //                      note "※同一单位仅可对同一目标同时施加1个该盟约法术伤害提升效果" (one instance per unit and target)
 //                      fits it under the engine default (a newer same-named buff waits until the earlier ends, PRTS
-//                      常见同名状态); strongest vs earliest and a unit refreshing its own stay [ASSUMED]. Re-measured after
-//                      the 0.1.0 report "奥术盟约不生效": it works on the real and the browser path
-//                      (test/sim/feedback1b-arcane.test.js); 标准 never activates it (modeDataDict inactiveBondIdList)
+//                      常见同名状态); strongest vs earliest is [ASSUMED]. Known deviation [ASSUMED]: an earlier revision
+//                      (oldid 386936) forbade a unit re-applying while its own instance lasts; an equal hit here
+//                      refreshes it to a fresh 3 s (slightly stronger). Re-measured after the 0.1.0 report
+//                      "奥术盟约不生效": it works on the real and the browser path (test/sim/feedback1b-arcane.test.js);
+//                      标准 never activates it (modeDataDict inactiveBondIdList)
 //   坚守 steadShip     all operators max HP +(base + per·L); tier 2: 40 % of a non-member operator's damage is borne by
 //                      the members on the field (split evenly, sourceless true damage — already mitigated), members’ thorns
 //                      (base + per·L arts, sourceless but credited to the member hit, ≤ 1 per cd_duration per member)
