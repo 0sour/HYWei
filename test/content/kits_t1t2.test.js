@@ -1292,14 +1292,22 @@ test('2_11 风丸: while substituted she fights with the <替身> ATK/DEF (+modu
   }
 });
 
-test('2_13 蒂比: only enemy attacks set off 紧急赶场通知; a true-damage attack triggers it but is not dodged', () => {
+test('2_13 蒂比: any damage instance sets off 紧急赶场通知 (PRTS 修正 "受到伤害前触发") and a physical one is dodged; a 流失 does not; a true-damage attack triggers it but is not dodged', () => {
   const id = 'chess_char_2_13_a';
+  const g = run({ units: [{ chessId: id, row: 9, col: 5, carryState: READY }] });
+  const v = g.unit(id);
+  g.step();
+  g.b.loseHp(v, 50);
+  g.step();
+  assert.equal(v.skill.active, false, 'a 流失 never triggers it');
+  const hp = v.hp;
+  g.b.dealDamage(null, v, { amount: 50, type: 'phys' });
+  assert.ok(v.skill.active, 'a non-attack (sourceless) damage instance triggers it');
+  assert.equal(v.hp, hp, '…and the physical damage is dodged');
+  done(g);
   const h = run({ defs: { enemies: { e: dummy('e', { atk: 300, bat: 1, dmgType: 'true' }) } }, units: [{ chessId: id, row: 9, col: 5, carryState: READY }] });
   const u = h.unit(id);
   h.step();
-  h.b.dealDamage(null, u, { amount: 50, type: 'phys' });
-  h.step();
-  assert.equal(u.skill.active, false, 'non-attack damage never triggers it');
   h.spawn('e', { pos: [9, 5] });
   h.runUntil(() => u.skill.active, 3);
   assert.ok(u.skill.active, 'the attack triggered it');

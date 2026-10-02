@@ -87,6 +87,27 @@ export function makeDamageInfo(d = {}) {
   };
 }
 
+/**
+ * DamageInfo of the official `periodic_damage` template — 源石溶剂 (PRTS 盟约记录: "受到60真实伤害", 修正 "并非流失", 备注
+ * "造成无来源真实持续环境伤害"), 狂暴宿主组长 ("自身每秒受到500无来源真实伤害"): 无来源 true 持续 damage (PRTS 伤害分类: attack
+ * type BUFF, "自残类型"). A damage instance, not a 流失 (Battle.loseHp skips every damage event — PRTS 作战机制 "生命流失不会
+ * 触发反伤、受击回复"): shields, damage-taken multipliers and target-side `hit` effects apply, and it is a "受到伤害" for
+ * 受击回复 SP and the 重装 TAKE_DAMAGE trigger. Tagged 'dot' (a fixed-value DoT: ATK multipliers skip it; 锡人's 持续伤害
+ * boost takes it) and 'periodic'. The caller passes the credit (the carrier / null) as the dealDamage source.
+ */
+export function periodicDamage(amount) {
+  return makeDamageInfo({ amount, type: 'true', canDodge: false, sourceless: true, tags: ['dot', 'periodic'] });
+}
+
+/**
+ * Is this the DamageInfo of a 流失 (Battle.loseHp, tag 'hpLoss')? Its `damaged` hook still runs (stats, leader parts,
+ * HP thresholds), but a 流失 is not "受到伤害": "受到伤害时" content (heals, counters, 未受伤害 timers, 反伤 chances)
+ * skips it — PRTS 作战机制 "生命流失…跳过所有结算与伤判效果…不会触发反伤、受击回复等受到攻击触发的时点".
+ */
+export function isHpLoss(dmg) {
+  return !!dmg && Array.isArray(dmg.tags) && dmg.tags.includes('hpLoss');
+}
+
 /** 沉睡 (ba.sleep "无敌且无法行动"): only attackers whose profile has `hitSleep` (or `ignoreSleep` damage) reach a sleeper. */
 function sleepBlocks(target, source, dmg) {
   return !!target.s.flags.sleep && !dmg.ignoreSleep && !(source && source.profile && source.profile.hitSleep);

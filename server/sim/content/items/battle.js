@@ -36,7 +36,7 @@ import {
   num, itemRecord, itemKeyOf, buffsOf, isOp, onField, unitBonds, isMember, bondActive, isGroundOp, frontTile,
   alliesAround, passiveBuff, fxOn, battleStore, contentInfo, itemsOf, directMods,
 } from '../support/index.js';
-import { mitigate, hasHp } from '../../damage.js';
+import { mitigate, hasHp, periodicDamage, isHpLoss } from '../../damage.js';
 
 // =====================================================================================================================
 // data helpers
@@ -315,11 +315,15 @@ function onAttackEnemies(S, u, fn) {
 
 /** Generic buff-key behaviours (shared by several items). */
 const BY_BUFF = {
-  // 源石溶剂: 每秒流失 damage 点生命值 (HP loss, may kill)
+  // 源石溶剂: the text's "每秒流失 damage 点生命值" is officially 每秒受到 damage 点真实伤害 (PRTS 盟约记录 修正 "并非流失", 备注
+  // "造成无来源真实持续环境伤害"; the `periodic_damage` template — also 狂暴宿主 "自身每秒受到N无来源真实伤害"): a damage instance,
+  // not a 流失 — shields, damage-taken modifiers and the target-side `hit` effects apply, and it is a "受到伤害" for 受击回复
+  // SP, the 重装 TAKE_DAMAGE trigger and 信仰搅拌机 S3's counters (player report D1). 无来源: hooks see no source; the carrier
+  // keeps the credit (a carrier the drain finishes off is its own kill, as before). May kill.
   periodic_damage(battle, u, p, S) {
     const d = num(p.damage);
     if (!(d > 0)) return;
-    S.stat('drain', null, { interval: 1, onTick: ({ unit }) => { if (unit.deployed) battle.loseHp(unit, d, { source: unit }); } });
+    S.stat('drain', null, { interval: 1, onTick: ({ unit }) => { if (unit.deployed) battle.dealDamage(unit, unit, periodicDamage(d)); } });
   },
   // 奥术法阵: 攻击使目标失去特殊能力 silence s
   silence_attachment(battle, u, p, S) {
@@ -439,14 +443,14 @@ const BY_ITEM = {
       S.buff(u, { key, mods, refresh: 'stack', stacks: 1, maxStacks: cap, persist: true, allowDead: true });
     });
   },
-  // 伪装服: first damage taken in the battle ⇒ 隐匿 `duration` s
+  // 伪装服: first damage taken in the battle ⇒ 隐匿 `duration` s (a 流失 is not 受到伤害: damage.js isHpLoss)
   chess_item_4_04_e(battle, u, rec, S) {
     const p = bp(rec, 'act2autochess_equip_acarm055_global_buff');
     const d = p ? num(p.duration) : 0;
     if (!(d > 0)) return;
     let used = false;
     S.on('damaged', (c) => {
-      if (used || c.target !== u || !(c.amount > 0) || !u.alive) return;
+      if (used || c.target !== u || !(c.amount > 0) || !u.alive || isHpLoss(c.dmg)) return;
       used = true;
       battle.applyStatus(u, 'stealth', { duration: d, source: u });
       fxOn(battle, 'camouflage', u, 'item:chess_item_4_04_e', rec.id, { duration: d });

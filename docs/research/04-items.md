@@ -155,7 +155,7 @@ Param names below are the keys of `items[].normal.params` / `items[].golden.para
   params: `atk=0.15/0.25`; buff keys: `env_gbuff_new_with_verify`
 - **坚守盾牌** (`chess_item_1_02_e_a`, TI, 1) - DEF% += def  
   params: `def=0.2/0.35`; buff keys: `env_gbuff_new_with_verify`
-- **源石溶剂** (`chess_item_1_05_e_a`, TI, 1) - ATK% += atk; in battle carrier loses `damage` HP per second (periodic self-damage, true/unmitigated [ASSUMED], can kill the carrier [ASSUMED]).  
+- **源石溶剂** (`chess_item_1_05_e_a`, TI, 1) - ATK% += atk; in battle the carrier takes `damage` true damage per second — 无来源 持续 damage, not a 流失 (PRTS 盟约记录 修正 "并非流失", 备注 "造成无来源真实持续环境伤害"): shields and damage-taken modifiers apply, it counts as 受到伤害 (受击回复 SP, the 重装 skill trigger, 信仰搅拌机 S3 counters); can kill the carrier.  
   params: `atk=0.4/0.6, damage=60.0`; buff keys: `env_gbuff_new_with_verify, env_gbuff_new_with_verify`
 - **不屈弹射器** (`chess_item_2_01_e_a`, TII, 1) - respawnTime *= (1 + respawn_time) (i.e. -30%/-50%); maxHP% += max_hp (-30%).  
   params: `respawn_time=-0.3/-0.5, max_hp=-0.3`; buff keys: `env_gbuff_new_with_verify`

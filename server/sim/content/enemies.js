@@ -57,7 +57,7 @@
 
 import { TICK, MOVE_SCALE, ELEMENT, ATTACK_PAUSE } from '../constants.js';
 import { canTargetAlly, sortAllyTargets, aggroCmp } from '../targeting.js';
-import { mitigate } from '../damage.js';
+import { mitigate, periodicDamage } from '../damage.js';
 
 // ---------------------------------------------------------------------------------------------------------------
 // constants (numbers that exist nowhere in the data)
@@ -1026,7 +1026,9 @@ function kitChimera(ab) {
       if (pulse) a.acc -= 1;
       for (const u of b.alliesInRadius(e.x, e.y, CHIMERA_AURA_RADIUS)) {
         auraBuff(b, u, 'ab:originium', 0.25, { spRecoveryMul: Math.max(0, 1 + spr) }, null, true);
-        if (pulse && dmg > 0) b.loseHp(u, dmg, { source: e });
+        // PRTS "持续视为受到源石污染区影响…受到50真实持续伤害": a damage instance (受击回复, the 重装 trigger), not a 流失 —
+        // 无来源 like the 源石污染区 terrain it stands for [ASSUMED], the chimera keeps the credit
+        if (pulse && dmg > 0) b.dealDamage(e, u, { ...periodicDamage(dmg), tags: ['dot', 'pollution'] });
       }
     },
   }];
@@ -2294,7 +2296,7 @@ export const KITS = Object.freeze({
   enemy_1067_snslime: (ab, e) => [deathBoom({ scale: T(ab, 'boom.atk_scale') ?? 0, r: (e.def.raw.stats && e.def.raw.stats.rawRangeRadius) || BOOM_RADIUS, status: { key: 'cold', dur: T(ab, 'boom.freeze') ?? 0 } })], // 冰爆源石虫 · death: phys blast + cold
   enemy_1069_icebrk_2: (ab) => [{ hitOut(c, b, e) { if (c.dmg.isAttack && c.target.s.flags.freeze) c.dmg.amount *= T(ab, 'atkup.atk_scale') ?? 1; } }], // 雪怪小队破冰者 · ×3 vs frozen
   enemy_1026_aghost: () => [unblockable()],                          // 幽灵组长 · unblockable
-  enemy_1062_rager_2: (ab) => [{ iv: 1, tick(b, e) { b.loseHp(e, T(ab, 'periodic_damage.damage') ?? 0, { source: null }); } }], // 狂暴宿主组长 · loses HP over time
+  enemy_1062_rager_2: (ab) => [{ iv: 1, tick(b, e) { const v = T(ab, 'periodic_damage.damage') ?? 0; if (v > 0) b.dealDamage(null, e, periodicDamage(v)); } }], // 狂暴宿主组长 · "自身每秒受到500无来源真实伤害" (damage, not 流失)
   enemy_1183_mlasrt: (ab) => [ep('erosion', T(ab, 'EpDamage.attack@ep_damage_ratio') ?? 0), nthAttackPower(nthOf(ab.sk.PowerAttack), (ab.sk.PowerAttack && ab.sk.PowerAttack.bb.atk_scale) || 1)], // 无胄盟清扫小队 · erosion; every 4th attack ×1.5
   enemy_1273_stmgun_2: (ab) => [skill(ab.sk.Cannon, (b, e) => {     // 高准度伦蒂尼姆城防自行炮 · locks the highest max-HP unit, bombards the highest HP% around it
     const lock = allTargets(b, e).sort((p, q) => q.s.maxHp - p.s.maxHp)[0];
