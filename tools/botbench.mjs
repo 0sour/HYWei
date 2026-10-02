@@ -12,6 +12,8 @@
 //   --json F    write the raw per-match records to F (the input of --compare)
 //   --jobs N    run the matches in N worker threads (outcomes are identical; the timings are then inflated by the
 //               parallel load — measure decision time with --jobs 1)
+//   --band ID   solo configs only: the bot plays strategy ID (e.g. band_cannot) instead of its weighted pick — a band's
+//               mechanic in isolation (坎诺特 banking, 杜宾's 教鞭, 昆图斯's 突变细胞)
 //
 // Per match: victory, rounds passed, LP left (the alive players at the end; a won Final Assault: the team LP), and per
 // bot and round: LP, shop level, deployed units, active bonds and Σ bond tiers, activated layers, board value (Σ shop
@@ -76,6 +78,8 @@ function runOne(cfg, seed) {
     roomCode: 'BENCH', mode: cfg.mode, difficulty: cfg.difficulty, seats, seed, data, log, scheduler: sched, botRehearsal: rehearsal,
     send: () => true, broadcast: () => {}, onEnd: (s) => { summary = s; },
   });
+  // --band: the only strategy on offer (botPickBand draws from gd.bandIds())
+  if (opt.band && cfg.mode === 'solo') m.gd.bandIds = () => [String(opt.band)];
   const rec = { config: cfg.name, seed, stageId: m.stageId, bossId: m.bossId, preps: [], picks: [], rounds: [], bounties: [] };
   // rehearsal stepping time (Battle.step of the rehearsal fields)
   let rehMs = 0;
