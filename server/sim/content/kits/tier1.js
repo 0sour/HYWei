@@ -929,10 +929,13 @@ export default {
   // ---------------------------------------------------------------------------------------------------------------
   // 1_19 野鬃 夹枪冲锋: wider range (skill grid), ATK +atk, "攻击会把目标往攻击方向中等力度地推开" (attack@force 1 = 中力) by
   // the official 力度 − 重量 distance (Battle.push: weight 0 → 2.14 tiles, 1 → 1.7, 2 → 0.44, 3 → 0.12, ≥ 4 → none; user
-  // playtest #6 item 14). "往攻击方向" is the 推击手 wording (阿消 S1 / S2, 温蒂 S1, 食铁兽 S1, 见行者 S1), which PRTS 推与拉
-  // calls 方向力: a push along her direction, radial at 受力等级 −2 for a target > 45° off it or < 0.25 tile away (特殊修正)
-  // — so an enemy she grabs behind her centre (the hand-over after a push freed her block) is not thrown 1.7 tiles
-  // towards the objective (player feedback D2, "往攻击方向相反方向推"; it was a radial push before).
+  // playtest #6 item 14). A directional push (方向力, PRTS 推与拉): the client's S2 attack ability (charpack
+  // char_496_wildmn, anim Skill_2) carries buff wildmn_s_2[force] of template knockback[dir] — buff_template_data:
+  // Knockback {_useSourceDirection: true, _decreaseForceLevelWhenNotInDirection: 2} — i.e. along her deploy direction,
+  // radial at 受力等级 −2 for a target > 45° off it or < 0.25 tile away (特殊修正); the radial pushes are
+  // knockback[relative] (琳琅诗怀雅 S3, 山 S3, 莫斯提马 S3). Her text uses the 推击手 wording "往攻击方向". So an enemy she
+  // grabs behind her centre (the hand-over after a push freed her block) is not thrown 1.7 tiles towards the objective
+  // (player feedback D2, "往攻击方向相反方向推"; it was a radial push before).
   // 一致向前: after deploying (normal flag 0: first deployment only; elite flag 1: every deployment) every undeployed
   // 【近卫】 operator of the player costs `value` less DP to deploy (≤ max_stack_cnt per operator until it deploys).
   // Alternate S1 骑枪刺击 (PASSIVE, ON_DEPLOY): for `duration` s after every deployment ASPD +attack_speed.

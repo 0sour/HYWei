@@ -1,15 +1,18 @@
 // Player feedback after 0.1.0, batch 4, workstream WM — D2 "干员野鬃的技能有时会把怪物往攻击方向相反方向推".
 //
-// Official: 野鬃 S2 夹枪冲锋 "攻击会把目标往攻击方向中等力度地推开" — the very wording of the 推击手 pushes (阿消 S1 / S2, 温蒂 S1,
-// 食铁兽 S1, 见行者 S1: "往攻击方向…推开"), which PRTS 推与拉 calls 方向力 ("如果该目标被沿着设定的方向推动，则该力是方向力…
-// 常见的推击手特种干员的推力即为此种力"): a push along her deploy direction, turned radial at 受力等级 −2 when the target
-// is more than 45° off that direction or nearer than 0.25 tile ("特殊修正"). The remake pushed her targets radially at
+// Official: 野鬃 S2 夹枪冲锋 "攻击会把目标往攻击方向中等力度地推开" is a 方向力 (PRTS 推与拉: "如果该目标被沿着设定的方向推动，
+// 则该力是方向力…常见的推击手特种干员的推力即为此种力"; the 推击手 use the same "往攻击方向…推开" wording). Client data: her
+// S2 attack ability (charpack char_496_wildmn, anim Skill_2) carries buff wildmn_s_2[force] of template knockback[dir],
+// which buff_template_data defines as Knockback {_useSourceDirection: true, _decreaseForceLevelWhenNotInDirection: 2}:
+// a push along her deploy direction, turned radial at 受力等级 −2 when the target is more than 45° off that direction
+// or nearer than 0.25 tile ("特殊修正"). The remake pushed her targets radially at
 // full force, so an enemy behind her centre — one that walked through her tile while her block was full and that she
 // grabbed once a push freed it (the hand-over, DESIGN §19.2), or one coming at her back — was thrown 1.7–2.14 tiles
 // the other way, towards the protection objective (real act2 m01 R5: 7 % of her pushes facing RIGHT, up to 42 % in
 // other facings). Now: directional, so such a target moves at most the −2 distance (≤ 0.44 tile).
-// Audit (direction only): 琳琅诗怀雅 S3's coin push "向前推开" is radial — PRTS 备注 "推开效果为径向推动" — and the remake
-// pushed it along her facing (and at −2 off the 45° cone); now radial from her centre, full force.
+// Audit (direction only): 琳琅诗怀雅 S3's coin push "向前推开" is radial — PRTS 备注 "推开效果为径向推动"; client
+// swire2_s_3[knockback] of template knockback[relative] (_useSourceDirection false) — and the remake pushed it along her
+// facing (and at −2 off the 45° cone); now radial from her centre, full force.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
