@@ -107,23 +107,26 @@ untimed. The UI picks a card with two taps (select → 确认选择, DESIGN §18
 the mode's static `inactiveBondIds` — 标准 has no 拉特兰 / 阿戈尔 / 卡西米尔 / 奥术 … — and with chess in the pool), so
 玛恩纳的盟誓 / 莫斯提马的盟誓 / 卡西米尔驰援 never show up in 标准. Card generation and the
 family defaults are documented in `choices.js` (bounty / supply / shop / tactic). 机密商店 cards are **free** (official
-text "无需消耗资金"). 悬赏决策 offers only choices.json cards with `draft: true` (`choices.js draftBounty`, user playtest #6
-item 4): the PRTS table 卫戍协议：盟约 下半/PRTS盟约记录 §机变阶段 "敌人轮选" — kill bounties for the next battle ("下场作战")
-or the next two ("接下来两场作战"), 源石虫·特训, and the 7 multi-round cards ("之后 / 后续的每场作战"), but never 战术特训
-(listed under "※以下悬赏任务仅由法术教鞭生成") nor the 鸭爵 / 高普尼克 / 流泪小子 / 圆仔 cards (commented out of the table) —
-105 cards. **Each draft offers the cards of its half** (`choices.js bountyDraftHalf`, choices.json `draftHalf`; player
-feedback after 0.1.0, report #2 — late bounty enemies in the early drafts): a draft up to R7 (the official wave
-generator's first half: 绝境 / 终极 R3, 险境 co-op R3 / R6) draws the 42 "接下来两场作战" cards, a draft from R8 on (R9)
-the 56 "下场作战" cards (boss bounties, 特异 giants, the faction _7 / _8 cards, 源石虫·特训) and the 7 multi-round ones —
-uniformly, with no tier window (the official late-draft screenshot shows boss bounties worth 1 to 6 together). The
-split by battle count is [ASSUMED] beyond that screenshot and a trend in the faction series (12 of the 18 two-battle
-faction cards bring first-half enemies, no next-battle card does); the evidence and the counter-evidence (the 假想敌
-cards are named `enemyInitial_*`) are in `tools/build-data.mjs bountyDraftHalf`. The mode's inactive enemy list does not thin the draft (PRTS
+text "无需消耗资金"). 悬赏决策 offers only choices.json cards with `draft: true` (`choices.js draftBounty`): never 战术特训 (PRTS
+"※以下悬赏任务仅由法术教鞭生成") nor the 鸭爵 / 高普尼克 / 流泪小子 / 圆仔 cards (user playtest #6 item 4). **Each draft is
+built like the official one of its round** (`choices.js bountyDraftCards`, choices.json `bountyDrafts` / schedule
+`bountyDraft`; player feedback after 0.1.0, report #2 — late bounty enemies in the early drafts — settled by 33
+screenshots of 11 official co-op 绝境 / 终极 matches, readings in `test/fixtures/official-bounty-drafts.json`): **R3**
+one of the 10 official sets of six "接下来两场作战" cards, 3 × I + 2 × II + 1 × III — 7 seen (a whole series 17 / 18 / 19,
+or one card from each of 6 of the series 10–15 / 20), the 3 unseen slots built by that rule [ASSUMED]; **R9** boss
+bounties + 源石虫·特训: a seen group of 0–3 named bosses that always come together, filled to 6 with the cheap ones (W /
+碎骨 / 弑君者, 大鲍勃, 庞贝 or 鼠王, 源石虫·特训); **R11** (绝境 / 终极: 悬赏决策, 机密商店 or 战术决策, never 道具补给)
+one 特异III giant + 5 "下场战斗" cards, at most one per faction series. 险境 R6 drafts like R3 [ASSUMED]. A card's enemy
+is fixed by its effect (`enemy_id`): the title only names category and tier (悬赏·损伤I = 底海滑动者 or 临时收音师).
+No official draft showed a multi-round card, a pre-series card (enemyeffect_3_*) or the boss bounties 凋零骑士 / “遗弃者”
+/ 锏 / 扎罗 / 迷路的巨像: `draftExcluded: 'unseen'` [ASSUMED], flipped by adding them to build-data
+`BOUNTY_INITIAL_SETS` / `BOUNTY_BOSS_TEMPLATES` once a screenshot shows one. The card positions are shuffled; solo
+shows 3 of the 6 [ASSUMED]. The mode's inactive enemy list does not thin the draft (PRTS
 11/18 note "不影响悬赏决策出场"). Every bounty card carries the effect's official rich text `descRaw` (the battles in blue
 "下场作战" / "两场作战"; the overlay and the effects column render it; the effects column also says "还剩 N 场作战").
 **Multi-round cards last two battles** (`choices.js MULTI_ROUND_BOUNTY_BATTLES = 2`, `bountyBattles` / `bountyText`): the
 user does not remember any multi-round bounty (playtest #6 answer, "我不记得有过多轮悬赏"), so until that is confirmed
-otherwise every "之后 / 后续的每场作战" card — drafted, from 教鞭 or “神秘顾客” — lasts two battles exactly like the
+otherwise every "之后 / 后续的每场作战" card — e.g. 教鞭's 法术大师A2·多轮战术特训 — lasts two battles exactly like the
 "接下来两场作战" cards, and its card and effects text read "接下来两场作战" in the same blue (还剩 N 场作战).
 `MULTI_ROUND_BOUNTY_BATTLES = null` restores the official red "每场" (every later battle; effects column
 "之后的每场作战"). The 战术特训 cards are what the 教鞭 Art offers (§2.5).
