@@ -681,7 +681,7 @@ export default {
           for (const a of alliesInGridOf(battle, unit)) {
             if (a === unit || a.kind !== 'op') continue;
             battle.fx('sonic', { x: a.x, y: a.y, radius: rad, id: unit.id });
-            for (const e of battle.enemiesInRadius(a.x, a.y, rad)) {
+            for (const e of battle.foesInRadius(a.x, a.y, rad)) {
               if (!e.s.flags.untargetable) battle.dealDamage(unit, e, { amount: unit.s.atk * sc, type: 'arts', isSkill: true, isSplash: true, tags: ['sonic'] });
             }
           }
@@ -756,7 +756,7 @@ export default {
         kind: 'duration', mods: { atkPct: num(bb.atk), defPct: num(bb.def) }, attack: { hitAllBlocked: true },
         onStart({ battle, unit }) {
           const grid = def?.skill?.rangeGrid;
-          const foes = grid ? enemiesInGrid(battle, unit, grid, { canHitFly: false, groundOnly: true }) : battle.enemiesInRadius(unit.x, unit.y, 1.5).filter((e) => !e.isFlying);
+          const foes = grid ? enemiesInGrid(battle, unit, grid, { canHitFly: false, groundOnly: true }) : battle.foesInRadius(unit.x, unit.y, 1.5).filter((e) => !e.isFlying);
           battle.fx('aoe', { x: unit.x, y: unit.y, radius: 1.5, id: unit.id, skill: 'resolve' });
           for (const e of foes) battle.applyStatus(e, 'tremble', { duration: num(bb.not_combat), source: unit });
         },
@@ -840,7 +840,7 @@ export default {
             battle.fx('zone', { x, y, radius, dur, id: unit.id, skill: 'tinman1' });
             battle.every(STEP, (b, sc) => {
               const pulse = i % per === 0;
-              for (const e of b.enemiesInRadius(x, y, radius)) {
+              for (const e of b.foesInRadius(x, y, radius)) {
                 if (e.isFlying || e.s.flags.untargetable) continue;
                 if (weak > 0) b.applyStatus(e, 'weaken', { duration: STEP + 0.05, value: weak, source: unit });
                 if (wither > 1) b.addBuff(e, { key: 'tinman:wither', duration: STEP + 0.05, data: { mul: wither }, source: unit });

@@ -20,7 +20,7 @@
 // counter {id} · crit {id} · dp {n, id} · heal {id} · taunt {id} · summon {id, token} · pull {id} · sonic {radius} ·
 // shield {id} · overload {id} · takeoff {id} · sleep {id} · buff {id, kind} · reveal {id} · dodge (engine kind).
 
-import { COLS } from '../../constants.js';
+import { COLS, CHAIN_RADIUS } from '../../constants.js';
 import { absoluteRangeKeys, sortEnemyTargets } from '../../targeting.js';
 import { frontOf, offsetTile } from '../../dir.js';
 import { bodyInKeys, bodyOnTile, bodyTileReach } from '../../body.js';
@@ -276,7 +276,7 @@ export function tinmanKit(bb, chess, def) {
         unit.mem.tinZones = (unit.mem.tinZones ?? 0) + 1;
         makeZone(battle, unit, {
           x, y, radius, duration: dur, skill: 'tinman', onPulse(b) {
-            for (const e of b.enemiesInRadius(x, y, radius)) {
+            for (const e of b.foesInRadius(x, y, radius)) {
               if (e.isFlying || e.s.flags.untargetable) continue;
               if (wither > 1) b.addBuff(e, { key: witherKey, duration: 1.05, data: { mul: wither }, source: unit });
               b.dealDamage(unit, e, { amount: atk * dmgScale, type: 'arts', isSkill: true, canDodge: false, tags: ['dot', 'zone'] });
@@ -390,7 +390,7 @@ export default {
       } }],
       install(battle, unit) {
         // the chain shape (count / sluggish, elite module included) comes from the resolved chain profile
-        const ch = unit.profile.chain || { count: num(traitBb(chess)['attack@max_target'], 3), radius: 1.8, sluggish: num(traitBb(chess)['attack@sluggish'], 0.5) };
+        const ch = unit.profile.chain || { count: num(traitBb(chess)['attack@max_target'], 3), radius: CHAIN_RADIUS, sluggish: num(traitBb(chess)['attack@sluggish'], 0.5) };
         if (unit.skill && unit.skill.spec.attack) unit.skill.spec.attack.chain = { ...ch, falloff: 0 };
       },
     };
@@ -590,7 +590,7 @@ export default {
         battle.addDp(unit.ownerId, num(bb.cost));
         battle.fx('dp', { x: unit.x, y: unit.y, n: num(bb.cost), id: unit.id });
         const grid = def?.skill?.rangeGrid;
-        const foes = grid ? enemiesInGrid(battle, unit, grid) : battle.enemiesInRadius(unit.x, unit.y, RING1).filter((e) => !e.s.flags.untargetable);
+        const foes = grid ? enemiesInGrid(battle, unit, grid) : battle.foesInRadius(unit.x, unit.y, RING1).filter((e) => !e.s.flags.untargetable);
         battle.fx('aoe', { x: unit.x, y: unit.y, radius: 2, id: unit.id, skill: 'swordRain' });
         for (const e of foes) {
           for (let i = 0; i < 2 && e.alive; i++) battle.dealDamage(unit, e, { amount: unit.s.atk * num(bb.atk_scale), type: 'arts', isSkill: true, tags: ['skill'] });
@@ -776,7 +776,7 @@ export default {
           const atk = unit.s.atk;
           makeZone(battle, unit, {
             x, y, radius: SPORE_RADIUS, duration: dur, skill: 'spores', onPulse(b) {
-              for (const e of b.enemiesInRadius(x, y, SPORE_RADIUS)) {
+              for (const e of b.foesInRadius(x, y, SPORE_RADIUS)) {
                 if (e.s.flags.untargetable) continue;
                 b.applyStatus(e, 'sluggish', { duration: 1.05, source: unit });
                 b.applyStatus(e, 'silence', { duration: 1.05, source: unit });

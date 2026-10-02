@@ -368,7 +368,7 @@ function installGeneric(spec) {
       if (!src || src.side !== 'enemy' || !ctx.dmg || !ctx.dmg.isAttack) return;
       readyAt = battle.time + c.cooldown;
       const amount = (c.stat === 'def' ? unit.s.def : unit.s.atk) * c.scale;
-      const victims = c.around ? battle.enemiesInRadius(unit.x, unit.y, 1.5).filter((e) => !(c.groundOnly && e.isFlying)) : (src.alive ? [src] : []);
+      const victims = c.around ? battle.foesInRadius(unit.x, unit.y, 1.5).filter((e) => !(c.groundOnly && e.isFlying)) : (src.alive ? [src] : []);
       for (const e of victims) {
         const dealt = amount > 0 ? battle.dealDamage(unit, e, { amount, type: c.type, canDodge: false, isSkill: true, tags: ['counter'] }) : 0;
         if (c.applyElement) c.applyElement(battle, unit, e, dealt);

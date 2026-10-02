@@ -36,6 +36,7 @@
 // death 10), layerGain −100 (after 魔王-style modifiers).
 
 import * as S from '../support/index.js';
+import { mitigate } from '../../damage.js';
 import { spawnYanyou } from '../tokens.js';
 import { kjeragColdWind } from '../devices.js';
 import * as items from '../items.js';
@@ -335,8 +336,10 @@ function installLaterano(battle, pid, bb, members) {
  * members the tiles in front of
  * those (chain); never themselves, a unit already marked by them or a unit that marked them. The marker gains the base
  * ATK (atkFlat) and block count of everything it marked; then each mark makes its target lose damage_value HP as a
- * 流失 (battle.loseHp: no DEF, shields, dodge or damage multipliers — research "5000-point physical 流失"; the kill is
- * credited to the marker) in marking order. A unit that died cancels its remaining marks (as target and as marker).
+ * 物理流失 (PRTS 盟约记录: "造成5000点物理流失", 修正 "【吞噬】的物理流失来源为被付与目标自身；单位被【吞噬】击杀时，击杀来源始终为
+ * 对应标记的付与来源"; PRTS 作战机制: a 物理流失 "会受到目标当前防御力…影响而相应衰减") — less the target's DEF as a physical hit
+ * (its own source: no DEF ignore), then battle.loseHp: no shields, dodge or damage multipliers (DEF-free until 0.1.1); the
+ * kill is credited to the marker — in marking order. A unit that died cancels its remaining marks (as target and as marker).
  * Each devoured operator adds its tier to 阿戈尔 once (IN_BATTLE gain, disabled in 联防 / boss fields).
  * Tokens / devices / empty tiles are never devoured.
  */
@@ -382,7 +385,7 @@ function devour(battle, pid, bb, members) {
   for (const [m, t] of marks) {
     if (!t.alive || !m.alive) continue;
     S.fxOn(battle, 'devour', t, 'bond:egirShip', 'devour', { from: m.id });
-    if (amount > 0) battle.loseHp(t, amount, { source: m, tags: ['bond:egir:devour'] });
+    if (amount > 0) battle.loseHp(t, mitigate(amount, 'phys', t.s), { source: m, tags: ['bond:egir:devour'] });
     if (!layered.has(t)) {
       layered.add(t);
       S.gainLayers(battle, { playerId: pid, bonds: 'egirShip', n: S.tierOf(t), source: m, reason: 'bond' });
@@ -479,7 +482,7 @@ function installKazimierz(battle, pid, bb, members) {
     battle.every(iv, () => {
       for (const m of members) {
         if (!S.onField(m) || !m.blocking || !m.blocking.length) continue;
-        const hits = battle.enemiesInRadius(m.x, m.y, radius);
+        const hits = battle.foesInRadius(m.x, m.y, radius);
         if (!hits.length) continue;
         const amount = scale * m.s.atk;
         for (const e of hits) {

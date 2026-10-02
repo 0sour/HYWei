@@ -446,7 +446,7 @@ const KITS = {
             unit.mem.titiWardAcc = 0;
             for (const a of unit.mem.titiWard || []) {
               if (!a.alive || !a.deployed || !a.findBuff('titi:ward')) continue;
-              for (const e of battle.enemiesInRadius(a.x, a.y, RING1)) if (e.alive) battle.applyStatus(e, 'sleep', { duration: AURA_DUR, source: unit });
+              for (const e of battle.foesInRadius(a.x, a.y, RING1)) if (e.alive) battle.applyStatus(e, 'sleep', { duration: AURA_DUR, source: unit });
             }
           },
           onEnd({ battle, unit }) {
@@ -507,7 +507,7 @@ const KITS = {
         const asleep = new Map();
         // PRTS 备注: "向1.5半径内除该单位外仇恨值最高的敌方单位施加沉睡" — highest aggro (taunt) first, then the nearest
         const sleepOthers = (from) => {
-          const cands = battle.enemiesInRadius(from.x, from.y, radius).filter((o) => o !== from && !o.s.flags.sleep && !o.mem?.candleOwner)
+          const cands = battle.foesInRadius(from.x, from.y, radius).filter((o) => o !== from && !o.s.flags.sleep && !o.mem?.candleOwner)
             .sort((a, b) => (b.s.taunt || 0) - (a.s.taunt || 0) || dist(a, from) - dist(b, from) || a.spawnSeq - b.spawnSeq);
           let n = 0;
           for (const o of cands) {
@@ -604,7 +604,7 @@ const KITS = {
             battle.addBuff(t, {
               key: `blaze2:aid:${unit.id}`, duration: num(bb.max_duration, 20), interval: Math.max(0.1, num(bb.interval, 1)), visible: true, data: { src: unit },
               onTick: ({ unit: x }) => {
-                for (const e of battle.enemiesInRadius(x.x, x.y, r)) {
+                for (const e of battle.foesInRadius(x.x, x.y, r)) {
                   const d = battle.dealDamage(unit, e, { amount: unit.s.atk * num(bb.atk_scale), type: 'arts', isSkill: true, tags: ['skill', 'blazeAid'] });
                   if (d > 0 && e.alive) battle.dealDamage(unit, e, { type: 'element', element: 'burn', amount: d * num(bb.element_multiplier), tags: ['skill', 'blazeAid'] });
                 }
@@ -676,7 +676,7 @@ const KITS = {
                 if (u.deploySeq !== dep || u.hp < u.s.maxHp - 1e-6) return;
                 battle.removeBuff(u, buff);
                 u.mem.downed = false;
-                for (const e of battle.enemiesInRadius(u.x, u.y, NEARBY_RADIUS)) if (e.alive) battle.applyStatus(e, 'stun', { duration: num(t1.stun), source: u });
+                for (const e of battle.foesInRadius(u.x, u.y, NEARBY_RADIUS)) if (e.alive) battle.applyStatus(e, 'stun', { duration: num(t1.stun), source: u });
                 battle.fx('revive', { x: u.x, y: u.y, id: u.id, r: NEARBY_RADIUS });
               },
             });
@@ -793,7 +793,7 @@ const KITS = {
             // for this one: it never lands on or catches air units (FLY, 近地悬浮, 浮空)
             const main = list.find((e) => !reach(e) && !e.blockedBy && !e.isFlying) ?? list.find((e) => !e.blockedBy && !e.isFlying) ?? list.find((e) => !e.isFlying);
             if (!main) return;
-            const near = battle.enemiesInRadius(main.x, main.y, RING1).filter((e) => !e.isFlying && !e.s.flags.untargetable && !e.s.flags.sleep)
+            const near = battle.foesInRadius(main.x, main.y, RING1).filter((e) => !e.isFlying && !e.s.flags.untargetable && !e.s.flags.sleep)
               .sort((a, b) => (a === main ? -1 : b === main ? 1 : 0) || dist(a, main) - dist(b, main) || a.spawnSeq - b.spawnSeq)
               .slice(0, Math.max(1, num(bb.max_target, 2)));
             const force = num(bb.force, 1);
@@ -827,7 +827,7 @@ const KITS = {
           const [sr, sc] = frontOf(unit.tileR, unit.tileC, unit.dir, stop ?? 0);
           const fromX = unit.x, fromY = unit.y;
           battle.fx('anchor', { x: sc, y: sr, id: unit.id, fromX, fromY, r: radius });
-          for (const e of battle.enemiesInRadius(sc, sr, radius)) {
+          for (const e of battle.foesInRadius(sc, sr, radius)) {
             battle.dealDamage(unit, e, { amount: unit.s.atk * num(bb.atk_scale), type: 'phys', isSkill: true, tags: ['skill', 'anchor'] });
             if (e.alive) battle.applyStatus(e, 'stun', { duration: num(bb.stun), source: unit });
           }
@@ -894,7 +894,7 @@ const KITS = {
     const hpScale = num(bb['attack@max_hp_scale'], 0.6), defScale = num(bb['attack@def_scale'], 1), resScale = num(bb['attack@magic_resistance_scale'], 1);
     const nCandles = Math.max(1, num(bb['attack@max_target'], 3));
     const candleKey = talentRec(chess, 2)?.bbStr?.take_extra_enemy_key ?? CANDLE_KEY;
-    const aroundN = (battle, a) => battle.enemiesInRadius(a.x, a.y, RING1).length;
+    const aroundN = (battle, a) => battle.foesInRadius(a.x, a.y, RING1).length;
     return {
       skills: lazySkills({
         skchr_etlchi_1: () => ({ kind: instantKind(chess, def), attack: { atkScale: num(bb.atk_scale, 1), hits: 2 } }),
@@ -917,7 +917,7 @@ const KITS = {
                 // PRTS 备注 "被添加血镰的单位处于起飞时，血镰可对空": a sickle on the ground spares air units (FLY, 近地悬浮, 浮空);
                 // 起飞 = an airborne skywalker (蒂比's skill: off the ground, flag blockFly)
                 const air = !a.ground && !!a.s.flags.blockFly;
-                for (const e of battle.enemiesInRadius(a.x, a.y, RING1)) {
+                for (const e of battle.foesInRadius(a.x, a.y, RING1)) {
                   if (e.isFlying && !air) continue;
                   battle.dealDamage(unit, e, { amount: unit.s.atk * num(bb.atk_scale), type: 'phys', isSkill: true, tags: ['skill', 'bloodSickle'] });
                 }
@@ -1939,7 +1939,7 @@ const KITS = {
       if (z.anchor && z.anchor.alive && z.anchor.deployed) { z.x = z.anchor.x; z.y = z.anchor.y; }
       const iv = Math.max(0.1, num(bb.interval, 1));
       const steps = Math.min(Math.max(0, num(bb.max_stack_cnt, 15)), Math.floor((z.t - AURA_IV + 1e-9) / iv));
-      const foes = battle.enemiesInRadius(z.x, z.y, RING1);
+      const foes = battle.foesInRadius(z.x, z.y, RING1);
       for (const e of foes) seaHits.set(e, Math.max(seaHits.get(e) ?? -1, steps));
       if (z.acc >= iv - 1e-9) {
         z.acc -= iv;
@@ -2037,7 +2037,7 @@ const KITS = {
             z.x = Math.max(R.c0, Math.min(R.c1, z.x + z.vx * AURA_IV));
             z.y = Math.max(R.r0, Math.min(R.r1, z.y + z.vy * AURA_IV));
             const r = r0 + grow * z.t;
-            const foes = battle.enemiesInRadius(z.x, z.y, r).filter((e) => !e.isFlying);
+            const foes = battle.foesInRadius(z.x, z.y, r).filter((e) => !e.isFlying);
             for (const e of foes) battle.addBuff(e, { key: 'thorn2:rot', duration: AURA_DUR, mods: { healingTakenMul: healMul } });
             if (z.acc >= 1 - 1e-9) {
               z.acc -= 1;
@@ -2252,7 +2252,7 @@ const KITS = {
         { install(battle, unit) { // 游侠
           const dr = num(t0.damage_resistance);
           whileOn(battle, unit, 0.2, () => {
-            unit.mem.mlyNear = battle.enemiesInRadius(unit.x, unit.y, AROUND_RADIUS).length;
+            unit.mem.mlyNear = battle.foesInRadius(unit.x, unit.y, AROUND_RADIUS).length;
             if (dr > 0 && unit.mem.mlyNear >= num(t0.cnt, 3)) battle.addBuff(unit, { key: 'mlynar:ranger', duration: 0.3, mods: { dmgTakenMul: 1 - dr } });
           });
         } },
@@ -2399,7 +2399,7 @@ const KITS = {
           battle.fx('iceSpike', { x: c, y: r, id: unit.id, r: ICICLE_RADIUS });
           battle.after(ICICLE_DELAY, () => {
             const hit = [];
-            for (const e of battle.enemiesInRadius(c, r, ICICLE_RADIUS)) {
+            for (const e of battle.foesInRadius(c, r, ICICLE_RADIUS)) {
               battle.dealDamage(unit, e, { amount: unit.s.atk * scale, type: 'arts', isAttack: true, isSkill: true, isSplash: true, tags: ['skill', 'iceSpike'] });
               if (e.alive && cold > 0) battle.applyStatus(e, 'cold', { duration: cold, source: unit });
               if (e.alive) hit.push(e);

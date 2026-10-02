@@ -82,7 +82,7 @@ function profileMul(battle, unit, target) {
 }
 /** Targetable enemies within `r` tiles of (x, y), nearest first (spawn order breaks ties), excluding `skip`. */
 function enemiesAround(battle, unit, x, y, r, skip = null) {
-  const out = battle.enemiesInRadius(x, y, r).filter((e) => !(skip && skip.has(e)) && canTargetEnemy(unit, e, { canHitFly: true }));
+  const out = battle.foesInRadius(x, y, r).filter((e) => !(skip && skip.has(e)) && canTargetEnemy(unit, e, { canHitFly: true }));
   const d = (e) => bodyDist(e, x, y);
   return out.sort((a, b) => d(a) - d(b) || (a.spawnSeq ?? a.id) - (b.spawnSeq ?? b.id));
 }
@@ -113,6 +113,8 @@ const gridKeys = (grid, u, ext = 0) => absoluteRangeKeys(grid || [[0, 0]], u.til
 const fx = (battle, kind, u, extra = {}) => battle.fx(kind, { x: u.x, y: u.y, id: u.id, ...extra });
 const copyGrid = (g) => (Array.isArray(g) && g.length ? g.map((p) => [p[0], p[1]]) : null);
 const NINE = [[1, -1], [1, 0], [1, 1], [0, -1], [0, 0], [0, 1], [-1, -1], [-1, 0], [-1, 1]];
+/** 琳琅诗怀雅 S3's coin range (PRTS 备注 "前方范围2-4"; range_table "2-4", facing right). */
+const SWIRE2_COIN_GRID = Object.freeze([[1, 1], [0, 0], [0, 1], [0, 2], [-1, 1]]);
 /** Two enemy bodies touch within this distance (tiles) — 见行者 collision stun. */
 const COLLIDE = 0.6;
 /** 忍冬 S3's 迷彩 (until her next cast): its own buff key, never merged with another unit status. */
@@ -401,11 +403,11 @@ const KITS = {
   //      大买家: coin at skill start + coin & ATK stack per trait payment; 破财消灾: DP-paid revive (cost doubles)
   //      S1 仗义疏财 (passive, 2 coins): an attack spends a coin to heal the most injured ally (< 70 % HP) of the 8
   //      surrounding tiles for attack@heal_scale × ATK. S3 千金一掷 (持续时间无限): attacks hit twice, kills give a coin;
-  //      closing it spends every coin on random ground enemies of the front range (atk_scale phys + a small push, radial
-  //      despite the text's 向前 — PRTS 备注 "推开效果为径向推动"; client charpack char_1033_swire2: the RandomGold ability
-  //      (Skill_3_End) carries swire2_s_3[knockback] of template knockback[relative]; 地面敌方单位, 弹道不可对空).
-  //      Auto-close (the mode casts everything itself; the player's "主动关闭" is not available): once the purse is full
-  //      (10) and an enemy stands in range. 精锐 module MER-Y: ATK +4 % per trait payment (≤ 5 stacks).
+  //      closing it spends every coin on random ground enemies of range 2-4 in front and those she blocks (atk_scale phys +
+  //      a small push, radial despite the text's 向前 — PRTS 备注 "推开效果为径向推动"; client charpack char_1033_swire2:
+  //      the RandomGold ability (Skill_3_End) carries swire2_s_3[knockback] of template knockback[relative]; 地面敌方单位,
+  //      弹道不可对空). Auto-close (the mode casts everything itself; the player's "主动关闭" is not available): once the
+  //      purse is full (10) and a coin target stands there. 精锐 module MER-Y: ATK +4 % per trait payment (≤ 5 stacks).
   chess_char_3_04_a: (bb, chess, def) => {
     const d = defOf(chess, def);
     const t0 = talentBb(d, 0), t1 = talentBb(d, 1);
@@ -476,22 +478,29 @@ const KITS = {
         [S1]: () => ({ kind: 'passive' }), // (coins → heals: installS1)
         [S3]: (s) => {
           const cash = num(s.bb.atk_scale, 1), force = num(s.bb.force, 0), full = num(s.bb.sp, 10);
+          // the 【金币标记】 targets: ground enemies on range 2-4 in front of her (range_table "2-4") and every unit she blocks
+          const coinMarks = (battle, unit) => {
+            const list = enemiesOn(battle, unit, gridKeys(SWIRE2_COIN_GRID, unit), 0, { ...unit.profile, canHitFly: false });
+            for (const e of unit.blocking || []) if (e.alive && !e.isFlying && !list.includes(e)) list.push(e);
+            return list;
+          };
           return {
             kind: 'toggle',
             attack: { hits: 2 },
             onTick({ battle, unit, skill }) {
-              if ((unit.mem.coins ?? 0) >= full && enemiesOn(battle, unit, unit.rangeKeys, 0, { ...unit.profile, canHitFly: false }).length) skill.end('manual');
+              if ((unit.mem.coins ?? 0) >= full && coinMarks(battle, unit).length) skill.end('manual');
             },
             onEnd({ battle, unit, reason }) {
               if (reason !== 'manual' || !unit.alive) return;
               const n = unit.mem.coins ?? 0;
               unit.mem.coins = 0;
               let spent = 0;
-              // PRTS 备注: 【金币标记】 goes on "前方范围内的地面敌方单位与自身阻挡的所有单位" and the coins are "弹道（不可对空）" —
-              // air units (FLY, 近地悬浮, 浮空) are never paid
-              const ground = { ...unit.profile, canHitFly: false };
+              // PRTS 备注: closing it "立即对前方范围2-4内的地面敌方单位与自身阻挡的所有单位施加【金币标记】", the coins going to
+              // marked units at random — 弹道（不可对空）: air units (FLY, 近地悬浮, 浮空) are never paid. Until 0.1.1 the
+              // coins went to her attack range (1-1) instead of range 2-4.
+              const marked = coinMarks(battle, unit);
               for (let i = 0; i < n; i++) {
-                const e = battle.rng.pick(enemiesOn(battle, unit, unit.rangeKeys, 0, ground));
+                const e = battle.rng.pick(marked.filter((x) => x.alive && !x.isFlying));
                 if (!e) break;
                 spent++;
                 battle.dealDamage(unit, e, { amount: unit.s.atk * cash, type: 'phys', isSkill: true, tags: ['skill', 'swire2Cash'] });

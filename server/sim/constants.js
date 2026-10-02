@@ -216,3 +216,6 @@ export const BOSS_POOL_MIN_HP = 1;
  * the base attributes) stay multipliers.
  */
 export const DIRECT_BONUS_STACKING = 'add';
+
+/** 链术师 jump radius (PRTS 溅射半径一览, 特性: "链术师 … 1.7"; 1.8 until 0.1.1). */
+export const CHAIN_RADIUS = 1.7;

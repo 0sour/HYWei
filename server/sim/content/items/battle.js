@@ -339,10 +339,20 @@ const BY_BUFF = {
       }
     } });
   },
-  // 奥术法阵: 攻击使目标失去特殊能力 silence s
+  // 奥术法阵: 攻击使目标失去特殊能力 silence s. PRTS 盟约记录 备注 (as 源石溶剂's): "携带后，全场范围内的所有敌人类我方单位也会获得
+  // 此装备的“造成伤害时使目标失去特殊能力5秒”效果（该效果的付与为我方阵营索敌，可对空，无视目标可选性）" — the damage of every
+  // enemy-record unit on our side (炎佑, a partner's too) silences its target while a carrier is on the field [ASSUMED: it
+  // ends with its carriers]; one effect per damage instance however many carriers.
   silence_attachment(battle, u, p, S) {
     const d = num(p.silence);
-    if (d > 0) onAttackEnemies(S, u, (t) => battle.applyStatus(t, 'silence', { duration: d, source: u }));
+    if (!(d > 0)) return;
+    onAttackEnemies(S, u, (t) => battle.applyStatus(t, 'silence', { duration: d, source: u }));
+    S.on('damaged', (c) => {
+      const a = c.source, t = c.target;
+      if (!a || a === u || a.side !== 'ally' || !ENEMY_RECORD.test(a.defId ?? '') || !t || t.side !== 'enemy' || !t.alive || !onField(u)) return;
+      if (c.dmg) { if (c.dmg.arcaneSilence) return; c.dmg.arcaneSilence = true; }
+      battle.applyStatus(t, 'silence', { duration: d, source: a });
+    });
   },
   // 海沟实验体: 伤害减免 value per damage instance (after DEF/RES)
   halfidle_block_fixed_damage(battle, u, p, S) {

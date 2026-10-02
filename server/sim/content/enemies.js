@@ -45,10 +45,10 @@
 //                gauge whose burst is the official one (termDescription ba.dt.erosion: "永久降低100点防御力并受到800点物理伤害").
 //   DOT        — damage zones (污染秽蚀: true damage, one tick per second however many cover a unit; 毒雾, 燃烧区域),
 //                bleeding (removed by healing), pulsing auras.
-//   INVISIBLE  — permanent `stealth` flag (engine: untargetable unless blocked or revealed). Radius area damage
-//                (Battle.enemiesInRadius: profession splash around a struck target, many skills' circles) still hits
-//                an unblocked one — a known deviation: officially an AoE only judges the enemies it can select (PRTS
-//                作战机制 §AOE伤害判定; ba.invisible vs ba.camou); tile selectors (enemiesInKeys) already skip it.
+//   INVISIBLE  — permanent `stealth` flag (engine: untargetable unless blocked or revealed). An operator's radius area
+//                damage skips an unblocked one too (Battle.foesInRadius: profession splash around a struck target,
+//                skill circles — PRTS 作战机制 §AOE伤害判定 "对攻击范围内的每个可以被选中的敌人进行判定"; until 0.1.1 it
+//                still hit it); tile selectors (enemiesInKeys) always skipped it.
 //   REFLECTION — 折射 (ba.refraction "生效时，法术抗性+70"): RES +refracting.magic_resistance while NOT silenced
 //                (the ability line is SILENCE-flagged: silencing turns it off); 镜膜 also gets max HP +100 % while on.
 //   SPECIAL    — mostly stats; prisoners, 穿刺手, 暴虐兵长, 镜卫, 动力装甲 … below.
@@ -68,7 +68,7 @@
 //   hidden tabs (shared/protocol.js fxForm).
 // Custom hook: 'lpLoss' {amount, reason, source} — leader "扣除目标生命" effects; also summed into result.lpLoss.
 
-import { TICK, MOVE_SCALE, ELEMENT, ATTACK_PAUSE, PROJECTILE_SPEEDS } from '../constants.js';
+import { TICK, MOVE_SCALE, ELEMENT, ATTACK_PAUSE, PROJECTILE_SPEEDS, ALLY_COLLIDER_RADIUS } from '../constants.js';
 import { canTargetAlly, sortAllyTargets, aggroCmp } from '../targeting.js';
 import { mitigate, periodicDamage } from '../damage.js';
 
@@ -123,8 +123,11 @@ const GRAB_RADIUS_SCALE = 2.5, GRAB_MAX_PREY = 3, GRAB_DELAY = 0.5;
 /** 孽罪奇美拉 污染模式 aura (PRTS 天赋 "自身半径1.2范围内的所有单位…每0.5秒受到50真实持续伤害（同类效果取最高）"): radius,
  *  damage period (s). */
 const CHIMERA_AURA_RADIUS = 1.2, CHIMERA_AURA_EVERY = 0.5;
-/** Bombardments per 自行炮 Cannon cast ("数次") [ASSUMED]. */
-const CANNON_SHOTS = 3;
+/** 自行炮 Cannon (PRTS 高准度伦蒂尼姆城防自行炮 技能 "以攻击范围内生命上限最高的我方单位为中心，生成9格的炮击区域，6s内每0.5s对炮击
+ *  区域中生命比例最高的我方单位进行攻击…(最多进行10次攻击)"): shot interval (s), shot cap; 3 shots 1 s apart [ASSUMED] until
+ *  0.1.1. 备注: during the skill animation 失衡免疫 + 晕眩 / 冻结 / 浮空 / 沉睡免疫 — held over the bombardment [ASSUMED length]. */
+const CANNON_EVERY = 0.5, CANNON_SHOTS = 10;
+const CANNON_IMMUNE = Object.freeze(['stun', 'freeze', 'cold', 'levitate', 'sleep']);
 /** 枯朽之种 summoned per BornBugs cast ("数个") [ASSUMED]. */
 const BUGS_PER_CAST = 3;
 /** Radius of 骸骨拷打者's "周围" death sensing when its talent has no Attack.range_radius [ASSUMED]. */
@@ -737,6 +740,14 @@ function freeAllPrisoners(b) {
  * knocked out while feared (叙拉古 / 妮芙: 恐惧 makes it unblockable) stayed unblockable — so, 隐匿, untargetable — as an
  * ember until the fear ran out.
  */
+/**
+ * The end of a 重生 (PRTS 特殊机制 §重生 "重生结束时，重置自身的通用技能与当前形态的技能冷却为初始冷却"): every ability with a
+ * cooldown starts again from its initial cooldown (until 0.1.1 the countdowns ran on through the 重生).
+ */
+function rebirthCooldowns(e) {
+  for (const s of (e.mem.ab && e.mem.ab.list) || []) if (s.cd != null) s.left = num(s.icd, 0);
+}
+
 function rebirthCleanse(b, e) {
   for (const x of e.buffs.slice()) {
     if (x.persist || (x.source && x.source.side === 'enemy')) continue;
@@ -764,6 +775,7 @@ function reborn({ dur = 0, hpRatio = 1, invincible = 0, onKo = null, during = nu
     if (invincible > 0) b.addBuff(e, { key: `${key}:inv`, duration: invincible, visible: true, flags: { invulnerable: true } });
     if (e.route) e.route.pts = null;
     e.atkCd = 0;
+    rebirthCooldowns(e);
     setForm(b, e, 'form2', 'revive', { kind: 'reborn' });
   };
   return {
@@ -900,7 +912,7 @@ function husk({ hits, delay, stealthy = true, unblock = false, onHusk = null, ke
       b.addBuff(e, { key: `${key}:reborn`, duration: HUSK_REBIRTH, flags: { invulnerable: true, untargetable: true, unblockable: true, noMove: true, noDisplace: true } });
       if (e.route) e.route.pts = null;
       setForm(b, e, 'husk', 'ember', { hits, dur: HUSK_REBIRTH + delay });
-      if (onHusk) b.after(HUSK_REBIRTH, () => { if (e.alive && a.state === 'husk') onHusk(b, e); }, { owner: e });
+      b.after(HUSK_REBIRTH, () => { if (e.alive && a.state === 'husk') { rebirthCooldowns(e); if (onHusk) onHusk(b, e); } }, { owner: e });
       b.after(HUSK_REBIRTH + delay, () => revive(b, e, a), { owner: e });
       return true;
     },
@@ -926,6 +938,7 @@ function statue(ab) {
       a.done = true;
       a.noAtk = e.profile.noAttack;
       rebirthCleanse(b, e);                                 // "进行重生。重生瞬间完成"
+      rebirthCooldowns(e);
       e.profile.noAttack = true;
       e.hp = e.s.maxHp;
       ab2.immune = new Set([...(ab2.immune || []), 'levitate']);
@@ -2503,17 +2516,28 @@ export const KITS = Object.freeze({
   enemy_1026_aghost: () => [unblockable()],                          // 幽灵组长 · unblockable
   enemy_1062_rager_2: (ab) => [{ iv: 1, tick(b, e) { const v = T(ab, 'periodic_damage.damage') ?? 0; if (v > 0) b.dealDamage(null, e, periodicDamage(v)); } }], // 狂暴宿主组长 · "自身每秒受到500无来源真实伤害" (damage, not 流失)
   enemy_1183_mlasrt: (ab) => [ep('erosion', T(ab, 'EpDamage.attack@ep_damage_ratio') ?? 0), nthAttackPower(nthOf(ab.sk.PowerAttack), (ab.sk.PowerAttack && ab.sk.PowerAttack.bb.atk_scale) || 1)], // 无胄盟清扫小队 · erosion; every 4th attack ×1.5
-  enemy_1273_stmgun_2: (ab) => [skill(ab.sk.Cannon, (b, e) => {     // 高准度伦蒂尼姆城防自行炮 · locks the highest max-HP unit, bombards the highest HP% around it
-    const lock = allTargets(b, e).sort((p, q) => q.s.maxHp - p.s.maxHp)[0];
-    if (!lock) return;
-    const x = lock.x, y = lock.y;
-    b.fx('telegraph', { x, y, r: 1, dur: CANNON_SHOTS, kind: 'cannon' });
-    for (let i = 1; i <= CANNON_SHOTS; i++) b.after(i, () => {
-      if (!e.alive) return;
-      const t = b.alliesInRadius(x, y, 1).sort((p, q) => q.hpRatio - p.hpRatio)[0];
-      if (t) { b.fx('explode', { x: t.x, y: t.y, r: 0.5, kind: 'cannon' }); hurt(b, e, t, e.s.atk * (ab.sk.Cannon.bb.atk_scale ?? 0), 'arts'); }
-    }, { owner: e });
-  }, { cond: (b, e) => allTargets(b, e).length > 0 })],
+  enemy_1273_stmgun_2: (ab) => {                                     // 高准度伦蒂尼姆城防自行炮 · locks the highest max-HP unit in range, bombards the highest HP% on its 9 tiles
+    // the allies in its range (the engine's ranged reach: radius + the ally collider)
+    const inRange = (b, e) => allTargets(b, e).filter((a) => Math.hypot(a.x - e.x, a.y - e.y) <= (e.base.rangeRadius || 0) + ALLY_COLLIDER_RADIUS + 1e-9);
+    return [skill(ab.sk.Cannon, (b, e) => {
+      const lock = inRange(b, e).sort((p, q) => q.s.maxHp - p.s.maxHp)[0];
+      if (!lock) return;
+      const r0 = Math.round(lock.y), c0 = Math.round(lock.x);
+      const dur = CANNON_SHOTS * CANNON_EVERY;
+      b.fx('telegraph', { x: c0, y: r0, r: 1.5, dur, kind: 'cannon' });
+      b.addBuff(e, { key: 'ab:cannon', duration: dur, flags: { noDisplace: true } });
+      const ab2 = e.mem.ab;
+      const had = new Set(ab2.immune || []);
+      ab2.immune = new Set([...had, ...CANNON_IMMUNE]);
+      for (let i = 1; i <= CANNON_SHOTS; i++) b.after(i * CANNON_EVERY, () => {
+        if (!e.alive) return;
+        if (i === CANNON_SHOTS) ab2.immune = had;
+        const t = b.allies().filter((a) => canTargetAlly(e, a, true) && Math.abs(Math.round(a.y) - r0) <= 1 && Math.abs(Math.round(a.x) - c0) <= 1)
+          .sort((p, q) => q.hpRatio - p.hpRatio)[0];
+        if (t) { b.fx('explode', { x: t.x, y: t.y, r: 0.5, kind: 'cannon' }); hurt(b, e, t, e.s.atk * (ab.sk.Cannon.bb.atk_scale ?? 0), 'arts'); }
+      }, { owner: e });
+    }, { cond: (b, e) => inRange(b, e).length > 0 })];
+  },
   // 萨卡兹骸骨拷打者 · heals + ATK stack when a unit within Attack.range_radius is knocked out; leaves 2 血珀 on death — they
   // stay where it fell and wait for a 唤血祭坛 that this mode has none of (inert, not counted)
   enemy_1364_spnaxe_2: (ab) => [{

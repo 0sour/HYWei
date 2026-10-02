@@ -43,6 +43,8 @@ const LINE = Object.freeze(Array.from({ length: COLS }, (_, i) => Object.freeze(
 const BILLRO_S3_RAMP = 20;
 /** 卡涅利安 S3 charged mark: one buff per enemy, shared by every 卡涅利安 (PRTS 备注), ≤ 5 stacks (skill text). */
 const BILLRO_MARK = 'billro:mark';
+/** 阿罗玛's 非首次标记 (talent 起泡性能测试): one per enemy, shared by every 阿罗玛 (PRTS 备注). */
+const AROMA_MARK = 'aroma:bubbled';
 const BILLRO_MARK_MAX = 5;
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -863,13 +865,25 @@ const kits = {
       }),
       skill: { kind: 'duration', mods: { atkPct: num(bb.atk) }, onStart({ battle, unit }) { battle.fx('slippery', { x: unit.x, y: unit.y, id: unit.id }); } },
       talents: [{ install(battle, unit) { // first attack on each enemy: ×1.1 and levitate 2.5 s
-        unit.mem.bubbled = new Set();
+        // PRTS 阿罗玛 备注: "天赋采用施加非首次标记的方式判断是否为'首次进行攻击'，自身离场时移除自身已施加的标记，不同阿罗玛之间的
+        // 非首次标记通用" — one mark per enemy (AROMA_MARK, the setter as source) for every 阿罗玛; hers go when she leaves
+        // the field (until 0.1.1 each 阿罗玛 kept her own list, so two of them both triggered on one enemy)
+        unit.mem.bubbled = new Set(); // the enemies she marked
         battle.on('hit', (c) => {
           const e = c.target;
-          if (c.source !== unit || !c.dmg.isAttack || e.side !== 'enemy' || unit.mem.bubbled.has(e.id)) return;
+          if (c.source !== unit || !c.dmg.isAttack || e.side !== 'enemy' || e.findBuff(AROMA_MARK)) return;
+          battle.addBuff(e, { key: AROMA_MARK, source: unit });
           unit.mem.bubbled.add(e.id);
           c.dmg.mul *= num(t0.damage_scale, 1.1);
           if (battle.applyStatus(e, 'levitate', { duration: num(t0.levitate_duration, 2.5), source: unit })) battle.fx('levitate', { x: e.x, y: e.y, id: e.id });
+        }, { owner: unit });
+        battle.on('death', (c) => {
+          if (c.unit !== unit) return;
+          for (const id of unit.mem.bubbled) {
+            const e = battle.unitById(id);
+            if (e && e.findBuff(AROMA_MARK)?.source === unit) battle.removeBuff(e, AROMA_MARK);
+          }
+          unit.mem.bubbled.clear();
         }, { owner: unit });
       } }],
       install(battle, unit) {
@@ -979,7 +993,7 @@ const kits = {
         onTick({ battle, unit, dt }) {
           const T = unit.mem.tornado;
           if (!T) return;
-          const inside = battle.enemiesInRadius(T.x, T.y, R);
+          const inside = battle.foesInRadius(T.x, T.y, R);
           for (const e of inside) pulse(battle, e, `glady:slow:${unit.id}`, { moveMul: Math.max(0, 1 + num(bb.move_speed, -0.5)) });
           T.acc += dt;
           if (T.acc + 1e-9 < iv) return;
@@ -996,7 +1010,7 @@ const kits = {
           const T = unit.mem.tornado;
           unit.mem.tornado = null;
           if (!T || reason === 'death' || !unit.alive) return;
-          for (const e of battle.enemiesInRadius(T.x, T.y, R)) pullSelf(battle, unit, e, force);
+          for (const e of battle.foesInRadius(T.x, T.y, R)) pullSelf(battle, unit, e, force);
           battle.fx('pull', { x: T.x, y: T.y, id: unit.id });
         },
       },
@@ -1946,7 +1960,7 @@ const kits = {
             if (S2 && skillActive(unit)) {
               // S2: motes orbit wider and hit enemies instead of operators
               const hitAt = unit.mem.moteHit || (unit.mem.moteHit = new Map());
-              const foes = battle.enemiesInRadius(unit.x, unit.y, num(bb.outside_radius, 2)).filter((e) => canTargetEnemy(unit, e, { canHitFly: true }))
+              const foes = battle.foesInRadius(unit.x, unit.y, num(bb.outside_radius, 2)).filter((e) => canTargetEnemy(unit, e, { canHitFly: true }))
                 .sort((a, b) => a.id - b.id);
               for (const e of foes) {
                 if ((hitAt.get(e.id) ?? -Infinity) > battle.time + 1e-9) continue;

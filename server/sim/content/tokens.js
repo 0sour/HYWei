@@ -1106,7 +1106,7 @@ function yanyouKit(bb, raw) {
         if (f.acc < 1 - 1e-9) return;
         f.acc -= 1;
         // centre-point AoE around the locked target, searched again every second (the target itself included)
-        const hit = flameR > 0 ? battle.enemiesInRadius(t.x, t.y, flameR) : [];
+        const hit = flameR > 0 ? battle.foesInRadius(t.x, t.y, flameR) : [];
         if (!hit.includes(t)) hit.unshift(t);
         for (const e of hit) battle.dealDamage(unit, e, { amount: unit.s.atk * flameScale, type: 'arts', isSkill: true, tags: ['flame'] });
         battle.fx('yanyouFlame', { x: t.x, y: t.y, id: unit.id, target: t.id, r: flameR, n: hit.length, dur: 1 });
@@ -1152,7 +1152,7 @@ function yanyouKit(bb, raw) {
         auraAcc += dt;
         if (fragMul > 1 && auraAcc >= YANYOU_AURA_EVERY - 1e-9) {
           auraAcc = 0;
-          for (const e of battle.enemiesInRadius(unit.x, unit.y, YANYOU_FRAGILE_RADIUS)) {
+          for (const e of battle.foesInRadius(unit.x, unit.y, YANYOU_FRAGILE_RADIUS)) {
             battle.applyStatus(e, 'elemFragile', { duration: 2 * YANYOU_AURA_EVERY, value: fragMul - 1, source: unit });
           }
         }

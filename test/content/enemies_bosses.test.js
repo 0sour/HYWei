@@ -1092,15 +1092,27 @@ test(`${nm('enemy_1062_rager_2')}: loses ${tb('enemy_1062_rager_2', 'periodic_da
   approx(e.s.maxHp - e.hp, 3 * tb('enemy_1062_rager_2', 'periodic_damage.damage'));
 });
 
-test(`${nm('enemy_1273_stmgun_2')}: Cannon locks the highest-max-HP unit and bombards (arts ATK×${skb('enemy_1273_stmgun_2', 'Cannon').bb.atk_scale})`, () => {
+test(`${nm('enemy_1273_stmgun_2')}: Cannon locks the highest-max-HP unit in range, bombards the highest HP% of its 9 tiles every 0.5 s up to 10 times (arts ATK×${skb('enemy_1273_stmgun_2', 'Cannon').bb.atk_scale}), 失衡免疫 + control immunity meanwhile (PRTS)`, () => {
   const h = arena({ units: [{ chessId: 't_gun', row: 12, col: 3 }, { chessId: 't_wall', row: 11, col: 3 }], chess: { t_wall: WALL('t_wall', { stats: { maxHp: 2e7 } }) } });
   h.step();
-  const e = put(h, 'enemy_1273_stmgun_2', [10, 9]);
-  e.profile.noAttack = true;
+  const far = arena({ units: [{ chessId: 't_gun', row: 12, col: 3 }] });
+  far.step();
+  const e0 = put(far, 'enemy_1273_stmgun_2', [10, 9]);
+  e0.profile.noAttack = true;
   const s = skb('enemy_1273_stmgun_2', 'Cannon');
-  h.run(s.initCooldown + 4);
-  assert.ok(h.eventsOf('fx').some((f) => f[1] === 'telegraph' && f[4].kind === 'cannon'));
+  far.run(s.initCooldown + 1);
+  assert.ok(!far.eventsOf('fx').some((f) => f[1] === 'telegraph' && f[4].kind === 'cannon'), 'nobody in its range: no cast');
+  const e = put(h, 'enemy_1273_stmgun_2', [11, 5]);
+  e.profile.noAttack = true;
+  h.run(s.initCooldown + 0.1);
+  const tel = h.eventsOf('fx').find((f) => f[1] === 'telegraph' && f[4].kind === 'cannon');
+  assert.ok(tel && tel[2] === 3 && tel[3] === 11, 'centred on the highest max-HP unit\'s tile');
+  assert.ok(e.findBuff('ab:cannon')?.flags.noDisplace, '失衡免疫 during the bombardment');
+  assert.equal(h.b.applyStatus(e, 'stun', { duration: 1 }), false, '晕眩免疫 during it');
+  h.run(5.5);
+  assert.equal(h.eventsOf('fx').filter((f) => f[1] === 'explode' && f[4].kind === 'cannon').length, 10, '10 shots');
   assert.ok(h.unit('t_wall').stats.taken + h.unit('t_gun').stats.taken > 0);
+  assert.ok(!e.findBuff('ab:cannon') && h.b.applyStatus(e, 'stun', { duration: 1 }) !== false, 'over afterwards');
 });
 
 for (const key of ['enemy_1501_demonk', 'enemy_10018_sgrobh']) {
@@ -1818,15 +1830,20 @@ test(`${nm('enemy_1525_blkswb')}: 抵抗; ignores ${tb('enemy_1525_blkswb', 'Def
   const first = h.hooksOf('damaged').find((c) => c.source === e);
   approx(first.amount, e.s.atk * skb('enemy_1525_blkswb', 'Blink').bb.atk_scale - 500, 1e-6, '速杀 on its blocker');
   assert.ok(e.x < 5 - 0.4, `passed through (x ${e.x})`);
-  // form 2 (its 速杀 held back so it keeps fighting the wall)
+  // form 2
   const CASTER = chessRec({ id: 't_caster', profession: 'CASTER', projectile: 'none', stats: { atk: 1, maxHp: 1e7, bat: 1, blockCnt: 0 }, rangeGrid: [[0, 0]], skill: { spCost: 999 } });
   const h2 = arena({ units: [{ chessId: 't_wall', row: 9, col: 5 }, { chessId: 't_caster', row: 10, col: 4 }], chess: { t_wall: WALL('t_wall', { def: 500 }), t_caster: CASTER },
     captureNoisy: true, hooks: ['damaged', 'statusApplied'] });
   h2.step();
   const k = put(h2, 'enemy_1525_blkswb', [9, 5]);
-  for (const a of k.mem.ab.list) if (a.id === 'blink' || a.id === 'blink2') a.left = 999;
+  // its 速杀 held back so it keeps fighting the wall (form 2's starts from its initial cooldown 0 when the 重生 ends)
+  for (const a of k.mem.ab.list) if (a.id === 'blink') a.left = 999; else if (a.id === 'blink2') a.cond = () => false;
   killed(h2, k, null);
-  h2.run(tb('enemy_1525_blkswb', 'Reborn.duration') + tb('enemy_1525_blkswb', 'Reborn.invincible') + 0.1);
+  assert.ok(h2.runUntil(() => k.form === 'form2', 10), 'the 重生 ends');
+  // PRTS 特殊机制 §重生 "重生结束时，重置自身的通用技能与当前形态的技能冷却为初始冷却"
+  const b1 = k.mem.ab.list.find((a) => a.id === 'blink');
+  assert.ok(b1.left > (b1.icd ?? 0) - 0.04 && b1.left <= (b1.icd ?? 0) + 1e-9, `速杀 (held at 999) back to its initial cooldown (${b1.left} vs ${b1.icd})`);
+  h2.run(tb('enemy_1525_blkswb', 'Reborn.invincible') + 0.1);
   assert.ok(k.s.flags.stealth, 'second form: 隐匿');
   const t0 = h2.b.time, a0 = k.stats.attacks;
   h2.runUntil(() => k.stats.attacks >= a0 + 1, 20);

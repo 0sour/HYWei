@@ -1567,6 +1567,26 @@ export class Battle {
     return out;
   }
 
+  /**
+   * The enemies within `r` (as enemiesInRadius) an ally-side area effect can select — PRTS 作战机制 §AOE伤害判定 "AOE的判定是
+   * 对攻击范围内的每个可以被选中的敌人进行判定", 隐匿 "隐匿状态下的单位一般无法被敌方的索敌机制和Buff选择器选中为目标": no
+   * untargetable enemy and no 隐匿 one unless revealed or blocked (tile selectors — enemiesInKeys / canTargetEnemy — already
+   * skip them). Flying and asleep enemies stay the caller's choice. Enemy-side effects on other enemies (auras, heals) and
+   * physical collisions keep enemiesInRadius. Player report #8 after 0.1.0 (the 逐火 余烬): until 0.1.1 profession splash
+   * and skill circles still reached an unblocked 隐匿 enemy.
+   */
+  foesInRadius(x, y, r, centre = false) {
+    const out = this.enemiesInRadius(x, y, r, centre);
+    let n = 0;
+    for (const e of out) {
+      const f = e.s.flags;
+      if (f.untargetable || (f.stealth && !f.reveal && !e.blockedBy)) continue;
+      out[n++] = e;
+    }
+    out.length = n;
+    return out;
+  }
+
   alliesInRadius(x, y, r, ownerId = null, { includeDevices = false } = {}) {
     const out = [];
     const r2 = r * r + 1e-9;

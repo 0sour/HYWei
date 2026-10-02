@@ -259,15 +259,17 @@ D1 audit): radius 1.2, a tick every 0.5 s, one tick per unit per 0.5 s however m
 enemy alive hides the knock-out from every later `kill` handler, the kill count, kill credit and the bounty — they all
 wait for the real death, the only one with a `die` event. Every 重生 (`reborn()`, `husk()`, `statue()`) clears what
 operators put on the enemy — the buffs with an ally source and source-less catalogue statuses (PRTS 特殊机制 §重生
-"清空自身身上除白名单外所有Buff"; `rebirthCleanse`) — and keeps [ASSUMED: the whitelist] its `persist` talents, what it or
+"清空自身身上除白名单外所有Buff"; `rebirthCleanse`), restarts its skills from their initial cooldown when the 重生 ends
+("重生结束时，重置自身的通用技能与当前形态的技能冷却为初始冷却"; `rebirthCooldowns`, since 0.1.1) — and keeps [ASSUMED: the
+whitelist] its `persist` talents, what it or
 another enemy gave it (锏's self-applied 抵抗, enemy auras) and source-less field state (terrain, airflow, element burst
 locks): a 逐火 knocked out while feared is no unblockable ember. 重生 / form changes: `reborn()` (first knock-out → second
 form; fx forms 'reborn' → 'form2'), `statue()` (守墓石像: melee only while blocked; first knock-out → 10 s unblockable,
 immobile statue → a flyer with ranged arts attacks that skip flyers; forms 'stone' → 'fly'), `husk()` (talent
 Revive[Trigger], every knock-out: 1 s 重生 — 无敌, 无法阻挡, immobile — then a hit-count husk that
-walks its route on: the 深池逐火 余烬 / 火灰 are 隐匿 and disarmed, so only a blocked one can be targeted by operators (the
-engine's radius area damage — `enemiesInRadius`: profession splash, skill circles — still reaches an unblocked one, a
-known deviation: officially an AoE judges only the enemies it can select, PRTS 作战机制 §AOE伤害判定); 假想敌：再生's 傀儡 is unblockable and, as it begins, shields the other enemies within 1.8; a husk
+walks its route on: the 深池逐火 余烬 / 火灰 are 隐匿 and disarmed, so only a blocked one can be targeted or struck by
+operators (radius area damage too: `Battle.foesInRadius`, PRTS 作战机制 §AOE伤害判定 — until 0.1.1 it reached an unblocked
+one); 假想敌：再生's 傀儡 is unblockable and, as it begins, shields the other enemies within 1.8; a husk
 still standing after `Revive[Trigger].interval` s stands up again with full HP),
 转译基底·α (its original form cancels every damage instance, and an HP loss stops at 1 HP; the 4th physical / arts
 instance or a block starts a 2 s change). Each form change goes through `setForm(b, e, form, fxKind, params)`: the
@@ -482,7 +484,7 @@ of coverage per 3 s), kept because the current wording no longer says so (feedba
 | `tremble` (战栗) | 被阻挡后无法进行普通攻击: no normal attack **while blocked** (abilities still fire) | – |
 | `palsy` (麻痹) | each stack cancels one enemy normal attack (max 3, lasts until consumed); refused by 麻痹免疫 (data `palsyImmune`) | stacks, default 1 |
 | `disarm` | no normal attacks | – |
-| `stealth` / `reveal` | 隐匿: untargetable unless blocked (an ally: only the enemy it blocks attacks it) / cancels stealth. An enemy's b.snap stealth bit is set only while its 隐匿 is on (not blocked, not revealed: drawn solid otherwise); radius splash (`enemiesInRadius`) ignores it [known deviation, PRTS 作战机制 §AOE伤害判定] | – |
+| `stealth` / `reveal` | 隐匿: untargetable unless blocked (an ally: only the enemy it blocks attacks it) / cancels stealth. An enemy's b.snap stealth bit is set only while its 隐匿 is on (not blocked, not revealed: drawn solid otherwise); an operator's radius area damage (`foesInRadius`) skips it too (PRTS 作战机制 §AOE伤害判定 "对攻击范围内的每个可以被选中的敌人进行判定"; until 0.1.1 the splash still hit it) | – |
 | `camou` (迷彩) | an ally's camouflage (ba.camou "不阻挡时不成为敌方普通攻击的目标"): like `stealth` for enemy targeting (only the enemy it blocks attacks it) and on screen (b.snap stealth bit, `snapshot.js flagsOf`), but not 隐匿 for 隐匿-conditions (叙拉古, 家族徽章) and under its own buff keys. 忍冬 S3 (key `vulpis:camou`, until her next cast), 寒芒克洛丝 S1 | – |
 | `invulnerable` | ignores damage | – |
 | `levitate` (浮空) | stun + unblockable (unblocks enemies) + 失衡免疫 (`noDisplace`); an air unit meanwhile (`isFlying`: melee cannot hit it); **half duration on units with (current) massLevel > 3**; refused on data flyers (`motion` FLY) and units already levitated (PRTS 异常效果 "若单位数据上为飞行单位…或是持有浮空异常则Buff取消") — a 近地悬浮 enemy is WALK in its data, so it can be levitated; 浮空 is not one of the 近地悬浮 enemies' drop triggers | – |
@@ -587,7 +589,8 @@ and 扎罗's 溶血骇惧; "受到N真实伤害" over time is damage (PRTS 伤�
 `'dot'` / `'periodic'` (player report D1). The 源石溶剂 drain also ticks on every 敌人类我方单位 of the field (炎佑, a
 partner's too: PRTS 备注 "全场范围内的所有敌人类我方单位也会获得此装备的…效果…无视目标可选性"), credited to nobody, once per
 second however many carriers (PRTS 作战机制 "同名buff的默认叠加策略buff只能表现出一个"), while a carrier is on the field
-[ASSUMED]. On a leader
+[ASSUMED]. 奥术法阵 has the same 备注 for its rider: while a carrier is on the field, every damage instance of such a unit
+silences its target for the item's 5 s ("造成伤害时使目标失去特殊能力5秒"; since 0.1.1). On a leader
 in a boss / hidden battle a loss of ≥ `BOSS_HIT_LIMIT` (a part's 传递, a drone's death) is cancelled like a hit. Every HP-damage kind
 meets the limit (phys / arts / true / 元素伤害 incl. element bursts, DoT ticks); element 损伤 (the gauge, `type: 'element'`)
 removes no HP and never does.
@@ -651,7 +654,7 @@ or guard with a per-unit flag while dealing it. When the guard trips, the logged
 | `isReservedTile(r, c)` | true when a living unit stands there or it is the home tile of an ally piece that has not deployed yet / waits to redeploy — summon tile pickers must skip these (`findTacticalPoint` does) |
 | `addProjectile({ from, target | to:{x,y}, speed, onHit(ctx), visual, source, hitDead })` | homing; fizzles if the target dies unless `hitDead` |
 | `allySelectable(ally, by)`, `alliesFor(by, ownerId?)` | may an ability of ally `by` select `ally` — never a 孤立 unit (炎佑, 从不混淆的方向) but `by` itself (PRTS 选择器: "若掩码中孤立为1，且选择器的阵营与目标为友好关系，则不可选中"); `allies()` without the 孤立 ones — content picks ally targets (buffs, auras, 全场 talents, heal picks) through these, `alliesInGrid` too |
-| `unitsInGrid(unit, grid, {side, extend})`, `alliesInGrid(unit)`, `enemiesInRadius(x, y, r, centre?)`, `alliesInRadius(x, y, r, ownerId?)` | grid offsets are relative to facing RIGHT, rotated by `unit.dir`; enemies by their body (§2 hit areas: a huge enemy on every tile it occupies / within `r` of its rectangle; `centre` = splash around a target, a 中点判定 by position) |
+| `unitsInGrid(unit, grid, {side, extend})`, `alliesInGrid(unit)`, `enemiesInRadius(x, y, r, centre?)`, `foesInRadius(x, y, r, centre?)`, `alliesInRadius(x, y, r, ownerId?)` | grid offsets are relative to facing RIGHT, rotated by `unit.dir`; enemies by their body (§2 hit areas: a huge enemy on every tile it occupies / within `r` of its rectangle; `centre` = splash around a target, a 中点判定 by position; `foesInRadius` = the enemies an operator's area effect can select — no untargetable, no unblocked unrevealed 隐匿 enemy, PRTS 作战机制 §AOE伤害判定 — while enemy-side auras / heals and collisions keep `enemiesInRadius`) |
 | `enemiesInKeys(keys, attacker, profile)`, `blockedTargets(unit, profile)` | targetable enemies whose body is on the tiles (a huge one listed once); the enemies a unit blocks — always selectable by it, a ranged operator on a melee tile included (§1.2 Blocking) |
 | `allies(ownerId?)`, `aliveEnemies()`, `unitAt(r, c)`, `unitById(id)`, `tileInfo(r, c)`, `lowestHpAllyInRange(unit)` | |
 | `addLayers(playerId, bondId, n, reason, {source})`, `addCoins(playerId, n)` | layers are a no-op when `flags.layerGainsEnabled` is false (unite/boss); a gain adds at most the room left under `BOND_LAYER_CAP` (999, shared/constants.js `layerGainRoom`: the client's `AddBondCount` min(L + n, 999)) on the live copy — or, without one, on the battle's own gains — and returns what it added (0 at the cap: no hook, no event) |
@@ -994,13 +997,13 @@ table: `hitSleep` (targets and damages sleeping enemies — "可以攻击沉睡�
 | fastshot | FLY first; module `atk_scale` vs FLY |
 | closerange, underminer, primcaster, corecaster, ritualist, summoner, counsellor, pioneer, fearless, fighter, protector, guardian, primprotector, executor, duelist | plain profile (numbers from data; skills/talents via kits). underminer module: weaken 10 % ATK 2 s on hit |
 | longrange | lowest DEF first |
-| aoesniper / splashcaster | splash 1.1 tiles around the struck target at full damage (PRTS 溅射半径一览: 扩散术师 1.1; Arknights Terra Wiki, Splash Caster). [OPEN] the same table gives 炮手 1.0 (none in the pool) and 格雷伊 1.0 |
+| aoesniper / splashcaster | splash 1.1 tiles around the struck target at full damage (PRTS 溅射半径一览: 扩散术师 1.1; Arknights Terra Wiki, Splash Caster); 格雷伊 1.0 (the same table's 特殊 row; TUNE.splashcaster, 1.1 until 0.1.1). The table's 炮手 1.0 has no chess in the pool |
 | blastcaster | `rangeAoe`: every selectable enemy on its line at once, the same damage near and far, instant (`'beam'`) — "超远距离的群体法术伤害" is the whole line, not a splash (primary: PRTS 作战机制 §AOE伤害判定 names 伊芙利特's 炎爆 a 锁定攻击范围 AoE, and 炎爆 is her next-attack skill "下次攻击造成…" (PRTS 伊芙利特 S2), so a 轰击术师 normal attack; secondary: Terra Wiki, Blast Caster; supporting: PRTS 溅射半径一览 documents no splash radius for it; community report E3). A stealthed enemy is not struck unless it is revealed or blocked (a 锁定范围 AoE cannot hit a 隐匿 unit, PRTS 作战机制) |
-| bombarder | ground-only splash 1.0 + aftershock(s) at 50 % ATK (bb append_atk_scale / times). [OPEN] PRTS 溅射半径一览 gives 投掷手 0.9 |
+| bombarder | ground-only splash 0.9 (PRTS 溅射半径一览: 投掷手 0.9; 1.0 until 0.1.1) + aftershock(s) at 50 % ATK (bb append_atk_scale / times); 迷迭香's S2 末梢阻断 1.5 (the same table) |
 | hunter | 8 bullets (bb value), ×1.2 ATK (bb atk_scale), reloads 1/s after 1 s without attacking; can't attack when empty |
 | loopshooter | 回环射手 (user playtest #3): every attack throws a boomerang (`ai.js throwBoomerang`, projectile `'boomerang'`) out to the target at 15 tiles/s — it hits on arrival — and back to the thrower's current position at 3.75 tiles/s without damage (PRTS 跃跃 "投射物飞行速度15，返回时飞行速度3.75"); attacks only while holding it (every boomerang thrown caught — "必须回收全部回旋投掷物才可以进行下一次攻击", `unit.trait.boomerangsOut`) and with the attack cooldown ready, so the real interval is the longer of the two; a target dead mid-flight is not hit (it still flies to the last position and back); knocked out / withdrawn ⇒ lost, a redeployed thrower holds a fresh one; 跃跃 S2's extra boomerangs share the one flight (cnt hits) |
 | reaperrange | hits every enemy in range; ×1.5 (bb atk_scale) on the trait front grid (or its own line ahead) — both along its direction |
-| chain | chain N (trait text/bb max_target) with −15 % per jump (bb chain.atk_scale), 1.8-tile jumps, sluggish on each hit. [OPEN] PRTS 溅射半径一览 gives 链术师 1.7 |
+| chain | chain N (trait text/bb max_target) with −15 % per jump (bb chain.atk_scale), 1.7-tile jumps (constants.js CHAIN_RADIUS, PRTS 溅射半径一览: 链术师 1.7; 1.8 until 0.1.1), sluggish on each hit |
 | funnel | drone damage 20 % → +15 %/hit on the same target → 110 % (bb init/delta/max) |
 | mystic | stores up to 3 (bb times) attacks while idle, fires them all at once |
 | phalanx | no attack & DEF +200 %, RES +20 (bb) while the skill is off; while on, `rangeAoe`: each attack strikes every selectable enemy on its range at once (blocked enemies included; a stealthed one only when revealed or blocked), the same damage near and far, instant (`'beam'`) — "群体法术伤害" (secondary: Terra Wiki, Phalanx Caster: "attacks hit all enemies within their range"; supporting: PRTS 林 S3 备注 "单次普攻最多触发1次效果" — one normal attack can kill several — the same 锁定攻击范围 shape as the 轰击术师, and PRTS 溅射半径一览 documents no splash radius for it (it omits the 撼地者 too, so this is not proof); no primary source states a target cap; community report E3: it used to be one bolt + a 1.1 splash). 卡涅利安's charged S1 keeps the skill-off trait, 不攻击 included (kit `canAttack`, PRTS 备注) |

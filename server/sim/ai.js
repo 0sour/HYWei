@@ -24,7 +24,7 @@
 // flutters inside its own tile); an `attract` (诱导) status walks it to the status point instead (moveAttracted);
 // both re-plan the route when released (恐惧 outranks 诱导).
 
-import { ATTACK_PAUSE, ALLY_COLLIDER_RADIUS, MOVE_SCALE, PROJECTILE_SPEEDS, PROJECTILE_SPEED, BOOMERANG_RETURN_SPEED, COLS } from './constants.js';
+import { ATTACK_PAUSE, ALLY_COLLIDER_RADIUS, MOVE_SCALE, PROJECTILE_SPEEDS, PROJECTILE_SPEED, BOOMERANG_RETURN_SPEED, COLS, CHAIN_RADIUS } from './constants.js';
 import { sortEnemyTargets, sortAllyTargets, canTargetEnemy, canTargetAlly, tileKeyOf } from './targeting.js';
 import { reduceElement } from './damage.js';
 import { straightClear } from './grid.js';
@@ -235,7 +235,7 @@ export function resolveHit(b, u, prof, target, info, x, y) {
   if (prof.splashRadius > 0) {
     const r = prof.splashRadius;
     const sc = prof.splashScale ?? 1;
-    for (const e of b.enemiesInRadius(x, y, r, true)) {
+    for (const e of b.foesInRadius(x, y, r, true)) {
       if (e === target) continue;
       if (prof.groundOnly && e.isFlying) continue;
       if (!prof.canHitFly && e.isFlying && !prof.splashHitsFly) continue;
@@ -252,7 +252,7 @@ export function resolveHit(b, u, prof, target, info, x, y) {
     const n = Math.max(1, prof.chain.count || 3);
     for (let k = 1; k < n; k++) {
       let best = null, bd = Infinity;
-      for (const e of b.enemiesInRadius(prev.x, prev.y, prof.chain.radius || 1.8)) {
+      for (const e of b.enemiesInRadius(prev.x, prev.y, prof.chain.radius || CHAIN_RADIUS)) {
         if (hit.has(e.id) || !canTargetEnemy(u, e, prof)) continue;
         const d = Math.hypot(e.x - prev.x, e.y - prev.y);
         if (d < bd - 1e-9 || (Math.abs(d - bd) <= 1e-9 && best && e.spawnSeq < best.spawnSeq)) { bd = d; best = e; }

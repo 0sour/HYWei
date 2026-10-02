@@ -29,7 +29,7 @@
 import { toLocal, frontOf } from './dir.js';
 import { absoluteRangeKeys } from './targeting.js';
 import { bodyInKeys, bodyKeys, bodyOnTile } from './body.js';
-import { COLS } from './constants.js';
+import { COLS, CHAIN_RADIUS } from './constants.js';
 
 const P = (o) => Object.freeze(o);
 const num = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -276,13 +276,14 @@ export const SUB = Object.freeze({
   closerange: P({}),
   longrange: P({ priority: 'lowDef' }),
   aoesniper: P({ splashRadius: 1.1, projectile: 'bomb' }),
-  bombarder: P({ splashRadius: 1.0, projectile: 'bomb', groundOnly: true, canHitFly: false,
+  // PRTS 溅射半径一览 (特性): 投掷手 0.9, 扩散术师 1.1 (格雷伊 1.0, TUNE below), 链术师 1.7 jumps; 炮手 1.0 (none in the pool)
+  bombarder: P({ splashRadius: 0.9, projectile: 'bomb', groundOnly: true, canHitFly: false,
     afterHit: (battle, unit, target, info) => {
       // aftershocks: (times − 1) extra hits at append_atk_scale × ATK (default one hit at 50 %)
       const n = Math.max(1, (unit.profile.shockTimes ?? 2) - 1);
       for (let i = 1; i <= n; i++) {
         battle.after(0.3 * i, () => {
-          for (const e of battle.enemiesInRadius(info.x, info.y, unit.profile.splashRadius || 1, true)) { // splash: 中点判定
+          for (const e of battle.foesInRadius(info.x, info.y, unit.profile.splashRadius || 1, true)) { // splash: 中点判定
             if (e.isFlying) continue;
             battle.dealDamage(unit, e, { amount: unit.s.atk * (unit.profile.shockScale ?? 0.5), type: 'phys', isSplash: true, tags: ['aftershock'] });
           }
@@ -310,7 +311,7 @@ export const SUB = Object.freeze({
   // documents no splash radius for either (supporting only: it omits the 撼地者 too)
   splashcaster: P({ splashRadius: 1.1 }),
   blastcaster: P({ rangeAoe: true }),
-  chain: P({ chain: { count: 3, falloff: 0.15, radius: 1.8, sluggish: 0.5 } }),
+  chain: P({ chain: { count: 3, falloff: 0.15, radius: CHAIN_RADIUS, sluggish: 0.5 } }),
   funnel: P({ projectile: 'drone', install: installFunnel,
     dmgMul: (battle, unit, target) => {
       const f = unit.profile.funnel || { init: 0.2, delta: 0.15, max: 1.1 };
@@ -397,6 +398,8 @@ export const SUB = Object.freeze({
 const TUNE = {
   fastshot: (tb) => ({ flyScale: num(tb.atk_scale, 1) }),
   bombarder: (tb) => ({ shockScale: num(tb['attack@append_atk_scale'], 0.5), shockTimes: num(tb['attack@times'], 2) }),
+  // PRTS 溅射半径一览 特殊: 格雷伊 1.0 (the branch's 1.1 otherwise)
+  splashcaster: (tb, def) => ((def.charId ?? def.raw?.charId) === 'char_253_greyy' ? { splashRadius: 1.0 } : {}),
   hunter: (tb) => ({ ammoMax: num(tb.value, 8), ammoScale: num(tb.atk_scale, 1.2) }),
   reaperrange: (tb, def) => ({ frontScale: num(tb.atk_scale, 1.5), frontGrid: def.raw?.trait?.rangeGrid ?? null }),
   funnel: (tb) => ({ funnel: { init: num(tb.init_atk_scale, 0.2), delta: num(tb.delta_atk_scale, 0.15), max: num(tb.max_atk_scale, 1.1) } }),
