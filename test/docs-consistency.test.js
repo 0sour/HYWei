@@ -232,7 +232,7 @@ test('回环射手 boomerang and 蕾缪安 S3 shells (user playtest #3 items 4�
   assert.equal(typeof SUB.loopshooter.canAttack, 'function', 'attacks only while holding the boomerang');
   assert.match(SIM, /boomerang 15 out,\s*3\.75 back/);
   assert.ok(!/next attack waits for the boomerang \(2 × distance \/ 10 s\)/.test(SIM), 'SIM §8: the old lob rule is gone');
-  assert.match(SIM, /`none\|arrow\|bolt\|bomb\|lob\|orb\|drone\|enemy\|boomerang\|chain\|chainHeal`/);
+  assert.match(SIM, /`none\|arrow\|bolt\|bomb\|lob\|orb\|drone\|enemy\|boomerang\|droneBomb\|chain\|chainHeal`/);
   assert.match(DESIGN, /BOOMERANG_RETURN_SPEED/);
   // 蕾缪安: one shell every 0.3 s after the skill (PRTS), fx 'bombardShell' then 'bombard' — the kit's constants
   const kit = readFileSync(join(ROOT, 'server/sim/content/kits/tier6.js'), 'utf8');

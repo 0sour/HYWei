@@ -216,7 +216,15 @@ never attack — unless content arms them through `enemy.profile` (`noAttack: fa
 转译基底·α's 寻仇者 / 特战术师 forms, which then attack like any enemy); `dmgType 'heal'` enemies heal the lowest-HP% enemy in their radius instead. A `noMove` enemy stands (not `moving`, drawn idle). Content can take over an
 enemy's attack: `enemy.profile.deferHit` = the engine makes the attack (target, timing, the `'atk'` event) but deals no
 damage — the content's `attack` handler resolves it (帝国炮火先兆者's shells landing 3 s later, `content/enemies.js
-kitShell`); `enemy.profile.shot` = the `'atk'` event's projectile kind (`'mortar'`: no projectile drawn). Crates (stage devices with
+kitShell`); `enemy.profile.shot` = the `'atk'` event's projectile kind (`'mortar'`: no projectile drawn). 暴鸰 (`kitBombd`,
+no normal attack) drops its one bomb as a projectile: the cast (trigger: an ally within its range 2; the drone hovers
+through it) releases it `BOMBD_RELEASE` (8 ticks, the Attack clip's OnAttack on frame 8) later — `'atk'` kind
+`'droneBomb'` and setForm `'bombed'` (fx `'phase'` {kind, form `'bombed'`}; `unit.form` → `UnitInfo.form`; the model flies on without it) — and
+it hits on arrival (target 100 % ATK, the other allies of the 8 tiles around its landing tile 100 % splash, camouflage
+ignored; a target gone mid-flight: it lands where it was). The cast ends once the bomb has landed and at least
+`BOMBD_POST_DELAY` (0.667 s) after the release: the drone's speed ×2, and it moves again. A stun / freeze / sleep
+before the release interrupts the cast: nothing leaves the drone and the skill re-arms with its 1 s cooldown (feedback
+D4 after 0.1.0: the damage used to land in the trigger tick with the bomb still on the drone). Crates (stage devices with
 role `crate`, 100 HP) are ground obstacles; an enemy forced through one is blocked by it and destroys it. A device is
 present when data/stages.json says `active: true` (this wins over the level file's `hidden`: act1 m02's crates);
 research stages without `active` use `!hidden`. Active platforms/mounds (射击台, act1 m03) [ASSUMED, DATA §15.11] are
@@ -916,7 +924,7 @@ PRTS 选择器, is not in the data): "地面敌人" / "不可对空" ⇒ `!e.isF
 风丸 折纸生花, 乌尔比安 S3, 缄默德克萨斯 S2, 余 S2, 见行者 S2, 耀骑士临光 不畏苦暗 and the token appear bursts — “耀阳”,
 沙之碑, 迷迭香的战术装备's stun, 纸偶). A stun / freeze / sleep from any of them drops a hovering 掠海漂移体 for good. Ranged attacks fly as projectiles
 (`constants.js PROJECTILE_SPEEDS`: arrow 14, bolt 11, bomb/lob 8, orb 10, drone 16, enemy 10 tiles/s; boomerang 15 out,
-3.75 back = `BOOMERANG_RETURN_SPEED`, PRTS 跃跃); melee/`none` hits are instant. Kit-settable profile flags beyond the
+3.75 back = `BOOMERANG_RETURN_SPEED`, PRTS 跃跃; droneBomb 5 = 暴鸰's bomb, the official projectile_bombd); melee/`none` hits are instant. Kit-settable profile flags beyond the
 table: `hitSleep` (targets and damages sleeping enemies — "可以攻击沉睡的敌人"), `onEachHit(b, u, victim, hctx)`, `dmgMul`,
 `afterHit`, `afterAttack`, `canAttack`, `hitsFn`, `priority`, `blockFly`, `noHeal`, `boomerang` (the projectile stays
 `'boomerang'` whatever the data's generic ranged projectile says) (see the header of professions.js).
@@ -981,14 +989,14 @@ Unknown subprofessions fall back to the profession default (test `professions.te
   cooldownEnd, cooldown]]` (only when non-empty) = `elementView` of every unit with a gauge or a running 爆发冷却 (§3).
   `fieldMeta()` lists the knocked-out operators too (a client joining mid-battle shows them; DESIGN §18.3).
 - `drainEvents()` tuples: `['spawn', UnitInfo]` (first appearance), `['deploy', id]` (every (re)deploy), `['atk', src, tgt, projKind]`
-  (`none|arrow|bolt|bomb|lob|orb|drone|enemy|boomerang|chain|chainHeal`; a boomerang's way back has no event — the
+  (`none|arrow|bolt|bomb|lob|orb|drone|enemy|boomerang|droneBomb|chain|chainHeal`; a boomerang's way back has no event — the
   renderer flies it back to the thrower at `BOOMERANG_RETURN_SPEED`; an enemy's `profile.shot` may name another kind,
   e.g. `mortar` for 帝国炮火先兆者, which the renderer does not draw — its fx `bombardShell` is the shell), `['dmg', tgt, amount, type]` (`phys|arts|true|burn|neural|necrosis|apoptosis`),
   `['heal', tgt, amount]`, `['skill', id, 1|0]`, `['die', id, reason]`, `['leak', id]`, `['status', id, key, 1|0]`,
   `['fx', kind, x, y, extra]` (`hitCap` `{ id, n }`: a leader's hit cancelled by 限伤 — the renderer draws nothing;
   `extra.form` = the enemy's model form from then on, `content/enemies.js setForm` / `shared/protocol.js fxForm`),
   `['layer', playerId, bondId, n]` (n = the layers actually added, capped at 999), `['bounty', playerId, coins]`.
-- `UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?, form?, skillIndex? }` (`skillIndex`: an ally's equipped skill, DESIGN §16; `form`: an enemy's current model form — `content/enemies.js setForm` — so a view built mid-battle from `fieldMeta()` starts on that clip set)
+- `UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?, form?, skillIndex? }` (`skillIndex`: an ally's equipped skill, DESIGN §16; `form`: an enemy's current model form — `content/enemies.js setForm`: 掠海漂移体 `'crawl'`, 暴鸰 `'bombed'` after its drop, 转译基底·α's forms … — so a view built mid-battle from `fieldMeta()` starts on that clip set)
   (`dir` = the unit direction, allies meaningful, enemies 'RIGHT'; `facing` = its horizontal sign for sprite flipping)
   (`spine`/`avatar` are asset ids from data).
 - flags: UF bits (blocked 1, stunned 2, frozen 4, stealth 8 — 隐匿 (an enemy's only while not blocked / revealed) or an ally's 迷彩 — skill 16, shield 32, invuln 64, cold 128, sleep 256, flying 512);

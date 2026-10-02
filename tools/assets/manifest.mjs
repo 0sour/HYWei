@@ -1,7 +1,8 @@
 // Manifest assembly: walks the plan template (tools/assets/plan.mjs), collects
 // the single-file download alternatives, and resolves the template against the
 // files that actually exist on disk into data/assets.json. Entries whose files
-// are missing are dropped (never emitted as broken URLs).
+// are missing are dropped (never emitted as broken URLs); a `literal(value)` node
+// is emitted as it is (no files behind it).
 
 import { existsSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -13,6 +14,15 @@ export const MANIFEST_VERSION = 1;
 
 const isLeaf = (n) => !!n && typeof n === 'object' && Array.isArray(n.alts);
 const isModelRef = (n) => !!n && typeof n === 'object' && typeof n.model === 'string' && Object.keys(n).length === 1;
+const LITERAL = Symbol('literal');
+const isLiteral = (n) => !!n && typeof n === 'object' && Object.hasOwn(n, LITERAL);
+
+/**
+ * A template node emitted as it is (a JSON copy; null fields kept): data that is no file to download or resolve, e.g.
+ * the metadata of a local-client Spine model (plan.mjs enemies[id].spineLocal).
+ * @param {any} value JSON value
+ */
+export function literal(value) { return { [LITERAL]: JSON.parse(JSON.stringify(value)) }; }
 
 /**
  * Collect every leaf of the template with its dotted path.
@@ -23,7 +33,7 @@ const isModelRef = (n) => !!n && typeof n === 'object' && typeof n.model === 'st
  */
 export function collectLeaves(node, path = '', out = []) {
   if (isLeaf(node)) { out.push({ path, leaf: node }); return out; }
-  if (isModelRef(node) || !node || typeof node !== 'object') return out;
+  if (isModelRef(node) || isLiteral(node) || !node || typeof node !== 'object') return out;
   for (const [k, v] of Object.entries(node)) collectLeaves(v, path ? `${path}.${k}` : k, out);
   return out;
 }
@@ -78,6 +88,7 @@ export function resolveTemplate(template, { root, spine, sourceOf = () => undefi
   const files = new Set();
   const walk = (node, path) => {
     if (node === null || node === undefined) return undefined;
+    if (isLiteral(node)) return JSON.parse(JSON.stringify(node[LITERAL]));
     if (isLeaf(node)) {
       for (let i = 0; i < node.alts.length; i++) {
         const a = node.alts[i];
@@ -110,7 +121,7 @@ export function resolveTemplate(template, { root, spine, sourceOf = () => undefi
     }
     return out;
   };
-  const isContainer = (v) => v && typeof v === 'object' && !isLeaf(v) && !isModelRef(v);
+  const isContainer = (v) => v && typeof v === 'object' && !isLeaf(v) && !isModelRef(v) && !isLiteral(v);
   const value = walk(template, '');
   return { value, misses, fallbacks, files };
 }

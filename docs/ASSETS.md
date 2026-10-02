@@ -20,7 +20,8 @@ npm run assets       # = node tools/vendor.mjs && node tools/fetch-assets.mjs
 | `--offline` | No network. Re-runs post-processing (atlas fixes, skeleton parsing, WOFF2) on what is already on disk, then rebuilds `data/assets.json`. |
 | `--dry-run` | Print the plan (file and model counts, alias notes) and exit. |
 | `--refresh-index` | Re-download the two upstream indexes: `audio_data.json` and `models_data.json`. |
-| `--prune` | Delete files under `public/assets/` that the manifest no longer references, for example after a mapping change. Without this flag they are only listed in the report. |
+| `--prune` | Delete files under `public/assets/` that the manifest no longer references, for example after a mapping change. Without this flag they are only listed in the report. `public/assets/local/` (written by `tools/local-extract`) is never pruned. |
+| `--local-spines` | Rewrite `tools/assets/local-enemy-spines.json` (the metadata of the enemy models only the local client has, see "Enemy aliases") from the models `tools/local-extract/extract.py` extracted to `public/assets/local/spine/enemy/`. Run it after a game update changed them; without it the committed file is used and a differing extraction only gets a warning. |
 
 The script is **idempotent**. A file on disk is kept, not re-downloaded, when any one of these holds:
 - its size matches the ledger entry from a previous download (`.cache/assets-ledger.json`);
@@ -71,6 +72,7 @@ The research JSONs in `docs/research/` (03, 05, 07) define **which** ids are nee
 | Operator battle Spine (Front, Back) | fexli/ArknightsResource `spine/{id}/{id}/{Front,Back}/` | `spine/op/{charId}/{front,back}/{stem}.{skel,atlas,png}` |
 | Token Spine | fexli: the default model, or else the first skin variant (`spine/{tokenId}/{variant}/Spine/`) | `spine/token/{tokenId}/{stem}.*` |
 | Enemy Spine (PC build, premultiplied alpha) | isHarryh/Ark-Models `models_enemies/{key}/`, file names from `models_data.json` | `spine/enemy/{enemyId}/{stem}.*` |
+| Enemy Spine that no dump carries (灼热源石虫 / 炽焰源石虫) | the local client only (`tools/local-extract/extract.py ENEMY_SPINES`, optional); never downloaded and never required: an overlay of the web alias (`enemies[id].spineLocal`) | `local/spine/enemy/{enemyId}/{stem}.*` (listed in `data/local-assets.json`) |
 | BGM | AA2 `voice` branch `audio/sound_beta_2/music/**` | `audio/bgm/{file}.mp3` |
 | SFX (UI, battle, per unit) | AA2 `voice` `audio/sound_beta_2/**`, mapped from `audio_data.json` banks | `audio/sfx/{same sub-path}.mp3` |
 | Fonts: Bender Regular and Light, Novecento Wide | TimWangZi/The-font-of-Arknights | `public/fonts/*.{otf,ttf,woff2}`, `public/fonts/fonts.css` |
@@ -125,7 +127,10 @@ All paths are URL paths relative to the site root, for example `/assets/char/ava
   stats: { files, bytes, chars, charsWithBack, enemies, enemiesWithSpine, tokens, tokensWithSpine,
            spineModels, bonds, items, bands, skills, ui, sfxUnits },
   chars:   { [charId]: { avatar, avatarE2?, portrait, portraitE2?, spine: { front: Spine, back?: Spine } } },
-  enemies: { [enemyId]: { icon, spine?: Spine, spineAliasOf?: enemyId } },
+  enemies: { [enemyId]: { icon, spine?: Spine, spineAliasOf?: enemyId,
+                          spineLocal?: { group, skel, atlas, textures, …Spine } } },
+                          // spineLocal: an optional local-client model; file names in a data/local-assets.json group,
+                          // not URLs, and always emitted (independent of the disk) — "Enemy aliases" below
   tokens:  { [tokenId]: { owner: charId|null, avatar?, spine?: Spine, spineVariant?: string } },
   bonds:   { [bondId]: url },       // white glyphs; tint in CSS/canvas
   items:   { [trapId]: url },
@@ -225,8 +230,30 @@ Other renderer rules from research 07 §5.4–5.5:
 - **Attack speed:** set the attack `timeScale` to `duration / attackInterval`.
 - **Model size:** every skeleton is drawn at one `UNIT.modelScale` (render/style.js, 320 skeleton units per tile), which stands for the official standard. The official client also scales each enemy model in its battle prefab: the Graphic / FaceSwitcher / Spine transforms multiply to 0.27 for most enemies and for the operators' battle skins, but not for all of them. For example, 威龙 is 0.16, 妖怪 0.20 and 青铜镜 0.6. The skeletons themselves carry no such scale, because every enemy SkeletonDataAsset uses 0.01. So an enemy is drawn × data/enemies.json `modelScale` (its prefab's product ÷ 0.27, see docs/DATA.md; user playtest #6: 威龙 used to be drawn 1.35× a 妖怪 instead of 1.08×), and its HP bar sits on that model: at its setup-pose bounds' height × the same factors, or, for a skeleton without bounds, at the chibi headroom × `modelScale` (bosses 2.2 tiles). `tools/local-extract/enemy_scales.py` reads the products from a local client, and `tools/build-data.mjs MODEL_SCALES` keeps them.
 - **Enemy aliases:** `enemies[id].spineAliasOf` means the model belongs to another enemy. Two cases:
-  - `enemy_1305_mhslim` has no Spine anywhere, so it uses the slime model. Tint it.
-  - `_2` boss variants reuse the base model.
+  - `_2` variants whose official prefab is the base one (鸭爵, 高普尼克, 流泪小子, 圆仔, 假想敌：胄, 假想敌：铳): the base model, as in the game.
+  - an enemy whose own model no dump carries: 灼热源石虫 / 炽焰源石虫 (`enemy_1305_mhslim` / `_2`) use the plain 源石虫 on
+    the web (`plan.mjs ENEMY_SPINE_ALIAS`). Their official skeletons only exist in the client's enemy art bundles
+    (`refs/arts/enm_art_*.ab`), so they are an optional **overlay**, `enemies[id].spineLocal` = `{ group, skel, atlas,
+    textures, pma, anims, animations, events, hits, bounds }` (file names in the `data/local-assets.json` group
+    `spine/enemy/{enemyId}`; the rest as a `spine` entry):
+    - `tools/local-extract/extract.py` writes the model to `public/assets/local/spine/enemy/{enemyId}/` (page textures
+      with their `[alpha]` texture merged in: premultiplied RGB + A like Ark-Models; the atlas gets `size:` and
+      `pma: true`) and lists its files in `data/local-assets.json`.
+    - The metadata comes from the committed `tools/assets/local-enemy-spines.json` (`fetch-assets --local-spines`
+      parses the extracted models into it), never from the disk: `data/assets.json` is byte-identical with or without
+      the extraction, it has no `/assets/local/` URL, and setup / doctor / the manifest tests never miss these files.
+    - The client (`assets.js spineEntry`, with `assets.local()`, which `createFieldView` awaits with the manifest) draws
+      the official model when the local manifest lists every file of it; otherwise, or when it fails to load
+      (`UnitView`: the entry's `fallback`), the web alias, tinted toward the slug's own lava colours
+      (`render/units.js ALIAS_TINT`: 灼热 orange, 炽焰 red-orange; research 07 §5.6 "a hue shift", [ASSUMED] look) so a
+      source install without the extraction still tells them from the plain 源石虫. A release bundle carries the
+      models only when it is zipped from a checkout where the extraction ran with the `spine/enemy` job (an extraction
+      made with 0.1.0 lacks it: `node tools/setup.mjs --local` again, then check that `data/local-assets.json` lists
+      `spine/enemy/enemy_1305_mhslim` and `spine/enemy/enemy_1305_mhslim_2`).
+    User feedback after 0.1.0 (D3: "所有特殊源石虫的模型全表现为普通源石虫"): the ELEMENT faction spawns up to ten of them a
+    round. A 2026-10-03 audit of every enemy of `data/enemies.json` (249) against the client's battle prefabs (the
+    skeleton each prefab's Spine renderer draws) found no other enemy drawn with another enemy's model; 伊利昂的木驮兽
+    (`enemy_10159_mntrjn`) starts on its `Full` skin (five passengers) in the game and is drawn with the `default` one.
 
 ### Other fallbacks
 

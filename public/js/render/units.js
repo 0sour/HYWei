@@ -4,7 +4,10 @@
 // the avatar-in-rarity-diamond fallback) + HUD container (bar layer: HP bar with delayed "ghost" damage, SP bar
 // with ready glow / draining skill bar, tier chip, status icons, blocked marker). The fallback shows at once and
 // cross-fades to the Spine model when it has loaded; missing or failed models keep the fallback forever (the
-// game never blocks on Spine). Every bar is a tinted Texture.WHITE sprite, so HUDs batch into few draw calls.
+// game never blocks on Spine) — except an optional local-client model (assets.js spineEntry `fallback`, DESIGN §13:
+// 灼热源石虫 / 炽焰源石虫), which falls back to the web model first; that web alias (the plain 源石虫) is drawn tinted
+// toward the slug's own colours (ALIAS_TINT). Every bar is a tinted Texture.WHITE sprite, so HUDs batch into few draw
+// calls.
 //
 // Placement: feet anchored at world (x, y, z); scale = camera px-per-tile at the feet × UNIT.modelScale, so
 // chibis shrink with distance like the original. An enemy's model is also scaled by its official prefab factor
@@ -25,9 +28,10 @@
 // An operator that enters a battle already knocked out (联防, user playtest #5 item 2: sim 'die' reason 'forcedExit')
 // goes down with `die(true)`: straight to the held end of the clip, no fall.
 // Enemy modes (sim fx 'phase' { id, kind } or another fx's `form` → `setForm(kind, fx)`): 掠海漂移体 dropping to 爬行模式
-// (user playtest #5 item 1) plays its skeleton's 'Change' clip once, then the crawl set (*_02); 转译基底's forms, the 逐火
-// embers, 再生's puppet, the leaders' 重生 and 守墓石像 likewise (user report after 0.1.0) — FORMS. A view built later
-// (`info.form` = UnitInfo `form`, the sim's current form, through render/app.js renderInfo) starts in the mode.
+// (user playtest #5 item 1) plays its skeleton's 'Change' clip once, then the crawl set (*_02); 暴鸰 flies on without its
+// bomb (*_2) after the drop (feedback D4); 转译基底's forms, the 逐火 embers, 再生's puppet, the leaders' 重生 and 守墓石像
+// likewise (user report after 0.1.0) — FORMS. A view built later (`info.form` = UnitInfo `form`, the sim's current form,
+// through render/app.js renderInfo) starts in the mode.
 // Element gauges (b.snap `elem` → sample `el` / `elFill` / `elUntil` / `elDur`), the official form (PRTS 元素: "模型
 // 下部会显示对应的元素图标，并以白条显示剩余的元素值"; enemies "小尺寸图标（不显示元素图标，仅根据元素种类改变背景色）"): a row
 // right under the unit's own HP / SP bars and inside their span — the element's disc at the left (operators with its
@@ -55,7 +59,7 @@
 import { UF, ANIM } from '../../../shared/constants.js';
 import { SpineActor } from './spine.js';
 import { diamondTexture, shadowTexture, fxAtlas, tierChip, statusTexture, itemTexture, hudRings, ringArc, HUD_DISC, ELEMENT_RING } from './textures.js';
-import { COLORS, TIER_COLORS, ENEMY_FRAME, UNIT, statusIconKey } from './style.js';
+import { COLORS, TIER_COLORS, ENEMY_FRAME, UNIT, PROJ, statusIconKey } from './style.js';
 import { drawCrate, rowDepthKey, ROW_KEY, deviceBoxOf, DEVICE_BOX } from './tiles.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
@@ -94,6 +98,13 @@ export const DOWN_LOOK = Object.freeze({
   size: 0.42, height: 1.02,
 });
 /**
+ * An enemy drawn with another enemy's web model because its own is only in the local client (manifest `spineAliasOf`
+ * + `spineLocal`: 灼热 / 炽焰源石虫 → the plain 源石虫's skeleton, feedback D3 after 0.1.0): a multiply tint toward its own
+ * lava colours (orange / red-orange), so it reads apart from the plain slug where the local art was not extracted
+ * (research 07 §5.6 "a hue shift") [ASSUMED look]. Never on its official (local) model; status tints win over it.
+ */
+export const ALIAS_TINT = Object.freeze({ enemy_1305_mhslim: 0xffc48a, enemy_1305_mhslim_2: 0xff9070 });
+/**
  * Element gauge row under the bars (see header): the disc's diameter in tiles and its pixel clamp (enemies × `enemy`),
  * the gap under the bars (px). The white bar is as tall as the SP bar and fills the rest of the bars' width. During a
  * 爆发冷却 the refilling bar takes the element's colour (textures.js ELEMENT_RING `tint`) and the disc's alpha pulses
@@ -106,6 +117,9 @@ export const EL_BAR = Object.freeze({ icon: 0.15, min: 8, max: 15, enemy: 0.8, g
  * → UnitView.setForm), per Spine id; the mode's roles override the manifest's (data/assets.json anims), `change` plays
  * once first:
  * - 掠海漂移体 (PRTS: 受晕眩/沉睡/冻结影响后进入爬行模式 — for good) crawls on its *_02 clips after 'Change';
+ * - 暴鸰 flies on its bomb-less *_2 clips once its one bomb left (the official prefab's mode S1: Move→Move_2, Idle→Idle_2,
+ *   Die→Die_2; user feedback after 0.1.0, D4: the bomb used to stay under the drone — no change clip, the drop is its
+ *   Attack clip);
  * - 转译基底·α (user report after 0.1.0, #5): its 2 s change clip A_Die_B / _C / _D, then 寻仇者 B_*, 幽灵 C_* (no attack
  *   clip: it never attacks) or 特战术师 D_* — its manifest roles are the original form's A_Idle / A_Move;
  * - 深池逐火战士 / 精锐战士 / 护卫 (#8): knocked out → 'Die' (the 1 s 重生), the 余烬 on Idle_2 / Move_2 and its death on
@@ -144,6 +158,14 @@ const STATUE = Object.freeze({
 });
 const JAKILL2 = clipSet('C2_Idle', 'C2_Move', 'C2_Die', 'C2_Attack');
 export const FORMS = Object.freeze({
+  enemy_1040_bombd: Object.freeze({
+    bombed: Object.freeze({
+      roles: Object.freeze({
+        idle: 'Idle_2', deploy: 'Idle_2', die: 'Die_2',
+        move: Object.freeze({ begin: 'Move_Begin_2', loop: 'Move_Loop_2', end: 'Move_End_2' }),
+      }),
+    }),
+  }),
   enemy_2025_syufo: Object.freeze({
     crawl: Object.freeze({ change: 'Change', roles: clipSet('Idle_02', 'Move_02', 'Die_02', 'Attack_02') }),
   }),
@@ -294,6 +316,7 @@ export class UnitView {
     this.body.addChild(this.fallback);
     this.actor = null;
     this.spineReady = false;
+    this.baseTint = 0xffffff;            // the drawn model's own tint (ALIAS_TINT), under the status tints
 
     this.hud = new P.Container();
     ctx.layers.bars.addChild(this.hud);
@@ -349,10 +372,19 @@ export class UnitView {
     const back = this._wantsBack();
     const entry = id ? a.spineEntry(id, { back }) : null;
     if (!entry || this.ctx.settings?.quality === 'low' && this.isEnemy && !this.isBoss && this.ctx.crowded?.()) return;
-    // every acquire is paired with exactly one release: a superseded / failed / post-destroy load releases its own
-    // entry; the displayed model's entry (`_actorEntry`) is released when that model is replaced or destroyed
-    this.entry = entry;
     this.entryBack = back;
+    this._acquireSpine(entry, id);
+  }
+
+  /**
+   * Load `entry` and show it. Every acquire is paired with exactly one release: a superseded / failed / post-destroy
+   * load releases its own entry; the displayed model's entry (`_actorEntry`) is released when that model is replaced or
+   * destroyed. A model that fails to load keeps the fallback diamond — unless the entry names a `fallback` (an optional
+   * local-client model, assets.js spineEntry: DESIGN §13), which is loaded in its place.
+   */
+  _acquireSpine(entry, id) {
+    const a = this.ctx.assets;
+    this.entry = entry;
     const req = this._spineReq = (this._spineReq || 0) + 1;
     a.spine.acquire(entry).then((data) => {
       if (this.destroyed || req !== this._spineReq) { this._releaseEntry(entry); return; }
@@ -370,6 +402,7 @@ export class UnitView {
       if (swap) this._dropActor();
       this.actor = actor;
       this._actorEntry = entry;
+      this.baseTint = (!entry.local && ALIAS_TINT[id]) || 0xffffff;   // the web alias of a local-only model
       this.body.addChild(this.actor.spine);
       this.spineReady = true;
       this.swapT = swap ? 1 : 0;
@@ -386,7 +419,11 @@ export class UnitView {
         if (this.flags & UF.SKILL) this.actor.setSkill(true);
         this.actor.setBase(this._baseFromAnim());
       }
-    }, () => { this._releaseEntry(entry); /* keep the fallback */ });
+    }, () => {
+      this._releaseEntry(entry);
+      if (entry.fallback && !this.destroyed && req === this._spineReq) this._acquireSpine(entry.fallback, id);
+      // else keep the fallback diamond
+    });
   }
 
   _formSpec() {
@@ -573,13 +610,17 @@ export class UnitView {
   }
 
   /** An attack was made (b.ev 'atk'). `target` = view or null. */
-  onAttack(target, now) {
+  onAttack(target, now, kind) {
     if (!this.alive) return;
-    if (this.lastAtk >= 0) {
-      const d = now - this.lastAtk;
-      if (d > 0.05 && d < 6) this.atkInterval = this.atkInterval * 0.6 + d * 0.4;
+    // a one-off cast (PROJ[kind].once: 暴鸰's bomb drop) is no attack rhythm: its clip plays once at its own speed
+    const once = !!PROJ[kind]?.once;
+    if (!once) {
+      if (this.lastAtk >= 0) {
+        const d = now - this.lastAtk;
+        if (d > 0.05 && d < 6) this.atkInterval = this.atkInterval * 0.6 + d * 0.4;
+      }
+      this.lastAtk = now;
     }
-    this.lastAtk = now;
     if (target && !this.isEnemy && this.info.kind !== 'device') {
       // operators keep their deploy direction (research 09 §1.2); enemies may turn towards their target
     } else if (target && this.isEnemy) {
@@ -591,17 +632,18 @@ export class UnitView {
       this.lungeDir.x = dx / len; this.lungeDir.y = dy / len;
     }
     this.lunge = 1;
-    if (this.actor) this.actor.attack(this.atkInterval); // game seconds: the actor's clock runs in game time
+    if (this.actor) this.actor.attack(this.atkInterval, once); // game seconds: the actor's clock runs in game time
     if (this.imp) this.imp.dirty = true;
   }
 
   /**
    * An attack by this unit is `lead` game seconds ahead in the snapshot buffer: start the Spine attack wind-up now
-   * so the strike frame lines up with the attack. True once started (then stop calling for that attack).
+   * so the strike frame lines up with the attack. True once started (then stop calling for that attack). `kind` = the
+   * 'atk' projKind (a one-off cast winds up at the clip's own speed).
    */
-  windUp(lead) {
+  windUp(lead, kind) {
     if (!this.alive || !this.actor || !this.spineReady) return false;
-    const ok = this.actor.windUp(this.atkInterval, lead);
+    const ok = this.actor.windUp(this.atkInterval, lead, !!PROJ[kind]?.once);
     if (ok && this.imp) this.imp.dirty = true;
     return ok;
   }
@@ -732,7 +774,7 @@ export class UnitView {
       this.fallback.visible = this.swapT < 1;
       const sc = s * UNIT.modelScale * this.modelK;
       const flashK = this.flash > 0 ? this.flash : 0;
-      let tint = 0xffffff;
+      let tint = this.baseTint;
       if (this.down) tint = DOWN_LOOK.tint;
       else if (this.flags & UF.FROZEN) tint = 0x9fd4ff;
       else if (this.flags & UF.COLD) tint = 0xcfe6ff;

@@ -61,13 +61,14 @@
 //   kind, tiles?, id?, form?} (delayed strikes, charges, 'reborn' with form 'reborn') · 'beam' {from, to, kind} ·
 //   'summon' {id, key} · 'ember' {id, hits, dur, form: 'husk'} · 'revive' {id, kind?, form: 'form2' | 'revived' | 'fly'}
 //   · 'stone' {id, dur, form: 'stone'} · 'blink' {id, fx, fy} · 'charge' {id, tx, ty} · 'expose' {id} · 'shieldBreak'
-//   {id} · 'liberate' {id} · 'phase' {id, kind, dur?, form?} (form changes — crawl, translator_* — and barrier / charge
-//   states) · 'lpLoss' {value, reason} · 'steal' · 'ignite'. Forms go through setForm(): the unit keeps it (`e.form`,
-//   UnitInfo `form`) and the fx's `form` is the model's clip set from then on (render/app.js → UnitView.setForm, units.js
-//   FORMS); the client keeps every fx with a `form` through catch-ups and hidden tabs (shared/protocol.js fxForm).
+//   {id} · 'liberate' {id} · 'phase' {id, kind, dur?, form?} (form changes — 掠海漂移体 'crawl', 暴鸰 'bombed',
+//   translator_* — and barrier / charge states) · 'lpLoss' {value, reason} · 'steal' · 'ignite'. Forms go through
+//   setForm(): the unit keeps it (`e.form`, UnitInfo `form`) and the fx's `form` is the model's clip set from then on
+//   (render/app.js → UnitView.setForm, units.js FORMS); the client keeps every fx with a `form` through catch-ups and
+//   hidden tabs (shared/protocol.js fxForm).
 // Custom hook: 'lpLoss' {amount, reason, source} — leader "扣除目标生命" effects; also summed into result.lpLoss.
 
-import { TICK, MOVE_SCALE, ELEMENT } from '../constants.js';
+import { TICK, MOVE_SCALE, ELEMENT, ATTACK_PAUSE, PROJECTILE_SPEEDS } from '../constants.js';
 import { canTargetAlly, sortAllyTargets, aggroCmp } from '../targeting.js';
 import { mitigate } from '../damage.js';
 
@@ -103,6 +104,16 @@ const ACPUPP_AURA_RADIUS = 1.8;
 const CROSS_REACH = 6;
 /** 暴鸰 投弹: the target's tile and its 8 neighbours (PRTS "对目标及其周围八格的我方单位造成100%物理伤害"). */
 const BOMB_REACH = 1;
+/** 暴鸰 投弹: the bomb leaves on the OnAttack event of the cast's Attack clip (the official battle prefab's Boomb ability:
+ *  animKey Attack, `_waitForAttackEvent`; the skeleton's OnAttack is on frame 8 of the 30 fps clip — data/assets.json
+ *  hits.Attack 0.267, rounded — so exactly 8 sim ticks). It then flies as projectile_bombd (`_speed` 5 =
+ *  PROJECTILE_SPEEDS.droneBomb, homing, `_ignoreCamouflage`). */
+export const BOMBD_RELEASE = 8 / 30;
+/** 暴鸰 投弹: the cast ends once the bomb has landed and no sooner than this after the release (the Boomb ability:
+ *  `_fireAttackFinishWhenProjectileInvalid` 1, `_minPostDelayWhenProjectileInvalid` 0.667, `_waitForAnimEndWhenProjectileInvalid`
+ *  0). Then its buff bomb_s (template switch_mode_restart_fsm: mode S1 + the move-speed modifier) — PRTS "技能结束后移速最终
+ *  提升至200%"; the cast's end clip is already the bomb-less Idle_2 (`_endAnimKey`). */
+export const BOMBD_POST_DELAY = 0.667;
 /** 帝国炮火先兆者 shell (PRTS "普通攻击向目标所在位置发射一枚于3秒后命中的弹道，弹道对半径1.2范围内的所有我方单位造成攻击力
  *  100%的无来源物理伤害 … ※弹道始终使用缓存攻击力"): flight time and blast radius. */
 const SHELL_FLIGHT = 3, SHELL_RADIUS = 1.2;
@@ -1537,22 +1548,75 @@ function kitRoar(ab) {
 /**
  * 暴鸰 (PRTS): "不进行普通攻击"; 投弹 (boomb, cooldown / initCooldown 1) "仅攻击范围内存在我方单位时可触发：对目标及其周围八格
  * 的我方单位造成100%物理伤害（对主目标造成物理普通伤害，对溅射目标造成物理溅射伤害，伤害无视迷彩）技能结束后移速最终提升至200%
- * ※此技能仅能触发一次，不可沉默" — one bomb on the ranged target (engine priority), then move speed ×boomb.move_speed.
+ * ※此技能仅能触发一次，不可沉默". The official battle prefab (enemy_1040_bombd, read from the client) drops the bomb as a
+ * projectile: the cast plays the Attack clip, the bomb leaves on its OnAttack event (BOMBD_RELEASE) and flies to the
+ * target (projectile_bombd), and the drone switches to its bomb-less mode (S1, buff bomb_s: the *_2 clips, no bottle).
+ * User feedback after 0.1.0 (D4 "炸弹无法正常投放"): the damage used to land in the tick of the trigger while the drone
+ * kept its bomb on screen. Now: the drone hovers through its cast; at the release an 'atk' event of kind 'droneBomb'
+ * (the client winds the Attack clip up to it and flies the bomb) and setForm 'bombed' (fx 'phase' {kind, form: 'bombed'}
+ * — render FORMS: the *_2 clips, which the view starts once the Attack clip is over — the official end clip Idle_2;
+ * `e.form` → UnitInfo.form; the client keeps the fx through catch-ups, shared/protocol.js fxForm); on arrival the target (the ranged target by engine priority) takes 100 % ATK and every other ally of
+ * the 8 tiles around where it lands 100 % ATK splash (camouflage ignored); a target gone mid-flight: the bomb lands
+ * where it was. The cast ends once the bomb has landed, at least BOMBD_POST_DELAY after the release: move speed
+ * ×boomb.move_speed, and it flies on. A stun / freeze / sleep before the release interrupts the cast (Boomb
+ * `_immuneStunWhenAffecting` 0, like the other enemy channels here): nothing leaves the drone, it keeps its bomb and casts
+ * again after the skill's cooldown (1 s, counted from the interrupt) once it is free and an operator is in range.
+ * [ASSUMED] no drop when the drone is dead at the release; the ATK at the release; the hover through the cast (the
+ * engine pauses an enemy for its attack clip, ATTACK_PAUSE; the drop is the drone's only attack-like cast); the
+ * bomb-less look from the release (the bomb leaves the drone on that frame of the Attack clip; at the cast end — 1 tick
+ * before the clip ends — the client would draw the bomb back for a frame); an interrupted cast does not use up the one
+ * trigger (`_maxTriggerTime` 1 — the bomb is still on the drone); a stun after the release does not stop the cast end.
  */
 function kitBombd(ab) {
   const s = ab.sk.boomb;
   const ms = (s && s.bb.move_speed) || 0;
   const reach = (e) => e.base.rangeRadius || 2;
+  const land = (b, e, atk, t, x, y) => {
+    const r = t ? t.tileR : Math.round(y), c = t ? t.tileC : Math.round(x);
+    b.fx('explode', { x, y, r: BOMB_REACH + 0.5, kind: 'bomb', tiles: 'box' });
+    if (t) hurt(b, e, t, atk, 'phys');
+    for (const u of alliesInTiles(b, r, c, 'box', BOMB_REACH)) if (u !== t) hurt(b, e, u, atk, 'phys', { tags: ['splash'] });
+  };
+  // the end of the cast (bomb_s): 移速最终提升至200%; it flies on
+  const finish = (b, e) => {
+    if (!e.alive) return;
+    e.pauseUntil = b.time;
+    if (ms > 0) b.addBuff(e, { key: 'ab:bombRun', mods: { moveMul: ms }, persist: true });
+  };
+  // the cast before its release: { a: the skill ability, rel: the scheduled release }
+  let pending = null;
+  // a stun / freeze / sleep before the release: the bomb stays on; the skill re-arms with its cooldown
+  const interrupt = (b, e) => {
+    const { a, rel } = pending;
+    pending = null;
+    rel.cancel();
+    e.pauseUntil = b.time;
+    a.left = Math.max(TICK, num(s.cd, 1));
+  };
   return [
-    { spawn(b, e) { e.profile.noAttack = true; } },
+    { spawn(b, e) { e.profile.noAttack = true; },
+      tick(b, e) { if (pending && e.s.flags.stun) interrupt(b, e); } },
     skill(s, (b, e, a) => {
       const t = byPriority(e, targetsNear(b, e, reach(e)))[0];
       if (!t) return;
       a.cd = Infinity; a.left = Infinity;                               // 仅能触发一次
-      b.fx('explode', { x: t.x, y: t.y, r: BOMB_REACH + 0.5, kind: 'bomb', tiles: 'box', id: e.id });
-      hurt(b, e, t, e.s.atk, 'phys');
-      for (const u of alliesInTiles(b, t.tileR, t.tileC, 'box', BOMB_REACH)) if (u !== t) hurt(b, e, u, e.s.atk, 'phys', { tags: ['splash'] });
-      if (ms > 0) b.addBuff(e, { key: 'ab:bombRun', mods: { moveMul: ms }, persist: true });   // 移速最终提升至200%
+      e.skillAnimUntil = -1;           // the cast is drawn through its 'atk' event: the client winds the Attack clip up to it
+      // hovers through the cast, until `finish` (bounded: the bomb lands within its projectile's maxAge, 10 s)
+      e.pauseUntil = Math.max(e.pauseUntil, b.time + BOMBD_RELEASE + 10 + BOMBD_POST_DELAY);
+      let landed = false, waited = false;
+      const done = () => { if (landed && waited) finish(b, e); };
+      pending = { a, rel: null };
+      pending.rel = b.after(BOMBD_RELEASE, () => {
+        if (pending && e.alive && e.s.flags.stun) { interrupt(b, e); return; }  // stunned after this tick's ability pass
+        pending = null;
+        if (!e.alive) return;
+        const atk = e.s.atk;
+        b._ev(['atk', e.id, t.id, 'droneBomb']);
+        setForm(b, e, 'bombed');                           // UnitInfo.form: a view built later draws it bomb-less
+        b.addProjectile({ from: e, target: t, speed: PROJECTILE_SPEEDS.droneBomb, visual: 'droneBomb', source: e, hitDead: true,
+          onHit: (c) => { land(b, e, atk, c.target, c.x, c.y); landed = true; done(); } });
+        b.after(BOMBD_POST_DELAY, () => { waited = true; done(); }, { owner: e });
+      }, { owner: e });
     }, { cond: (b, e) => targetsNear(b, e, reach(e)).length > 0 }),
   ];
 }

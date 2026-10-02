@@ -2,7 +2,9 @@
 //
 // b.snap  = { fieldId, t, units: [[id, x, y, hp, maxHp, sp, spMax, flags, anim]], dp, killed, total }
 // UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?,
-//   form?, skillIndex?, moduleId? }  (form = an enemy's current model form, content/enemies.js setForm)
+//   form?, skillIndex?, moduleId? }  (form = an enemy's current model form, content/enemies.js setForm — 掠海漂移体 'crawl',
+//   暴鸰 'bombed', 转译基底·α's forms …: a view built after the change, a field opened mid-battle, draws it — render/units.js
+//   FORMS)
 //   dir = 'UP'|'RIGHT'|'DOWN'|'LEFT' (allies: the deploy direction, sim/dir.js); facing = its horizontal sign (±1).
 // flags bits & anim codes come from shared/constants.js (UF / ANIM); an enemy's stealth bit = its 隐匿 is on (not while it
 // is blocked or revealed), an ally's = 隐匿 / 迷彩 whatever it blocks.

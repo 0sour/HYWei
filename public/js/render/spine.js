@@ -6,8 +6,10 @@
 //
 // Driving (units.js calls these; the sim is authoritative, the actor only visualises):
 //   setBase('idle'|'move'|'stun')        the resting state from the snapshot anim code
-//   attack(interval)                      one attack happened now (b.ev 'atk'): plays begin→loop, re-phases the loop
-//                                         so its OnAttack frame lands now, timeScale = loopDuration / interval
+//   attack(interval, once)                one attack happened now (b.ev 'atk'): plays begin→loop, re-phases the loop
+//                                         so its OnAttack frame lands now, timeScale = loopDuration / interval;
+//                                         `once` (a one-off cast, style.js PROJ[kind].once — 暴鸰's bomb drop): the
+//                                         clip plays once at its own speed, then base
 //   setSkill(on)                          skill begin→loop while active (skill idle replaces idle), end on stop
 //   deploy()                              'Start' once, then base
 //   die()                                 die clip once (callers fade out afterwards)
@@ -17,7 +19,8 @@
 //                                         closing clip timed to end `in` s from now (a 重生's last clip ends with the
 //                                         重生), landing in `roles`
 //   update(dt)                            advances the skeleton (autoUpdate is off: one clock for everything)
-// Attack mode lasts until ~1.4 attack intervals without a new attack, then the end clip (if any) and base.
+// Attack mode lasts until ~1.4 attack intervals without a new attack (a `once` cast: to the end of its clip), then the
+// end clip (if any) and base.
 
 const clampN = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
@@ -229,42 +232,49 @@ export class SpineActor {
    * clip from its wind-up so the strike frame lands when the attack event is rendered. Returns true once started;
    * false when it is still too early (call again next frame) or there is nothing to wind up.
    */
-  windUp(interval, lead) {
+  windUp(interval, lead, once = false) {
     if (this.dead || this.mode === 'stun' || this.mode === 'die' || this.mode === 'change' || !(lead >= 0)) return false;
     const clip = this._attackClip();
     if (!clip) return false;
     if (this.mode === 'attack' && this.current === clip.loop) return false; // in rhythm: attack() re-phases
-    const iv = clampN(Number.isFinite(interval) && interval > 0 ? interval : this.interval, 0.08, 8);
     const loopDur = this.dur(clip.loop);
+    // a one-off cast plays at the clip's own speed (one loop per clip length), whatever the attack rhythm
+    const iv = once ? loopDur : clampN(Number.isFinite(interval) && interval > 0 ? interval : this.interval, 0.08, 8);
     const hit = this._hitTime(clip.loop, loopDur);
     const plan = windUpPlan(loopDur, hit, iv, lead);
     if (!(hit > 0) || lead * plan.ts > hit + 1e-6) return false;
-    this.interval = iv;
+    if (!once) this.interval = iv;
     this.mode = 'attack';
-    this.attackUntil = this.clock + lead + Math.max(0.45, iv * 1.4);
-    this._play(clip.loop, true, { timeScale: plan.tsWind, start: plan.start, mix: 0.06 });
+    this.attackUntil = this.clock + lead + (once ? Math.max(0, loopDur - hit) / plan.ts : Math.max(0.45, iv * 1.4));
+    this._play(clip.loop, !once, { timeScale: plan.tsWind, start: plan.start, mix: 0.06 });
     this.windTs = plan.ts;
     this.windUntil = this.clock + lead;
     return true;
   }
 
-  /** An attack happened now. `interval` = seconds between attacks (game time already scaled to real). */
-  attack(interval) {
+  /**
+   * An attack happened now. `interval` = seconds between attacks (game time already scaled to real); `once` = a one-off
+   * cast (no rhythm): the clip plays once at its own speed from its strike frame, then the resting state.
+   */
+  attack(interval, once = false) {
     if (this.dead || this.mode === 'stun' || this.mode === 'die' || this.mode === 'change') return;   // a form change plays out
-    this.interval = clampN(Number.isFinite(interval) && interval > 0 ? interval : this.interval, 0.08, 8);
+    if (!once) this.interval = clampN(Number.isFinite(interval) && interval > 0 ? interval : this.interval, 0.08, 8);
     const clip = this._attackClip();
     if (!clip) return;
     const loopDur = this.dur(clip.loop);
-    const ts = clampN(loopDur / this.interval, 0.35, 4);
+    const ts = once ? 1 : clampN(loopDur / this.interval, 0.35, 4);
     const hit = this._hitTime(clip.loop, loopDur);
     const wasAttacking = this.mode === 'attack' && this.current === clip.loop;
     this.mode = 'attack';
-    this.attackUntil = this.clock + Math.max(0.45, this.interval * 1.4);
+    this.attackUntil = this.clock + (once ? Math.max(0, loopDur - hit) / ts : Math.max(0.45, this.interval * 1.4));
     this.windUntil = null;
     if (!wasAttacking) {
       // not wound up (no look-ahead, e.g. a batch that arrived late): the sim already resolved the hit, so show
       // the strike frame now
-      this._play(clip.loop, true, { timeScale: ts, start: hit, mix: 0.06 });
+      this._play(clip.loop, !once, { timeScale: ts, start: hit, mix: 0.06 });
+    } else if (once) {
+      const e = this.spine.state.tracks[0];
+      if (e) e.timeScale = ts;
     } else {
       const e = this.spine.state.tracks[0];
       if (e) {

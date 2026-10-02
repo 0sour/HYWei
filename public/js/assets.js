@@ -11,6 +11,8 @@
 //   assets.spine.release(entry);
 //   await assets.local();                           // optional local-client art manifest (data/local-assets.json,
 //   assets.localUrl('map/autochess', 'TX_autochessi_D')   DESIGN §13) → URL or null (never required)
+//   assets.spineEntry('enemy_1305_mhslim')          // its official model from the local client once local() listed
+//                                                   // it (manifest spineLocal), else the web model; `.fallback`
 //
 // Every URL helper is also exported as a pure function taking the manifest first (`avatarUrl(manifest, …)`),
 // so it can be unit tested without a browser. Helpers never throw on unknown ids — they return null and the
@@ -116,6 +118,10 @@ export function subProfIconUrl(m, sub) {
  * Spine manifest entry for a unit asset id (operator charId, token id, enemy id). `opts.back` asks for the Back
  * model (operators only; falls back to Front). Enemy aliases are resolved transparently. Returns the Spine
  * object of docs/ASSETS.md or null.
+ * `opts.local` (the data/local-assets.json manifest): an enemy whose official model only the local client has
+ * (`spineLocal`, e.g. 灼热源石虫 — user feedback after 0.1.0, D3) gets that model when the manifest lists every one of
+ * its files; the returned entry's `fallback` is the web model (aliased), for a load failure (DESIGN §13: local art is
+ * optional, everything works without it).
  */
 export function spineEntry(m, id, opts) {
   const s = str(id);
@@ -129,12 +135,40 @@ export function spineEntry(m, id, opts) {
   if (tk) return validSpine(tk.spine) ? tk.spine : null;
   const en = get(get(m, 'enemies'), s);
   if (en) {
-    if (validSpine(en.spine)) return en.spine;
-    const alias = str(en.spineAliasOf);
-    const al = alias ? get(get(m, 'enemies'), alias) : null;
-    return al && validSpine(al.spine) ? al.spine : null;
+    let web = null;
+    if (validSpine(en.spine)) web = en.spine;
+    else {
+      const alias = str(en.spineAliasOf);
+      const al = alias ? get(get(m, 'enemies'), alias) : null;
+      web = al && validSpine(al.spine) ? al.spine : null;
+    }
+    return (opts && opts.local && localSpineEntry(en.spineLocal, opts.local, web)) || web;
   }
   return null;
+}
+
+const localSpines = new WeakMap(); // spineLocal record → { local, web, entry } (one entry object per manifest pair)
+
+/**
+ * A manifest `spineLocal` (`{ group, skel, atlas, textures[], pma, anims, … }`, file names in the data/local-assets.json
+ * group) as a Spine entry with URLs, when `local` lists every file — skeleton and atlas side by side (pixi-spine finds
+ * the atlas by the skeleton's name); else null. `fallback` = `web`.
+ */
+export function localSpineEntry(sl, local, web) {
+  if (!isObj(sl) || !isObj(local)) return null;
+  const c = localSpines.get(sl);
+  if (c && c.local === local && c.web === web) return c.entry;
+  const g = str(sl.group);
+  const url = (name) => (g ? localAssetUrl(local, g, name) : null);
+  const skel = url(sl.skel), atlas = url(sl.atlas);
+  const textures = Array.isArray(sl.textures) ? sl.textures.map(url) : [];
+  let entry = null;
+  if (skel && atlas && skel.replace(/\.skel$/, '.atlas') === atlas && textures.length && textures.every(Boolean)) {
+    entry = { skel, atlas, textures, pma: !!sl.pma, anims: sl.anims, animations: sl.animations, events: sl.events, hits: sl.hits, bounds: sl.bounds, local: true, fallback: web || null };
+    if (!validSpine(entry)) entry = null;
+  }
+  localSpines.set(sl, { local, web, entry });
+  return entry;
 }
 
 /** Whether an operator/token/enemy has a Back model. */
@@ -651,7 +685,7 @@ export function createAssets(options) {
     subProfIcon: (s) => subProfIconUrl(m(), s),
     ui: (name) => uiUrl(m(), name),
     picture: (id) => unitPictureUrl(m(), id),
-    spineEntry: (id, o) => spineEntry(m(), id, o),
+    spineEntry: (id, o) => spineEntry(m(), id, localManifest ? { ...o, local: localManifest } : o),
     hasBack: (id) => hasBackSpine(m(), id),
     audio: {
       bgm: (kind) => bgmEntry(m(), kind),
