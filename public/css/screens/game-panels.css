@@ -182,6 +182,11 @@
 .dbond__tiers { display: inline-flex; gap: 2px; margin-left: .02rem; }
 .dbond__tiers i { width: .05rem; height: .12rem; background: rgba(255, 255, 255, .16); transform: skewX(-18deg); }
 .dbond__tiers i.on { background: var(--mint-400); box-shadow: 0 0 .04rem rgba(78, 216, 175, .8); }
+/* a bond the mode never activates (标准: 10 of 23 — gameLogic modeOffBonds) */
+.dbonds--top .dbond.is-off { border-style: dashed; border-color: rgba(255, 255, 255, .16); background: transparent; color: var(--text-dim); }
+.dbond.is-off .dbond__name { text-decoration: line-through; text-decoration-color: rgba(255, 84, 84, .6); }
+.dbond.is-off .dbond__icon img { filter: grayscale(1) brightness(.5); }
+.dbond__off { font-size: .12rem; color: var(--text-dim); white-space: nowrap; }
 .dtag-loadout { display: inline-block; margin-left: .08rem; vertical-align: .02rem; font-size: .11rem; font-weight: 700; letter-spacing: .06em;
   padding: 0 .06rem; line-height: 1.6; background: var(--mint-500); color: #062019; }
 .dmodule { display: flex; align-items: center; flex-wrap: wrap; gap: .08rem; font-size: .15rem; }
@@ -238,6 +243,7 @@
 .bpop__facts { display: flex; gap: .16rem; font-size: .15rem; color: var(--text-lo); }
 .bpop__facts b { color: #fff; font-size: .18rem; }
 .bpop__facts small { font-size: .12rem; }
+.bpop__off { margin: .08rem 0 0; font-size: .14rem; color: var(--text-lo); border-left: 2px solid rgba(255, 255, 255, .2); padding-left: .08rem; }
 .bpop__tiers { display: flex; gap: .06rem; }
 .bpop__tier { display: flex; align-items: baseline; gap: .02rem; padding: .02rem .12rem; border: 1px solid var(--line-2); color: var(--text-dim); font-size: .13rem; }
 .bpop__tier b { font-size: .2rem; }

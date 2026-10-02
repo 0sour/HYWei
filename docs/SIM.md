@@ -389,7 +389,12 @@ if it outlasts it, resumes when the strong one expires (pass `refresh` to opt ou
 catalogue status the same rule (one invisible buff `key` per target whatever applies it — no immunity, 抵抗, status hooks
 or icon): the engine default for two same-named buffs (PRTS 作战机制 "同名buff的默认叠加策略buff只能表现出一个"). 奥术 uses
 it, so the two players of a pair field compete for one instance instead of multiplying, and so do 灵知's 坚冰 and the
-莱恩哈特 / 缄默德克萨斯 RES cuts, once keyed per unit (DESIGN §20.10). "Strongest" = the largest |value|.
+莱恩哈特 / 缄默德克萨斯 RES cuts, once keyed per unit (DESIGN §20.10). "Strongest" = the largest |value|. PRTS 盟约记录's
+奥术 note "※同一单位仅可对同一目标同时施加1个该盟约法术伤害提升效果" (2026-03-30 revision: "…持续期间内，无法对该目标施加新的…")
+limits each unit to one instance per target; read with the engine default — a newer same-named buff waits inert until
+the earlier ones end (PRTS 常见同名状态 "默认叠加方式") — and 巴哈姆特 12316 ("共享型buff會跟對面搶"), one instance is effective
+at a time, which is what applyStrongest keeps; strongest rather than earliest, and a unit refreshing its own instance,
+stay [ASSUMED] (feedback after 0.1.0).
 
 | key | effect | value |
 |---|---|---|

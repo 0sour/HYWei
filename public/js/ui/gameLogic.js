@@ -439,6 +439,21 @@ export function briefingBondTip(name, state, bannedN = 0) {
   return name;
 }
 
+/**
+ * The bonds a mode never activates (config.json modes[modeId].inactiveBondIds = the official modeDataDict
+ * inactiveBondIdList: 标准模拟 leaves 拉特兰 阿戈尔 卡西米尔 灵巧 奥术 奇迹 投资人 突袭 独行 绝技 off). Operators that also carry an
+ * enabled bond stay in the pool (server pool.js drawDisabledBonds) — 标准's 深靛 洛洛 阿罗玛 夕 圣聆初雪 still show 奥术 — and
+ * the server leaves such a bond out of m.private.bonds, so without a mark a card read "奥术 0/2 未激活" with three 奥术
+ * operators deployed (player report after 0.1.0: "奥术盟约不生效"). The shop / reward cards, the detail card's bond chips
+ * and the bond popup mark these 本局禁用 (briefingBondTip 'off').
+ * @param {any} mode config.json modes[modeId] (data.js getMode), or null
+ * @returns {Set<string>}
+ */
+export function modeOffBonds(mode) {
+  const list = isObj(mode) && Array.isArray(mode.inactiveBondIds) ? mode.inactiveBondIds : [];
+  return new Set(list.filter((b) => typeof b === 'string'));
+}
+
 // ---- shop ---------------------------------------------------------------------------------------------
 
 /**
