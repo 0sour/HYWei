@@ -96,7 +96,7 @@ export class PlayerState {
     this.loadout = Object.freeze({});
     if (!this.isBot && seat.loadout) this.setLoadout(seat.loadout);
     this.shop = { level: 1, upgradePrice: this.gd.upgradeBase(1) ?? 0, slots: [], frozen: false, freeRefreshes: 0 };
-    /** reward offers queue (merge rewards, special refreshes): { tier, source, slots: [{ kind, id, price, sold }] } */
+    /** reward offers queue (merge rewards, special refreshes): { tier, source, label, slots: [{ kind, id, price, sold }] } */
     this.offers = [];
     /** @type {Array<any>} */
     this.hand = new Array(HAND_SIZE).fill(null);
@@ -593,7 +593,7 @@ export class PlayerState {
    * up from the tier below (user playtest #6 item 19: the official promotion reward never offers one operator twice —
    * the user's first-hand report; the normal shop's slots may repeat). The offer reserves no copies (the pick takes one).
    */
-  pushRewardOffer(source = 'merge', { tier = null, ids = null } = {}) {
+  pushRewardOffer(source = 'merge', { tier = null, ids = null, label = null } = {}) {
     const ro = this.gd.rewardOffer();
     const t = Number.isInteger(tier) ? tier : Math.min(this.shop.level + ro.tierOffset, ro.maxTier);
     // an offer never shows one operator twice, whoever built the list (user playtest #6 item 19)
@@ -608,17 +608,20 @@ export class PlayerState {
       }
     }
     if (!list.length) return null;
-    const offer = { tier: t, source, slots: list.slice(0, MAX_OFFER_SLOTS).map((id) => ({ kind: 'chess', id, price: ro.price, sold: false })) };
+    const offer = { tier: t, source, label: typeof label === 'string' && label ? label : null, slots: list.slice(0, MAX_OFFER_SLOTS).map((id) => ({ kind: 'chess', id, price: ro.price, sold: false })) };
     this.offers.push(offer);
     this.dirty();
     return offer;
   }
 
-  /** Queue a free pick-one offer of items (凯瑟琳 定向投放 and similar); shown as shop.rewardOffer with kind 'item'. */
-  pushItemOffer(ids, { source = 'effect', tier = null } = {}) {
-    const list = (Array.isArray(ids) ? ids : []).filter((id) => this.gd.item(id)).slice(0, MAX_OFFER_SLOTS);
+  /**
+   * Queue a free pick-one offer of items (凯瑟琳 定向投放, 娜仁图亚 见者有份); shown as shop.rewardOffer with slots of kind
+   * 'item' under its `label` (the effect's name; player report #6 after 0.1.0).
+   */
+  pushItemOffer(ids, { source = 'effect', tier = null, label = null } = {}) {
+    const list = [...new Set(Array.isArray(ids) ? ids : [])].filter((id) => this.gd.item(id)).slice(0, MAX_OFFER_SLOTS);
     if (!list.length) return null;
-    const offer = { tier: Number.isInteger(tier) ? tier : null, source, slots: list.map((id) => ({ kind: 'item', id, price: 0, sold: false })) };
+    const offer = { tier: Number.isInteger(tier) ? tier : null, source, label: typeof label === 'string' && label ? label : null, slots: list.map((id) => ({ kind: 'item', id, price: 0, sold: false })) };
     this.offers.push(offer);
     this.dirty();
     return offer;
@@ -1481,7 +1484,9 @@ export class PlayerState {
         freeRefreshes: this.shop.freeRefreshes,
         frozen: this.shop.frozen,
         slots,
-        rewardOffer: offer ? { tier: offer.tier, slots: offer.slots.map((s) => ({ kind: s.kind === 'item' ? 'item' : 'chess', id: s.id, price: s.price, sold: !!s.sold })) } : null,
+        // `source` 'merge' = the promotion reward (晋升奖励); any other offer (a strategy, an item, a 特质) carries the
+        // `label` the bar shows instead (player report #6 after 0.1.0)
+        rewardOffer: offer ? { tier: offer.tier, source: offer.source === 'merge' ? 'merge' : 'special', label: offer.label || null, slots: offer.slots.map((s) => ({ kind: s.kind === 'item' ? 'item' : 'chess', id: s.id, price: s.price, sold: !!s.sold })) } : null,
       },
       hand: this.hand.map((p) => (p ? this.pieceView(p) : null)),
       temp: this.temp.map((p) => (p ? this.pieceView(p) : null)),

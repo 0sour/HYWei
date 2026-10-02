@@ -352,6 +352,22 @@ function ownedChess(ps) {
 const finiteInt = (n) => (Number.isFinite(n) ? Math.trunc(n) : 0);
 
 /**
+ * What a pick-one offer made by an effect is called on the shop bar (m.private shop.rewardOffer.label; player report #6
+ * after 0.1.0 — 凯瑟琳's three items came under the promotion reward's 晋升奖励 header): a strategy's effect name
+ * (定向投放, 见者有份), an item's name (寻呼模块, 信标), the operator whose 特质 it is (松果), else null.
+ * @param {import('./gamedata.js').GameData} gd
+ * @param {object} source the dispatch source (kind band / item / garrison …)
+ * @returns {string|null}
+ */
+export function offerLabel(gd, source) {
+  if (!source || typeof source !== 'object') return null;
+  if (source.kind === 'band') { const b = source.band || gd.band(source.bandId); return (b && (b.effectName || b.name)) || null; }
+  if (source.kind === 'item') { const it = source.item || (source.piece ? gd.item(source.piece.id) : null); return (it && it.name) || null; }
+  if (source.kind === 'garrison' && source.piece) { const c = gd.chess(source.piece.id); return (c && c.name) || null; }
+  return null;
+}
+
+/**
  * @param {import('./Match.js').Match} m
  * @param {import('./PlayerState.js').PlayerState} ps
  * @param {object} source
@@ -510,9 +526,10 @@ export function makeCtx(m, ps, source, hook, ev = null) {
       ps.recompute();
       return true;
     },
-    offerChess: (ids, opts = {}) => !!ps.pushRewardOffer(opts.source || source.key || 'effect', { ids, tier: opts.tier ?? null }),
+    /** Queue a free pick-one offer of chess (shop.rewardOffer; `label` defaults to offerLabel(source), the bar's header). */
+    offerChess: (ids, opts = {}) => !!ps.pushRewardOffer(opts.source || source.key || 'effect', { ids, tier: opts.tier ?? null, label: opts.label ?? offerLabel(gd, source) }),
     /** Queue a free pick-one offer of items (shop.rewardOffer with slots of kind 'item'). */
-    offerItems: (ids, opts = {}) => !!ps.pushItemOffer(ids, { source: opts.source || source.key || 'effect', tier: opts.tier ?? null }),
+    offerItems: (ids, opts = {}) => !!ps.pushItemOffer(ids, { source: opts.source || source.key || 'effect', tier: opts.tier ?? null, label: opts.label ?? offerLabel(gd, source) }),
     setShopSlot: (i, slot) => {
       if (!Number.isInteger(i) || i < 0 || i >= ps.shop.slots.length) return false;
       if (slot == null) { ps.shop.slots[i] = null; ps.dirty(); return true; }
