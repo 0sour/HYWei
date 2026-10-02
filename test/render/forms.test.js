@@ -3,6 +3,10 @@
 // melee operators block and hit it, so its model must stop hovering: render/units.js FORMS switches the view to the
 // skeleton's crawl clips (*_02) after its 'Change' clip (render/spine.js SpineActor.setForm), also for a view built
 // after the change (render/app.js keeps the mode on the unit info). Headless fake PIXI (test/render/fakepixi.js).
+// Player reports after 0.1.0 (#5, #8): 转译基底·α changes on its 2 s A_Die_B / _C / _D clip into the 寻仇者 B_*, 幽灵 C_* or
+// 特战术师 D_* set (it used to stay on A_Idle / A_Move and die on B_Die — "加载变身动画然后就没了"); a knocked-out 逐火 plays
+// 'Die' (its 1 s 重生) and walks as the ember on Idle_2 / Move_2, dying on Die_2, and 'Revive' brings the warrior back
+// (sim fx 'ember' / 'revive' { form: 'husk' | 'revived' }); 假想敌：再生's 傀儡 the same with A_Die / B_* / B_Revive.
 
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -116,7 +120,99 @@ describe('掠海漂移体 爬行模式 (FORMS)', () => {
   });
 });
 
-test('render/app.js hands the sim\'s fx \'phase\' to the view and keeps the mode on the unit info', () => {
+/** A real-manifest enemy view (any skeleton). */
+async function enemy(id, info = {}) {
+  const ctx = fakeViewCtx(fake.P, { assets: store(id), cam });
+  const v = new UnitView(ctx, { id: 9, side: 'enemy', kind: 'enemy', defId: id, spine: id, tier: 2, x: 8, y: 9, maxHp: 1000, facing: -1, ...info });
+  await tick(); await tick();
+  assert.ok(v.actor, 'Spine model built');
+  return v;
+}
+
+describe('转译基底·α forms (user report after 0.1.0, #5)', () => {
+  const TR = 'enemy_10081_mpplai';
+  test('every clip of the three forms exists in the skeleton; the change clips last the official 2 s; the manifest keeps the original form', () => {
+    const anims = assets.enemies[TR].spine.animations;
+    for (const [kind, f] of Object.entries(FORMS[TR])) {
+      for (const name of [f.change, f.roles.idle, f.roles.die, f.roles.move.loop]) assert.ok(name in anims, `${kind}: ${name}`);
+      assert.equal(anims[f.change], 2, `${kind}: ${f.change}`);
+    }
+    assert.equal(FORMS[TR].translator_youling.roles.attack, null, '幽灵 never attacks');
+    assert.equal(assets.enemies[TR].spine.anims.idle, 'A_Idle');
+    assert.equal(assets.enemies[TR].spine.anims.move.loop, 'A_Move');
+  });
+
+  for (const [kind, set, attack] of [['translator_fuchou', 'B', 'B_Attack'], ['translator_shushi', 'D', 'D_Attack'], ['translator_youling', 'C', null]]) {
+    test(`${kind}: the original form walks on A_*, the change clip plays out (2 s, moving or not), then the ${set}_* set`, async () => {
+      const v = await enemy(TR);
+      v.sync(sample(0, ANIM.MOVE), 1);
+      assert.equal(clip(v), 'A_Move');
+      v.setForm(kind);
+      assert.equal(clip(v), FORMS[TR][kind].change);
+      frames(v, 60);
+      v.sync(sample(0, ANIM.MOVE), 2);
+      assert.equal(clip(v), FORMS[TR][kind].change, 'not cut short');
+      frames(v, 70);
+      assert.equal(clip(v), `${set}_Move`);
+      v.sync(sample(0, ANIM.IDLE), 3);
+      assert.equal(clip(v), `${set}_Idle`);
+      v.onAttack(null, 3.2);
+      assert.equal(clip(v), attack ?? `${set}_Idle`, attack ? 'its attack clip' : 'no attack clip');
+      v.die();
+      assert.equal(clip(v), `${set}_Die`);
+    });
+  }
+
+  test('a view built after the change starts on the form\'s clips', async () => {
+    const v = await enemy(TR, { form: 'translator_shushi' });
+    v.sync(sample(), 1);
+    assert.equal(clip(v), 'D_Idle');
+  });
+});
+
+describe('逐火 embers and the 再生 puppet (user report after 0.1.0, #8)', () => {
+  for (const id of ['enemy_1288_duskls', 'enemy_1288_duskls_2', 'enemy_1292_duskld']) {
+    test(`${id}: knocked out ⇒ 'Die' once, the ember on Idle_2 / Move_2 / Die_2; revived ⇒ 'Revive', then the warrior's clips`, async () => {
+      const anims = assets.enemies[id].spine.animations;
+      for (const name of ['Die', 'Idle_2', 'Move_2', 'Die_2', 'Revive']) assert.ok(name in anims, name);
+      const v = await enemy(id);
+      v.sync(sample(0, ANIM.MOVE), 1);
+      assert.equal(clip(v), 'Move');
+      v.setForm('husk');
+      assert.equal(clip(v), 'Die', 'the knock-out (its 1 s 重生)');
+      frames(v, 65);
+      assert.equal(clip(v), 'Move_2', 'the ember walks');
+      v.sync(sample(UF.STEALTH, ANIM.IDLE), 2);
+      assert.equal(clip(v), 'Idle_2');
+      v.setForm('revived');
+      assert.equal(clip(v), 'Revive');
+      frames(v, 80);
+      assert.equal(clip(v), 'Idle', 'the warrior again');
+      v.onAttack(null, 4);
+      assert.equal(clip(v), 'Attack');
+      v.setForm('husk');
+      frames(v, 65);
+      v.die();
+      assert.equal(clip(v), 'Die_2', 'the ember dies on its own clip');
+    });
+  }
+
+  test('假想敌：再生: A_Die, the 傀儡 on B_Idle / B_Move / B_Die; B_Revive back to the A_* clips', async () => {
+    const v = await enemy('enemy_9010_acpupp');
+    v.setForm('husk');
+    assert.equal(clip(v), 'A_Die');
+    frames(v, 65);
+    assert.equal(clip(v), 'B_Idle');
+    v.sync(sample(0, ANIM.MOVE), 2);
+    assert.equal(clip(v), 'B_Move');
+    v.setForm('revived');
+    assert.equal(clip(v), 'B_Revive');
+    frames(v, 65);
+    assert.equal(clip(v), 'A_Move');
+  });
+});
+
+test('render/app.js hands the sim\'s fx \'phase\' kind — or the `form` of any fx — to the view and keeps the mode on the unit info', () => {
   const src = readFileSync(path.join(ROOT, 'public/js/render/app.js'), 'utf8');
-  assert.match(src, /e\[1\] === 'phase'[\s\S]{0,300}inf\.form = [\s\S]{0,200}setForm\?\.\(e\[4\]\.kind\)/);
+  assert.match(src, /e\[1\] === 'phase' \? ex4\.kind : 'form' in ex4 \? ex4\.form[\s\S]{0,200}inf\.form = [\s\S]{0,120}setForm\?\.\(form\)/);
 });

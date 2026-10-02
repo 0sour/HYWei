@@ -15,6 +15,7 @@ const E = JSON.parse(fs.readFileSync(new URL('../../data/enemies.json', import.m
 const W = JSON.parse(fs.readFileSync(new URL('../../data/waves.json', import.meta.url), 'utf8'));
 const { KITS, STATS_ONLY, EROSION, EROSION_BURST } = enemiesMod;
 const { BOSS_KITS, PART_TRANSFER, BLADE_TRANSFER, DRONE_LINK_BASE, droneLinkBase } = bossesMod;
+const { HUSK_REBIRTH, TRANSLATOR_CHANGE } = enemiesMod;
 
 const BIG = [];
 for (let dr = -4; dr <= 4; dr++) for (let dc = -12; dc <= 12; dc++) BIG.push([dr, dc]);
@@ -213,7 +214,7 @@ for (const key of ['enemy_1200_msfjin', 'enemy_1204_msfhu', 'enemy_1288_duskls']
     h.step();
     const e = put(h, key, [10, 7]);
     const g = h.unit('t_mage');
-    if (/duskls/.test(key)) { killed(h, e, g); assert.ok(e.alive, 'ember'); }
+    if (/duskls/.test(key)) { killed(h, e, g); assert.ok(e.alive, 'ember'); h.run(HUSK_REBIRTH + 0.05); }
     const hits = e.s.maxHp;
     assert.ok(hits > 1 && hits <= 30);
     let n = 0;
@@ -307,7 +308,7 @@ for (const key of ['enemy_1203_sfhu', 'enemy_1203_sfhu_2']) {
 }
 
 for (const key of ['enemy_1288_duskls', 'enemy_1288_duskls_2', 'enemy_1292_duskld']) {
-  test(`${nm(key)}: knocked out ⇒ stealthed ember needing ${tb(key, 'Revive[Trigger].prop_max_hp')} hits; revives at full HP after ${tb(key, 'Revive[Trigger].interval')} s`, () => {
+  test(`${nm(key)}: knocked out ⇒ ${HUSK_REBIRTH} s 重生, then a walking, disarmed, 隐匿 ember needing ${tb(key, 'Revive[Trigger].prop_max_hp')} hits; full HP again ${tb(key, 'Revive[Trigger].interval')} s later`, () => {
     const h = arena({ units: [{ chessId: 't_gun', row: 12, col: 3 }] });
     h.step();
     const e = put(h, key, [10, 7]);
@@ -315,19 +316,23 @@ for (const key of ['enemy_1288_duskls', 'enemy_1288_duskls_2', 'enemy_1292_duskl
     killed(h, e, h.unit('t_gun'));
     assert.ok(e.alive);
     assert.equal(e.s.maxHp, tb(key, 'Revive[Trigger].prop_max_hp'));
-    assert.ok(e.s.flags.stealth && e.profile.noAttack);
-    h.run(tb(key, 'Revive[Trigger].interval') + 0.1);
+    assert.ok(e.s.flags.invulnerable && e.s.flags.unblockable && e.s.flags.noMove, '重生');
+    h.run(HUSK_REBIRTH + 0.05);
+    assert.ok(e.s.flags.stealth && e.s.flags.disarm && e.profile.noAttack, '余烬: 隐匿, 缴械');
+    assert.ok(!e.s.flags.unblockable && !e.s.flags.noMove, 'blockable, walks');
+    h.run(tb(key, 'Revive[Trigger].interval'));
     assert.equal(e.s.maxHp, max);
     assert.equal(e.hp, max);
     assert.ok(!e.s.flags.stealth);
     // an ember hit N times dies for good
     killed(h, e, null);
+    h.run(HUSK_REBIRTH + 0.05);
     for (let i = 0; i < tb(key, 'Revive[Trigger].prop_max_hp'); i++) h.b.dealDamage(null, e, { amount: 1, type: 'arts' });
     assert.ok(!e.alive);
   });
 }
 
-test(`${nm('enemy_9010_acpupp')}: knocked out ⇒ 15-hit regeneration husk that revives, and nearby enemies get a 5-hit shield`, () => {
+test(`${nm('enemy_9010_acpupp')}: knocked out ⇒ an unblockable 15-hit 傀儡 that walks on and revives, and nearby enemies get a 5-hit shield`, () => {
   const h = arena();
   h.step();
   const e = put(h, 'enemy_9010_acpupp', [10, 7]);
@@ -335,6 +340,8 @@ test(`${nm('enemy_9010_acpupp')}: knocked out ⇒ 15-hit regeneration husk that 
   killed(h, e, null);
   assert.ok(e.alive);
   assert.equal(e.s.maxHp, tb('enemy_9010_acpupp', 'Revive[Trigger].prop_max_hp'));
+  h.run(HUSK_REBIRTH + 0.05);
+  assert.ok(e.s.flags.unblockable && e.s.flags.disarm && !e.s.flags.stealth && !e.s.flags.noMove, '傀儡: 不可被阻挡, not stealthed');
   const hp = o.hp;
   for (let i = 0; i < tb('enemy_9010_acpupp', 'Aura.max_damage_block_cnt'); i++) h.b.dealDamage(null, o, { amount: 100, type: 'phys' });
   assert.equal(o.hp, hp, 'shield negates the hits');
@@ -342,6 +349,7 @@ test(`${nm('enemy_9010_acpupp')}: knocked out ⇒ 15-hit regeneration husk that 
   assert.ok(o.hp < hp);
   h.run(tb('enemy_9010_acpupp', 'Revive[Trigger].interval') + 0.1);
   assert.equal(e.hp, E.enemy_9010_acpupp.stats.maxHp);
+  assert.ok(!e.s.flags.unblockable);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1831,30 +1839,34 @@ test(`${nm('enemy_1535_wlfmster')}: −${tb('enemy_1535_wlfmster', 'Passive.dama
   assert.equal(h.b.applyStatus(e, 'stun', { duration: 1 }), true, 'stunnable in the second form');
 });
 
-test(`${nm('enemy_10081_mpplai')}: no attack until 4 physical hits (复仇: melee), 4 arts hits (术士: ranged arts) or being blocked (幽灵: unblockable)`, () => {
+test(`${nm('enemy_10081_mpplai')}: original form cancels every damage instance; 4th physical hit ⇒ 寻仇者 (melee), 4th arts hit ⇒ 特战术师 (ranged arts), blocked ⇒ 幽灵 (unblockable) — each after a ${TRANSLATOR_CHANGE} s change`, () => {
   const mk = () => { const h = arena({ units: [{ chessId: 't_gun', row: 12, col: 3 }, { chessId: 't_mage', row: 12, col: 4 }], kits: { t_gun: NOATK, t_mage: NOATK } }); h.step(); return h; };
   let h = mk();
   let e = put(h, 'enemy_10081_mpplai', [10, 7]);
-  for (let i = 0; i < 4; i++) h.b.dealDamage(h.unit('t_gun'), e, { amount: 10, type: 'phys' });
+  const hp = e.hp;
+  for (let i = 0; i < 4; i++) assert.equal(h.b.dealDamage(h.unit('t_gun'), e, { amount: 1e6, type: 'phys' }), 0);
+  assert.equal(e.hp, hp, 'no damage lands in the original form');
+  h.run(TRANSLATOR_CHANGE + 0.05);
   approx(e.s.atk, E.enemy_10081_mpplai.stats.atk + tb('enemy_10081_mpplai', 'Mode_Fuchou_Passive.atk'));
   approx(e.s.maxHp, E.enemy_10081_mpplai.stats.maxHp + tb('enemy_10081_mpplai', 'Mode_Fuchou_Passive.max_hp'));
   const h2 = arena({ units: [{ chessId: 't_wall', row: 10, col: 6 }] });
   h2.step();
   const f = put(h2, 'enemy_10081_mpplai', [10, 7]);
   for (let i = 0; i < 4; i++) h2.b.dealDamage(null, f, { amount: 1, type: 'arts' });
-  assert.equal(f.mem.ab.list.length, 3);
   // arts hits from nobody (terrain) do not count
+  h2.run(TRANSLATOR_CHANGE + 0.05);
   assert.equal(f.findBuff('ab:form'), null);
   h = mk();
   e = put(h, 'enemy_10081_mpplai', [11, 5]);
   for (let i = 0; i < 4; i++) h.b.dealDamage(h.unit('t_mage'), e, { amount: 10, type: 'arts' });
+  h.run(TRANSLATOR_CHANGE + 0.05);
   approx(e.s.res, E.enemy_10081_mpplai.stats.res + tb('enemy_10081_mpplai', 'Mode_Shushi_Passive.magic_resistance'));
   h.run(3);
-  assert.ok(e.stats.attacks > 0 && h.unit('t_gun').stats.taken + h.unit('t_mage').stats.taken > 0, '术士 attacks in range');
+  assert.ok(e.stats.attacks > 0 && h.unit('t_gun').stats.taken + h.unit('t_mage').stats.taken > 0, '特战术师 attacks in range');
   const h3 = arena({ units: [{ chessId: 't_wall', row: 9, col: 5 }] });
   h3.step();
   const g = put(h3, 'enemy_10081_mpplai', [9, 5]);
-  h3.run(0.5);
+  h3.run(TRANSLATOR_CHANGE + 0.3);
   assert.ok(g.findBuff('ab:form') && g.s.flags.unblockable, '幽灵');
   assert.equal(g.stats.attacks, 0);
 });

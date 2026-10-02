@@ -202,6 +202,12 @@ A skill clip may also come from directional-only animations when a model has no 
 
 The resolver's full precedence list is in the header of `tools/assets/anim-roles.mjs`.
 
+The manifest roles describe an enemy's first form. Enemies whose skeleton holds another form's clip set get it from
+`public/js/render/units.js FORMS` (keyed by Spine id, switched by the sim's 'phase' fx kind or the `form` of its
+'ember' / 'revive' fx; a `change` clip plays once first): 掠海漂移体's crawl (`Change`, `*_02`), 转译基底·α's three forms
+(`A_Die_B` / `_C` / `_D`, 2 s each, then `B_*` 寻仇者, `C_*` 幽灵, `D_*` 特战术师), the 深池逐火 embers (`Die`, then
+`Idle_2` / `Move_2` / `Die_2`; `Revive` back) and 假想敌：再生's puppet (`A_Die`, `B_*`, `B_Revive`).
+
 Other renderer rules from research 07 §5.4–5.5:
 - **Choosing the model:** Front when the unit faces right or down; Front mirrored when facing left; Back when facing up.
 - **Attack speed:** set the attack `timeScale` to `duration / attackInterval`.

@@ -100,21 +100,42 @@ export const DOWN_LOOK = Object.freeze({
 export const EL_BAR = Object.freeze({ icon: 0.15, min: 8, max: 15, enemy: 0.8, gap: 1, pulse: 0.45, pulseHz: 1.5 });
 
 /**
- * Enemy modes drawn with another clip set of the same skeleton (sim fx 'phase' kind → UnitView.setForm), per Spine
- * id: 掠海漂移体 (PRTS: 受晕眩/沉睡/冻结影响后进入爬行模式 — for good) crawls on its *_02 clips after 'Change'. The mode's
- * roles override the manifest's (data/assets.json anims); 吉兆飞鳞's 晕眩模式 is its Stun clip already.
+ * Enemy modes drawn with another clip set of the same skeleton (sim fx 'phase' kind, or the `form` of another sim fx
+ * → UnitView.setForm), per Spine id; the mode's roles override the manifest's (data/assets.json anims), `change` plays
+ * once first:
+ * - 掠海漂移体 (PRTS: 受晕眩/沉睡/冻结影响后进入爬行模式 — for good) crawls on its *_02 clips after 'Change';
+ * - 转译基底·α (user report after 0.1.0, #5): its 2 s change clip A_Die_B / _C / _D, then 寻仇者 B_*, 幽灵 C_* (no attack
+ *   clip: it never attacks) or 特战术师 D_* — its manifest roles are the original form's A_Idle / A_Move;
+ * - 深池逐火战士 / 精锐战士 / 护卫 (#8): knocked out → 'Die' (the 1 s 重生), the 余烬 on Idle_2 / Move_2 and its death on
+ *   Die_2; standing up again → 'Revive', then the warrior's manifest clips;
+ * - 假想敌：再生: knocked out → A_Die, the 傀儡 on B_Idle / B_Move / B_Die; back → B_Revive, then the A_* manifest clips.
+ * 吉兆飞鳞's 晕眩模式 is its Stun clip already.
  */
+const loop = (name, via = null) => Object.freeze(via ? { begin: null, loop: name, end: null, via } : { begin: null, loop: name, end: null });
+const clipSet = (idle, move, die, attack = null) => Object.freeze({
+  idle, deploy: idle, die, move: loop(move),
+  attack: attack ? loop(attack, 'attackAny') : null,
+  skill: attack ? Object.freeze({ begin: null, loop: attack, end: null, via: 'attack', index: 0, idle: null }) : null,
+});
+const EMBER = Object.freeze({
+  husk: Object.freeze({ change: 'Die', roles: clipSet('Idle_2', 'Move_2', 'Die_2') }),
+  revived: Object.freeze({ change: 'Revive', roles: Object.freeze({}) }),
+});
 export const FORMS = Object.freeze({
   enemy_2025_syufo: Object.freeze({
-    crawl: Object.freeze({
-      change: 'Change',
-      roles: Object.freeze({
-        idle: 'Idle_02', deploy: 'Idle_02', die: 'Die_02',
-        move: Object.freeze({ begin: null, loop: 'Move_02', end: null }),
-        attack: Object.freeze({ begin: null, loop: 'Attack_02', end: null, via: 'attackAny' }),
-        skill: Object.freeze({ begin: null, loop: 'Attack_02', end: null, via: 'attack', index: 0, idle: null }),
-      }),
-    }),
+    crawl: Object.freeze({ change: 'Change', roles: clipSet('Idle_02', 'Move_02', 'Die_02', 'Attack_02') }),
+  }),
+  enemy_10081_mpplai: Object.freeze({
+    translator_fuchou: Object.freeze({ change: 'A_Die_B', roles: clipSet('B_Idle', 'B_Move', 'B_Die', 'B_Attack') }),
+    translator_youling: Object.freeze({ change: 'A_Die_C', roles: clipSet('C_Idle', 'C_Move', 'C_Die') }),
+    translator_shushi: Object.freeze({ change: 'A_Die_D', roles: clipSet('D_Idle', 'D_Move', 'D_Die', 'D_Attack') }),
+  }),
+  enemy_1288_duskls: EMBER,
+  enemy_1288_duskls_2: EMBER,
+  enemy_1292_duskld: EMBER,
+  enemy_9010_acpupp: Object.freeze({
+    husk: Object.freeze({ change: 'A_Die', roles: clipSet('B_Idle', 'B_Move', 'B_Die') }),
+    revived: Object.freeze({ change: 'B_Revive', roles: Object.freeze({}) }),
   }),
 });
 

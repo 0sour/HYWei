@@ -209,7 +209,8 @@ a stealthed ally (隐匿, 排气格栅) only for the enemy it blocks — our ope
 "不阻挡时不成为敌方普通攻击的目标") likewise (PRTS 异常效果: neither anomaly is "阻挡时解除") [ASSUMED: enemy skills and
 splash selectors skip it too]
 and pause `ATTACK_PAUSE` (0.35 s) after each unblocked attack; `fear`/`disarm` stop attacks; `dmgType 'none'` enemies
-never attack; `dmgType 'heal'` enemies heal the lowest-HP% enemy in their radius instead. Content can take over an
+never attack — unless content arms them through `enemy.profile` (`noAttack: false`, `melee`, `dmgType`, `maxTargets`:
+转译基底·α's 寻仇者 / 特战术师 forms, which then attack like any enemy); `dmgType 'heal'` enemies heal the lowest-HP% enemy in their radius instead. A `noMove` enemy stands (not `moving`, drawn idle). Content can take over an
 enemy's attack: `enemy.profile.deferHit` = the engine makes the attack (target, timing, the `'atk'` event) but deals no
 damage — the content's `attack` handler resolves it (帝国炮火先兆者's shells landing 3 s later, `content/enemies.js
 kitShell`); `enemy.profile.shot` = the `'atk'` event's projectile kind (`'mortar'`: no projectile drawn). Crates (stage devices with
@@ -225,6 +226,16 @@ excepted). 【污染秽蚀】 (萨卡兹枯朽战车's 秽蚀轰击,
 萨卡兹枯朽战士's death) is **true** damage, 50 / 25 per second on low / high ground (PRTS "每秒受到50/25点真实普通伤害 …
 同名效果不叠加", user playtest #6): a unit covered by several zones takes one tick per second (`unit.mem.pollutedAt`), so
 a crowd of dying 萨卡兹枯朽战士 totals 50 / s, not 50 × n.
+
+**Knock-outs that are not deaths** (`content/enemies.js`; player reports after 0.1.0): a `killed` ability that keeps the
+enemy alive hides the knock-out from every later `kill` handler, the kill count, kill credit and the bounty — they all
+wait for the real death, the only one with a `die` event. 重生 / form changes: `reborn()` (first knock-out → second
+form), `husk()` (talent Revive[Trigger], every knock-out: 1 s 重生 — 无敌, 无法阻挡, immobile — then a hit-count husk that
+walks its route on: the 深池逐火 余烬 / 火灰 are 隐匿 and disarmed, so only a blocked one can be targeted and beaten; 假想敌：
+再生's 傀儡 is unblockable; a husk still standing after `Revive[Trigger].interval` s stands up again with full HP),
+转译基底·α (its original form cancels every damage instance; the 4th physical / arts instance or a block starts a 2 s
+change). The model's clip set follows a 'phase' fx kind or the `form` of the 'ember' / 'revive' fx (render/units.js
+FORMS).
 
 **Ownership** (`enemy.ownerId`, used for `killed/total` and leak attribution): `ownerPlayerId` if given, else the
 player whose half contains the spawn tile (cols ≥ 11 = right half / player with colOffset 8 or side R). A leak is
