@@ -312,7 +312,8 @@ export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bond
 
 /**
  * An item's card (hand / temp / shop / equipped). An effect-only item (items.json `shopExcluded`: the special 维式重锤,
- * 突变细胞 — user playtest #4 item 5) says it is never sold and where it comes from (`shopExcludedBy`).
+ * 突变细胞 — user playtest #4 item 5) says it is never sold and where it comes from (`shopExcludedBy`); a rule the
+ * official text leaves out (items.json `note`: 突变细胞 returns to the hand after each use) is shown under the effect.
  */
 export function ItemDetail({ item, piece, editable, onDestroy }) {
   const m = data.get('assets');
@@ -327,6 +328,7 @@ export function ItemDetail({ item, piece, editable, onDestroy }) {
       </div>
     </div>
     <${Section} title="效果" micro="EFFECT"><${RichText} as="p" text=${item.descRaw || item.desc} class="dtext" /><//>
+    ${item.note ? html`<p class="dhint dhint--rule"><${Icon} name="info" />${item.note}</p>` : null}
     ${item.itemType === 'MAGIC'
       ? html`<p class="dhint"><${Icon} name="info" />将其拖拽至战场上的格子使用</p>`
       : html`<p class="dhint"><${Icon} name="info" />拖拽至干员身上进行配发（每名干员最多 2 件，配发后无法取下）${item.mergeable ? '；2 件相同装备自动合成进阶装备' : ''}</p>`}

@@ -440,6 +440,10 @@ export function makeCtx(m, ps, source, hook, ev = null) {
     counter: (k) => (Number.isFinite(ps.counters[k]) ? ps.counters[k] : 0),
     setCounter: (k, v) => { if (typeof k === 'string' && Number.isFinite(v)) ps.counters[k] = v; return ps.counters[k] ?? 0; },
     incCounter: (k, n = 1) => { if (typeof k !== 'string' || !Number.isFinite(n)) return 0; ps.counters[k] = (Number.isFinite(ps.counters[k]) ? ps.counters[k] : 0) + n; return ps.counters[k]; },
+    /** Per-piece counter of the current round (0 in a new round / for a new piece; an elite merged this round keeps the
+     *  highest of its copies' — PlayerState.pieceRoundCount). */
+    pieceCounter: (uid, k) => { const l = ps.find(uid); return l ? ps.pieceRoundCount(l.piece, k) : 0; },
+    incPieceCounter: (uid, k, n = 1) => { const l = ps.find(uid); return l ? ps.bumpPieceRoundCount(l.piece, k, n) : 0; },
 
     // ---- economy
     addFunds: (n, reason = '') => ps.addFunds(finiteInt(n), { reason }),
@@ -498,8 +502,9 @@ export function makeCtx(m, ps, source, hook, ev = null) {
       return m.dispatcher.triggerGarrisons(ps, l.piece, eventType, { asPiece: as ? as.piece : null, triggeredBy: source.key || null });
     },
     promote: (uid) => { const l = ps.find(uid); return l ? ps.promote(l.piece) : false; },
-    /** Replace a chess piece by another chess (keeps its tile when legal, keeps its equipment). */
-    transform: (uid, chessId) => { const l = ps.find(uid); if (!l || l.piece.kind !== 'chess') return null; const p = ps.transformChess(l.piece, chessId); return p ? view(p) : null; },
+    /** Replace a chess piece by another chess (keeps its tile when legal, keeps its equipment — `{ returnItems: true }`:
+     *  the equipment returns to the hand instead, as from a destroyed operator; PlayerState.transformChess). */
+    transform: (uid, chessId, opts = {}) => { const l = ps.find(uid); if (!l || l.piece.kind !== 'chess') return null; const p = ps.transformChess(l.piece, chessId, { returnItems: !!(opts && opts.returnItems) }); return p ? view(p) : null; },
     /** Normal item piece → its golden version in place. */
     upgradeItem: (uid) => { const l = ps.find(uid); return l && l.piece.kind === 'item' ? ps.upgradeItem(l.piece) : false; },
     /** Attach an owned hand/temp item to an owned chess without equip effects (copies, restores). */

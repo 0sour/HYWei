@@ -964,7 +964,9 @@ test('商业包装方案: every 8 / 7 operators sold ⇒ 1 normal operator shari
   }
 });
 
-test('突变细胞: after a battle the carrier becomes a random NORMAL tier+1 operator, the cell is consumed, other equipment returns', () => {
+test('突变细胞: after a battle the carrier becomes a random NORMAL tier+1 operator; its equipment, the cell included, returns to the hand', () => {
+  // PRTS 下半 记录 备注 "生效时，原干员销毁，获得一名高一阶的随机初始干员（最高六阶）"; the cell is not consumed (player
+  // feedback after 0.1.0 — players re-inject it every round; test/match/feedback1-meta.test.js)
   const { m, ps, equip } = setup({ seed: 3 });
   const cid = plain((c) => c.tier === 2)[0];
   const holder = give(m, ps, cid, 'hand');
@@ -978,8 +980,16 @@ test('突变细胞: after a battle the carrier becomes a random NORMAL tier+1 op
   assert.ok(!DATA.chess[p.id].isGolden);
   assert.deepEqual(p.items, [], 'no equipment left on it');
   assert.ok(handIds(ps, 'item').includes(A('1_01')), 'other item back in the hand');
-  assert.ok(!handIds(ps, 'item').includes(A('5_08')), 'cell consumed');
+  assert.ok(handIds(ps, 'item').includes(A('5_08')), 'the cell back in the hand (not consumed)');
   assert.equal(DATA.items[A('5_08')].upgradeNum, 100);
+  // the golden record (same buff) behaves the same
+  const g = ps.hand.find((x) => x && x.id === A('5_08'));
+  g.id = B('5_08');
+  assert.deepEqual(equip(g, p), OK);
+  m.dispatch(ps, 'onBattleResult', { result: {}, lpLoss: 0, perfect: true });
+  const q = ps.hand.find((x) => x && x.kind === 'chess');
+  assert.equal(DATA.chess[q.id].tier, 4);
+  assert.ok(handIds(ps, 'item').includes(B('5_08')));
   cover(A('5_08'), B('5_08'));
 });
 

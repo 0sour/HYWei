@@ -285,7 +285,8 @@ everything needed to resolve a unit for `(chessId, skillIndex, moduleId)` (`simd
 | `requiresBondId` | `null` / `"yanShip"` | VI-tier bond signature items (research 04) |
 | `effectId`, `effectName`, `desc`, `descRaw` | `"eff_acarm041"`, …, `"攻击力+15%"` | |
 | `buffs[]`, `params` | `[{"key":"env_gbuff_new_with_verify","countType":"NONE","bb":{"atk":0.15},"bbStr":{"key":"attr_common_global_buff"}}]` | |
-| `category`, `kind`, `family`, `implFormula` | `"STAT"`, `"passive"`, `null`, `"ATK% += atk …"` | research 04 (categories: STAT, ON_HIT, SURVIVAL, SP, ECONOMY, RECRUIT, BOND, BOND_GRANT, SET, BOND_SIGNATURE, MAGIC) |
+| `category`, `kind`, `family`, `implFormula` | `"STAT"`, `"passive"`, `null`, `"ATK% += atk …"` | research 04 (categories: STAT, ON_HIT, SURVIVAL, SP, ECONOMY, RECRUIT, BOND, BOND_GRANT, SET, BOND_SIGNATURE, MAGIC); `implFormula` is overridden by `tools/build-data.mjs ITEM_RULES` where research 04 was wrong (突变细胞) |
+| `note` | `null` / `"生效时原干员销毁，…突变细胞与其他装备退回整备区，可再次配发"` | a rule the official text leaves out (`ITEM_RULES`, sourced; normal and golden), shown under the effect in the item card — 突变细胞 is not consumed (player feedback after 0.1.0: PRTS 下半 记录 备注 "生效时，原干员销毁…", players re-inject it every round) |
 | `rangeGrid` | `[[0,0]]` | Arts area (画卷 `[[0,0],[0,1]]`) |
 | `flavor` | | |
 
