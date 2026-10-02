@@ -333,6 +333,28 @@ Official-waves column: `node tools/balance.mjs --mode all --difficulty ALL --bot
 seed), measured before the review's leader-multiplier / 联防-timing fixes (§2; not re-run); the other columns are the
 previous pass (old generator), kept for history. \* the bot code of this pass (§5) with the old time reading and no tuning; the originally reported bots (old bot code) survived ≈ 6.5 rounds on 险境 and won 1/20 on 标准.
 
+**Player feedback after 0.1.0 (#10 "人机有点太笨了").** Measured first (`tools/botbench.mjs`): the 0.1.0 bots refreshed
+0–2 times a prep and bought side-grade singles they sold again at a loss (every sale returns 1), so they merged ≈ 2
+times a match and fielded ≈ 2 elites at R13; at 绝境 ≈ 1 in 2 of their bounty picks leaked (the old score ignored the
+enemy); 信标 went on the best operator (it destroys its carrier) and a level-up could spend the funds a third copy in
+the shop needed. Changes (server/match/bot.js header, META §1.5): refresh-vs-buy by the shop odds of completing held
+pairs, the freeze for an unaffordable third copy, merges before level-ups, a committed focus / second bond, armour-aware
+DPS, bounty picks from the exposure model, item carriers by effect, a tactician's 援军 inside its range. Same seeds
+(1–40) old → new, the match's default rehearsal (3):
+
+| config | wins | rounds passed | LP left | leaks / match | bounty enemies leaked | merges / bot | elites at R13 |
+|---|---|---|---|---|---|---|---|
+| 独立 标准 (1 AI) | 35 → 35 / 40 | 8.80 → 8.80 | 29.9 → 28.8 | 2.5 → 2.9 | 1 → 1 | 1.40 → 2.23 | – (R7: 0.7 → 1.0) |
+| 独立 绝境 (1 AI) | 19 → 28 / 40 | 13.05 → 13.47 | 14.3 → 16.4 | 26.5 → 19.6 | 10 → 5 of 80 picks | 2.33 → 4.17 | 1.8 → 2.2 |
+| 同盟 标准 (4 AI) | 40 → 40 / 40 | 14.00 → 14.00 | 110.0 → 113.5 | 39.4 → 32.8 | 6 → 5 | 2.59 → 4.17 | 1.9 → 2.3 |
+| 同盟 绝境 (4 AI) | 5 → 11 / 40 | 11.85 → 12.22 | 5.1 → 10.9 | 224.6 → 215.2 | 155 → 142 of ≈ 310 picks | 2.00 → 3.05 | 2.3 → 2.4 |
+
+绝境 leaks per alive bot in R12 / R13: solo 8.0 / 9.2 → 5.7 / 4.9, co-op 20.5 / 20.7 → 17.6 / 17.8. Decision time per
+bot prep is unchanged (CPU p50 / p95, the rehearsal included: solo 绝境 520 / 1302 → 531 / 1216 ms, co-op 绝境
+405 / 884 → 404 / 910 ms; the heuristics alone 94 / 234 → 93 / 212 and 71 / 186 → 71 / 185 ms — a heavily loaded host,
+so the absolute values are ≈ 3–4× a quiet one; Σ per match within ± 2 %). The tuning sweeps used seeds 101–148 with the
+rehearsal off; the table is a separate seed range.
+
 ---
 
 ## 6. Match follow-ups shipped with this pass

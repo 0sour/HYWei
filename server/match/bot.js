@@ -1309,7 +1309,7 @@ function* buyLoopSteps(m, ps, { fillOnly = false, maxRefreshes = 0 } = {}) {
             const gain = lineupGain(m, ps, s.id, ctx, cur);
             if (gain <= 2) return;
             sc += Math.min(15, gain * 0.5);
-          } else if (gd.isGolden(s.id) || (!ctx.keep.has(base) && !(ctx.pairs < MAX_PAIRS && chessRec(m, s.id).tier <= 3 && countFree(ps.hand) >= 3))) {
+          } else if (gd.isGolden(s.id) || (!ctx.keep.has(base) && !(ctx.pairs < MAX_PAIRS && (chessRec(m, s.id)?.tier ?? 6) <= 3 && countFree(ps.hand) >= 3))) {
             // a second copy of a non-keeper with no bench room for another pair is clutter, sold later at a loss
             return;
           }
