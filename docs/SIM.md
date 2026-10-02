@@ -818,7 +818,9 @@ chess_char_2_02_a: (bb) => ({
 (the placed piece deploys once with the board — `SKILL_SUMMON_START_DEPLOY` — and then waits on its tile for the
 skill; the drone's stats come from `tokens.json variants[chess_char_2_02_a]`; it is untargetable, uses the heal profile
 and its token kit withdraws it after 10 s. A kit whose summon is not a hand piece spawns it itself:
-`battle.spawnToken(unit, tokenId, r, c, { duration })`.)
+`battle.spawnToken(unit, tokenId, r, c, { duration })`. A summon past its data `deployLimit` per owner withdraws the
+oldest one, except the skill summons of `tokens.js SKILL_SUMMON_UNCAPPED`, whose data limit is a hand count the skill
+ignores: 维娜 S3 places a 黄金盟誓 on every free deployable melee tile of her talent-1 area, fences included.)
 
 **6. AUTO heal skill — 古米 `chess_char_1_10_a` 备用军粮** (自动触发, bb `heal_scale 1.15`; PRTS 备注: cast once a
 healable ally of the skill range is injured — no enemy needed — then her next normal attack heals that ally):
@@ -884,7 +886,8 @@ talent effects that pick their own victims follow the skill's text and PRTS 备�
 PRTS 选择器, is not in the data): "地面敌人" / "不可对空" ⇒ `!e.isFlying` (e.g. 隐德来希 S2 血镰, 归溟幽灵鲨 拥抱自我,
 琳琅诗怀雅 S3 cash-out, 乌尔比安 S1 捕网 [ASSUMED like 雪雉's]); "可对空" or no note ⇒ air units too (no note = [ASSUMED]:
 风丸 折纸生花, 乌尔比安 S3, 缄默德克萨斯 S2, 余 S2, 见行者 S2, 耀骑士临光 不畏苦暗 and the token appear bursts — “耀阳”,
-沙之碑, 迷迭香的战术装备's stun, 纸偶). A stun / freeze / sleep from any of them drops a hovering 掠海漂移体 for good. Ranged attacks fly as projectiles
+沙之碑, 迷迭香的战术装备's stun, 纸偶). A melee skill whose attacks PRTS marks "可对空" sets `targeting.canHitFly` (玛恩纳
+S3 未照耀的荣光 — its CUSTOM_RANGE trigger also counts flyers). A stun / freeze / sleep from any of them drops a hovering 掠海漂移体 for good. Ranged attacks fly as projectiles
 (`constants.js PROJECTILE_SPEEDS`: arrow 14, bolt 11, bomb/lob 8, orb 10, drone 16, enemy 10 tiles/s; boomerang 15 out,
 3.75 back = `BOOMERANG_RETURN_SPEED`, PRTS 跃跃); melee/`none` hits are instant. Kit-settable profile flags beyond the
 table: `hitSleep` (targets and damages sleeping enemies — "可以攻击沉睡的敌人"), `onEachHit(b, u, victim, hctx)`, `dmgMul`,

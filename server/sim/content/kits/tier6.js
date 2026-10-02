@@ -30,7 +30,8 @@
 //                the storm stops when she leaves the field.
 //  6_06 佩佩     splash stun via `damaged` (isSplash) hook; module ×1.15 when ≥3 enemies in the splash area.
 //  6_07 维娜     "attack enemies blocked by allies in talent range" = those enemies' tiles are added to her range;
-//                黄金盟誓 lasts the skill duration on the tile nearest to an enemy.
+//                S3 puts a 黄金盟誓 on every free deployable melee tile of her talent-1 area (fences too), each for
+//                the skill duration (the token's maxDeployCount 1 is its hand limit — tokens.js).
 //  6_08 焰影苇草 灼痕 = marker (ATK −20 %) + the 法术脆弱 status (同名效果取最高); applied during S3 it lasts until the
 //                skill ends (duration = remaining skill time).
 //  6_09 塑心     cannot normal attack; each skill charge is one attack; 精神逆构 multiplies every apoptosis gauge fill on
@@ -1336,21 +1337,24 @@ function siege2(bb, chess, def) {
       mods: { atkPct: num(bb.atk), batPct: batOf(bb.base_attack_time, def) },
       targeting: { maxTargets: Math.max(1, Math.floor(num(bb['attack@max_target'], 1))) },
       attack: { dmgType: 'true' },
+      // "立即在天赋一生效范围内可部署地面召唤“黄金盟誓”" (EN client "Summons Golden Vows on deployable tiles within
+      // Talent 1's range"): one on EVERY free tile of the talent-1 area a melee piece could be deployed on — fences
+      // (low, deployable, not walkable) included [ASSUMED: the EN wiki's "open low ground tiles"]; player report B3
       onStart({ battle, unit, skill }) {
-        const tile = bestTile(battle, freeTiles(battle, unit, tGrid));
-        if (tile) {
+        const lions = [];
+        for (const tile of freeTiles(battle, unit, tGrid, { ground: false })) {
           const lion = battle.spawnToken(unit, tokId, tile[0], tile[1], { duration: skill.timeLeft });
-          unit.mem.vlion = lion;
-          if (lion) {
-            if (!lion.kit?.fromTokens && lion.profile) lion.profile.dmgType = 'true'; // "攻击造成真实伤害" without a token kit
-            battle.fx('summon', { x: lion.x, y: lion.y, id: lion.id, src: unit.id });
-          }
+          if (!lion) continue;
+          lions.push(lion);
+          if (!lion.kit?.fromTokens && lion.profile) lion.profile.dmgType = 'true'; // "攻击造成真实伤害" without a token kit
+          battle.fx('summon', { x: lion.x, y: lion.y, id: lion.id, src: unit.id });
         }
+        unit.mem.vlions = lions;
       },
       onEnd({ battle, unit }) {
-        const lion = unit.mem.vlion;
-        unit.mem.vlion = null;
-        if (lion && lion.alive) battle.retreat(lion, { reason: 'expired', permanent: true });
+        const lions = unit.mem.vlions || [];
+        unit.mem.vlions = null;
+        for (const lion of lions) if (lion.alive) battle.retreat(lion, { reason: 'expired', permanent: true });
         battle.setExtraRange(unit, null);
       },
     },

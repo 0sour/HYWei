@@ -402,7 +402,7 @@ test('佩佩: S3 ATK +150 %, main target stunned, stacks up to 4 with a growing 
   checkInvariants(h.b);
 });
 
-test('维娜·维多利亚: first hit trembles, S3 summons 黄金盟誓, deals true damage to +1 target', () => {
+test('维娜·维多利亚: first hit trembles, S3 summons 黄金盟誓 (one per free tile around her), deals true damage to +1 target', () => {
   const h = battle({
     units: [{ chessId: 'chess_char_6_07_a', row: 9, col: 5, carryState: { sp: 64 } }],
     enemies: [{ key: 'enemy_armored', pos: [9, 6] }],
@@ -411,17 +411,18 @@ test('维娜·维多利亚: first hit trembles, S3 summons 黄金盟誓, deals t
   h.step();
   const e = enemyAt(h, 'enemy_armored');
   assert.ok(h.runUntil(() => u.skill.active, 10));
-  const lion = h.b.allyUnits.find((x) => x.defId === 'token_10040_siege2_vlion');
-  assert.ok(lion && lion.alive, '黄金盟誓 summoned');
-  assert.ok(Math.max(Math.abs(lion.tileR - u.tileR), Math.abs(lion.tileC - u.tileC)) <= 1);
+  const lions = h.b.allyUnits.filter((x) => x.defId === 'token_10040_siege2_vlion');
+  assert.ok(lions.length >= 2 && lions.every((l) => l.alive), `黄金盟誓 summoned on the free tiles around her (${lions.length})`);
+  for (const l of lions) assert.ok(Math.max(Math.abs(l.tileR - u.tileR), Math.abs(l.tileC - u.tileC)) <= 1);
+  assert.equal(new Set(lions.map((l) => l.tileR * 100 + l.tileC)).size, lions.length, 'one per tile');
   h.run(3);
   assert.ok(h.dmg.some((d) => d.src === u.id && d.attack && d.type === 'true'), 'true damage');
-  assert.ok(h.dmg.some((d) => d.src === lion.id && d.type === 'true'), 'lion hits with true damage');
+  assert.ok(h.dmg.some((d) => lions.some((l) => l.id === d.src) && d.type === 'true'), 'a lion hits with true damage');
   assert.equal(u.profile.maxTargets + u.def.skill.bb['attack@max_target'] - 1 >= 2, true);
   assert.ok(h.hooksOf('statusApplied').some((c) => c.status === 'tremble' && c.target === e), '无拘的锋芒');
   h.runUntil(() => !u.skill.active, 30);
   h.step();
-  assert.equal(lion.alive, false, 'lion leaves with the skill');
+  assert.ok(lions.every((l) => !l.alive), 'the lions leave with the skill');
   checkInvariants(h.b);
 });
 

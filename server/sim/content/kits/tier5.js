@@ -2167,20 +2167,41 @@ const KITS = {
   },
 
   // ---------------------------------------------------------------------------------------------------------------
-  // 玛恩纳 — librator (ramp to +200 % ATK while idle). S3 未照耀的荣光 (26 s, CUSTOM_RANGE): skill range, trait ×2 (−10 %
-  // per kill), 5 targets at 125/150 % ATK phys; enemies in range take +10/11 % of his ATK true damage from every Kazimierz
-  // attack. T1 游侠: ×1.1 ATK on attacks (×1.15 and −15 % damage taken with ≥3 enemies around). T2 无动于衷: taunt +1,
-  // Kazimierz ops reflect 15 % of his ATK as true damage when attacked.
+  // 玛恩纳 — librator (ramp to +200 % ATK while idle). S3 未照耀的荣光 (26 s, CUSTOM_RANGE): skill range, trait ×2, 5
+  // targets at 125/150 % ATK phys, air units too (PRTS 备注 "※可对空"; player report B4 after 0.1.0: on a flying wave the
+  // cast hit nothing for 26 s); enemies in range take +10/11 % of his ATK true damage from every Kazimierz attack. Per
+  // PRTS 备注 the trait bonus drops by 10 % (per_kill_reduce, absolute: +400 % → +390 %) for each enemy knocked out by
+  // his own attack (or the damage it carries — not 无动于衷's reflection, not a mark another operator's attack set off),
+  // settled after that attack, never below +0 %. T1 游侠: ×1.1 ATK on attacks (×1.15 and −15 % damage taken with ≥3
+  // enemies around). T2 无动于衷: taunt +1, Kazimierz ops reflect 15 % of his ATK as true damage when attacked.
   // S1 未声张的怒火 (duration, SEARCH): attacks attack@atk_scale × ATK, DEF +. S2 未宽解的悲哀 (duration): skill range,
-  // BAT +0.3 s, attacks attack@atk_scale × ATK twice; a kill during the skill keeps the trait ramp when it ends.
+  // BAT +0.3 s, attacks attack@atk_scale × ATK twice; a kill of his own attacks during the skill keeps the trait ramp
+  // when it ends. S1 / S2 have no 对空 note: ground only, like his trait.
   chess_char_5_19_a: (bb, chess, def) => {
     const t0 = talent(chess, 0), t1 = talent(chess, 1);
     const sid = selectedId(chess, def);
     const up = num(bb.trait_up, 1), perKill = num(bb.per_kill_reduce);
+    // S3: the trait bonus = ramp × trait_up + per_kill_reduce × kills, ≥ 0 — the trait's own ramp buff stays, the
+    // difference goes into `mlynar:traitUp` (negative once the kills take the bonus below the ramp)
     const applyUp = (battle, unit) => {
-      const extra = num(unit.trait.ramp) * Math.max(0, num(unit.mem.mlyMult, 1) - 1);
-      if (extra > 0) battle.addBuff(unit, { key: 'mlynar:traitUp', mods: { atkPct: extra } });
+      const ramp = num(unit.trait.ramp);
+      const extra = unit.mem.mlyUp ? Math.max(0, ramp * up + perKill * num(unit.mem.mlyKills)) - ramp : 0;
+      if (extra) battle.addBuff(unit, { key: 'mlynar:traitUp', mods: { atkPct: extra } });
       else battle.removeBuff(unit, 'mlynar:traitUp');
+    };
+    /**
+     * "仅自身普通攻击（与该次攻击附带的伤害）击倒非角色类单位" (PRTS S2 / S3 备注): `onKill(victim)` for each enemy whose
+     * last damage from him came from his attack or the mark that attack set off (tagged 'mlynarOwn') while his skill
+     * runs; `onAttack()` after each of his attacks ("加成降低于当次攻击后统一结算").
+     */
+    const ownKills = (battle, unit, onKill, onAttack = null) => {
+      let last = null;
+      battle.on('damaged', (c) => {
+        if (c.source !== unit) return;
+        last = c.dmg?.isAttack || (c.dmg?.tags || []).includes('mlynarOwn') ? c.target : null;
+      }, { owner: unit, priority: 1000 });
+      battle.on('kill', (c) => { if (c.killer === unit && c.victim === last && c.victim.side === 'enemy' && unit.skill?.active) onKill(c.victim); }, { owner: unit });
+      battle.on('attack', (c) => { if (c.attacker !== unit) return; last = null; if (onAttack) onAttack(); }, { owner: unit });
     };
     return {
       skills: lazySkills({
@@ -2193,10 +2214,14 @@ const KITS = {
       }),
       skill: {
         kind: 'duration',
-        targeting: skillGrid(chess, def) ? { rangeGrid: skillGrid(chess, def) } : undefined,
+        targeting: { ...(skillGrid(chess, def) ? { rangeGrid: skillGrid(chess, def) } : {}), canHitFly: true },
         attack: { atkScale: num(bb['attack@atk_scale'], 1), maxTargets: Math.max(1, num(bb['attack@max_target'], 1)) },
-        onStart({ battle, unit }) { unit.mem.mlyMult = up; applyUp(battle, unit); battle.fx('aoe', { x: unit.x, y: unit.y, id: unit.id, r: 2, skill: 'mlynar' }); },
-        onEnd({ battle, unit }) { unit.mem.mlyMult = 1; battle.removeBuff(unit, 'mlynar:traitUp'); },
+        onStart({ battle, unit }) {
+          unit.mem.mlyUp = true; unit.mem.mlyKills = 0; unit.mem.mlyPending = 0;
+          applyUp(battle, unit);
+          battle.fx('aoe', { x: unit.x, y: unit.y, id: unit.id, r: 2, skill: 'mlynar' });
+        },
+        onEnd({ battle, unit }) { unit.mem.mlyUp = false; unit.mem.mlyPending = 0; battle.removeBuff(unit, 'mlynar:traitUp'); },
       },
       trait: { dmgMul: (b, u) => (num(u.mem.mlyNear) >= num(t0.cnt, 3) ? num(t0.atk_scale_up, 1) : num(t0.atk_scale_base, 1)) },
       talents: [
@@ -2224,7 +2249,7 @@ const KITS = {
           // 技能期间若击倒敌人，技能结束时特性效果不重置: the librator trait resets the ramp on skillEnd (priority 0) —
           // remember it before and put it back after
           battle.on('skillStart', (c) => { if (c.unit === unit) unit.mem.mlyKeep = false; }, { owner: unit });
-          battle.on('kill', (c) => { if (c.killer === unit && c.victim.side === 'enemy' && unit.skill?.active) unit.mem.mlyKeep = true; }, { owner: unit });
+          ownKills(battle, unit, () => { unit.mem.mlyKeep = true; });
           battle.on('skillEnd', (c) => {
             if (c.unit === unit) unit.mem.mlyRamp = unit.mem.mlyKeep && c.reason !== 'death' ? num(unit.trait.ramp) : null;
           }, { owner: unit, priority: 100 });
@@ -2236,18 +2261,20 @@ const KITS = {
           }, { owner: unit, priority: -100 });
         }
         if (sid && sid !== 'skchr_mlynar_3') return;
-        battle.on('kill', (c) => {
-          if (c.killer !== unit || c.victim.side !== 'enemy' || !unit.skill?.active) return;
-          unit.mem.mlyMult = Math.max(1, num(unit.mem.mlyMult, 1) + perKill);
+        ownKills(battle, unit, () => { unit.mem.mlyPending = num(unit.mem.mlyPending) + 1; }, () => {
+          if (!unit.mem.mlyPending || !unit.mem.mlyUp) return;
+          unit.mem.mlyKills = num(unit.mem.mlyKills) + unit.mem.mlyPending;
+          unit.mem.mlyPending = 0;
           applyUp(battle, unit);
-        }, { owner: unit });
+        });
         const extra = num(bb.atk_scale);
         if (!(extra > 0)) return;
         battle.on('damaged', (c) => {
           const src = c.source, e = c.target;
           if (!src || src.side !== 'ally' || !isOp(src) || !isKazimierz(src) || !c.dmg?.isAttack || c.type === 'element') return;
           if (e.side !== 'enemy' || !e.alive || !unit.skill?.active || !on(unit) || !inRange(unit, e)) return;
-          battle.dealDamage(unit, e, { amount: unit.s.atk * extra, type: 'true', canDodge: false, isSkill: true, tags: ['skill', 'mlynarMark'] });
+          const tags = src === unit ? ['skill', 'mlynarMark', 'mlynarOwn'] : ['skill', 'mlynarMark'];
+          battle.dealDamage(unit, e, { amount: unit.s.atk * extra, type: 'true', canDodge: false, isSkill: true, tags });
         }, { owner: unit });
       },
     };
