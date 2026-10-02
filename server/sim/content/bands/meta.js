@@ -19,7 +19,8 @@
 //   round_start_bond_check_gain_layer                  余       round start of `round`: exactly factioncount active bonds → +count1, else each active +count2
 //   up_shop_add_special_goods {count,choice,pool}      凯瑟琳   every level-up: pick 1 of `count` items of pool (free)
 //   coin_carry_over {capital,interest,max}             坎诺特   leftover ≥ capital at round start → +min(max, ⌊left/capital⌋×interest) income
-//   round_start_all_player_change_enemy_2              鸭爵     global: every alive player's normal battle from `round` (own + teammates)
+//   round_start_all_player_change_enemy_2              鸭爵     global: every alive player's battle from `round` (own + teammates;
+//                                                                normal, Final Assault, Hidden Core): 0–2 enemies → enemylist
 //   round_start_activate_char_chess_effect_in_board    铃兰     round start: 获得时 traits of the right-most (then bottom-most) board op with one
 //   first_sell_char_chess_exchange_char_chess_in_shop  巫恋     first sale of a normal op per round: swapped with a random shop chess (no funds)
 //   round_start_gain_char_chess_in_shop_every_n_round  松桐     round % n = 0: a random shop chess for free (its slot empties)
@@ -348,13 +349,24 @@ K.preparation_start_add_special_goods_every_n_round = (ps) => ({
 });
 
 // ---------------------------------------------------------------------------------------------------------------
-// 鸭爵: "你和队友遭遇的部分敌人" — a global handler rewrites the normal-battle spawn list of every alive player while
-// the band is held by that player or a teammate. From the `minweight`–`maxweight` share of the wave (time order),
-// min..max NORMAL ground enemies are replaced by a random enemylist enemy worth 1 fund to its killer (bounty, also in
-// 联防). The originals never exist, so none of their death / kill / leak effects happen.
+// 鸭爵 “神秘顾客”: "从第5回合起，你和队友遭遇的部分敌人可能会替换为<鸭爵><高普尼克><流泪小子><圆仔>，击倒这些敌人者获得1资金奖励
+// （包括联防阶段）". A global handler rewrites the battle spawn list of every alive player while the band is held by that
+// player or a teammate: from round `round`, in the normal battle, the Final Assault and the Hidden Core (PRTS 卫戍协议：盟约
+// 下半/PRTS盟约记录 鸭爵 备注 "每回合将有0~2名敌人被替换为上述敌人之一…且在最终回合和隐秘核心回合中仍然生效"; the 联防 phase
+// replaces nothing: its enemies are leaks, which keep their bounty). min..max (0–2, uniform [ASSUMED]) of the player's
+// ground enemies from the `minweight`–`maxweight` share of the wave (time order) [ASSUMED reading of the two weights]
+// — any wave enemy but the leader, its parts, bounties, earlier swaps and uncounted units: normal or elite, as the
+// Final Assault's escorts are all elites; flyers stay [ASSUMED: the four are ground units and a FLY action's route is
+// a FLY route] — become a random enemylist enemy (the act2 `_2` versions) at the replaced unit's time and route, worth
+// DUCK_COINS to its killer (bounty, also in 联防). A boss field's two players edit the field's one list in turn, so each
+// gets its own 0–2. The originals never exist, so none of their death / kill / leak effects happen. Reaching the
+// protection point costs 1 LP ("但进入保护目标点将减少1点目标生命值": the enemies' data lpr, tools/build-data.mjs).
 
 export const DUCK_BAND = 'band_ducklord';
+/** "击倒这些敌人者获得1资金奖励" (the blackboard's `count` is 1 too). */
 export const DUCK_COINS = 1;
+/** Battle kinds the swap applies to (PRTS: the Final Assault and the Hidden Core too). */
+const DUCK_KINDS = new Set(['normal', 'boss', 'hidden']);
 
 function duckParams() {
   for (const b of buffsOf(bandRecord(DUCK_BAND))) if (b.key === 'round_start_all_player_change_enemy_2') return b.p;
@@ -383,7 +395,8 @@ export function duckReplace(ctx, spawns, p, ownerPlayerId) {
     const s = spawns[f.i];
     const e = gd.enemy(s.enemyKey);
     const frac = n > 1 ? j / (n - 1) : 0;
-    return !s.tag && e && e.rank === 'NORMAL' && e.stats?.motion !== 'FLY' && frac >= w0 - 1e-9 && frac <= w1 + 1e-9;
+    return !s.tag && s.countInTotal !== false && e && e.rank !== 'BOSS' && !e.notCountInTotal && e.stats?.motion !== 'FLY'
+      && frac >= w0 - 1e-9 && frac <= w1 + 1e-9;
   });
   const picked = ctx.rng.shuffle(ok).slice(0, want);
   if (!picked.length) return [];
@@ -421,7 +434,7 @@ export function duckReplace(ctx, spawns, p, ownerPlayerId) {
 
 const duckGlobal = {
   onBattleStart(ctx, ev) {
-    if (!ev || ev.kind !== 'normal' || !Array.isArray(ev.spawns)) return;
+    if (!ev || !DUCK_KINDS.has(ev.kind) || !Array.isArray(ev.spawns)) return;
     const p = duckParams();
     if (!p || ctx.round < int(p.round, 1)) return;
     const held = ctx.bandId() === DUCK_BAND || ctx.teammates().some((t) => t.bandId() === DUCK_BAND);

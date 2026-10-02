@@ -1088,14 +1088,18 @@ for (const key of ['enemy_1501_demonk', 'enemy_10018_sgrobh']) {
 }
 
 for (const key of ['enemy_2001_duckmi', 'enemy_2001_duckmi_2']) {
-  test(`${nm(key)}: unblockable; runs ×${tb(key, 'run.attack@move_speed')} once hit`, () => {
+  // PRTS 鸭爵 "移动速度+400%" (run 4); the 鸭爵 strategy's version "受伤后移动速度+300%" (run 3): ×(1 + run)
+  test(`${nm(key)}: unblockable, no attack; runs ×${1 + tb(key, 'run.attack@move_speed')} once hit`, () => {
     const h = arena();
     h.step();
     const e = put(h, key, [10, 7], { move: true });
     const v = e.s.moveSpeed;
     assert.ok(e.s.flags.unblockable);
+    assert.ok(e.profile.noAttack);
     h.b.dealDamage(null, e, { amount: 1, type: 'true' });
-    approx(e.s.moveSpeed, v * tb(key, 'run.attack@move_speed'));
+    approx(e.s.moveSpeed, v * (1 + tb(key, 'run.attack@move_speed')));
+    h.b.dealDamage(null, e, { amount: 1, type: 'true' });
+    approx(e.s.moveSpeed, v * (1 + tb(key, 'run.attack@move_speed')), 1e-6, 'once');
   });
 }
 
@@ -1621,6 +1625,20 @@ test(`${nm('enemy_10097_crshd')} / ${nm('enemy_2085_skzjxd')}: physical / arts d
   approx(h.b.dealDamage(front, y, { amount: 1000, type: 'arts' }), 1000 * (1 - y.s.res / 100) * (1 - tb('enemy_2085_skzjxd', 'Weakness.damage_resistance')), 1e-6, '圆仔 faces the two operators on the left');
   approx(h.b.dealDamage(back, y, { amount: 1000, type: 'true' }), 1000, 1e-6, 'true damage is never reduced');
 });
+
+for (const key of ['enemy_2085_skzjxd', 'enemy_2085_skzjxd_2']) {
+  test(`${nm(key)}: 无法攻击/被阻挡 (PRTS 天赋) — walks through a blocker, never attacks`, () => {
+    const h = arena({ units: [{ chessId: 't_wall', row: 10, col: 5 }], hooks: ['blocked'] });
+    h.step();
+    const e = put(h, key, [10, 7], { move: true, route: { motion: 'WALK', start: [10, 7], end: [10, 2], checkpoints: [] } });
+    assert.ok(e.s.flags.unblockable);
+    assert.ok(e.profile.noAttack);
+    h.runUntil(() => e.x < 4, 60);
+    assert.ok(e.x < 4, `passed the wall (x ${e.x})`);
+    assert.equal(h.hooksOf('blocked').length, 0);
+    assert.equal(e.stats.attacks, 0);
+  });
+}
 
 test(`${nm('enemy_10098_crhro')}: 重生 once after ${tb('enemy_10098_crhro', 'reborn.duration')} s at full HP`, () => {
   const h = arena();

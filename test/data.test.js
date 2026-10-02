@@ -686,6 +686,11 @@ test('independent re-derivation of every chess and enemy stat from the raw offic
   const db = new Map(raw('levels/enemydata/enemy_database.json').enemies.map((e) => [e.Key, e.Value]));
   const ov = new Map((raw('levels/activities/act1autochess/level_autochess_enemy_data.json').enemyDbRefs || [])
     .filter((r) => r.overwrittenData).map((r) => [r.id, r.overwrittenData]));
+  // the 鸭爵 strategy's swapped-in enemies cost 1 LP at the protection point (PRTS 卫戍协议：盟约 下半/PRTS盟约记录 鸭爵 备注
+  // "但进入保护目标点将减少1点目标生命值"; the database's lifePointReduce 0 is the roguelike rule)
+  const swapped = new Set(Object.values(act.effectBuffInfoDataDict).flat().filter((b) => b.key === 'round_start_all_player_change_enemy_2')
+    .flatMap((b) => b.blackboard.filter((kv) => kv.key === 'enemylist').flatMap((kv) => kv.valueStr.split(','))));
+  assert.equal(swapped.size, 4);
   for (const e of Object.values(enemies)) {
     const base = db.get(e.key).find((l) => l.level === 0).enemyData;
     const o = ov.get(e.key);
@@ -700,7 +705,7 @@ test('independent re-derivation of every chess and enemy stat from the raw offic
       maxHp: pick((x) => x.attributes?.maxHp, 0), atk: pick((x) => x.attributes?.atk, 0), def: pick((x) => x.attributes?.def, 0),
       res: pick((x) => x.attributes?.magicResistance, 0), moveSpeed: pick((x) => x.attributes?.moveSpeed, 1),
       bat: pick((x) => x.attributes?.baseAttackTime, 1), aspd: pick((x) => x.attributes?.attackSpeed, 100),
-      lpr: pick((x) => x.lifePointReduce, 1), massLevel: pick((x) => x.attributes?.massLevel, 0),
+      lpr: swapped.has(e.key) ? 1 : pick((x) => x.lifePointReduce, 1), massLevel: pick((x) => x.attributes?.massLevel, 0),
       motion: pick((x) => x.motion, 'WALK'),
     };
     for (const [key, v] of Object.entries(exp)) {

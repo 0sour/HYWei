@@ -1674,11 +1674,29 @@ const MODEL_SCALE_BY_PREFAB = new Map();
 for (const [v, list] of MODEL_SCALES) for (const k of list) MODEL_SCALE_BY_PREFAB.set(`enemy_${k}`, Math.round((v / MODEL_SCALE_STANDARD) * 1e4) / 1e4);
 
 /**
+ * The 鸭爵 strategy's swapped-in enemies (`round_start_all_player_change_enemy_2` enemylist — the act2 versions, *_2)
+ * cost BAND_SWAP_LPR at the protection point, not the database's lifePointReduce 0 (the roguelike 宝藏 rule): PRTS
+ * 卫戍协议：盟约 下半/PRTS盟约记录 §策略 鸭爵 备注 "…但进入保护目标点将减少1点目标生命值，且在最终回合和隐秘核心回合中仍然生效"
+ * (player feedback after 0.1.0, #7). Normal rounds count leaks whatever their `lpr`; the Final Assault / Hidden Core
+ * LP and the detail card's 目标价值 read it.
+ */
+const BAND_SWAP_LPR = 1;
+function bandSwapEnemyKeys(act) {
+  const out = new Set();
+  for (const buffs of Object.values(act.effectBuffInfoDataDict || {})) for (const b of buffs || []) {
+    if (b?.key !== 'round_start_all_player_change_enemy_2') continue;
+    for (const kv of b.blackboard || []) if (kv.key === 'enemylist') for (const k of String(kv.valueStr || '').split(',')) if (k.trim()) out.add(k.trim());
+  }
+  return out;
+}
+
+/**
  * Build data/enemies.json: base stats at the season level (randomEnemyAttributeDict.level, 0 for
  * all), with the season-wide override level (level_autochess_enemy_data) applied.
  */
 function buildEnemies(ctx) {
   const { ac, act, handbook } = ctx;
+  const swapKeys = bandSwapEnemyKeys(act);
   const c = ac.constData;
   const hpF = c.enemyMaxHpFactor ?? 1, atkF = c.enemyAtkFactor ?? 5, defF = c.enemyDefFactor ?? 3, resF = c.enemyMagicResistanceFactor ?? 3;
   const globalOverrides = new Map();
@@ -1736,6 +1754,7 @@ function buildEnemies(ctx) {
       otherImmunities: ['disarmedCombat', 'feared', 'palsy', 'attract', 'teleport', 'groundBound'].filter((k) => !!mv(at[`${k}Immune`], false)),
       tauntLevel: mv(at.tauntLevel, 0),
     };
+    if (swapKeys.has(key)) stats.lpr = BAND_SWAP_LPR;
     const beFactor = rand?.enemyBattleEffectivenessFactor ?? 1;
     const be = beFactor > 0 ? Math.round((stats.maxHp * hpF + stats.atk * atkF + stats.def * defF + stats.res * resF) / beFactor) : null;
     const talents = flattenBB(data.talentBlackboard, `enemy ${key} talents`);
