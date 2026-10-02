@@ -204,3 +204,28 @@ test('F5 "若干员被击倒的位置为其他干员或召唤物的初始位置�
     checkInvariants(b);
   }
 });
+
+test('F5 safeguard: the `down` state reports WAIT_TILE whenever _checkRedeploys holds a body back — a living unit or another body on its tile', async () => {
+  const { DOWN_STATE } = await import('../../server/sim/constants.js');
+  const op = (id) => chessRec({ id, profession: 'WARRIOR', stats: { atk: 0, maxHp: 1000, def: 0, blockCnt: 0, cost: 1, respawnTime: 2 }, skill: null });
+  const h = makeBattle({
+    defs: { chess: { s_a: op('s_a'), s_b: op('s_b') } }, units: [{ chessId: 's_a', row: 9, col: 5 }, { chessId: 's_b', row: 10, col: 5 }],
+    content: 'none', autoFinish: false, timeLimit: 120, flags: { dpInit: 50, dpPerSec: 1, dpMax: 99 },
+  });
+  h.step();
+  const b = h.b, A = h.unit('s_a'), B = h.unit('s_b');
+  kill(b, A);
+  kill(b, B);
+  // unreachable through the engine (no ally deploys on a body tile; _layBody checks isReservedTile): force two bodies
+  // onto one tile to check that the client's state and the redeploy check agree
+  B.body = [9, 5];
+  h.run(3);
+  assert.ok(!A.alive && !B.alive, 'neither redeploys onto a tile another body lies on');
+  assert.equal(downEntry(b, A)[3], DOWN_STATE.WAIT_TILE, 'A: its tile is taken (not COUNTING with the DP there)');
+  assert.equal(downEntry(b, B)[3], DOWN_STATE.WAIT_TILE);
+  B.body = [10, 5];
+  assert.ok(h.runUntil(() => A.alive && B.alive, 5), 'both redeploy once the tiles are their own');
+  assert.deepEqual(tileOf(A), [9, 5]);
+  assert.deepEqual(tileOf(B), [10, 5]);
+  checkInvariants(b);
+});

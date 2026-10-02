@@ -843,8 +843,9 @@ export class Battle {
   // deployment / death / redeploy
 
   /**
-   * Deploy `u` on its home tile, or on `tile` ([r, c]: a one-off landing tile — the home stays the tile of later
-   * redeploys). `keepSp` = { sp, charges } restored right after the skill reset, before the `deploy` hook fires.
+   * Deploy `u` on its home tile, or on `tile` ([r, c]: a one-off landing tile — the home stays the board tile: a
+   * withdrawn operator comes back there, a knocked-out one on its body tile, restTile). `keepSp` = { sp, charges }
+   * restored right after the skill reset, before the `deploy` hook fires.
    */
   _deploy(u, { initial = false, carry = null, tile = null, keepSp = null } = {}) {
     if ((u.alive && u.deployed) || u._removing) return false;
@@ -2217,14 +2218,15 @@ export class Battle {
   }
 
   /**
-   * constants.js DOWN_STATE of a down operator: its timer runs, or it waits for its tile / the DP (_checkRedeploys). No
-   * ally may take the tile it lies on (downOn), so WAIT_TILE is a safeguard only.
+   * constants.js DOWN_STATE of a down operator: its timer runs, or it waits for its tile / the DP — the same checks as
+   * _checkRedeploys (a living unit or another body on its rest tile). No ally may take the tile it lies on (downOn), so
+   * WAIT_TILE is a safeguard only.
    */
   _downState(u) {
     if (this.time + 1e-9 < u.respawnAt) return DOWN_STATE.COUNTING;
     const [r, c] = this.restTile(u);
     const occ = this._occ[r * COLS + c];
-    if (occ && occ.alive && occ !== u) return DOWN_STATE.WAIT_TILE;
+    if ((occ && occ.alive && occ !== u) || this.downOn(r, c, u)) return DOWN_STATE.WAIT_TILE;
     const ps = this.getPlayer(u.ownerId);
     return !ps || ps.dp + 1e-9 < u.base.cost ? DOWN_STATE.WAIT_DP : DOWN_STATE.COUNTING;
   }

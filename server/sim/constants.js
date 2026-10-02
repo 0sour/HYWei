@@ -139,9 +139,9 @@ export const DP_DEFAULTS = Object.freeze({ dpInit: 10, dpPerSec: 1, dpMax: 99 })
  */
 export const AUTO_OP_COOLDOWN = 3;
 /**
- * State of a knocked-out operator waiting to redeploy on its own tile (b.snap `down` entries, Battle.snapshot): its
- * respawn timer runs (COUNTING), then it waits for the player's DP to reach its cost (WAIT_DP) or for its tile to be
- * free (WAIT_TILE). render/units.js mirrors these codes.
+ * State of a knocked-out operator waiting to redeploy on the tile it lies on (b.snap `down` entries, Battle.snapshot):
+ * its respawn timer runs (COUNTING), then it waits for the player's DP to reach its cost (WAIT_DP) or for its tile to be
+ * free (WAIT_TILE — a safeguard: no ally deploys on a body's tile, Battle.downOn). render/units.js mirrors these codes.
  */
 export const DOWN_STATE = Object.freeze({ COUNTING: 0, WAIT_DP: 1, WAIT_TILE: 2 });
 /**
