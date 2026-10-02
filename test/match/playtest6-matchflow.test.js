@@ -173,12 +173,13 @@ test('#4 data: cards.bounty marks the draft pool after the PRTS table — 战术
   assert.equal(list.find((c) => c.effectId === 'enemyeffect_5_1').draft, true, '源石虫·特训 is in the table too');
 });
 
-/** Drive a co-op 绝境 match to its R3 bounty draft; the human takes the first free card `want(card, free)` accepts. */
-function pickAtR3(seed, want) {
+/** Drive a co-op 绝境 match to its R3 (or R`round`) bounty draft; the human takes the first free card `want(card, free)`
+ * accepts. */
+function pickAtR3(seed, want, round = 3) {
   const h = makeMatch({ mode: 'coop', difficulty: 'HARD', humans: 1, bots: 1, seed, fake: true }).start();
   const m = h.m;
-  const ok = h.drive(() => m.phase === PHASE.SP_DRAFT && m.round === 3, { ready: true });
-  assert.ok(ok && m.sp.family === 'bounty', `seed ${seed}: the R3 bounty draft`);
+  const ok = h.drive(() => m.phase === PHASE.SP_DRAFT && m.round === round, { ready: true });
+  assert.ok(ok && m.sp.family === 'bounty', `seed ${seed}: the R${round} bounty draft`);
   let picked = null;
   for (let guard = 0; guard < 200 && m.phase === PHASE.SP_DRAFT; guard++) {
     if (m.spTurn() === 'p_0') {
@@ -191,7 +192,7 @@ function pickAtR3(seed, want) {
   return { h, m, ps: h.ps('p_0'), picked };
 }
 
-/** Rounds (≤ R8) whose normal battle of p_0 spawned bounty `bountyId`. */
+/** Rounds whose normal battle of p_0 spawned bounty `bountyId`. */
 function bountyRounds(bountyId) {
   const out = [];
   for (const f of FakeBattle.instances) {
@@ -221,11 +222,12 @@ test('#4 E2E (co-op 绝境, the real R3 draft): a 1–2-battle bounty\'s enemies
 });
 
 test('#4 E2E: a multi-round card lasts two battles like the "两场作战" cards — blue text on the card and in the effects column (the user\'s call)', () => {
-  // "我不记得有过多轮悬赏" (user, after playtest #6): choices.js MULTI_ROUND_BOUNTY_BATTLES = 2; null restores 每场
+  // "我不记得有过多轮悬赏" (user, after playtest #6): choices.js MULTI_ROUND_BOUNTY_BATTLES = 2; null restores 每场. The
+  // multi-round cards are second-half cards (the R9 draft; player feedback #2, choices.js bountyDraftHalf)
   assert.equal(MULTI_ROUND_BOUNTY_BATTLES, 2);
   let done = false;
   for (let seed = 1; seed <= 40 && !done; seed++) {
-    const { h, m, ps, picked } = pickAtR3(700 + seed, (c) => MULTI.has(c.id));
+    const { h, m, ps, picked } = pickAtR3(700 + seed, (c) => MULTI.has(c.id), 9);
     if (!picked) { m.dispose(); continue; }
     done = true;
     assert.equal(picked.rounds, 2);
@@ -236,12 +238,12 @@ test('#4 E2E: a multi-round card lasts two battles like the "两场作战" cards
     const e = ps.privateView().effects.find((x) => x.id === b.id);
     assert.equal(e.counterText, '还剩 2 场作战');
     assert.match(e.desc, /<@ba\.vup>两场作战<\/>/, 'the effects tooltip says the same');
-    h.drive(() => m.phase === PHASE.ROUND_START && m.round === 9, { ready: true });
-    assert.deepEqual(bountyRounds(b.id), [3, 4], 'its enemy comes for two battles, then never again');
+    h.drive(() => m.phase === PHASE.ROUND_START && m.round === 13, { ready: true });
+    assert.deepEqual(bountyRounds(b.id), [9, 10], 'its enemy comes for two battles, then never again');
     assert.ok(!ps.bounties.some((x) => x.id === b.id), 'and the bounty is gone');
     m.dispose();
   }
-  assert.ok(done, 'some R3 draft offered a multi-round card');
+  assert.ok(done, 'some R9 draft offered a multi-round card');
 });
 
 test('#4 the active bounty says how many battles it has left, with its card text in the official colours (effects column)', () => {

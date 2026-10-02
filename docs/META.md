@@ -111,7 +111,13 @@ text "无需消耗资金"). 悬赏决策 offers only choices.json cards with `dr
 item 4): the PRTS table 卫戍协议：盟约 下半/PRTS盟约记录 §机变阶段 "敌人轮选" — kill bounties for the next battle ("下场作战")
 or the next two ("接下来两场作战"), 源石虫·特训, and the 7 multi-round cards ("之后 / 后续的每场作战"), but never 战术特训
 (listed under "※以下悬赏任务仅由法术教鞭生成") nor the 鸭爵 / 高普尼克 / 流泪小子 / 圆仔 cards (commented out of the table) —
-105 cards, drawn uniformly. Every bounty card carries the effect's official rich text `descRaw` (the battles in blue
+105 cards. **Each draft offers the cards of its half** (`choices.js bountyDraftHalf`, choices.json `draftHalf`; player
+feedback after 0.1.0, report #2 — late bounty enemies in the early drafts): a draft up to R7 (the official wave
+generator's first half: 绝境 / 终极 R3, 险境 co-op R3 / R6) draws the 42 "接下来两场作战" cards, a draft from R8 on (R9)
+the 56 "下场作战" cards (boss bounties, 特异 giants, the faction _7 / _8 cards, 源石虫·特训) and the 7 multi-round ones —
+uniformly, with no tier window (the official late-draft screenshot shows boss bounties worth 1 to 6 together; the
+evidence is in `tools/build-data.mjs bountyDraftHalf`). The mode's inactive enemy list does not thin the draft (PRTS
+11/18 note "不影响悬赏决策出场"). Every bounty card carries the effect's official rich text `descRaw` (the battles in blue
 "下场作战" / "两场作战"; the overlay and the effects column render it; the effects column also says "还剩 N 场作战").
 **Multi-round cards last two battles** (`choices.js MULTI_ROUND_BOUNTY_BATTLES = 2`, `bountyBattles` / `bountyText`): the
 user does not remember any multi-round bounty (playtest #6 answer, "我不记得有过多轮悬赏"), so until that is confirmed

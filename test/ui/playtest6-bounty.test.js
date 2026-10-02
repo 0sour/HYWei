@@ -37,9 +37,11 @@ test('#4 the draft overlay shows each bounty card\'s battles in the official col
   // the official multi-round cards: two battles, in the two-battle cards' blue (the user's call after playtest #6)
   const MULTI = new Set(DATA.choices.cards.bounty.filter((c) => c.multiRound).map((c) => c.effectId));
   const seen = new Set();
-  for (let seed = 1; seed <= 40 && seen.size < 3; seed++) {
-    const d = generateDraft(gd, createRng(seed * 977 + 3), 3, { stageId: 'act2autochess_m02' });
-    assert.equal(d.family, 'bounty', 'co-op 绝境 R3 is a bounty draft');
+  // R3 offers the two-battle cards, R9 the next-battle and multi-round ones (player feedback #2, choices.js bountyDraftHalf)
+  for (let seed = 1; seed <= 80 && seen.size < 3; seed++) {
+    const round = seed % 2 ? 3 : 9;
+    const d = generateDraft(gd, createRng(seed * 977 + 3), round, { stageId: 'act2autochess_m02' });
+    assert.equal(d.family, 'bounty', `co-op 绝境 R${round} is a bounty draft`);
     const sp = normalizeSp({ family: d.family, cards: d.cards.map(cardView), order: ['p_0'], turn: 'p_0', picks: {}, taken: {} }, [{ playerId: 'p_0' }]);
     for (const card of sp.cards) {
       const view = resolveSpCard(card, sp.family);

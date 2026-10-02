@@ -3,11 +3,17 @@
 //
 // Generation (generateDraft): the family is a weighted pick from choices.schedule[modeId].rounds[r].families; the card
 // count is `cards` (co-op 6, solo 3):
-//   bounty  悬赏决策  distinct cards.bounty entries with tier ∈ bountyTiers whose enemy exists and is active in the mode,
-//                     draft cards only (`draftBounty`, choices.json `draft`: the PRTS 下半 记录 §机变阶段 "敌人轮选" table —
-//                     never 战术特训, which only 法术教鞭 creates, nor the hidden 鸭爵 set; the 7 multi-round "之后 / 后续
-//                     的每场作战" cards stay in, as the table lists them); each card carries its official rich text
-//                     `descRaw` (the battles in blue "下场作战" / "两场作战"); a multi-round card lasts
+//   bounty  悬赏决策  distinct cards.bounty entries whose enemy exists, draft cards only (`draftBounty`, choices.json
+//                     `draft`: the PRTS 下半 记录 §机变阶段 "敌人轮选" table — never 战术特训, which only 法术教鞭 creates,
+//                     nor the hidden 鸭爵 set; the 7 multi-round "之后 / 后续的每场作战" cards stay in, as the table lists
+//                     them) of the draft's half (`bountyDraftHalf`, choices.json `draftHalf`; player feedback after
+//                     0.1.0, report #2 — late bounty enemies in the early drafts): rounds ≤ 7 (the official wave
+//                     generator's first half: R3, 险境 R6) offer the "接下来两场作战" cards, R8 on (R9) the "下场作战" cards
+//                     (boss bounties, 特异 giants, the faction _7 / _8 cards …) and the multi-round ones (tools/build-data.mjs
+//                     bountyDraftHalf has the evidence); drawn uniformly (no tier window: the official late draft shows
+//                     boss bounties worth 1 to 6 together); the mode's inactive enemy list does not apply (PRTS
+//                     卫戍协议：盟约 11/18 note "以上调整仅针对战术特训敌人，不影响悬赏决策出场"); each card carries its official
+//                     rich text `descRaw` (the battles in blue "下场作战" / "两场作战"); a multi-round card lasts
 //                     MULTI_ROUND_BOUNTY_BATTLES battles and says so (`bountyBattles` / `bountyText`: the user's call
 //                     after playtest #6 — "我不记得有过多轮悬赏")
 //   supply  道具补给  random normal EQUIP shop items with tier in supplyTiers [lo, hi] (duplicates allowed)
@@ -34,7 +40,7 @@
 //     anything else (env_gbuff…, enemy_attribute_mul…)  a battle EffectRef for the sim content (playerEffects)
 //   cards with `team: true` apply to the picker AND every alive teammate ("若存在其他队友则他们也获得").
 
-import { weightedPick } from './waves.js';
+import { weightedPick, firstHalfMax } from './waves.js';
 
 export const FAMILY_NAMES = { bounty: '悬赏决策', supply: '道具补给', shop: '机密商店', tactic: '战术决策' };
 
@@ -75,7 +81,16 @@ function scheduleFor(gd, round) {
   const r = sch && sch.rounds && sch.rounds[String(round)];
   if (r && typeof r === 'object') return r;
   // fallback: a supply draft
-  return { families: [{ family: 'supply', weight: 1 }], cards: gd.isSolo ? 3 : 6, supplyTiers: [1, Math.min(6, 1 + Math.floor(round / 3))], bountyTiers: [1, 2] };
+  return { families: [{ family: 'supply', weight: 1 }], cards: gd.isSolo ? 3 : 6, supplyTiers: [1, Math.min(6, 1 + Math.floor(round / 3))] };
+}
+
+/**
+ * The half of the match a 悬赏决策 draft of `round` belongs to: 1 up to the official wave generator's first-half end
+ * (waves.js firstHalfMax, 7), else 2. Its cards are the cards.bounty entries with that `draftHalf` (player feedback
+ * after 0.1.0, report #2).
+ */
+export function bountyDraftHalf(round, gd = null) {
+  return Number(round) <= firstHalfMax(gd) ? 1 : 2;
 }
 
 function formatCount(gd) {
@@ -105,7 +120,7 @@ export function generateDraft(gd, rng, round, { stageId = null, bondAvailable = 
   const fams = Array.isArray(sch.families) && sch.families.length ? sch.families.map((f) => [f.family, f.weight]) : [['supply', 1]];
   let family = weightedPick(rng, fams) || 'supply';
   const n = Number.isInteger(sch.cards) && sch.cards > 0 ? Math.min(sch.cards, 6) : formatCount(gd);
-  const opts = { stageId, bondAvailable };
+  const opts = { stageId, bondAvailable, round };
   let cards = buildCards(gd, rng, family, n, sch, opts);
   if (!cards.length && family !== 'supply') { family = 'supply'; cards = buildCards(gd, rng, family, n, sch, opts); }
   if (!cards.length) return null;
@@ -145,19 +160,21 @@ export function cardTargetBonds(gd, effectId) {
 /**
  * A bounty card the 悬赏决策 draft may offer (choices.json cards.bounty `draft`, tools/build-data.mjs
  * bountyDraftExclusion: the PRTS "敌人轮选" table — no 战术特训, no 鸭爵 set; user playtest #6 item 4). Data without the
- * flag (older builds, test fixtures) falls back to the kill bounties.
+ * flag (older builds, test fixtures) falls back to the kill bounties. With `half` (1 | 2, bountyDraftHalf) the card must
+ * also belong to that half (choices.json `draftHalf`; a card without one — test fixtures — fits both).
  */
-export function draftBounty(c) {
+export function draftBounty(c, half = null) {
   if (!c) return false;
+  if (half != null && Number.isInteger(c.draftHalf) && c.draftHalf !== half) return false;
   if (typeof c.draft === 'boolean') return c.draft;
   return c.payout !== 'perfect';
 }
 
-function buildCards(gd, rng, family, n, sch, { stageId = null, bondAvailable = null } = {}) {
+function buildCards(gd, rng, family, n, sch, { stageId = null, bondAvailable = null, round = 1 } = {}) {
   const cardsData = gd.choices.cards || {};
   if (family === 'bounty') {
-    const tiers = Array.isArray(sch.bountyTiers) && sch.bountyTiers.length ? sch.bountyTiers : [1, 2];
-    const pool = (Array.isArray(cardsData.bounty) ? cardsData.bounty : []).filter((c) => c && draftBounty(c) && tiers.includes(c.tier) && gd.enemy(c.enemyKey) && !gd.inactiveEnemies.has(c.enemyKey));
+    const half = sch.bountyHalf === 1 || sch.bountyHalf === 2 ? sch.bountyHalf : bountyDraftHalf(round, gd);
+    const pool = (Array.isArray(cardsData.bounty) ? cardsData.bounty : []).filter((c) => c && draftBounty(c, half) && gd.enemy(c.enemyKey));
     const pick = pool.slice();
     rng.shuffle(pick);
     return pick.slice(0, n).map((c) => {

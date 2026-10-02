@@ -2334,6 +2334,27 @@ function bountyDraftExclusion(e, main) {
   return null;
 }
 
+/**
+ * The half of the match whose 悬赏决策 drafts offer a drafted bounty card (player feedback after 0.1.0, report #2: "本来应该
+ * 后期出的悬赏的怪物在前期的悬赏就出现了"): 1 = the drafts of rounds ≤ firstHalfMaxRound (7: co-op / solo 绝境 · 终极 R3,
+ * 险境 co-op R3 / R6), 2 = the drafts from R8 on (R9). The official card list of each draft event (enemy_initial_1..10,
+ * bounty_hunter_1..15, bossInitial_1..6) is server-side; what the official side shows:
+ *   - the one official co-op 悬赏决策 screenshot (Bahamut 12294, research 06 §15 "Wrkhtxv") holds six boss bounties —
+ *     “复仇者” 6, “庞贝” 2, W 1, 萨卡兹百夫长 2, “邪魔的利刃” 3, 碎骨 1 — with the team at LP 6 / 10 / 9 / 15: a late
+ *     draft, coin values 1–6 together;
+ *   - the data's six faction series pair the battles with the wave generator's halves (specialEnemyInfoDict
+ *     isInFirstHalf): "接下来两场作战" (_4–_6) bring first-half enemies or their attached keys (妖怪, 磨砻, 逐腐兽, 萨卡兹
+ *     枯朽战车, 山海众头目, 深池伙友卫队 …), "下场作战" (_7 / _8) second-half specials or their upgraded copies (法术大师A2,
+ *     假想敌：蚀裂, 尖端萨卡兹枯朽战车, 新硎, 家族暗影灭迹人, 异光体孽生者 …).
+ * Rule: a "接下来两场作战" card (data `round` 2) is a first-half card; a "下场作战" card (the boss bounties, the 特异 giants,
+ * the faction _7 / _8 cards, 源石虫·特训) and a multi-round card (the 假想敌, a second-half special each) a second-half
+ * one [ASSUMED beyond the evidence above]. Not a drafted card ⇒ null.
+ */
+function bountyDraftHalf(main, draftExcluded) {
+  if (draftExcluded) return null;
+  return main.rounds === 2 ? 1 : 2;
+}
+
 /** Classify a 机变 choice event id into a family. */
 function choiceFamily(ev) {
   if (ev.choiceType === 'BOUNTY_HUNT' || ev.choiceType === 'PERSONAL_CHOOSE') return 'bounty';
@@ -2387,7 +2408,7 @@ function buildChoices(ctx, effects, items, chess) {
     bounty.push({
       effectId: e.effectId, name: e.name, desc: e.desc, tier, coin,
       payout: main.payout, rounds: main.rounds, multiRound, enemyKey: main.enemyKey, count: main.count, adds,
-      draft: !draftExcluded, draftExcluded,
+      draft: !draftExcluded, draftExcluded, draftHalf: bountyDraftHalf(main, draftExcluded),
     });
   }
   bounty.sort((a, b) => naturalCmp(a.effectId, b.effectId));
@@ -2412,7 +2433,9 @@ function buildChoices(ctx, effects, items, chess) {
   // Per-mode schedule of families (research 01 A4).
   const schedule = {};
   const supplyWindow = { 3: [1, 4], 6: [2, 5], 9: [3, 6], 11: [4, 6] };
-  const bountyTiers = { 3: [1, 2], 6: [1, 2, 3], 9: [2, 3], 11: [2, 3] };
+  // the 悬赏决策 draft of a round offers the cards of its half (cards.bounty `draftHalf`, bountyDraftHalf): the official
+  // wave generator's first half ends at maxLevelCnt / 2 (factions.generation.firstHalfMaxRound)
+  const firstHalfMaxRound = Math.floor((ctx.ac.constData.maxLevelCnt ?? 15) / 2);
   for (const [modeId, rounds] of Object.entries(act.battleDataDict)) {
     const mode = act.modeDataDict[modeId];
     const solo = mode.modeType === 'SINGLE';
@@ -2429,10 +2452,11 @@ function buildChoices(ctx, effects, items, chess) {
           ? [{ family: r === 9 ? 'tactic' : 'supply', weight: 100 }]
           : [{ family: 'bounty', weight: 50 }, { family: 'supply', weight: 25 }, { family: 'shop', weight: 10 }, { family: 'tactic', weight: 15 }];
       } else families = [{ family: 'supply', weight: 45 }, { family: 'tactic', weight: 35 }, { family: 'shop', weight: 20 }];
-      const bountyEvents = r <= 3 ? eventsOf('bounty', (e) => /^enemy_initial/.test(e.id) && e.solo === solo) : eventsOf('bounty', (e) => /^(bounty_hunter|bossInitial)/.test(e.id) && e.solo === solo);
+      const bountyHalf = r <= firstHalfMaxRound ? 1 : 2;
+      const bountyEvents = bountyHalf === 1 ? eventsOf('bounty', (e) => /^enemy_initial/.test(e.id) && e.solo === solo) : eventsOf('bounty', (e) => /^(bounty_hunter|bossInitial)/.test(e.id) && e.solo === solo);
       m[r] = {
         families, cards: solo ? 3 : 6,
-        supplyTiers: supplyWindow[r] || [1, 6], bountyTiers: bountyTiers[r] || [1, 3],
+        supplyTiers: supplyWindow[r] || [1, 6], bountyHalf,
         events: {
           bounty: bountyEvents,
           supply: diff === 'TRAINING' ? eventsOf('supply', (e) => e.training) : eventsOf('supply', (e) => !e.training && e.solo === solo),
@@ -2448,7 +2472,7 @@ function buildChoices(ctx, effects, items, chess) {
   return {
     events,
     families: {
-      bounty: { name: '悬赏决策', desc: '选定悬赏目标，获取额外奖励。', cards: 'cards.bounty entries with draft: true (PRTS 敌人轮选: no 战术特训 — the 教鞭 Art offers those — and no 鸭爵 set)' },
+      bounty: { name: '悬赏决策', desc: '选定悬赏目标，获取额外奖励。', cards: 'cards.bounty entries with draft: true (PRTS 敌人轮选: no 战术特训 — the 教鞭 Art offers those — and no 鸭爵 set) and draftHalf = schedule[*].bountyHalf (1: the "接下来两场作战" cards, rounds ≤ firstHalfMaxRound; 2: the "下场作战" and multi-round cards)' },
       supply: { name: '道具补给', desc: '无需消耗资金，获得装备补给。', cards: 'random normal EQUIP items in schedule[*].supplyTiers (duplicates allowed)' },
       shop: { name: '机密商店', desc: '无需消耗资金，获得装备补给。', cards: 'random normal EQUIP items of any tier I–VI (duplicates allowed)' },
       tactic: { name: '战术决策', desc: '选择战术增益。', cards: 'cards.tactic (terrain cards only for the match stage)' },
