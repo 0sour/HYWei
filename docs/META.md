@@ -439,7 +439,9 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   any member (on the board only: the 14 bonds are BOARD; one member per operator, normal and elite copies alike), and
   so in the battle input / battle, the views, and on the client: the bond popup lists it among the members (tagged
   同构, `gameLogic.bondMembers` / `grantedBonds`, the same rule as `pieceBonds`) and its card shows the granted bond
-  chip; a teammate's units carry their item ids for that (UnitInfo `items`, `Match.prepFieldMeta`, SIM.md §9).
+  chip; a teammate's units carry their item ids for that (UnitInfo `items`, `Match.prepFieldMeta`, SIM.md §9), and a
+  card without an own piece (a teammate's unit, the card a 同构 row opens) lists those items read-only under 装备.
+  Not covered [ASSUMED]: operator talents that test "【拉特兰】/【卡西米尔】/… 干员" in the kits read the record's bonds.
   **Layer cap** (research 11 §1; the client's `MAX_GARRISON_STACK` / `AddBondCount` = min(L + n, 999)): each bond's
   layers stop at `BOND_LAYER_CAP` = 999 (shared/constants.js; 0 / Infinity = off). Every writer clamps with
   `layerGainRoom` — `PlayerState.addLayers` (all prep-side gains: 特质, items, bands, 机变 cards, bonds; `ctx.addLayers`),

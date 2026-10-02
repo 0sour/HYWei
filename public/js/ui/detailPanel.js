@@ -2,11 +2,13 @@
 // operators — portrait, name, tier, elite, class/subclass and, right under them in the header's right column (no
 // scrolling, user playtest #2 item 9), the unit's bonds (阵营 / 盟约: icon, name, member count / next threshold,
 // reached tier, active state — tap one for its popup; a bond its 变形同构体 pairing grants (gameLogic pieceBondIds: its
-// piece's items, a teammate's unit: UnitInfo `items`) has a dashed chip tagged 同构 — the wearer counts for it); right
+// piece's items, a teammate's unit: UnitInfo `items`, a bond popup's 同构 row: the wearer's) has a dashed chip tagged
+// 同构 — the wearer counts for it); right
 // under the header the operator's own effect (特质 — garrison: type chip (its official type icon + eventTypeDesc such as 整备能力, garrisonTypeIconKey) + description,
 // compact, visible without scrolling: user playtest #3 items 8 / 9), the class trait (特性), stats + range mini-map, skill (the one chosen in the loadout, DESIGN §16: icon, SP
 // info, rich description, 已调配 when not the default), elite module (模组: official type icon from the local-client
-// art, else its letter), equipped items, talents (CHESS_SECTIONS); items — icon, tier,
+// art, else its letter), equipped items (read-only from those `items` when the card has no own piece), talents
+// (CHESS_SECTIONS); items — icon, tier,
 // effect; tokens — the owner's variant (a golden owner's summon: its `_b` stats / skill), how a placed summon takes
 // the field (shared/constants.js SKILL_SUMMON_START_DEPLOY), its token skill and talents; enemies — stats, rank,
 // faction tags, abilities. Selling / destroying is the underframe's job in the
@@ -225,7 +227,8 @@ export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bond
   const skSlot = sk && Number.isInteger(sk.index) ? `S${sk.index + 1}` : null;
   const garrison = Array.isArray(c.garrisonIds) && c.garrisonIds[0] ? data.lookup('garrisons', c.garrisonIds[0]) : null;
   const items = Array.isArray(piece?.items) ? piece.items : [];
-  // the bonds the unit counts for: its own + a 变形同构体 pairing's (its piece's items; a teammate's unit: UnitInfo items)
+  // the bonds the unit counts for: its own + a 变形同构体 pairing's (its piece's items; without one: `unitItems` — a
+  // teammate's unit's UnitInfo items, a bond popup 同构 row's wearer's)
   const carried = piece ? items : (Array.isArray(unitItems) ? unitItems : []);
   const getItem = (id) => data.lookup('items', id);
   const bondIds = pieceBondIds(c, carried, getItem);
@@ -307,6 +310,10 @@ export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bond
     <//>` : null;
   blocks.equip = piece?.kind === 'chess' ? html`<${Section} key="equip" title="装备" micro=${`EQUIP ${items.length}/2`} class="dsec--equip">
       ${items.length ? items.map((it) => html`<${ItemRow} key=${it.uid} itemId=${it.id} />`) : html`<p class="t-dim dempty">拖拽装备至该干员以配发（最多 2 件）</p>`}
+    <//>`
+    // no own piece (a teammate's unit, a bond popup's 变形同构体 row): what it carries, read-only
+    : !piece && carried.length ? html`<${Section} key="equip" title="装备" micro=${`EQUIP ${carried.length}/2`} class="dsec--equip">
+      ${carried.map((id, i) => html`<${ItemRow} key=${`${i}:${id}`} itemId=${id} />`)}
     <//>` : null;
   blocks.talents = Array.isArray(fr.talents) && fr.talents.some((t) => t && t.name && !t.hidden) ? html`<${Section} key="talents" title="天赋" micro="TALENT" class="dsec--talent">
       ${fr.talents.filter((t) => t && t.name && !t.hidden).map((t, i) => html`<div key=${i} class="dtalent"><b>${t.name}</b><${RichText} text=${t.descRaw || t.desc} class="dtext" /></div>`)}
@@ -480,7 +487,12 @@ export function resolveDetail(target, pieces) {
     const c = data.lookup('chess', p.id);
     return c ? { type: 'chess', chess: c, piece: p } : null;
   }
-  if (target.kind === 'chess') { const c = data.lookup('chess', target.id); return c ? { type: 'chess', chess: c, hint: target.hint || null } : null; }
+  if (target.kind === 'chess') {
+    // a bond popup's 变形同构体 row hands the wearer's item ids on (bondStrip onMember): the card shows the pair and the chip
+    const c = data.lookup('chess', target.id);
+    const items = Array.isArray(target.items) ? target.items.filter((x) => typeof x === 'string') : [];
+    return c ? { type: 'chess', chess: c, hint: target.hint || null, ...(items.length ? { unitItems: items } : {}) } : null;
+  }
   if (target.kind === 'item') { const it = data.lookup('items', target.id); return it ? { type: 'item', item: it } : null; }
   if (target.kind === 'enemy') { const en = data.lookup('enemies', target.id); return en ? { type: 'enemy', enemy: en, count: target.count } : null; }
   if (target.kind === 'token') { const t = data.lookup('tokens', target.id); return t ? { type: 'token', token: t } : null; }

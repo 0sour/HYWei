@@ -1,7 +1,8 @@
 // Bond strip (active-bond discs under the top bar) and the bond detail popup: the key facts first (user playtest #2
 // item 9: name, members in play / next threshold, layers, reached tier and its threshold row, the current effect with
 // layer-resolved numbers), then the full description and the member list with owned / on-board state — operators that
-// are members through 变形同构体 included (tagged 同构, gameLogic bondMembers), so the list's count agrees with 在场. Opened
+// are members through 变形同构体 included (tagged 同构, gameLogic bondMembers; such a row opens the wearer's card with its
+// items: the pair and the granted chip), so the list's count agrees with 在场. Opened
 // from the detail panel's bond chips it docks beside that panel (`beside`: the panel's side).
 // Research 06 §11.1: round mint discs, stack count over the disc, name below, sorted by stacks; grey =
 // present but inactive; in 联防 / boss rounds the strip is dimmed ("层数叠加已禁用").
@@ -59,10 +60,12 @@ export function BondStrip({ bonds, layersDisabled = false, onOpen, openId = null
 
 /**
  * Bond detail popup.
- * @param {{ bondId: string, entry?: any, priv?: any, banned?: string[], onClose: Function, onMember?: (chessId:string)=>void,
+ * @param {{ bondId: string, entry?: any, priv?: any, banned?: string[], onClose: Function,
+ *   onMember?: (chessId:string, items?:string[]|null)=>void,
  *   place?: 'left'|'beside'|'besideR'|'right'|null, over?: boolean, beside?: 'left'|'right'|null, owner?: string|null }} props —
  *   `place`: where it opens (gameLogic bondPopupPlace; `beside: 'left'` = the older spelling of 'beside'); `over`: above the
- *   detail card; `owner`: the watched teammate's name (`entry` / `priv` are then theirs: ui/watchBonds.js)
+ *   detail card; `owner`: the watched teammate's name (`entry` / `priv` are then theirs: ui/watchBonds.js); `onMember`
+ *   gets a 变形同构体 row's item ids too (its card shows the pair and the granted chip), null for a plain member
  */
 export function BondPopup({ bondId, entry, priv, banned = [], onClose, onMember, place = null, over = false, beside = null, owner = null }) {
   const b = data.lookup('bonds', bondId);
@@ -108,7 +111,7 @@ export function BondPopup({ bondId, entry, priv, banned = [], onClose, onMember,
       <h4>成员 <small>${members.filter((x) => x.onBoard).length}/${members.length}</small></h4>
       <div class="bpop__members">
         ${members.map((mb) => html`<button key=${mb.id} type="button" class=${cx('bpop__member', mb.onBoard && 'is-on', mb.owned && !mb.onBoard && 'is-owned', mb.banned && 'is-banned', mb.granted && 'is-granted')}
-            onClick=${() => onMember?.(mb.id)} data-granted=${mb.granted ? '1' : null}
+            onClick=${() => onMember?.(mb.id, mb.granted && Array.isArray(mb.items) ? mb.items : null)} data-granted=${mb.granted ? '1' : null}
             title=${`${mb.name}${mb.granted ? '（变形同构体：视为本盟约成员）' : ''}${mb.banned ? '（本局禁用）' : mb.onBoard ? '（在场）' : mb.owned ? '（整备区）' : ''}`}>
           <${UnitThumb} kind="chess" id=${mb.id} size="sm" dim=${!mb.owned || mb.banned} />
           <span class="bpop__mname">${mb.name}</span>

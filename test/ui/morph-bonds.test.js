@@ -79,6 +79,8 @@ describe('变形同构体 — the bond popup\'s member list', () => {
     assert.equal(w.name, chess[WEARER].name);
     assert.equal(rows.length, b.visibleMembers.length + 1, 'the converted operator joins the list');
     assert.equal(rows.filter((r) => r.granted).length, 1);
+    assert.deepEqual(w.items, [ISO, HAMMER], 'the row carries the wearer\'s item ids (its card shows the pair)');
+    assert.ok(rows.filter((r) => !r.granted).every((r) => !('items' in r)), 'plain members carry none');
     // not a member of an unrelated bond, and not with the bond item alone
     assert.equal(bondMembers(bonds.steadShip, priv, [], getChess, getItem).some((r) => r.id === WEARER), false);
     const plain = privWith({ board: [{ ...piece(WEARER, [HAMMER]), row: 9, col: 5 }] });
@@ -123,9 +125,9 @@ globalThis.fetch = async (url) => {
   }
 };
 const { data } = await import('../../public/js/data.js');
-await data.loadAll('bonds', 'chess', 'items', 'assets');
+await data.loadAll('bonds', 'chess', 'items', 'assets', 'garrisons');
 const { BondPopup } = await import('../../public/js/ui/bondStrip.js');
-const { BondChips, resolveDetail } = await import('../../public/js/ui/detailPanel.js');
+const { BondChips, ChessDetail, resolveDetail } = await import('../../public/js/ui/detailPanel.js');
 
 function* walk(v) {
   if (Array.isArray(v)) { for (const x of v) yield* walk(x); return; }
@@ -169,5 +171,34 @@ describe('变形同构体 — what the popup and the card show', () => {
     const d = resolveDetail({ kind: 'unit', unit: { id: 7, side: 'ally', ownerId: 'p2', defId: WEARER, items: [ISO, HAMMER] } }, new Map());
     assert.deepEqual(d.unitItems, [ISO, HAMMER]);
     assert.equal(resolveDetail({ kind: 'unit', unit: { id: 8, side: 'ally', ownerId: 'p2', defId: WEARER } }, new Map()).unitItems, null);
+  });
+
+  test('a 同构 row opens the wearer\'s card with its items: the pair (read-only 装备) and the granted chip', () => {
+    const priv = privWith({ board: [{ ...piece(VIC[0]), row: 9, col: 3 }, { ...piece(WEARER, [ISO, HAMMER]), row: 9, col: 5 }] });
+    const entry = { bondId: 'victoriaShip', count: 2, active: false, tier: 0, layers: 0, thresholds: [3, 6], countsHand: false };
+    const calls = [];
+    const v = BondPopup({ bondId: 'victoriaShip', entry, priv, onClose() {}, onMember: (...a) => calls.push(a) });
+    const rows = [...walk(v)].filter((x) => hasClass(x, 'bpop__member'));
+    rows.find((x) => hasClass(x, 'is-granted')).props.onClick();
+    rows.find((x) => !hasClass(x, 'is-granted') && hasClass(x, 'is-on')).props.onClick();
+    assert.deepEqual(calls, [[WEARER, [ISO, HAMMER]], [VIC[0], null]]);
+    // the screen turns the click into { kind: 'chess', id, owner, items } (screens/game.js) → resolveDetail
+    const d = resolveDetail({ kind: 'chess', id: WEARER, owner: 'p1', items: [ISO, HAMMER] }, new Map());
+    assert.deepEqual(d.unitItems, [ISO, HAMMER]);
+    assert.equal('unitItems' in resolveDetail({ kind: 'chess', id: WEARER, owner: 'p1', items: null }, new Map()), false, 'a plain member card: no items');
+    const mine = [{ bondId: 'victoriaShip', count: 2, active: false, tier: 0, layers: 0, thresholds: [3, 6] }];
+    const blocks = ChessDetail({ chess: d.chess, piece: null, editable: false, bonds: mine, loadout: null, unitItems: d.unitItems });
+    const chips = [...walk(blocks)].find((x) => x.type === BondChips);
+    assert.ok(chips.props.bondIds.includes('victoriaShip') && chips.props.granted.includes('victoriaShip'), 'the granted chip');
+    const vic = [...walk(BondChips(chips.props))].find((x) => hasClass(x, 'dbond') && x.props['data-bond'] === 'victoriaShip');
+    assert.ok(vic && hasClass(vic, 'is-granted'));
+    const equip = blocks.find((b) => b?.key === 'equip');
+    assert.ok(equip, 'a read-only 装备 section without an own piece');
+    assert.deepEqual([...walk(equip)].filter((x) => x.props?.itemId).map((x) => x.props.itemId), [ISO, HAMMER]);
+    assert.ok(![...walk(equip)].some((x) => hasClass(x, 'dempty')), 'no "drag to equip" hint on a read-only list');
+    // a plain record card (shop, a plain member) keeps no 装备 section and no granted chip
+    const bare = ChessDetail({ chess: d.chess, piece: null, editable: false, bonds: mine, loadout: null });
+    assert.equal(bare.some((b) => b?.key === 'equip'), false);
+    assert.deepEqual([...walk(bare)].find((x) => x.type === BondChips).props.granted, []);
   });
 });
