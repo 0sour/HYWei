@@ -516,6 +516,11 @@ const onTerrain = (b, u, terrain) => { const [r, c] = tileOf(u); return b.grid.t
 const stealth = () => ({ spawn(b, e) { b.addBuff(e, { key: 'ab:stealth', flags: { stealth: true }, persist: true }); } });
 /** 无法被阻挡. */
 const unblockable = () => ({ spawn(b, e) { b.addBuff(e, { key: 'ab:unblockable', flags: { unblockable: true }, persist: true }); } });
+/**
+ * "受到伤害时开始奔跑，移动速度+N%" (鸭爵 `run.attack@move_speed`): the first damage it takes ⇒ move speed ×(1 + v) for good —
+ * PRTS 鸭爵 天赋 "移动速度+400%" for v 4, PRTS 卫戍协议：盟约 下半/PRTS盟约记录 鸭爵 备注 "受伤后移动速度+300%" for the act2 v 3.
+ */
+const runWhenHit = (v) => ({ taken(c, b, e, a) { if (a.on || !(v > 0)) return; a.on = true; b.addBuff(e, { key: 'ab:duckRun', persist: true, mods: { moveMul: 1 + v } }); } });
 /** 频次: maxHp = hits. */
 const times = (artsOnly = false) => ({ spawn(b, e) { setHits(e, e.def.maxHp); hitCount(b, e, true, artsOnly); } });
 /** "只能被阻挡数大于等于N的单位阻挡". */
@@ -2327,8 +2332,8 @@ export const KITS = Object.freeze({
   }],
   enemy_1501_demonk: () => [maxTargets(2)],                          // 萨卡兹百夫长 · attacks 2 targets
   enemy_10018_sgrobh: () => [maxTargets(2)],                         // “独轮车玩具” · attacks 2 targets
-  enemy_2001_duckmi: (ab) => [unblockable(), { taken(c, b, e, a) { if (a.on) return; a.on = true; b.addBuff(e, { key: 'ab:duckRun', persist: true, mods: { moveMul: T(ab, 'run.attack@move_speed') ?? 1 } }); } }], // 鸭爵 · unblockable; runs once hit
-  enemy_2001_duckmi_2: (ab) => [unblockable(), { taken(c, b, e, a) { if (a.on) return; a.on = true; b.addBuff(e, { key: 'ab:duckRun', persist: true, mods: { moveMul: T(ab, 'run.attack@move_speed') ?? 1 } }); } }], // 鸭爵 · same
+  enemy_2001_duckmi: (ab) => [unblockable(), runWhenHit(T(ab, 'run.attack@move_speed') ?? 0)],   // 鸭爵 · unblockable, no attack; runs +400 % once hurt
+  enemy_2001_duckmi_2: (ab) => [unblockable(), runWhenHit(T(ab, 'run.attack@move_speed') ?? 0)], // 鸭爵 (鸭爵 strategy) · same, +300 %
   enemy_10159_mntrjn: () => [unblockable()],                         // 伊利昂的木驮兽 · unblockable (passengers n/a)
   enemy_2009_csaudc: kitEp('neural', 'combat.attack@ep_damage_ratio'), // 骇笑看客 · neural on hit
   enemy_2010_csdcr: (ab) => [ep('neural', T(ab, 'attack.attack@ep_damage_ratio') ?? 0), { // 绯红歌伶 · neural on hit; every 20 hits taken: global enemy ASPD up
@@ -2468,8 +2473,10 @@ export const KITS = Object.freeze({
   enemy_1535_wlfmster: kitWolfLord,                                  // 扎罗 · −30 % damage, 溶血骇惧 ⇒ 远古威慑 rebirth ⇒ ranged double hits
   enemy_10081_mpplai: kitTranslator,                                 // 转译基底·α · 4 phys / 4 arts hits or being blocked ⇒ one of three forms
   enemy_10144_xdelk_2: kitElk,                                       // 乌顶巨角卢鲁 · 角力对决 charge on its blocker (push fails ⇒ damage + stun)
-  enemy_2085_skzjxd: (ab) => [frontGuard(T(ab, 'Weakness.damage_resistance') ?? 0, faceCrowd)],   // 圆仔 · faces the bigger crowd, front damage −80 %
-  enemy_2085_skzjxd_2: (ab) => [frontGuard(T(ab, 'Weakness.damage_resistance') ?? 0, faceCrowd)], // 圆仔 · same
+  // 圆仔 · PRTS 天赋 "无法攻击/被阻挡；受到来源于正面的物理和法术伤害-80%；自身始终朝向我方干员数量最多的方向" (no attack: applyWay
+  // NONE; its 倒走 / 【炫耀】 is "仅用于演出，无额外效果"): unblockable, faces the bigger crowd, front damage −80 %
+  enemy_2085_skzjxd: (ab) => [unblockable(), frontGuard(T(ab, 'Weakness.damage_resistance') ?? 0, faceCrowd)],
+  enemy_2085_skzjxd_2: (ab) => [unblockable(), frontGuard(T(ab, 'Weakness.damage_resistance') ?? 0, faceCrowd)], // (鸭爵 strategy) same
   // 失衡 (pushed / pulled by operators)
   enemy_1328_cbjedi: (ab) => [unbalanced((b, e, a, d) => {           // 弧光锋卫 · loses HP in proportion to the distance moved while unbalanced
     const v = T(ab, 'unbalanced_bleed.damage') ?? 0, iv = T(ab, 'unbalanced_bleed.interval') ?? 1;
