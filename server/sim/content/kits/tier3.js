@@ -768,10 +768,11 @@ const KITS = {
     return kit;
   },
 
-  // ---- 3_08 薄绿 · 阵法术师 — S2 聚能涡旋: each hit pushes the target towards her (splash arts), end-of-skill burst on
+  // ---- 3_08 薄绿 · 阵法术师 — S2 聚能涡旋: each attack strikes every enemy on her range (the trait's 群体法术伤害) and
+  //      pushes each one towards her, end-of-skill burst on
   //      every enemy in range; 地质学者: DEF aura (skill off) / less likely targeted (skill on);
   //      精锐 module PLX-X: keeps part of the guard (DEF/RES) while the skill runs
-  //      S1 风语: wider range (skill grid), attacks at attack@atk_scale (群体 arts splash of the trait). Auto-cast: the data
+  //      S1 风语: wider range (skill grid), attacks every enemy on it at attack@atk_scale. Auto-cast: the data
   //      rule SEARCH is the 阵法术师 row (PRTS 卫戍协议/帮助 "不受基础策略影响，在初始攻击范围内存在敌人时释放技能"; it
   //      covers every MANUAL skill of the class — user playtest #6) = an enemy inside her INITIAL range — the engine's
   //      DEFAULT rule, checked every tick for a unit that does not attack while its skill is off — not any enemy on the

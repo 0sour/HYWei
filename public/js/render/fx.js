@@ -130,7 +130,8 @@ const camKey = (c) => (c ? c.tx + c.ty * 1e3 + c.tz * 1e6 + c.tilt * 7.13 + c.di
 /** Characters of a damage number as drawn (heals get a '+'). */
 const numChars = (v, style) => String(Math.round(v)).length + (style === 'heal' ? 1 : 0);
 
-const SPLASH_SUBS = new Set(['aoesniper', 'splashcaster', 'blastcaster', 'bombarder', 'phalanx', 'fortress', 'hammer']);
+/** Sub-professions whose attacks splash around the struck target (the 阵法术师 / 轰击术师 strike every enemy in range). */
+const SPLASH_SUBS = new Set(['aoesniper', 'splashcaster', 'bombarder', 'fortress', 'hammer']);
 
 let fontsReady = false;
 /** Generate the damage-number bitmap fonts (after web fonts loaded, if possible). */

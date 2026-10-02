@@ -16,8 +16,8 @@
 //   groupId `abyssal` (data/chess.json has no groupId: charIds from docs/research/03-operators.json).
 // - "友方干员" effects touch operators only (summons/devices excluded); SP gifts skip units whose timed skill runs
 //   (AK: no SP gain during a skill — the engine's gainSp enforces it too; the kits skip such units when picking).
-// - On-hit statuses of AoE skill attacks (卡涅利安) apply to every enemy the attack damages (a SkillSpec
-//   `attack.onHit` only sees the main target), via a `damaged` hook.
+// - On-hit statuses of 卡涅利安's attacks apply to every enemy the attack damages — the 阵法术师 trait strikes every
+//   enemy on her range at once (professions.js `allInRange`, community report E3) — via a `damaged` hook.
 // - Dodge from a skill that adds to other dodge sources (焰尾 S3) is rolled independently in a `hit` hook, so the
 //   sources combine as 1 − Π(1 − p) (the same rule the engine now applies to stacked dodge mods).
 // - Operator loadouts (DESIGN §16): every selectable non-default skill of the 22 visible chess is authored in the kit's
@@ -37,6 +37,8 @@ const AURA = 0.2;          // aura refresh period (s)
 const AURA_DUR = 0.25;     // aura buff lifetime (s): lapses ~1 tick after the source stops refreshing it
 const ABYSSAL = new Set(['char_143_ghost', 'char_263_skadi', 'char_474_glady', 'char_4145_ulpia', 'char_1023_ghost2']);
 const LINE = Object.freeze(Array.from({ length: COLS }, (_, i) => Object.freeze([0, i])));
+/** 卡涅利安 S3 食噬之印: the ATK bonus climbs in 1 s steps over 20 s (PRTS 备注; the blackboard has no ramp time). */
+const BILLRO_S3_RAMP = 20;
 
 // ---------------------------------------------------------------------------------------------------------------
 // helpers
@@ -834,7 +836,7 @@ const kits = {
           kind: instantKind(def),
           attack: {
             atkScale: num(bb.atk_scale, 1.5),
-            onEachHit({ battle, unit, target }) { // every victim of the blast (main + splash) that flies
+            onEachHit({ battle, unit, target }) { // every enemy of her line the blast strikes that flies
               if (target && target.alive && target.isFlying) battle.dealDamage(unit, target, { amount: unit.s.atk * num(bb.atk_scale_to_fly, 0.55), type: 'arts', isSkill: true, tags: ['skill', 'antiAir'] });
             },
           },
@@ -1712,11 +1714,12 @@ const kits = {
     };
   },
 
-  // ===== 卡涅利安 (phalanx) S2 沙缚镣锁 — faster AoE, 0.3 s sluggish; charged: ATK +10 % and bind; talents
+  // ===== 卡涅利安 (phalanx) S2 沙缚镣锁 — faster attacks on every enemy in range (the trait's 群体法术伤害), 0.3 s
+  //       sluggish on each; charged: ATK +10 % and bind; talents
   //       S1 沙暴守卫 (SEARCH: ATK/DEF up; charged — cast with every charge stored — the trait's DEF/RES guard stays on);
-  //       S3 食噬之印 (wider range, ATK ramps to +140 %/+200 % over the skill; charged: every hit marks the target, +20 %
-  //       damage from her per mark, ≤ 5, until the skill ends). Talent 生命之餐 heals on every skill; module PLX-X keeps
-  //       part of the guard during any skill, PLX-Y (乡音): +3 % damage per enemy in range (≤ 5)
+  //       S3 食噬之印 (wider range, ATK +0 % → +140 %/+200 % in 1 s steps over 20 s — PRTS 备注; charged: every hit marks
+  //       its target, +20 % damage from her per mark, ≤ 5, until the skill ends). Talent 生命之餐 heals on every skill;
+  //       module PLX-X keeps part of the guard during any skill, PLX-Y (乡音): +3 % damage per enemy in range (≤ 5)
   chess_char_4_24_a: (bb, chess, def) => {
     const t0 = tbb(def, 0), t1 = tbb(def, 1), mb = moduleBb(def);
     const tb = def.traitBb || {};
@@ -1748,10 +1751,11 @@ const kits = {
             battle.addBuff(unit, { key: 'billro:s3atk', mods: { atkPct: 0 } });
             battle.fx('devour', { x: unit.x, y: unit.y, id: unit.id });
           },
-          onTick({ unit, skill, dt }) { // 攻击力逐渐增至+N% (linear over the skill duration)
+          onTick({ unit, dt }) { // 攻击力逐渐增至+N%: PRTS 备注 "从+0%开始在20秒内线性增加，攻击力每1秒更新1次"
             unit.mem.billroRamp = (unit.mem.billroRamp ?? 0) + dt;
+            const steps = Math.min(BILLRO_S3_RAMP, Math.floor(unit.mem.billroRamp + 1e-9));
             const b = unit.findBuff('billro:s3atk');
-            if (b) { b.mods = { atkPct: num(bb.atk) * Math.min(1, unit.mem.billroRamp / Math.max(0.1, skill.duration)) }; unit.markDirty(); }
+            if (b && b.mods.atkPct !== num(bb.atk) * steps / BILLRO_S3_RAMP) { b.mods = { atkPct: num(bb.atk) * steps / BILLRO_S3_RAMP }; unit.markDirty(); }
           },
           onEnd({ battle, unit }) {
             battle.removeBuff(unit, 'billro:s3atk');
@@ -1817,8 +1821,7 @@ const kits = {
           }, { owner: unit });
         }
         if (!S2) return;
-        // "每次攻击对目标造成0.3秒停顿" (charged: 束缚): every enemy damaged by her AoE skill attack — the splash victims
-        // too (a SkillSpec attack.onHit only sees the main target)
+        // "每次攻击对目标造成0.3秒停顿" (charged: 束缚): every enemy her attack damages — each one on her range
         battle.on('damaged', (c) => {
           const e = c.target;
           if (c.source !== unit || !c.dmg || !c.dmg.isAttack || e.side !== 'enemy' || !e.alive || !skillActive(unit)) return;

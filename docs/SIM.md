@@ -886,17 +886,20 @@ PRTS 选择器, is not in the data): "地面敌人" / "不可对空" ⇒ `!e.isF
 风丸 折纸生花, 乌尔比安 S3, 缄默德克萨斯 S2, 余 S2, 见行者 S2, 耀骑士临光 不畏苦暗 and the token appear bursts — “耀阳”,
 沙之碑, 迷迭香的战术装备's stun, 纸偶). A stun / freeze / sleep from any of them drops a hovering 掠海漂移体 for good. Ranged attacks fly as projectiles
 (`constants.js PROJECTILE_SPEEDS`: arrow 14, bolt 11, bomb/lob 8, orb 10, drone 16, enemy 10 tiles/s; boomerang 15 out,
-3.75 back = `BOOMERANG_RETURN_SPEED`, PRTS 跃跃); melee/`none` hits are instant. Kit-settable profile flags beyond the
+3.75 back = `BOOMERANG_RETURN_SPEED`, PRTS 跃跃); melee/`none` hits are instant, and so are `'beam'` hits (a 锁定攻击范围 AoE
+without a projectile — `rangeAoe` profiles: "在攻击前摇结束时选取范围内的全体目标，同时造成伤害", PRTS 作战机制). Kit-settable profile flags beyond the
 table: `hitSleep` (targets and damages sleeping enemies — "可以攻击沉睡的敌人"), `onEachHit(b, u, victim, hctx)`, `dmgMul`,
 `afterHit`, `afterAttack`, `canAttack`, `hitsFn`, `priority`, `blockFly`, `noHeal`, `boomerang` (the projectile stays
-`'boomerang'` whatever the data's generic ranged projectile says) (see the header of professions.js).
+`'boomerang'` whatever the data's generic ranged projectile says), `rangeAoe` (likewise `'beam'`, with `allInRange`)
+(see the header of professions.js).
 
 | sub | behaviour |
 |---|---|
 | fastshot | FLY first; module `atk_scale` vs FLY |
 | closerange, underminer, primcaster, corecaster, ritualist, summoner, counsellor, pioneer, fearless, fighter, protector, guardian, primprotector, executor, duelist | plain profile (numbers from data; skills/talents via kits). underminer module: weaken 10 % ATK 2 s on hit |
 | longrange | lowest DEF first |
-| aoesniper / splashcaster / blastcaster | splash 1.1 tiles at full damage |
+| aoesniper / splashcaster | splash 1.1 tiles around the struck target at full damage (Arknights Terra Wiki, Splash Caster: "a radius of 1.1 tiles centered on the target") |
+| blastcaster | `rangeAoe`: every enemy on its line at once, the same damage near and far, instant (`'beam'`) — "超远距离的群体法术伤害" is the whole line, not a splash (Terra Wiki, Blast Caster; PRTS 作战机制 §AOE伤害判定: 伊芙利特's 炎爆 is a 锁定攻击范围 AoE; community report E3) |
 | bombarder | ground-only splash 1.0 + aftershock(s) at 50 % ATK (bb append_atk_scale / times) |
 | hunter | 8 bullets (bb value), ×1.2 ATK (bb atk_scale), reloads 1/s after 1 s without attacking; can't attack when empty |
 | loopshooter | 回环射手 (user playtest #3): every attack throws a boomerang (`ai.js throwBoomerang`, projectile `'boomerang'`) out to the target at 15 tiles/s — it hits on arrival — and back to the thrower's current position at 3.75 tiles/s without damage (PRTS 跃跃 "投射物飞行速度15，返回时飞行速度3.75"); attacks only while holding it (every boomerang thrown caught — "必须回收全部回旋投掷物才可以进行下一次攻击", `unit.trait.boomerangsOut`) and with the attack cooldown ready, so the real interval is the longer of the two; a target dead mid-flight is not hit (it still flies to the last position and back); knocked out / withdrawn ⇒ lost, a redeployed thrower holds a fresh one; 跃跃 S2's extra boomerangs share the one flight (cnt hits) |
@@ -904,7 +907,7 @@ table: `hitSleep` (targets and damages sleeping enemies — "可以攻击沉睡�
 | chain | chain N (trait text/bb max_target) with −15 % per jump (bb chain.atk_scale), 1.8-tile jumps, sluggish on each hit |
 | funnel | drone damage 20 % → +15 %/hit on the same target → 110 % (bb init/delta/max) |
 | mystic | stores up to 3 (bb times) attacks while idle, fires them all at once |
-| phalanx | no attack & DEF +200 %, RES +20 (bb) while the skill is off; attacks with 1.1 splash while on |
+| phalanx | no attack & DEF +200 %, RES +20 (bb) while the skill is off; while on, `rangeAoe`: each attack strikes every enemy on its range at once (blocked enemies included), the same damage near and far, instant (`'beam'`) — "群体法术伤害" (Terra Wiki, Phalanx Caster: "attacks hit all enemies within their range"; PRTS 林 S3 备注 "单次普攻最多触发1次效果"; community report E3: it used to be one bolt + a 1.1 splash) |
 | physician | heal the lowest HP% injured ally in range (a skill `targeting.maxTargets` widens any heal profile) |
 | ringhealer | heal 3 allies |
 | chainhealer | heal bounces 3× (−25 %, bb chain.*) within 2.5 tiles |
