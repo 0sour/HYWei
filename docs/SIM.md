@@ -209,7 +209,8 @@ a stealthed ally (隐匿, 排气格栅) only for the enemy it blocks — our ope
 "不阻挡时不成为敌方普通攻击的目标") likewise (PRTS 异常效果: neither anomaly is "阻挡时解除") [ASSUMED: enemy skills and
 splash selectors skip it too]
 and pause `ATTACK_PAUSE` (0.35 s) after each unblocked attack; `fear`/`disarm` stop attacks; `dmgType 'none'` enemies
-never attack; `dmgType 'heal'` enemies heal the lowest-HP% enemy in their radius instead. Content can take over an
+never attack — unless content arms them through `enemy.profile` (`noAttack: false`, `melee`, `dmgType`, `maxTargets`:
+转译基底·α's 寻仇者 / 特战术师 forms, which then attack like any enemy); `dmgType 'heal'` enemies heal the lowest-HP% enemy in their radius instead. A `noMove` enemy stands (not `moving`, drawn idle). Content can take over an
 enemy's attack: `enemy.profile.deferHit` = the engine makes the attack (target, timing, the `'atk'` event) but deals no
 damage — the content's `attack` handler resolves it (帝国炮火先兆者's shells landing 3 s later, `content/enemies.js
 kitShell`); `enemy.profile.shot` = the `'atk'` event's projectile kind (`'mortar'`: no projectile drawn). Crates (stage devices with
@@ -225,6 +226,31 @@ excepted). 【污染秽蚀】 (萨卡兹枯朽战车's 秽蚀轰击,
 萨卡兹枯朽战士's death) is **true** damage, 50 / 25 per second on low / high ground (PRTS "每秒受到50/25点真实普通伤害 …
 同名效果不叠加", user playtest #6): a unit covered by several zones takes one tick per second (`unit.mem.pollutedAt`), so
 a crowd of dying 萨卡兹枯朽战士 totals 50 / s, not 50 × n.
+
+**Knock-outs that are not deaths** (`content/enemies.js`; player reports after 0.1.0): a `killed` ability that keeps the
+enemy alive hides the knock-out from every later `kill` handler, the kill count, kill credit and the bounty — they all
+wait for the real death, the only one with a `die` event. Every 重生 (`reborn()`, `husk()`, `statue()`) clears what
+operators put on the enemy — the buffs with an ally source and source-less catalogue statuses (PRTS 特殊机制 §重生
+"清空自身身上除白名单外所有Buff"; `rebirthCleanse`) — and keeps [ASSUMED: the whitelist] its `persist` talents, what it or
+another enemy gave it (锏's self-applied 抵抗, enemy auras) and source-less field state (terrain, airflow, element burst
+locks): a 逐火 knocked out while feared is no unblockable ember. 重生 / form changes: `reborn()` (first knock-out → second
+form; fx forms 'reborn' → 'form2'), `statue()` (守墓石像: melee only while blocked; first knock-out → 10 s unblockable,
+immobile statue → a flyer with ranged arts attacks that skip flyers; forms 'stone' → 'fly'), `husk()` (talent
+Revive[Trigger], every knock-out: 1 s 重生 — 无敌, 无法阻挡, immobile — then a hit-count husk that
+walks its route on: the 深池逐火 余烬 / 火灰 are 隐匿 and disarmed, so only a blocked one can be targeted by operators (the
+engine's radius area damage — `enemiesInRadius`: profession splash, skill circles — still reaches an unblocked one, a
+known deviation: officially an AoE judges only the enemies it can select, PRTS 作战机制 §AOE伤害判定); 假想敌：再生's 傀儡 is unblockable and, as it begins, shields the other enemies within 1.8; a husk
+still standing after `Revive[Trigger].interval` s stands up again with full HP),
+转译基底·α (its original form cancels every damage instance, and an HP loss stops at 1 HP; the 4th physical / arts
+instance or a block starts a 2 s change). Each form change goes through `setForm(b, e, form, fxKind, params)`: the
+unit keeps it (`e.form`, published as UnitInfo `form`, so a view built mid-battle from `fieldMeta()` — a watched
+teammate's field, 联防 observers, a reconnect — starts in it: `render/app.js renderInfo` hands it to the view) and the
+fx announces it as its `form`: a 'phase' fx (crawl, translator_* — also its `kind`), 'ember' ('husk'), 'revive'
+('revived' / 'form2' / 'fly'), 'telegraph' ('reborn') or 'stone' ('stone') — render/units.js FORMS. Barrier / charge
+'phase' kinds carry no `form` and are no forms. A form is state, not decoration (b.snap tuples carry none): the client
+keeps every fx with a `form` (`shared/protocol.js fxForm`) where it drops other events — the runner's catch-up frames
+and its hidden-tab backlog (`battle/runner.js keepsState`), the game screen's events buffered before a field is entered
+(`screens/game.js`); dropping them was report #5's look again after a stall or a background tab.
 
 **Ownership** (`enemy.ownerId`, used for `killed/total` and leak attribution): `ownerPlayerId` if given, else the
 player whose half contains the spawn tile (cols ≥ 11 = right half / player with colOffset 8 or side R). A leak is
@@ -406,7 +432,7 @@ it, so the two players of a pair field compete for one instance instead of multi
 | `tremble` (战栗) | 被阻挡后无法进行普通攻击: no normal attack **while blocked** (abilities still fire) | – |
 | `palsy` (麻痹) | each stack cancels one enemy normal attack (max 3, lasts until consumed); refused by 麻痹免疫 (data `palsyImmune`) | stacks, default 1 |
 | `disarm` | no normal attacks | – |
-| `stealth` / `reveal` | 隐匿: untargetable unless blocked (an ally: only the enemy it blocks attacks it) / cancels stealth | – |
+| `stealth` / `reveal` | 隐匿: untargetable unless blocked (an ally: only the enemy it blocks attacks it) / cancels stealth. An enemy's b.snap stealth bit is set only while its 隐匿 is on (not blocked, not revealed: drawn solid otherwise); radius splash (`enemiesInRadius`) ignores it [known deviation, PRTS 作战机制 §AOE伤害判定] | – |
 | `camou` (迷彩) | an ally's camouflage (ba.camou "不阻挡时不成为敌方普通攻击的目标"): like `stealth` for enemy targeting (only the enemy it blocks attacks it) and on screen (b.snap stealth bit, `snapshot.js flagsOf`), but not 隐匿 for 隐匿-conditions (叙拉古, 家族徽章) and under its own buff keys. 忍冬 S3 (key `vulpis:camou`, until her next cast), 寒芒克洛丝 S1 | – |
 | `invulnerable` | ignores damage | – |
 | `levitate` (浮空) | stun + unblockable (unblocks enemies) + 失衡免疫 (`noDisplace`); an air unit meanwhile (`isFlying`: melee cannot hit it); **half duration on units with (current) massLevel > 3**; refused on data flyers (`motion` FLY) and units already levitated (PRTS 异常效果 "若单位数据上为飞行单位…或是持有浮空异常则Buff取消") — a 近地悬浮 enemy is WALK in its data, so it can be levitated; 浮空 is not one of the 近地悬浮 enemies' drop triggers | – |
@@ -955,12 +981,13 @@ Unknown subprofessions fall back to the profession default (test `professions.te
   renderer flies it back to the thrower at `BOOMERANG_RETURN_SPEED`; an enemy's `profile.shot` may name another kind,
   e.g. `mortar` for 帝国炮火先兆者, which the renderer does not draw — its fx `bombardShell` is the shell), `['dmg', tgt, amount, type]` (`phys|arts|true|burn|neural|necrosis|apoptosis`),
   `['heal', tgt, amount]`, `['skill', id, 1|0]`, `['die', id, reason]`, `['leak', id]`, `['status', id, key, 1|0]`,
-  `['fx', kind, x, y, extra]` (`hitCap` `{ id, n }`: a leader's hit cancelled by 限伤 — the renderer draws nothing),
+  `['fx', kind, x, y, extra]` (`hitCap` `{ id, n }`: a leader's hit cancelled by 限伤 — the renderer draws nothing;
+  `extra.form` = the enemy's model form from then on, `content/enemies.js setForm` / `shared/protocol.js fxForm`),
   `['layer', playerId, bondId, n]` (n = the layers actually added, capped at 999), `['bounty', playerId, coins]`.
-- `UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?, skillIndex? }` (`skillIndex`: an ally's equipped skill, DESIGN §16)
+- `UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?, form?, skillIndex? }` (`skillIndex`: an ally's equipped skill, DESIGN §16; `form`: an enemy's current model form — `content/enemies.js setForm` — so a view built mid-battle from `fieldMeta()` starts on that clip set)
   (`dir` = the unit direction, allies meaningful, enemies 'RIGHT'; `facing` = its horizontal sign for sprite flipping)
   (`spine`/`avatar` are asset ids from data).
-- flags: UF bits (blocked 1, stunned 2, frozen 4, stealth 8 — 隐匿 or an ally's 迷彩 — skill 16, shield 32, invuln 64, cold 128, sleep 256, flying 512);
+- flags: UF bits (blocked 1, stunned 2, frozen 4, stealth 8 — 隐匿 (an enemy's only while not blocked / revealed) or an ally's 迷彩 — skill 16, shield 32, invuln 64, cold 128, sleep 256, flying 512);
   anim: ANIM codes (idle 0, move 1, attack 2, skill 3, die 4, stun 5, deploy 6).
 
 ---

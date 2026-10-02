@@ -12,15 +12,19 @@
 //                                               new board piece flashes (fx.deploy); a merge's elite — on the tile of
 //                                               the deployed copy it replaced, or on its bench slot — gets the
 //                                               promotion cue instead (render/promote.js, fx.promote)
-//   view.enterBattle(fieldMeta)                 m.field { fieldId, kind, rect, stageId, units: [UnitInfo] }
+//   view.enterBattle(fieldMeta)                 m.field { fieldId, kind, rect, stageId, units: [UnitInfo] } — each
+//                                               unit through renderInfo(UnitInfo) (an enemy's `form`: a view built
+//                                               mid-battle starts in the current model form)
 //   view.pushSnapshot(snap); view.pushEvents(ev | { ev, gt })  b.snap / b.ev wire frames as received (game time in
 //                                               `gt`; a numeric `t` is accepted for raw Battle snapshots / recordings)
 //                                               — 100 ms interpolation buffer; b.snap `down` keeps knocked-out
 //                                               operators on the field under a redeploy ring and `elem` draws the
 //                                               element gauges (user playtest #4 items 8 / 9, render/units.js); a
 //                                               'die' with reason FORCED_EXIT (an operator entering 联防 knocked out,
-//                                               user playtest #5 item 2) goes straight to the held pose, no burst
-//   view.setLocalFeed({ on, speed })            frames come from the local sim every frame (client-side combat):
+//                                               user playtest #5 item 2) goes straight to the held pose, no burst; an
+//                                               fx with a `form` (shared/protocol.js fxForm) switches the enemy's
+//                                               model to that clip set (render/units.js FORMS)
+//   view.setLocalFeed({ on, speed })          frames come from the local sim every frame (client-side combat):
 //                                               ~2-frame buffer at the battle's game speed
 //   view.highlightTiles(tiles, style)           [[r,c]] | [{row,col}]; style 'legal'|'illegal'|'range'|'rangeStand'|
 //                                               'hover'|'target'|{color,fill,line,group}; highlightTiles(null) clears all
@@ -87,10 +91,11 @@
 // `data` is the client data store (public/js/data.js: lookup(file, id)) or plain { chess, tokens, items, enemies } maps.
 
 import { GEO, ANIM, UF } from '../../../shared/constants.js';
+import { fxForm } from '../../../shared/protocol.js';
 import { Camera, presetCamera, lerpCamera, easeInOutCubic, pickTile, normRect } from './projection.js';
 import { SnapshotBuffer, frameTime } from './interp.js';
 import { TileField } from './tiles.js';
-import { UnitView, ItemView, DeviceView } from './units.js';
+import { UnitView, ItemView, DeviceView, FORMS } from './units.js';
 import { FxSystem, ensureDamageFonts } from './fx.js';
 import { createDragController, pieceTile } from './drag.js';
 import { backdropTextures, shadowTexture, refreshTierChips, silhouetteTexture } from './textures.js';
@@ -242,6 +247,32 @@ export const FORCED_EXIT = 'forcedExit';
  * not a knock-out), nor for an operator entering the battle knocked out (FORCED_EXIT).
  */
 export const showsDeathFx = (info, consumed = false, reason = null) => !consumed && reason !== FORCED_EXIT && info?.kind !== 'device';
+
+/**
+ * The views' info of a battle unit from its UnitInfo (m.field / fieldMeta `units`, a 'spawn' event; snapshot.js
+ * unitInfo), sanitised; null for a malformed entry. `form` — an enemy's current model form (content/enemies.js setForm:
+ * 转译基底·α's forms, a 逐火 余烬, a leader after its 重生, 掠海漂移体's crawl) — makes a view built mid-battle (a teammate's
+ * field watched later, 联防 observers, a reconnect, server-run watchers: no fx of the change is replayed) start on that
+ * clip set (render/units.js FORMS); it used to be dropped here, so such views drew the first form (player report #5).
+ */
+export function renderInfo(u) {
+  if (!u || typeof u !== 'object' || (typeof u.id !== 'number' && typeof u.id !== 'string')) return null;
+  return {
+    id: u.id, uid: u.uid ?? null, kind: u.kind || 'enemy', side: u.side === 'ally' ? 'ally' : 'enemy', ownerId: u.ownerId ?? null,
+    defId: u.defId ?? null, name: u.name ?? '', tier: u.tier ?? 1, golden: !!u.golden, spine: u.spine ?? u.defId ?? null,
+    avatar: u.avatar ?? u.defId ?? null, x: Number(u.x) || 0, y: Number(u.y) || 0, facing: u.facing === -1 ? -1 : 1,
+    maxHp: Number(u.maxHp) || 1, boss: !!u.boss, motion: u.motion,
+    // deploy direction of allies (UnitInfo.dir, DESIGN §3): the model (Back for UP, mirrored for LEFT) and the
+    // ground wedge follow it; absent = unknown (legacy frames) → derived from `facing`, no wedge
+    dir: typeof u.dir === 'string' ? u.dir : undefined,
+    // an enemy's current model form (UnitInfo.form): the view starts in it (UnitView reads info.form)
+    form: typeof u.form === 'string' ? u.form : undefined,
+    // DESIGN §16 loadout of an ally (UnitInfo.skillIndex / moduleId): the Spine actor plays that skill's clip, and a
+    // tap hands them to the detail card (a teammate's unit shows its owner's skill / module)
+    skillIndex: Number.isInteger(u.skillIndex) ? u.skillIndex : undefined,
+    moduleId: typeof u.moduleId === 'string' ? u.moduleId : undefined,
+  };
+}
 
 /** '2d' | '3d' | 'auto' board preference: `?board=` in the page URL (dev), else the view option. */
 export function boardPreference(opt) {
@@ -1283,21 +1314,8 @@ export async function createFieldView(host, options = {}) {
   }
 
   function addInfo(u) {
-    if (!u || typeof u !== 'object' || (typeof u.id !== 'number' && typeof u.id !== 'string')) return null;
-    const info = {
-      id: u.id, uid: u.uid ?? null, kind: u.kind || 'enemy', side: u.side === 'ally' ? 'ally' : 'enemy', ownerId: u.ownerId ?? null,
-      defId: u.defId ?? null, name: u.name ?? '', tier: u.tier ?? 1, golden: !!u.golden, spine: u.spine ?? u.defId ?? null,
-      avatar: u.avatar ?? u.defId ?? null, x: Number(u.x) || 0, y: Number(u.y) || 0, facing: u.facing === -1 ? -1 : 1,
-      maxHp: Number(u.maxHp) || 1, boss: !!u.boss, motion: u.motion,
-      // deploy direction of allies (UnitInfo.dir, DESIGN §3): the model (Back for UP, mirrored for LEFT) and the
-      // ground wedge follow it; absent = unknown (legacy frames) → derived from `facing`, no wedge
-      dir: typeof u.dir === 'string' ? u.dir : undefined,
-      // DESIGN §16 loadout of an ally (UnitInfo.skillIndex / moduleId): the Spine actor plays that skill's clip, and a
-      // tap hands them to the detail card (a teammate's unit shows its owner's skill / module)
-      skillIndex: Number.isInteger(u.skillIndex) ? u.skillIndex : undefined,
-      moduleId: typeof u.moduleId === 'string' ? u.moduleId : undefined,
-    };
-    infos.set(info.id, info);
+    const info = renderInfo(u);
+    if (info) infos.set(info.id, info);
     return info;
   }
 
@@ -1415,20 +1433,25 @@ export async function createFieldView(host, options = {}) {
         break;
       }
       case 'status': { const v = views.get(e[1]); if (v) v.onStatus?.(e[2], !!e[3]); break; }
-      case 'fx':
+      case 'fx': {
         if (e[4] && typeof e[4] === 'object' && e[4].consumed && e[4].id != null) {
           consumedIds.add(e[4].id);
           if (consumedIds.size > 200) consumedIds.delete(consumedIds.values().next().value);
         }
-        // an enemy's mode change (掠海漂移体 → 爬行模式, user playtest #5 item 1): its view switches clip set
-        // (UnitView.setForm); the info keeps it for a view built later
-        if (e[1] === 'phase' && e[4] && typeof e[4] === 'object' && e[4].id != null) {
+        // an enemy's mode change — the `form` of a sim setForm fx (shared/protocol.js fxForm: 掠海漂移体 → 爬行模式, user
+        // playtest #5 item 1; 转译基底's forms, a 逐火 ember and its revival, the leaders' 重生, 守墓石像 — user report after
+        // 0.1.0) — switches the view's clip set (UnitView.setForm; a kind without a clip set of that skeleton changes
+        // nothing); the info keeps it for a view built later. The client runner never drops these fx (catch-up frames,
+        // hidden-tab backlog), nor does the game screen's pre-entry buffer.
+        const form = fxForm(e);
+        if (form !== undefined) {
           const inf = infos.get(e[4].id);
-          if (inf) inf.form = typeof e[4].kind === 'string' ? e[4].kind : null;
-          views.get(e[4].id)?.setForm?.(e[4].kind);
+          if (inf && (form === null || FORMS[inf.spine || inf.defId]?.[form])) inf.form = form;
+          views.get(e[4].id)?.setForm?.(form, e[4]);
         }
         fx.simFx(e[1], Number(e[2]), Number(e[3]), e[4]);
         break;
+      }
       case 'layer': {
         const bondId = e[2], n = Number(e[3]) || 0;
         if (!(n > 0) || typeof bondId !== 'string') break;

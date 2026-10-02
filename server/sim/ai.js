@@ -17,7 +17,8 @@
 // user playtest #6: "阻挡了就一定要能打到").
 // Unblocked ranged enemies attack allies within their radius and pause ATTACK_PAUSE seconds after each attack; the
 // candidates pass the enemy's own rule (`e.profile.canTarget`) and are ordered blocker → taunt → latest deployed
-// (targeting.js sortAllyTargets). Reaching the final leg's end = leak. A `fear` (恐惧) status suspends the route: the
+// (targeting.js sortAllyTargets). An enemy's damage type is its data's unless content arms it (`e.profile.dmgType`:
+// 转译基底's forms, whose data never attacks). Reaching the final leg's end = leak. A `fear` (恐惧) status suspends the route: the
 // enemy runs between random checkpoints away from the fear's source (fear.js moveFeared; a self-inflicted fear
 // flutters inside its own tile); an `attract` (诱导) status walks it to the status point instead (moveAttracted);
 // both re-plan the route when released (恐惧 outranks 诱导).
@@ -456,7 +457,7 @@ export function updateEnemy(b, e, dt) {
   }
   if (!e.hidden && b._checkBlock(e)) return;
   if (b.time < e.pauseUntil) return;
-  if (e.s.flags.noMove) return;
+  if (e.s.flags.noMove) { e.moving = false; return; }   // standing (a 重生, a form change): drawn idle, not walking
   // 恐惧 (ba.fear "无法被阻挡并四散逃跑"; PRTS 诱发移动: 恐惧 outranks 诱导): runs to random tiles of the fan away from
   // its source — a self-inflicted fear flutters inside its own tile (fear.js); the route re-plans once it ends
   if (e.s.flags.fear && !e.hidden) { moveFeared(b, e, dt); return; }
@@ -570,11 +571,12 @@ function advanceRoute(b, e, dt, R) {
 function enemyAttack(b, e) {
   const def = e.def;
   if (e.profile && e.profile.noAttack) return;
-  if (def.dmgType === 'none' || e.s.atk <= 0) return;
+  const dmgType = (e.profile && e.profile.dmgType) || def.dmgType;
+  if (dmgType === 'none' || e.s.atk <= 0) return;
   if (e.s.flags.fear || e.s.flags.disarm) return;
   if (e.s.flags.tremble && e.blockedBy) return; // 战栗: 被阻挡后无法进行普通攻击
   if (e.atkCd > 0) return;
-  if (def.dmgType === 'heal') { enemyHeal(b, e, e.base.rangeRadius); return; }
+  if (dmgType === 'heal') { enemyHeal(b, e, e.base.rangeRadius); return; }
   // applyWay MELEE enemies only ever hit their blocker, even when their data carries a rangeRadius (粉碎攻坚手 2.5,
   // 宿主士兵 2.5, 深池伙友卫队 1.4 … — that radius belongs to their abilities/splash, handled by content).
   // Content may flip it with `e.profile.melee = false`.
@@ -618,7 +620,7 @@ function enemyAttack(b, e) {
   e.lastAttackAt = b.time;
   e.stats.attacks++;
   const attackId = ++b._attackSeq;
-  const type = def.dmgType === 'heal' ? 'arts' : def.dmgType;
+  const type = dmgType === 'heal' ? 'arts' : dmgType;
   const rangedShot = radius > 0 && !(e.blockedBy && targets[0] === e.blockedBy && radius < 1);
   // content-resolved attacks (`e.profile.deferHit`: 帝国炮火先兆者's shell landing 3 s later): the attack itself happens
   // — the 'atk' event (kind `e.profile.shot`, drawn by the content's own fx), cooldown, pause, the 'attack' hook — and

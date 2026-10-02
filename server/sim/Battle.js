@@ -811,7 +811,9 @@ export class Battle {
     e.deployedAt = this.time;
     e.atkCd = 0;
     e.pauseUntil = -Infinity;
-    e.profile = { noAttack: def.dmgType === 'none', maxTargets: 1, atkScale: 1 };
+    // every enemy profile starts with the same fields (stable object shapes keep the hot loop's property reads fast);
+    // `dmgType` null = the data's (content may arm a data-unarmed enemy: ai.js enemyAttack)
+    e.profile = { noAttack: def.dmgType === 'none', maxTargets: 1, atkScale: 1, dmgType: null };
     e.route = { legs: route ? compileRoute(route, this.rect) : [], legIdx: 0, pts: null, ptIdx: 0, suffix: null, version: -1, waitLeft: null };
     if (!e.route.legs.length) {
       const end = this.grid.specialTiles('end')[0];

@@ -24,8 +24,10 @@
 // redeploy) plays the deploy clip and restores the normal look; `setDown(null)` on a dead view lets it fade out.
 // An operator that enters a battle already knocked out (联防, user playtest #5 item 2: sim 'die' reason 'forcedExit')
 // goes down with `die(true)`: straight to the held end of the clip, no fall.
-// Enemy modes (sim fx 'phase' { id, kind } → `setForm(kind)`): 掠海漂移体 dropping to 爬行模式 (user playtest #5 item 1)
-// plays its skeleton's 'Change' clip once, then the crawl set (*_02) — FORMS; a view built later keeps the mode.
+// Enemy modes (sim fx 'phase' { id, kind } or another fx's `form` → `setForm(kind, fx)`): 掠海漂移体 dropping to 爬行模式
+// (user playtest #5 item 1) plays its skeleton's 'Change' clip once, then the crawl set (*_02); 转译基底's forms, the 逐火
+// embers, 再生's puppet, the leaders' 重生 and 守墓石像 likewise (user report after 0.1.0) — FORMS. A view built later
+// (`info.form` = UnitInfo `form`, the sim's current form, through render/app.js renderInfo) starts in the mode.
 // Element gauges (b.snap `elem` → sample `el` / `elFill` / `elUntil` / `elDur`), the official form (PRTS 元素: "模型
 // 下部会显示对应的元素图标，并以白条显示剩余的元素值"; enemies "小尺寸图标（不显示元素图标，仅根据元素种类改变背景色）"): a row
 // right under the unit's own HP / SP bars and inside their span — the element's disc at the left (operators with its
@@ -100,22 +102,72 @@ export const DOWN_LOOK = Object.freeze({
 export const EL_BAR = Object.freeze({ icon: 0.15, min: 8, max: 15, enemy: 0.8, gap: 1, pulse: 0.45, pulseHz: 1.5 });
 
 /**
- * Enemy modes drawn with another clip set of the same skeleton (sim fx 'phase' kind → UnitView.setForm), per Spine
- * id: 掠海漂移体 (PRTS: 受晕眩/沉睡/冻结影响后进入爬行模式 — for good) crawls on its *_02 clips after 'Change'. The mode's
- * roles override the manifest's (data/assets.json anims); 吉兆飞鳞's 晕眩模式 is its Stun clip already.
+ * Enemy modes drawn with another clip set of the same skeleton (sim fx 'phase' kind, or the `form` of another sim fx
+ * → UnitView.setForm), per Spine id; the mode's roles override the manifest's (data/assets.json anims), `change` plays
+ * once first:
+ * - 掠海漂移体 (PRTS: 受晕眩/沉睡/冻结影响后进入爬行模式 — for good) crawls on its *_02 clips after 'Change';
+ * - 转译基底·α (user report after 0.1.0, #5): its 2 s change clip A_Die_B / _C / _D, then 寻仇者 B_*, 幽灵 C_* (no attack
+ *   clip: it never attacks) or 特战术师 D_* — its manifest roles are the original form's A_Idle / A_Move;
+ * - 深池逐火战士 / 精锐战士 / 护卫 (#8): knocked out → 'Die' (the 1 s 重生), the 余烬 on Idle_2 / Move_2 and its death on
+ *   Die_2 (also while 'Revive' plays: the ember can still be beaten); standing up again → 'Revive', then the warrior's
+ *   manifest clips;
+ * - 假想敌：再生: knocked out → A_Die, the 傀儡 on B_Idle / B_Move / B_Die; back → B_Revive, then the A_* manifest clips;
+ *   (both: the stand-up clip (`end`) is timed from the 'ember' fx's `dur` to end as the husk stands up — the 'revive'
+ *   fx then only lands in the manifest clips);
+ * - the leaders' 重生 (sim reborn(): forms 'reborn' → 'form2'): 锏 Revive1, Revive2 held, Revive3, then B_*; 扎罗 A_revive_1 /
+ *   _2 / _3, then B_* (its double-hit attack); “复仇者” Revive_Begin / _Loop / _End; 杰斯顿 C1_Die (its 4 s 重生), then
+ *   C2_* — their manifests mix the forms (锏 / 扎罗 died on B_Die from the A model, the look of report #5). The closing
+ *   clip (`end`) is timed from the 重生's `dur` (the 'telegraph' fx) to end with it, so the second form walks and
+ *   attacks on its own clips at once (a view that missed the timing — built mid-重生 — skips the closing clip);
+ * - 守墓石像 (forms 'stone' → 'fly'): the statue on Sleep [ASSUMED by name], then the flyer's *_2 clips.
+ * A kind without a clip set of this skeleton (barriers, charges, …) changes nothing. 吉兆飞鳞's 晕眩模式 is its Stun clip.
  */
+const loop = (name, via = null) => Object.freeze(via ? { begin: null, loop: name, end: null, via } : { begin: null, loop: name, end: null });
+const clipSet = (idle, move, die, attack = null) => Object.freeze({
+  idle, deploy: idle, die, move: loop(move),
+  attack: attack ? loop(attack, 'attackAny') : null,
+  skill: attack ? Object.freeze({ begin: null, loop: attack, end: null, via: 'attack', index: 0, idle: null }) : null,
+});
+const EMBER = Object.freeze({
+  husk: Object.freeze({ change: 'Die', end: 'Revive', next: 'revived', roles: clipSet('Idle_2', 'Move_2', 'Die_2') }),
+  revived: Object.freeze({ change: null, roles: Object.freeze({}) }),
+});
+/** A 重生 held on `hold` (also while the sim reports the rebirth's stun) after `begin`, closing on `end` as the 重生 ends,
+ *  then the second form. */
+const rebirth = (begin, hold, end, form2 = Object.freeze({})) => Object.freeze({
+  reborn: Object.freeze({ change: begin, end, next: 'form2', roles: Object.freeze({ idle: hold, deploy: hold, move: loop(hold), stun: loop(hold), attack: null, skill: null }) }),
+  form2: Object.freeze({ change: null, roles: form2 }),
+});
+const STATUE = Object.freeze({
+  stone: Object.freeze({ change: null, roles: Object.freeze({ idle: 'Sleep', deploy: 'Sleep', move: loop('Sleep'), stun: loop('Sleep'), attack: null, skill: null }) }),
+  fly: Object.freeze({ change: null, roles: clipSet('Idle_2', 'Move_2', 'Die_2', 'Attack_2') }),
+});
+const JAKILL2 = clipSet('C2_Idle', 'C2_Move', 'C2_Die', 'C2_Attack');
 export const FORMS = Object.freeze({
   enemy_2025_syufo: Object.freeze({
-    crawl: Object.freeze({
-      change: 'Change',
-      roles: Object.freeze({
-        idle: 'Idle_02', deploy: 'Idle_02', die: 'Die_02',
-        move: Object.freeze({ begin: null, loop: 'Move_02', end: null }),
-        attack: Object.freeze({ begin: null, loop: 'Attack_02', end: null, via: 'attackAny' }),
-        skill: Object.freeze({ begin: null, loop: 'Attack_02', end: null, via: 'attack', index: 0, idle: null }),
-      }),
-    }),
+    crawl: Object.freeze({ change: 'Change', roles: clipSet('Idle_02', 'Move_02', 'Die_02', 'Attack_02') }),
   }),
+  enemy_10081_mpplai: Object.freeze({
+    translator_fuchou: Object.freeze({ change: 'A_Die_B', roles: clipSet('B_Idle', 'B_Move', 'B_Die', 'B_Attack') }),
+    translator_youling: Object.freeze({ change: 'A_Die_C', roles: clipSet('C_Idle', 'C_Move', 'C_Die') }),
+    translator_shushi: Object.freeze({ change: 'A_Die_D', roles: clipSet('D_Idle', 'D_Move', 'D_Die', 'D_Attack') }),
+  }),
+  enemy_1288_duskls: EMBER,
+  enemy_1288_duskls_2: EMBER,
+  enemy_1292_duskld: EMBER,
+  enemy_9010_acpupp: Object.freeze({
+    husk: Object.freeze({ change: 'A_Die', end: 'B_Revive', next: 'revived', roles: clipSet('B_Idle', 'B_Move', 'B_Die') }),
+    revived: Object.freeze({ change: null, roles: Object.freeze({}) }),
+  }),
+  enemy_1525_blkswb: rebirth('Revive1', 'Revive2', 'Revive3', clipSet('B_Idle', 'B_Move', 'B_Die', 'B_Attack')),
+  enemy_1535_wlfmster: rebirth('A_revive_1', 'A_revive_2', 'A_revive_3', clipSet('B_Idle', 'B_Move', 'B_Die', 'B_Attack')),
+  enemy_1539_reid: rebirth('Revive_Begin', 'Revive_Loop', 'Revive_End'),
+  enemy_1516_jakill: Object.freeze({
+    reborn: Object.freeze({ change: 'C1_Die', roles: JAKILL2 }),
+    form2: Object.freeze({ change: null, roles: JAKILL2 }),
+  }),
+  enemy_1172_dugago: STATUE,
+  enemy_1172_dugago_2: STATUE,
 });
 
 /**
@@ -342,18 +394,25 @@ export class UnitView {
   }
 
   /**
-   * The unit changed mode (sim fx 'phase' { id, kind }): the mode's clip set (FORMS) after its change clip; a kind with
-   * no clip set of its own goes back to the manifest clips. Kept for a model built later.
+   * The unit changed mode (the `form` of a sim fx — shared/protocol.js fxForm; `fx` = that fx's extra): the mode's clip
+   * set (FORMS) after its change clip, and its closing clip (`end`, landing in the `next` form's clips) timed to end
+   * `fx.dur` game s later — the unit is still in this mode while it plays (an ember can be beaten in its last second),
+   * so this mode's death clip stays until the next mode's fx; null goes back to the manifest clips; a kind this skeleton
+   * has no clip set for (an arts barrier, a broken charge …) changes nothing. Kept for a model built later.
    */
-  setForm(kind) {
+  setForm(kind, fx = null) {
     const k = typeof kind === 'string' ? kind : null;
     if (k === this.form) return;
+    if (k && !FORMS[this.info.spine || this.info.defId]?.[k]) return;
     const had = !!this._formSpec();
     this.form = k;
     this.info.form = k;
     const f = this._formSpec();
     if (!this.actor) return;
-    if (f) this.actor.setForm(f.roles, f.change || null);
+    const dur = fx && Number(fx.dur);
+    let next = f && f.next ? FORMS[this.info.spine || this.info.defId]?.[f.next]?.roles || null : null;
+    if (next && typeof f.roles.die === 'string') next = { ...next, die: f.roles.die };
+    if (f) this.actor.setForm(f.roles, f.change || null, f.end && dur > 0 ? { clip: f.end, in: dur, roles: next } : null);
     else if (had) this.actor.setForm(null);
   }
 
