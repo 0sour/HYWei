@@ -1066,7 +1066,8 @@ export class Battle {
    * Try to block enemy `e` where it stands. Returns true if it is (now) blocked. Official contact rule (constants.js
    * BLOCK_RADIUS, PRTS 游戏数据基础 §阻挡半径): the enemy's position within the blocker's block radius of the blocker's
    * centre (ground 0.7071 — the tile's circumscribed circle, reaching 0.21 tile into the side neighbours; air 0.8944;
-   * devices 0.4472), and the blocker has free capacity for the enemy's block weight. Checked every tick for every
+   * devices 0.4472), and the blocker has free capacity for the enemy's block weight (and may block it at all: a unit on
+   * a fenced tile blocks no ground enemy, _blockerFor). Checked every tick for every
    * unblocked enemy, moving or not, so an enemy overlapping an operator is taken over as soon as its blocker is gone or
    * the operator's capacity frees up (user playtest #5 item 4). Several blockers in contact → the nearest [ASSUMED],
    * ties → the first in row-then-column scan order.
@@ -1113,11 +1114,18 @@ export class Battle {
     return out;
   }
 
-  /** Can ally/device `u` block enemy `e` (block weight `w`) right now — everything but the contact distance. */
+  /**
+   * Can ally/device `u` block enemy `e` (block weight `w`) right now — everything but the contact distance. A unit on a
+   * tile ground units cannot pass blocks no ground enemy: the fenced tiles (围墙 tile_fence_bound / 围栏 tile_fence —
+   * low ground, deployable, passable to flyers only) — PRTS 围墙 / 围栏 地形机制 "部署在其中的单位，若当前阻挡类型为'地面
+   * 阻挡'则无法阻挡敌人". Air blocking (blockFly against flyers) is not ground blocking and stays. Nothing walks onto such
+   * a tile, so it matters for an enemy pushed or pulled against the fence (Battle.displace stops it at the tile edge,
+   * 0.5 from the fenced unit — inside the ground block radius).
+   */
   _blockerFor(u, e, w) {
     if (!u.alive || !u.deployed || u.hidden || u.s.flags.noBlock || u.s.flags.sleep) return false;
     if (e.isFlying && !(u.s.flags.blockFly || (u.profile && u.profile.blockFly))) return false;
-    if (!e.isFlying && !u.ground) return false;
+    if (!e.isFlying && (!u.ground || this.grid.tile(u.tileR, u.tileC).pass !== 'ALL')) return false;
     const cap = u.s.blockCnt;
     if (cap <= 0) return false;
     let used = 0;
