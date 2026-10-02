@@ -1,7 +1,7 @@
 // Official route shapes (community report after 0.1.0, D5: on 战场#04 活性源石 the lower-gate enemies walked two tiles
 // straight left of the red gate and then straight up, instead of crossing diagonally from the 4th row to the 3rd as in
-// the official game). grid.js keeps the official flow field (research 08 §3.1) wherever its route crosses no more
-// non-blockable tiles (floor, gates) than the blockable-ground preference of user playtest #2 — a segment that only
+// the official game). grid.js keeps the official flow field (research 08 §3.1) unless the blockable-ground preference
+// route of user playtest #2 (0.1.0's) crosses strictly fewer non-blockable tiles (floor, gates) — a segment that only
 // brushes a floor tile's corner does not cross it. Audit: every stage (active or not) × gate × field against the pure
 // official algorithm; the routes that still differ are listed, each avoiding floor the official route walks over.
 import { test } from 'node:test';
@@ -78,8 +78,8 @@ const DEVIATIONS = {
   'act1autochess_m02 unite 9,18>9,2': '9,18 9,17 11,17 12,12 12,3 9,3 9,2',
   'act1autochess_m02 boss 2,10>1,3': '2,10 2,9 4,9 4,6 2,6 2,3 1,3',
   'act1autochess_m02 boss 2,10>2,2': '2,10 2,9 4,9 4,6 2,6 2,2',
-  'act1autochess_m02 boss 2,10>1,17': '2,10 3,11 4,11 4,14 2,14 2,17 1,17',
-  'act1autochess_m02 boss 2,10>2,18': '2,10 3,11 4,11 4,14 2,14 2,18',
+  'act1autochess_m02 boss 2,10>1,17': '2,10 2,11 4,11 4,14 2,14 2,17 1,17',
+  'act1autochess_m02 boss 2,10>2,18': '2,10 2,11 4,11 4,14 2,14 2,18',
   'act1autochess_m07 unite 12,18>9,2': '12,18 12,11 9,11 9,2',
 };
 
@@ -127,4 +127,56 @@ test('D5: an operator on (9,9), (9,8) or (10,8) blocks the lower-gate enemy on t
     const u = h.unit('t_guard');
     assert.ok(h.runUntil(() => h.enemies()[0]?.blockedBy === u, 30), `blocked by the operator on (${r},${c})`);
   }
+});
+
+test('战场#02 Final Assault: the (2,10) exit routes mirror each other and an operator beside the exit on (2,9) / (2,11) blocks them', REAL, () => {
+  // the preference route is 0.1.0's (a diagonal step's corner tiles count in its line of sight); only the choice between
+  // it and the official route counts exact crossings — otherwise the right half slipped diagonally past (2,11)
+  const g = stageGrid('act1autochess_m02', GEO.BOSS_RECT);
+  const mirror = (wp) => wp.map(([r, c]) => [r, 20 - c]);
+  assert.deepEqual(g.waypoints(2, 10, 1, 17), mirror(g.waypoints(2, 10, 1, 3)));
+  assert.deepEqual(g.waypoints(2, 10, 2, 18), mirror(g.waypoints(2, 10, 2, 2)));
+  const guard = chessRec({ id: 't_guard', profession: 'WARRIOR', stats: { atk: 0, blockCnt: 3, maxHp: 1e6 }, skill: null });
+  const walker = enemyRec({ key: 'enemy_walker', hp: 1e6, speed: 1 });
+  for (const [tile, end] of [[[2, 9], [1, 3]], [[2, 9], [2, 2]], [[2, 11], [1, 17]], [[2, 11], [2, 18]]]) {
+    const h = makeBattle({ stageId: 'act1autochess_m02', kind: 'boss', defs: { chess: { t_guard: guard }, enemies: { enemy_walker: walker } },
+      units: [{ chessId: 't_guard', row: tile[0], col: tile[1] }], enemies: [{ key: 'enemy_walker', route: { motion: 'WALK', start: [2, 10], end, checkpoints: [] } }],
+      content: 'none', autoFinish: false, timeLimit: 60 });
+    const u = h.unit('t_guard');
+    assert.ok(h.runUntil(() => h.enemies()[0]?.blockedBy === u, 20), `the enemy (2,10) → (${end}) is blocked on (${tile})`);
+    assert.ok(u.deployed && u.tileR === tile[0] && u.tileC === tile[1], `operator on (${tile})`);
+  }
+});
+
+test('equal floor never bends the official route: one crate on any tile of an active stage leaves every gate route official or crossing strictly fewer non-blockable tiles', REAL, () => {
+  const stages = ['act1autochess_m01', 'act1autochess_m02', 'act1autochess_m03', 'act1autochess_m04', 'act2autochess_m01', 'act2autochess_m02', 'act2autochess_m03', 'act2autochess_m04'];
+  const floor = (g, wp) => {
+    let n = 0;
+    for (let i = 1; i < wp.length; i++) for (const [r, c] of segmentTiles(wp[i - 1], wp[i]).slice(1)) n += g.unblockable[r * COLS + c];
+    return n;
+  };
+  const R = GEO.NORMAL_RECT;
+  let n = 0;
+  for (const sid of stages) {
+    for (let r = R.r0; r <= R.r1; r++) {
+      for (let c = R.c0; c <= R.c1; c++) {
+        const g = stageGrid(sid, R), p = stageGrid(sid, R, true);
+        if (!g.walkable(r, c) || g.obstacle[r * COLS + c]) continue;
+        g.setObstacle(r, c, true, 'crate');
+        p.setObstacle(r, c, true, 'crate');
+        for (const s of [[9, 10], [12, 10]]) {
+          const ours = g.waypoints(s[0], s[1], 9, 2), off = p.waypoints(s[0], s[1], 9, 2);
+          if (!ours || str(ours) === str(off)) continue;
+          n++;
+          assert.ok(floor(g, ours) < floor(g, off), `${sid} crate (${r},${c}) from (${s}): ${str(ours)} vs the official ${str(off)}`);
+        }
+      }
+    }
+  }
+  assert.ok(n > 0, 'some layouts keep a floor-avoiding deviation');
+  // the case that used to slip through: a crate on (10,6) of 战场#04 — official (9,10) → (9,9) → (11,7), as much floor as
+  // the L via (9,8), so the official one stays
+  const g = stageGrid(M04, R);
+  g.setObstacle(10, 6, true, 'crate');
+  assert.equal(str(g.waypoints(9, 10, 9, 2)), '9,10 9,9 11,7 11,4 9,4 9,2');
 });

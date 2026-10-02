@@ -424,7 +424,7 @@ test('random layouts: official lengths, fewest non-blockable tiles among equal-l
     // routes: strictly closer each hop; every segment is official line of sight (walkable, crate-free Bresenham
     // footprint); `cost` = the non-blockable tiles the route crosses; never more than the pure official route, nor than
     // the fewest-floor chain (pen); a pointer other than the official one crosses strictly less floor, or as little
-    // with a farther waypoint
+    // while it only skips the official waypoint (which lies on the straight line to it and leads there)
     assert.deepEqual([...f.official], [...fp.next], `${what}: the official pointers`);
     const nbSeg = (x, y) => segmentTiles([(x / COLS) | 0, x % COLS], [(y / COLS) | 0, y % COLS]).slice(1).filter(([r, c]) => g.unblockable[r * COLS + c]).length;
     const offNb = new Int32Array(N);
@@ -445,7 +445,10 @@ test('random layouts: official lengths, fewest non-blockable tiles among equal-l
       assert.ok(f.cost[k] <= f.pen[k] - g.unblockable[k] + g.unblockable[dest], `${what}: (${a}) more floor than its fewest-floor chain`);
       if (y !== o) {
         const co = nbSeg(k, o) + f.cost[o];
-        assert.ok(f.cost[k] < co || (f.cost[k] === co && f.dist[y] < f.dist[o]), `${what}: (${a}) leaves the official pointer without less floor`);
+        const oo = [(o / COLS) | 0, o % COLS];
+        const skips = f.next[o] === y && (oo[0] - a[0]) * (b[1] - a[1]) === (oo[1] - a[1]) * (b[0] - a[0])
+          && segmentTiles(a, b).some(([r, c]) => r === oo[0] && c === oo[1]);
+        assert.ok(f.cost[k] < co || (f.cost[k] === co && skips), `${what}: (${a}) leaves the official pointer without less floor`);
       }
     }
   }

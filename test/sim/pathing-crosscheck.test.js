@@ -2,10 +2,11 @@
 // `Torappu.Battle.SPFA`: FIFO SPFA from the destination over the WHOLE level map, UP/RIGHT/DOWN/LEFT, crates cost 1000,
 // strict improvement; row-major in-place Bresenham smoothing with the diagonal corner rule), run on the raw level files
 // in .cache/gamedata (skipped when absent), extended by our blockable-ground preference (grid.js header: a second,
-// preference field — equal-length ties to the chain with the fewest non-blockable tiles, smoothing that backs off from
-// segments through non-blockable tiles off the own raw chain — whose pointer replaces the official one where its route
-// crosses fewer non-blockable tiles, or as few with a farther waypoint; "crosses" = positive-length intersection with
-// the tile, found here by clipping the segment against each tile, independently of grid.js crossTiles):
+// preference field = 0.1.0's — equal-length ties to the chain with the fewest non-blockable tiles, a line of sight that
+// covers non-blockable tiles, diagonal-step corners included, only on the own raw chain — whose pointer replaces the
+// official one where its route crosses fewer non-blockable tiles, or as few while only skipping the official waypoint
+// (on the straight line to it, leading there); "crosses" = positive-length intersection with the tile, found here by
+// clipping the segment against each tile, independently of grid.js crossTiles):
 //   * the 8 active stages with their match-start devices: the smoothed chain from EVERY walkable tile of the normal,
 //     联防 and boss rects to every goal equals the full-map reference one (the sim's rect limit changes nothing);
 //   * 400 random crate / block layouts: identical chains to the same algorithm limited to the rect;
@@ -113,24 +114,21 @@ function official(sid, { crates: extraCrates = [], blocks: extraBlocks = [], rec
       }
       return { dist, par };
     };
-    // row-major in-place smoothing; `guard`: back off to the farthest passed waypoint whose segment crosses
-    // non-blockable tiles only on the tile's own raw chain
+    // row-major in-place smoothing; `guard` (0.1.0's preference smoothing): the line of sight toward ancestor a may
+    // also cover non-blockable tiles (Bresenham footprint, diagonal-step corners included) only on the tile's own raw
+    // chain between the tile and a — the jump stops at the first ancestor it cannot see so
     const smooth = ({ dist, par }, guard) => {
       const nxt = new Map(par);
       for (let r = 0; r < H; r++) {
         for (let c = 0; c < W; c++) {
           const k = `${r},${c}`;
           if (!nxt.has(k)) continue;
+          const chain = new Set();
+          if (guard) for (let x = [r, c]; x; x = par.get(x.join())) chain.add(x.join());
+          const sees = (a) => bres([r, c], a, (y, x) => losClear(y, x)
+            && (!guard || !nb(y, x) || (chain.has(`${y},${x}`) && dist.get(`${y},${x}`) >= dist.get(a.join()))));
           let b = nxt.get(k);
-          const hops = [b];
-          while (nxt.has(b.join()) && bres([r, c], nxt.get(b.join()), losClear)) { b = nxt.get(b.join()); hops.push(b); }
-          if (guard) {
-            const chain = new Set();
-            for (let x = [r, c]; x; x = par.get(x.join())) chain.add(x.join());
-            const ok = (a) => through([r, c], a).every(([y, x]) => !nb(y, x) || (chain.has(`${y},${x}`) && dist.get(`${y},${x}`) >= dist.get(a.join())));
-            while (hops.length > 1 && !ok(hops[hops.length - 1])) hops.pop();
-            b = hops[hops.length - 1];
-          }
+          while (nxt.has(b.join()) && sees(nxt.get(b.join()))) b = nxt.get(b.join());
           nxt.set(k, b);
         }
       }
@@ -142,15 +140,19 @@ function official(sid, { crates: extraCrates = [], blocks: extraBlocks = [], rec
     let nxt = smooth(off, false);
     if (prefer) {
       // per tile in increasing distance: the preference pointer when its route crosses fewer non-blockable tiles (or as
-      // few with a farther waypoint)
+      // few while it only skips the official waypoint: o strictly inside the segment a → p, and o's chosen pointer is p)
       const nxtP = smooth(spfa(true), true);
       const cost = new Map([[D, 0]]);
       const chosen = new Map();
+      const skips = (a, o, p) => {
+        const t = through(a, p);
+        return key(o) !== key(a) && key(o) !== key(p) && (o[0] - a[0]) * (p[1] - a[1]) === (o[1] - a[1]) * (p[0] - a[0]) && t.some((x) => key(x) === key(o));
+      };
       for (const k of [...dist.keys()].sort((a, b) => dist.get(a) - dist.get(b))) {
         if (k === D) continue;
         const a = unkey(k), o = nxt.get(k), p = nxtP.get(k);
         const co = segNb(a, o) + cost.get(key(o)), cp = segNb(a, p) + cost.get(key(p));
-        const useP = cp < co || (cp === co && dist.get(key(p)) < dist.get(key(o)));
+        const useP = cp < co || (cp === co && key(o) !== key(p) && key(chosen.get(key(o)) ?? []) === key(p) && skips(a, o, p));
         chosen.set(k, useP ? p : o);
         cost.set(k, useP ? cp : co);
       }

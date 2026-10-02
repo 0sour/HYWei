@@ -18,19 +18,22 @@
 // no operator can block them"), kept to where the official route really walks over more floor (community report after
 // 0.1.0: on 战场#04 活性源石 the lower-gate enemies must cross diagonally from row 9 into row 10 as officially, not
 // walk two tiles left of the gate and then straight up). A tile is non-blockable when it is walkable but not LOW
-// ground buildable for melee (floor / gate / goal / teleport — `blockable()` false). A segment CROSSES the tiles whose
-// interior it passes through (`crossTiles`, exact geometry); one it only touches at a corner point is not crossed.
-// Each field holds two candidate pointers per tile, both with the official `dist` (so the crate cost 1000 and every
-// grid route length stay official) and the official line-of-sight walk:
+// ground buildable for melee (floor / gate / goal / teleport — `blockable()` false). Each field holds two candidate
+// pointers per tile, both with the official `dist` (so the crate cost 1000 and every grid route length stay official):
 //   * official: the plain algorithm above;
-//   * preference: the SPFA relaxes on (dist, pen) lexicographically, `pen` = non-blockable tiles on the chain (among
-//     equal-length chains the fewest wins; remaining ties go to the first parent in SPFA order), and a smoothed
-//     segment that would cross a non-blockable tile off the tile's own raw chain backs off to the farthest earlier
-//     waypoint whose segment does not — it never cuts across floor its grid route does not walk.
-// `next[tile]` is the official pointer unless the preference pointer leads to a route crossing strictly fewer
-// non-blockable tiles (`cost`, counted to the destination in increasing `dist` order), or as few with a farther
-// waypoint. So the route from every tile crosses no more floor than either candidate and is the official one wherever
-// that is not floor-heavier (test/sim/pathing-official.test.js lists the routes that still differ on every stage).
+//   * preference (0.1.0's): the SPFA relaxes on (dist, pen) lexicographically, `pen` = non-blockable tiles on the chain
+//     (among equal-length chains the fewest wins; remaining ties go to the first parent in SPFA order), and the line of
+//     sight may cover a non-blockable tile — its Bresenham footprint, the corner tiles of a diagonal step included —
+//     only on the tile's own raw chain between its two ends, so it never slips past a road tile beside floor its grid
+//     route does not walk.
+// `next[tile]` is the official pointer unless the preference pointer leads to a route CROSSING strictly fewer
+// non-blockable tiles (`cost`, counted to the destination in increasing `dist` order). A segment crosses the tiles
+// whose interior it passes through (`crossTiles`, exact geometry); one it only touches at a corner point is not crossed
+// — the first version counted the corner tiles there too and so bent official diagonals into L shapes (D5). On equal
+// counts the official pointer stays, except where the preference one merely skips it (the official waypoint lies on
+// the straight line to it and leads there: the same walk, one waypoint fewer). So the route from every tile crosses
+// no more floor than the official one and leaves it only for a step that crosses less (test/sim/pathing-official.test.js
+// lists the routes that still differ on every stage).
 // Unavoidable non-blockable tiles (gates, goals, teleports and single-exit floor, e.g. (12,9) next to the upper
 // gate) stay on the route; test/sim/pathing-blockable.test.js lists them per stage, gate and field.
 //
@@ -252,16 +255,23 @@ export class Grid {
     const pref = this._spfa(dest, ignore, unb);
     const dist = pref.dist; // the lexicographic relaxation leaves every distance the official one
     const walk = (r, c) => this.walkable(r, c, ignore) && (ignore || !(this.obstacle[r * COLS + c] & OB_CRATE));
-    const los = allowDiagonal ? (a, b) => bresenhamClear(a, b, walk) : (a, b) => segmentClear(a, b, walk);
-    const nextO = smoothChains(official.parent, dist, los, null);
-    // preference smoothing: a segment may cross a non-blockable tile only on the tile's own raw chain between its ends
+    const ray = allowDiagonal ? bresenhamClear : segmentClear;
+    const nextO = smoothChains(official.parent, dist, (a, b) => ray(a, b, walk), null);
+    // preference smoothing (0.1.0's, playtest #2): the line of sight from n toward ancestor `to` may also cover a
+    // non-blockable tile — the Bresenham footprint, corner tiles of a diagonal step included — only when that tile is on
+    // n's own raw chain between n and `to`; the jump stops at the first ancestor not visible under that rule
     const onChain = new Int32Array(N).fill(-1);
-    const nextP = smoothChains(pref.parent, dist, los, {
-      begin: (n) => { for (let x = n, g = N; x >= 0 && g-- > 0; x = pref.parent[x]) onChain[x] = n; },
-      ok: (n, b) => crossTiles(n, b, (r, c) => { const k = r * COLS + c; return !unb[k] || (onChain[k] === n && dist[k] >= dist[b]); }),
-    });
-    // per tile, in increasing distance: the official pointer unless the preference one crosses fewer non-blockable
-    // tiles on the way to the destination (or as few with a farther waypoint)
+    let from = -1, to = -1;
+    const walkP = (r, c) => {
+      if (!walk(r, c)) return false;
+      const k = r * COLS + c;
+      return !unb[k] || (onChain[k] === from && dist[k] >= dist[to]);
+    };
+    const nextP = smoothChains(pref.parent, dist, (a, b) => { from = a; to = b; return ray(a, b, walkP); },
+      (n) => { for (let x = n, g = N; x >= 0 && g-- > 0; x = pref.parent[x]) onChain[x] = n; });
+    // per tile, in increasing distance: the official pointer unless the preference one crosses strictly fewer
+    // non-blockable tiles on the way to the destination — or as few while only skipping the official waypoint o, which
+    // then lies on the straight line to it and leads there (the same walk, one waypoint fewer)
     const order = [];
     for (let k = 0; k < N; k++) if (dist[k] >= 0) order.push(k);
     order.sort((a, b) => dist[a] - dist[b] || a - b);
@@ -274,7 +284,7 @@ export class Grid {
       let use = o, best = through(k, o) + cost[o];
       if (p >= 0 && p !== o) {
         const cp = through(k, p) + cost[p];
-        if (cp < best || (cp === best && dist[p] < dist[o])) { use = p; best = cp; }
+        if (cp < best || (cp === best && next[o] === p && onSegment(k, o, p))) { use = p; best = cp; }
       }
       next[k] = use;
       cost[k] = best;
@@ -402,27 +412,26 @@ export class Grid {
 
 /**
  * Row-major, in-place smoothing (client `_PostprocessAndMakeNextMapSmoothly`): each tile's pointer jumps along its chain
- * (already smoothed pointers for tiles processed earlier) while `los(tile, ancestor)` holds. With `guard`
- * ({ begin(n), ok(n, b) }) the jump then backs off to the farthest of the waypoints it passed that `ok` accepts (the
- * raw parent always is). Returns the smoothed pointers.
+ * (already smoothed pointers for tiles processed earlier) while `los(tile, ancestor)` holds; `begin(tile)`, when given,
+ * runs before the tile's jump. Returns the smoothed pointers.
  */
-function smoothChains(parent, dist, los, guard) {
+function smoothChains(parent, dist, los, begin) {
   const N = parent.length;
   const next = new Int32Array(parent);
-  const hops = new Int32Array(N);
   for (let n = 0; n < N; n++) {
     if (dist[n] < 0 || next[n] < 0) continue;
-    let h = 0, b = next[n];
-    hops[h++] = b;
-    while (next[b] >= 0 && los(n, next[b])) { b = next[b]; hops[h++] = b; }
-    if (guard && h > 1) {
-      guard.begin(n);
-      while (h > 1 && !guard.ok(n, hops[h - 1])) h--;
-      b = hops[h - 1];
-    }
+    if (begin) begin(n);
+    let b = next[n];
+    while (next[b] >= 0 && los(n, next[b])) b = next[b];
     next[n] = b;
   }
   return next;
+}
+
+/** Whether tile key b lies strictly inside the straight segment between tile keys a and c. */
+function onSegment(a, b, c) {
+  const ar = (a / COLS) | 0, ac = a - ar * COLS, br = (b / COLS) | 0, bc = b - br * COLS, cr = (c / COLS) | 0, cc = c - cr * COLS;
+  return (br - ar) * (cc - ac) === (bc - ac) * (cr - ar) && (br - ar) * (cr - br) + (bc - ac) * (cc - bc) > 0;
 }
 
 /** Bresenham line of sight between tile keys a → b (client `_RaycastBresenhamLine`). */

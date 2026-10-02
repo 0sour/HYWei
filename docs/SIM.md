@@ -150,13 +150,14 @@ HP, then `kill(old, null)` — uncounted, no bounty; the client sees a `die` and
 
 WALK legs pathfind on the stage grid inside the rect with the official flow field (grid.js: 4-direction SPFA from the
 destination, crates cost 1000, then Bresenham line-of-sight smoothing — research 08 §3.4). The official route stays
-unless the road-over-floor preference route (the fewest non-blockable tiles among equal-length chains, smoothing that
-never cuts across floor its grid route does not walk; user playtest #2 item 2) crosses fewer non-blockable tiles
-(floor / gate lanes) — "crosses" = passes through the tile's interior, a corner touch does not count (`grid.js`
-`segmentTiles`; community report D5 after 0.1.0: 战场#04's lower-gate enemies cut diagonally from row 9 into row 10 as
-officially). test/sim/pathing-official.test.js lists the 14 of 154 stage routes that still differ from the official
-ones (战场#01's col-8 road, the boss exits of 战场#01 / #02 …); test/sim/pathing-blockable.test.js audits the floor
-crossed. Enemies re-path whenever
+unless 0.1.0's road-over-floor preference route (the fewest non-blockable tiles among equal-length chains, a line of
+sight that never covers floor — diagonal-step corners included — its grid route does not walk; user playtest #2 item 2)
+crosses strictly fewer non-blockable tiles (floor / gate lanes); "crosses" = passes through the tile's interior, a
+corner touch does not count (`grid.js` `segmentTiles`; community report D5 after 0.1.0: 战场#04's lower-gate enemies cut
+diagonally from row 9 into row 10 as officially), and on equal counts the official route stays.
+test/sim/pathing-official.test.js lists the 14 of 154 stage routes that still differ from the official ones (战场#01's
+col-8 road, the boss exits of 战场#01 / #02 …); test/sim/pathing-blockable.test.js audits the floor crossed. Enemies
+re-path whenever
 an obstacle changes (`grid.version`), after a displacement and when 诱导 / 恐惧 ends (the 恐惧 and 诱导 walks likewise
 re-plan from where the enemy stands after an obstacle change or when something else moved it — a push, or for 诱导 an
 outranking 恐惧); the smoothed chain is only line-of-sight
