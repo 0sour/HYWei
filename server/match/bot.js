@@ -2,19 +2,20 @@
 // is eliminated, Match._quit). Every action goes through the same validated
 // PlayerState handlers a human uses; randomness only from the match's bot rng (deterministic per seed).
 //
-// It reads only what a player can see: its own state, the shop, and the round's enemy preview (composition and
-// routes, research 06 §4.3 "查看当前回合即将迎击的敌方单位").
+// It reads only what a player can see: its own state, the shop, the shared pool's copies left, the teammates' bond
+// strips, and the round's enemy preview (composition and routes, research 06 §4.3 "查看当前回合即将迎击的敌方单位").
 //
 // Prep routine (botPrep):
 //   1. take a pending reward offer (merge progress, bond synergy, tier)
 //   2. economy. The bond plan (bondPlan): a focus core bond — owned members, members the shop can still bring at this
-//      level, banked layers, last round's focus (commit instead of flip-flopping), minus a teammate's focus (the shop
-//      pool is shared) — and a second bond (most owned members, next threshold within reach). Keepers: the deployed
-//      operators, focus / second members, chess of tier ≥ shop level − 1. Sell bench chess that neither make the
-//      lineup nor build toward something (a pair whose third copy can still come, a keeper, an elite; ≤ BENCH_BUDGET
-//      spare units, pairs first), buy toward a full board (the deploy cap is 8 from round 1), complete every merge it
-//      can afford — before a level-up can spend the funds —, level the 调度中心 on a curve (free levels always; the
-//      −1/round discount is waited for early), then spend the rest (leftover funds are lost at prep end): with a full
+//      level, banked layers, last round's focus (commit instead of flip-flopping), minus a teammate's main core bond
+//      (its bond strip; the shop pool is shared) — and a second bond (most owned members, next threshold within
+//      reach). Keepers: the deployed operators, focus / second members, chess of tier ≥ shop level − 1. Sell bench
+//      chess that neither make the lineup nor build toward something (a pair whose third copy can still come, a
+//      keeper, an elite; ≤ BENCH_BUDGET spare units, pairs first), buy toward a full board (the deploy cap is 8 from
+//      round 1), complete every merge it can afford — before a level-up can spend the funds —, level the 调度中心 on a
+//      curve (free levels always; the −1/round discount is waited for early), then spend the rest (leftover funds are
+//      lost at prep end; a band that keeps them, 坎诺特, holds its interest capital back — fundsReserve): with a full
 //      board a purchase must be merge progress or a lineup upgrade AND worth more than the refreshes its price would
 //      pay for — refreshValue: Σ over the held pairs of P(a refresh shows the third copy, the shop's copy-weighted odds
 //      over the shared pool) × MERGE_HIT (an elite plus the merge's free pick of the next tier) — else it refreshes. A
@@ -43,18 +44,22 @@
 //      generators that yield between whole actions (never with a transient board) — the same actions in the same
 //      order as the one-shot functions (runSteps), hence the same rng draws and decisions.
 //      The summon cards of the placed operators (赫默's 医疗探机, 伺夜's 狼群 …; user playtest #6) are placed after
-//      them on the best remaining tiles — a tactician's 援军 on a tile of its attack range (its tactical point) —, 凯瑟琳's
-//      支援装置 next to the best operator no device faces yet, facing it. Legality is the server's: the bot plans on the
-//      deploy map (board.js legalTiles) and a tile g.move refuses is skipped for the next best one.
+//      them on the best remaining tiles — a tactician's 援军 on a tile of its attack range (its tactical point;
+//      summonRange: PlayerState.summonRange when the server has it) —, 凯瑟琳's 支援装置 next to the best operator no
+//      device faces yet, facing it. Legality is the server's: the bot plans on the deploy map (board.js legalTiles) and
+//      a tile g.move refuses is skipped for the next best one.
 //   5. items by what they do (itemTarget): equipment on the strongest deployed damage dealers (survival items on
-//      blockers, bond signature items on a member), 信标 on a bench single, 拟态物质 on a pair, 博士投影 on the strongest
-//      normal operator, 突变细胞 on the weakest one below VI, bond items on a focus member; Arts (useArt): 画卷 copies the
-//      most valuable deployed operator, 教鞭 / “神秘顾客” only after a perfect battle (consume-on-equip items / Arts
-//      only with a handler)
-//   6. resolve the temp slots, keep one hand slot free, then Ready.
+//      blockers, bond signature items on a member), 信标 on a bench single, 拟态物质 on a pair, 博士投影 (both
+//      qualities) on the strongest normal operator, 突变细胞 on the least valuable normal single below 6阶 (cellTarget:
+//      never an elite or a pair member), bond items on a focus member; Arts (useArt): 画卷 copies the most valuable
+//      deployed operator, 教鞭 / “神秘顾客” are used after a perfect battle and kept otherwise (consume-on-equip items /
+//      Arts only with a handler)
+//   6. resolve the temp slots, keep one hand slot free (freeHandSlot: a kept bounty Art goes before a chess on a bot's
+//      own seat, never on a human's seat under AI 托管), then Ready.
 // 机变 (botPickCard): a bounty by its expected payout minus the expected LP lost — bountyKillChance runs the exposure
-// model for that one enemy against the own board, so a card the board cannot beat is the last pick —; tactic cards by
-// what they act on (a 盟誓 / 驰援 card on the own bonds, 升华 …); items by tier and use.
+// model for that one enemy against the own board; a card the board is unlikely to beat wins only when nothing better
+// is offered or it pays much more —; tactic cards by what they act on (a 盟誓 / 驰援 card on the own bonds, 升华 …);
+// items by tier and use.
 // Placement quality (tools/matchrun sweeps, research-faithful waves): the planner beats random layouts by ≈ 8 points
 // of kill rate and rehearsal adds ≈ 5 more; see docs/META.md §1.5. Old vs new decisions on the same seeds:
 // tools/botbench.mjs.
@@ -126,8 +131,9 @@ export function botPickBand(m, ps) {
 
 /**
  * 机变 card pick among the untaken indexes (a draft is one family: generateDraft). Bounties (extra enemies in the own
- * next battles) score their expected payout minus the expected LP lost (bountyScore: the enemy against the own board,
- * so an unbeatable one is the last pick); items by tier and use (an item the bot cannot use is worth little); tactic
+ * next battles) score their expected payout minus the expected LP lost (bountyScore: the enemy against the own board —
+ * an expected-value comparison, so a card the board is unlikely to beat is taken only when no better one is offered or
+ * its pay outweighs the expected leaks); items by tier and use (an item the bot cannot use is worth little); tactic
  * cards by what they act on (tacticScore: a 盟誓 / 驰援 card on the own bonds, 升华 …). Across families items and team
  * buffs come before bounties.
  */
@@ -289,18 +295,38 @@ function bondPoolStats(m, ps, owned) {
 }
 
 /**
+ * A teammate's main core bond as every player sees it (its public bond strip, ps.bonds): the core bond with the most
+ * counted members, ≥ 2 (ties: data order); null when it builds none yet. Humans and bots alike.
+ */
+function mainCoreBond(m, p) {
+  let top = null;
+  let topN = 1;
+  for (const id of m.gd.bondIds) {
+    const b = p.bonds && p.bonds[id];
+    const n = b ? b.count || 0 : 0;
+    if (n > topN && m.gd.bond(id)?.isCore) { topN = n; top = id; }
+  }
+  return top;
+}
+
+/**
  * The bonds the bot builds around (cached per round and owned set): `focus` = the core bond with the best
  * owned members × 10 + reachable members (bondPoolStats, ≤ 4) + layers already banked (≤ 6) + 6 for last round's focus
- * (commit instead of flip-flopping between equal bonds) − 6 when a teammate already builds it (the shop pool is
- * shared); `second` = the other live bond (core or add-on) with the most owned members whose next threshold is
- * within reach (≥ 1 owned member). `ps._botFocusId` keeps the focus across rounds; teammates read it.
+ * (commit instead of flip-flopping between equal bonds) − 6 when a teammate already builds it (its main core bond on
+ * its public bond strip, mainCoreBond — the shop pool is shared); `second` = the other live bond (core or add-on) with
+ * the most owned members whose next threshold is within reach (≥ 1 owned member). `ps._botFocusId` keeps the focus
+ * across rounds.
  */
-function bondPlan(m, ps, owned) {
+export function bondPlan(m, ps, owned = ownedBonds(m, ps)) {
   const key = `${m.round}|${ps.shop.level}|${[...owned.counts.entries()].map(([k, v]) => k + v).join()}`;
   if (ps._botFocus && ps._botFocus.key === key) return ps._botFocus;
   const prev = ps._botFocusId ?? null;
   const mates = new Set();
-  for (const p of m.alivePlayers()) if (p !== ps && p._botFocusId) mates.add(p._botFocusId);
+  for (const p of m.alivePlayers()) {
+    if (p === ps) continue;
+    const b = mainCoreBond(m, p);
+    if (b) mates.add(b);
+  }
   let focus = null;
   let bestS = 0;
   const pool = bondPoolStats(m, ps, owned);
@@ -483,8 +509,8 @@ function chooseLineup(m, ps, ctx) {
   let set = seed.slice(0, cap);
   let bench = seed.slice(cap);
   let score = lineupScore(m, ps, set, ctx);
-  // identical pieces (same chess, same number of items) score alike: only the first of them is tried
-  const sig = (p) => `${p.id}|${(p.items || []).length}`;
+  // identical pieces (same chess, same items — a bond can hang on an item pair) score alike: only the first is tried
+  const sig = (p) => `${p.id}|${(p.items || []).map((it) => it.id).sort().join('+')}`;
   for (let iter = 0; iter < 12 && bench.length; iter++) {
     let best = null;
     const tried = new Set();
@@ -852,7 +878,7 @@ export function planLayout(m, ps, pieces, params = LAYOUT_PARAMS, opts = {}) {
 }
 
 /** planLayout as a step generator: yields after each placed piece (Match slices a bot's prep, see botPrepBeginSteps). */
-export function* planLayoutSteps(m, ps, pieces, params = LAYOUT_PARAMS, { occupied = new Set(), recOf = null, allowed = null } = {}) {
+export function* planLayoutSteps(m, ps, pieces, params = LAYOUT_PARAMS, { occupied = new Set(), recOf = null } = {}) {
   const model = fieldModel(m, ps);
   const map = ps.deployMap();
   const rec = recOf || ((p) => (p.kind === 'token' ? m.gd.token(p.id) : m.gd.chess(p.id)));
@@ -866,9 +892,11 @@ export function* planLayoutSteps(m, ps, pieces, params = LAYOUT_PARAMS, { occupi
     if (!r0) continue;
     let best = null;
     let bestV = -Infinity;
+    // a summon bound to its owner's attack range (a tactician's 援军 — its tactical point): only those tiles
+    const within = p.kind === 'token' ? summonRange(m, ps, p) : null;
     for (const [r, c] of legalTiles(map, positionClass(r0))) {
       const k = tileKey(r, c);
-      if (taken.has(k) || (allowed && !allowed.has(k))) continue;
+      if (taken.has(k) || (within && !within.has(k))) continue;
       const noise = m.rngBots() * 1e-6;
       const seen = new Set();
       for (const dir of PLAN_DIRS) {
@@ -1227,8 +1255,21 @@ export function* botPrepEndSteps(m, ps, job = null) {
   if (job && job.done && job.best !== job.plans[0]) yield* applyPlanSteps(m, ps, job.chosen, job.best);
   // 5. temp → hand / sell / destroy; keep one hand slot free for next round's merges
   resolveTemp(m, ps);
-  if (freeSlot(ps.hand) < 0) sellWeakestHand(m, ps);
+  if (freeSlot(ps.hand) < 0) freeHandSlot(m, ps);
   tryDo(() => ps.setReady(true));
+}
+
+/**
+ * Free one hand slot: on a bot's own seat a kept bounty Art goes first (“神秘顾客” pays its fund and passes to a
+ * teammate when destroyed, 教鞭 gives nothing — its chance of a perfect-battle payout is worth less than a slot for a
+ * merge), else the weakest bench single is sold. A human's seat under AI 托管 never loses an item this way.
+ */
+function freeHandSlot(m, ps) {
+  if (ps.isBot && !ps.autoplay) {
+    const art = ps.hand.find((p) => p && p.kind === 'item' && isBountyArt(m.gd, p.id));
+    if (art && tryDo(() => ps.destroy(art.uid))) return true;
+  }
+  return sellWeakestHand(m, ps);
 }
 
 /** The whole prep routine in one go (the rehearsal, if any, runs synchronously). */
@@ -1261,10 +1302,24 @@ function levelUp(m, ps, { spare = false } = {}) {
     let want = price === 0;
     if (!want && ps.shop.level < target && (boardReady || r >= 6)) want = true;
     if (!want && ps.shop.level < nextTarget && price <= 2 && boardReady) want = true;
-    if (!want && spare && ps.funds >= price + 1 && ps.shop.level < nextTarget + 1 && boardReady) want = true;
+    if (!want && spare && ps.funds >= price + 1 + fundsReserve(m, ps) && ps.shop.level < nextTarget + 1 && boardReady) want = true;
     if (!want && ps.funds >= price + 14) want = true;
     if (!want || !tryDo(() => ps.levelUp())) return;
   }
+}
+
+/**
+ * Funds a band that keeps its leftover (gd.leftoverKeptBands: 坎诺特 利滚利 "每回合剩余的资金可以继承，剩余至少5资金时，
+ * 每回合额外获得1资金") holds back from discretionary spending — refreshes, full-board purchases that complete nothing,
+ * items, spare level-ups: the interest capital (coin_carry_over bb.capital, 5). 0 for every other band (their
+ * leftover is lost at the prep end, so spending it all is free value).
+ */
+function fundsReserve(m, ps) {
+  if (!m.gd.leftoverKeptBands.includes(ps.bandId)) return 0;
+  const band = m.gd.band(ps.bandId);
+  const buff = band && Array.isArray(band.buffs) ? band.buffs.find((b) => b && b.key === 'coin_carry_over') : null;
+  const cap = Number(buff && buff.bb && buff.bb.capital);
+  return Number.isFinite(cap) && cap > 0 ? cap : 5;
 }
 
 /** Buying / rerolling toward the lineup; a step generator (yields after each purchase or reroll). */
@@ -1272,6 +1327,7 @@ function* buyLoopSteps(m, ps, { fillOnly = false, maxRefreshes = 0 } = {}) {
   const gd = m.gd;
   let refreshes = 0;
   const minPrice = 2;
+  const reserve = fundsReserve(m, ps);
   // the best lineup is reused while the owned chess stay the same (a refresh changes only the shop)
   let memo = null;
   for (let guard = 0; guard < 40; guard++) {
@@ -1298,6 +1354,7 @@ function* buyLoopSteps(m, ps, { fillOnly = false, maxRefreshes = 0 } = {}) {
         const merges = ps.completesChessMerge(s.id);
         if ((freeSlot(ps.hand) < 0 || mergesOnly) && !merges) return;
         const base = gd.baseIdOf(s.id);
+        if (boardFull && !merges && ps.funds - price < reserve) return; // banked (坎诺特)
         sc = buyScore(m, ps, s.id, ctx) - price;
         if (boardFull && !merges) {
           if (!ctx.copies.get(base)) {
@@ -1319,15 +1376,17 @@ function* buyLoopSteps(m, ps, { fillOnly = false, maxRefreshes = 0 } = {}) {
         if (fillOnly) return;
         if (!canUseItem(m, ps, { id: s.id })) return;
         if (freeSlot(ps.hand) < 0 && !ps.completesItemMerge(s.id)) return;
+        if (ps.funds - price < reserve && !ps.completesItemMerge(s.id)) return;
         const carriers = [...ps.board.values()].filter((p) => p.kind === 'chess' && (p.items || []).length < gd.equipPerChess).length;
         if (!carriers) return;
         sc = 6 + (gd.tierOf(s.id) || 1) * 3 - price + (ps.completesItemMerge(s.id) ? 10 : 0);
       }
       if (sc > bestS) { bestS = sc; best = i; bestMerges = s.kind === 'chess' && ps.completesChessMerge(s.id); }
     });
-    // leftover funds are lost at prep end: reroll while a purchase stays affordable
+    // leftover funds are lost at prep end: reroll while a purchase stays affordable (a band that keeps them: down to its
+    // reserve — a free refresh is always taken)
     const refreshCost = ps.shop.freeRefreshes > 0 ? 0 : gd.refreshPrice;
-    const canRefresh = refreshes < maxRefreshes && ps.funds >= refreshCost + minPrice;
+    const canRefresh = refreshes < maxRefreshes && ps.funds >= refreshCost + (refreshCost > 0 ? Math.max(minPrice, reserve) : minPrice);
     // a full board buys only what improves it (merge progress, a lineup upgrade), and only when it is worth more than
     // the refreshes its price would pay for (each may show the third copy of a held pair, refreshValue)
     let buy = best >= 0 && bestS >= (boardFull ? BUY_FULL_MIN : 3);
@@ -1474,10 +1533,13 @@ function supportSpot(m, ps, p) {
 }
 
 /**
- * Tiles a summon may take: a tactician's 援军 (狼群, 流形) stands on its tactical point, which lies in the tactician's
- * attack range (trait "可以在攻击范围内选择一次战术点来召唤援军") — the owner's range tiles as it stands; null = any.
+ * The tiles ('r,c' keys) a range-bound summon may take, null = any: the server's own rule when PlayerState has one
+ * (summonRange — what g.move enforces), else the trait's: a tactician's 援军 (伺夜's 狼群, 缪尔赛思's 流形) stands on its
+ * tactical point, inside the tactician's attack range ("可以在攻击范围内选择一次战术点来召唤援军") — the owner's range
+ * grid rotated by its facing around its tile.
  */
-function summonTiles(m, ps, p) {
+function summonRange(m, ps, p) {
+  if (typeof ps.summonRange === 'function') return ps.summonRange(p);
   if (p.ownerUid == null) return null;
   for (const [k, q] of ps.board) {
     if (q.uid !== p.ownerUid) continue;
@@ -1506,11 +1568,10 @@ function* placeTokensSteps(m, ps) {
         if (!spot || !tryDo(() => ps.move(p.uid, { area: 'board', row: spot[0], col: spot[1] }, spot[2]))) break;
         continue;
       }
-      const allowed = summonTiles(m, ps, p);
       const refused = new Set();
       let placed = false;
       for (let t = 0; t < SUMMON_TRIES && !placed; t++) {
-        const plan = yield* planLayoutSteps(m, ps, [p], LAYOUT_PARAMS, { occupied: new Set([...ps.board.keys(), ...refused]), allowed });
+        const plan = yield* planLayoutSteps(m, ps, [p], LAYOUT_PARAMS, { occupied: new Set([...ps.board.keys(), ...refused]) });
         const k = plan.get(p.uid);
         if (!k) break;
         const [r, c] = parseKey(k);
@@ -1525,6 +1586,28 @@ function* placeTokensSteps(m, ps) {
 /** What an item does: the key of its first buff (data/items.json `buffs`, e.g. use_equip_reward_char_chess). */
 const itemEffect = (rec) => (rec && Array.isArray(rec.buffs) && rec.buffs[0] && typeof rec.buffs[0].key === 'string' ? rec.buffs[0].key : '');
 
+/** 突变细胞 (buff char_chess_transformation_equip). */
+const isMutationCell = (gd, itemId) => itemEffect(gd.item(itemId)) === 'char_chess_transformation_equip';
+
+/**
+ * Whom the bot injects with 突变细胞 (after the battle its carrier — deployed or on the bench: every owned carrier's item
+ * hooks run — becomes a random operator one tier higher; items meta char_chess_transformation_equip): the least
+ * valuable normal operator below 6阶 with a free equip slot — never an elite, never one of a merge pair (the merge
+ * progress would be lost), nobody already carrying a cell. null: the cell waits in the hand.
+ */
+export function cellTarget(m, ps, ctx = context(m, ps)) {
+  const gd = m.gd;
+  let best = null;
+  let bestV = Infinity;
+  for (const p of ps.allChess()) {
+    if (gd.isGolden(p.id) || gd.tierOf(p.id) >= 6 || (p.items || []).length >= gd.equipPerChess) continue;
+    if ((p.items || []).some((it) => isMutationCell(gd, it.id)) || (ctx.copies.get(gd.baseIdOf(p.id)) || 0) >= 2) continue;
+    const v = pieceValue(m, ps, p, ctx);
+    if (v < bestV || (v === bestV && p.uid < best.uid)) { bestV = v; best = p; }
+  }
+  return best;
+}
+
 /** Whether the bot's own last battle was perfect (no counted leak). */
 function lastPerfect(m, ps) {
   const r = m.lastResults && m.lastResults.get(ps.playerId);
@@ -1536,8 +1619,9 @@ function lastPerfect(m, ps) {
  *   信标 (destroys its carrier for a pick of two chess of the same tier): the highest-tier bench single, else the
  *     weakest normal deployed operator;
  *   拟态物质 (a third copy of a pair, else a member of a bond): a pair (highest tier), else a focus member;
- *   博士投影 (promotes to elite): the strongest normal deployed operator;
- *   突变细胞 (the carrier becomes a random tier + 1 operator after the battle): the weakest normal deployed one below VI;
+ *   博士投影 (promotes to elite; the normal one at the next round start, the golden one at once): the strongest normal
+ *     deployed operator;
+ *   突变细胞 (the carrier becomes a random tier + 1 operator after the battle): cellTarget;
  *   随身身份牌 / 简易通讯机 / 寻呼模块 (act on the carrier's bonds): the operator whose bonds matter most (focus first);
  *   funds, 紧急调度券, 人事部文档 …: anyone; a bond signature item (requiresBondId): a member of that bond;
  *   other equipment: the strongest deployed damage dealers with a free slot (SURVIVAL items blockers first).
@@ -1568,10 +1652,13 @@ export function itemTarget(m, ps, item, ctx = context(m, ps)) {
         .sort((a, b) => (chessRec(m, b.id)?.tier || 0) - (chessRec(m, a.id)?.tier || 0) || a.uid - b.uid);
       return pair[0] || owned.slice().sort((a, b) => rel(b) - rel(a) || val(b) - val(a) || a.uid - b.uid)[0] || null;
     }
+    // 博士投影: the normal one promotes at the next round start, the golden one (缪尔赛思's R1 item, item merges) at once;
+    // both refuse an elite (builtinMeta: BAD_TARGET 'already elite')
     case 'equip_round_start_upgrade_char':
+    case 'use_equip_upgrade_char':
       return byVal(deployed.filter(normal))[0] || byVal(owned.filter(normal))[0] || null;
     case 'char_chess_transformation_equip':
-      return byVal(deployed.filter((p) => normal(p) && (chessRec(m, p.id)?.tier || 6) < 6 && (p.items || []).length < gd.equipPerChess), 1)[0] || null;
+      return cellTarget(m, ps, ctx);
     case 'use_equip_reward_char_chess_bond_layer':
     case 'use_equip_reward_char_chess_with_same_bond':
     case 'use_equip_reward_special_goods_char_chess':
@@ -1596,10 +1683,14 @@ export function itemTarget(m, ps, item, ctx = context(m, ps)) {
   return order.find(free) || null;
 }
 
+/** 教鞭 / “神秘顾客”: an Art that adds a bounty to the own next battle (trap_create_self_choice). */
+const isBountyArt = (gd, itemId) => { const rec = gd.item(itemId); return !!rec && Array.isArray(rec.buffs) && rec.buffs.some((b) => b && b.key === 'trap_create_self_choice'); };
+
 /**
  * Use an Art: 画卷 copies the operator on its tile (its range is the tile + the one in front) — the most valuable
- * deployed operator, with a free hand slot for the copy; 教鞭 / “神秘顾客” add a bounty to the next battle — only after a
- * perfect battle with LP to spare, else “神秘顾客” is destroyed for its funds (it passes to a teammate) and 教鞭 dropped.
+ * deployed operator, with a free hand slot for the copy; 教鞭 / “神秘顾客” add a bounty to the next battle (one the engine
+ * draws, not chosen) — only after a perfect battle with LP to spare, else the Art stays in the hand for a later round
+ * (destroying 教鞭 gives nothing; a full hand at the prep end: freeHandSlot).
  */
 function useArt(m, ps, item, ctx) {
   const rec = m.gd.item(item.id);
@@ -1613,12 +1704,9 @@ function useArt(m, ps, item, ctx) {
     return;
   }
   if (keys.includes('trap_create_self_choice')) {
-    if (lastPerfect(m, ps) && ps.lp >= 10) {
-      const [key] = [...ps.board.keys()];
-      if (key) { const [r, c] = parseKey(key); tryDo(() => ps.useArt(item.uid, r, c)); }
-    } else {
-      tryDo(() => ps.destroy(item.uid));
-    }
+    if (!lastPerfect(m, ps) || ps.lp < 10) return; // kept
+    const [key] = [...ps.board.keys()];
+    if (key) { const [r, c] = parseKey(key); tryDo(() => ps.useArt(item.uid, r, c)); }
     return;
   }
   const [key] = [...ps.board.keys()];

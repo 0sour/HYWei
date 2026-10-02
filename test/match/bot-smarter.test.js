@@ -1,13 +1,15 @@
 // AI player after the 0.1.0 player feedback (#10 "目前的人机有点太笨了", server/match/bot.js): bounty picks against the
-// own board, item carriers by what the item does, a tactician's 援军 inside its attack range, pairs completed through
-// the shop freeze, and a cost guard on the prep heuristics. The outcome numbers (old vs new bot on the same seeds) are
-// measured with tools/botbench.mjs (docs/META.md §1.5).
+// own board, item carriers by what the item does (both 博士投影, 突变细胞 never on an elite or a pair member), bounty
+// Arts kept rather than destroyed (never on a human's seat under AI 托管), a tactician's 援军 inside its attack range,
+// pairs completed through the shop freeze, 坎诺特's banked funds, a teammate's bond read from its bond strip, and a
+// cost guard on the prep heuristics. The outcome numbers (old vs new bot on the same seeds) are measured with
+// tools/botbench.mjs (docs/META.md §1.5).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PHASE } from '../../shared/constants.js';
-import { botPickCard, bountyKillChance, itemTarget, arrange, botPrepBegin, rangeTiles } from '../../server/match/bot.js';
-import { parseKey } from '../../server/match/board.js';
-import { makeMatch, checkInvariants, give, giveItem, DATA } from './harness.js';
+import { botPickCard, bountyKillChance, itemTarget, arrange, botPrepBegin, botPrepEnd, bondPlan, rangeTiles } from '../../server/match/bot.js';
+import { parseKey, tileKey } from '../../server/match/board.js';
+import { makeMatch, checkInvariants, give, giveItem, legalTileFor, DATA } from './harness.js';
 
 const soloBot = (o = {}) => makeMatch({ mode: 'solo', difficulty: 'NORMAL', seats: [{ seat: 0, playerId: 'ai_0', name: 'AI', isBot: true, connected: true }], ...o });
 
@@ -39,7 +41,7 @@ test('bounty pick: the card the own board can beat, never one it cannot (even wh
   m.dispose();
 });
 
-test('bounty pick in real drafts (绝境 R3 悬赏决策): never a card the board cannot beat while a beatable one is offered', () => {
+test('bounty pick in real drafts (绝境 R3 悬赏决策): a card the board likely beats (p ≥ 0.5) whenever a near-sure one (p ≥ 0.9) is offered', () => {
   let drafts = 0;
   for (const seed of [1, 2, 3, 4]) {
     const h = soloBot({ seed, difficulty: 'HARD', fake: true }).start();
@@ -65,7 +67,7 @@ test('bounty pick in real drafts (绝境 R3 悬赏决策): never a card the boar
   assert.ok(drafts >= 4, `${drafts} bounty drafts seen`);
 });
 
-test('items: 信标 never on the lineup when a bench single can take it; 博士投影 on a normal deployed operator; 突变细胞 on the weakest one below VI; 拟态物质 on a pair', () => {
+test('items: 信标 on a bench single; both 博士投影 on a normal operator even when an elite is the best one; 突变细胞 never on an elite or a pair member; 拟态物质 on a pair', () => {
   const h = soloBot({ seed: 6 }).start();
   const m = h.m;
   const ps = m.order[0];
@@ -78,6 +80,12 @@ test('items: 信标 never on the lineup when a bench single can take it; 博士�
   const fresh = (tier) => Object.values(DATA.chess).find((c) => c.visible && !c.isGolden && c.tier === tier && m.pool.left(c.chessId) >= 3 && !owned.has(c.chessId)).chessId;
   for (const p of ps.hand) if (p && p.kind === 'chess') ps.returnCopies(p);
   ps.hand.fill(null);
+  // the highest-tier deployed operator becomes an elite: the most valuable piece on the board
+  const [topKey, top] = [...ps.board.entries()].filter(([, p]) => p.kind === 'chess' && !m.gd.isGolden(p.id))
+    .sort((a, b) => m.gd.chess(b[1].id).tier - m.gd.chess(a[1].id).tier || a[1].uid - b[1].uid)[0];
+  ps.returnCopies(top);
+  ps.board.delete(topKey);
+  const elite = give(m, ps, m.gd.goldenIdOf(top.id), 'board', parseKey(topKey));
   const single = give(m, ps, fresh(4), 'hand');
   const pairId = fresh(1);
   const pairA = give(m, ps, pairId, 'hand');
@@ -86,17 +94,74 @@ test('items: 信标 never on the lineup when a bench single can take it; 博士�
   // 信标 (destroys its carrier for a pick of two of its tier)
   const beacon = itemTarget(m, ps, giveItem(m, ps, 'chess_item_5_04_e_a'));
   assert.equal(beacon && beacon.uid, single.uid, '信标 on the bench single');
-  // 博士投影 (promotion): a normal operator on the board
-  const promo = itemTarget(m, ps, giveItem(m, ps, 'chess_item_5_06_e_a'));
-  assert.ok(promo && deployed().includes(promo) && !m.gd.isGolden(promo.id), '博士投影 on a normal deployed operator');
-  // 突变细胞 (becomes a random tier + 1 operator after the battle): deployed, normal, below VI, not the strongest
+  // 博士投影 (promotion; the golden one at once — 缪尔赛思's R1 item): a normal operator on the board, never the elite
+  for (const id of ['chess_item_5_06_e_a', 'chess_item_5_06_e_b']) {
+    const promo = itemTarget(m, ps, giveItem(m, ps, id));
+    assert.ok(promo && deployed().includes(promo) && !m.gd.isGolden(promo.id), `${id} on a normal deployed operator`);
+    assert.notEqual(promo.uid, elite.uid);
+  }
+  // 突变细胞 (becomes a random tier + 1 operator after the battle): normal, below VI, never one of the pair (the least
+  // valuable pieces here) or the elite
   const cell = itemTarget(m, ps, giveItem(m, ps, 'chess_item_5_08_e_a'));
-  assert.ok(cell && deployed().includes(cell) && !m.gd.isGolden(cell.id) && tierOf(cell) < 6, '突变细胞 on a normal deployed operator below VI');
-  assert.notEqual(cell.uid, promo.uid, 'the promotion target (the strongest) is not the one mutated');
+  assert.ok(cell && !m.gd.isGolden(cell.id) && tierOf(cell) < 6, '突变细胞 on a normal operator below VI');
+  assert.ok(![pairA.uid, pairB.uid].includes(cell.uid), '…never one of a merge pair');
   // 拟态物质 (a third copy when two are owned): the pair
   const mimic = itemTarget(m, ps, giveItem(m, ps, 'chess_item_5_05_e_a'));
   assert.ok(mimic && [pairA.uid, pairB.uid].includes(mimic.uid), '拟态物质 on the pair');
   m.dispose();
+});
+
+test('bounty Arts (教鞭): kept after a battle with leaks, used after a perfect one; a full hand drops it on a bot\'s seat, never on a human\'s seat under AI 托管', () => {
+  const WHIP = 'chess_item_6_03_m';
+  const owns = (ps, id) => [...ps.hand, ...ps.temp].some((p) => p && p.id === id);
+  const leaky = { killed: 5, total: 6, leaked: [{ counted: true }], perfect: false };
+  const clean = { killed: 6, total: 6, leaked: [], perfect: true };
+  {
+    const h = soloBot({ seed: 4 }).start();
+    const m = h.m;
+    const ps = m.order[0];
+    h.run(() => m.phase === PHASE.PREP && m.round === 1);
+    ps.lp = 999;
+    h.run(() => m.phase === PHASE.PREP && m.round === 3);
+    m.lastResults.set(ps.playerId, leaky);
+    giveItem(m, ps, WHIP);
+    h.run(() => m.phase === PHASE.COMBAT && m.round === 3);
+    assert.ok(owns(ps, WHIP), 'kept after a battle with leaks (not destroyed)');
+    h.run(() => m.phase === PHASE.PREP && m.round === 4);
+    m.lastResults.set(ps.playerId, clean);
+    const bounties = ps.bounties.length;
+    h.run(() => m.phase === PHASE.COMBAT && m.round === 4);
+    assert.ok(!owns(ps, WHIP) && ps.bounties.length > bounties, 'used after a perfect battle');
+    assert.equal(m.errorCount, 0);
+    m.dispose();
+  }
+  for (const human of [false, true]) {
+    const seat = human ? { seat: 0, playerId: 'p_0', name: 'P', isBot: false, connected: true } : { seat: 0, playerId: 'ai_0', name: 'AI', isBot: true, connected: true };
+    const h = makeMatch({ mode: 'solo', difficulty: 'NORMAL', seats: [seat], seed: 4 }).start();
+    const m = h.m;
+    const ps = m.order[0];
+    if (human) assert.ok(m.setAutoplay(ps, true).ok, 'AI 托管 on');
+    h.run(() => m.phase === PHASE.PREP && m.round === 1);
+    ps.lp = 999;
+    h.run(() => m.phase === PHASE.PREP && m.round === 3);
+    m.lastResults.set(ps.playerId, leaky);
+    // a full hand at the prep end with the 教鞭 in it
+    const owned = new Set(ps.allChess().map((p) => m.gd.baseIdOf(p.id)));
+    const fillers = Object.values(DATA.chess).filter((c) => c.visible && !c.isGolden && c.tier === 1 && m.pool.left(c.chessId) >= 1 && !owned.has(c.chessId));
+    giveItem(m, ps, WHIP);
+    for (let i = 0; ps.hand.some((x) => x == null); i++) give(m, ps, fillers[i].chessId, 'hand');
+    const chessBefore = ps.allChess().length;
+    botPrepEnd(m, ps);
+    assert.ok(ps.hand.some((x) => x == null), 'a hand slot is free');
+    if (human) {
+      assert.ok(owns(ps, WHIP), 'a human\'s 教鞭 is never destroyed by AI 托管');
+      assert.equal(ps.allChess().length, chessBefore - 1, 'a bench chess was sold instead');
+    } else {
+      assert.ok(!owns(ps, WHIP), 'the bot drops its kept 教鞭 for the slot');
+      assert.equal(ps.allChess().length, chessBefore, 'no chess sold');
+    }
+    m.dispose();
+  }
 });
 
 test('a tactician\'s 援军 (伺夜\'s 狼群) is placed on a tactical point inside the tactician\'s attack range', () => {
@@ -155,6 +220,60 @@ test('economy: a held pair is completed — bought when affordable, else the sho
   m.dispose();
 });
 
+test('坎诺特 (利滚利: leftover funds are kept, +1 at ≥ 5): with a full board the bot banks its interest capital instead of refreshing it away', () => {
+  let checked = 0;
+  for (const seed of [5, 7, 9]) {
+    const h = soloBot({ seed }).start();
+    const m = h.m;
+    const ps = m.order[0];
+    h.run(() => m.phase === PHASE.PREP && m.round === 1);
+    ps.lp = 999;
+    h.run(() => m.phase === PHASE.PREP && m.round === 7);
+    ps.bandId = 'band_cannot';
+    assert.ok(m.gd.leftoverKeptBands.includes(ps.bandId));
+    ps.funds = 14;
+    const merges = ps.stats.merges;
+    h.run(() => m.phase === PHASE.COMBAT && m.round === 7);
+    // (a merge may spend the reserve; the level-up on the curve is paid for first and leaves enough here)
+    if (ps.stats.merges === merges) {
+      checked++;
+      assert.ok(ps.funds >= 5, `seed ${seed}: ${ps.funds} funds banked`);
+    }
+    m.dispose();
+  }
+  assert.ok(checked >= 2, `${checked} preps without a merge`);
+});
+
+test('bond plan: a teammate\'s main core bond (its bond strip — a human\'s too) counts against the bot\'s focus (the shop pool is shared)', () => {
+  const SARGON = ['chess_char_1_12_a', 'chess_char_2_06_a', 'chess_char_2_08_a'];
+  const KAZIMIERZ = ['chess_char_1_19_a', 'chess_char_2_12_a', 'chess_char_2_18_a'];
+  const focusWhenMateBuilds = (mateIds) => {
+    const seats = [{ seat: 0, playerId: 'p_0', name: 'P', isBot: false, connected: true }, { seat: 1, playerId: 'ai_0', name: 'AI', isBot: true, connected: true }];
+    const h = makeMatch({ mode: 'coop', difficulty: 'NORMAL', seats, seed: 3 }).start();
+    const m = h.m;
+    const [human, ai] = m.order;
+    h.run(() => m.phase === PHASE.PREP && m.round === 2);
+    for (const ps of [human, ai]) {
+      for (const p of ps.allChess()) ps.returnCopies(p);
+      ps.board.clear();
+      ps.hand.fill(null);
+      ps.temp.fill(null);
+      ps.layers = {};
+    }
+    for (const id of [SARGON[0], SARGON[1], KAZIMIERZ[0], KAZIMIERZ[1]]) give(m, ai, id, 'hand');
+    for (const id of mateIds) give(m, human, id, 'board', legalTileFor(m, human, id));
+    human.recompute();
+    ai.recompute();
+    ai._botFocus = null;
+    ai._botFocusId = null;
+    const { focus } = bondPlan(m, ai);
+    m.dispose();
+    return focus;
+  };
+  assert.equal(focusWhenMateBuilds(SARGON), 'kazimierzShip', 'the human builds 萨尔贡: the bot takes 卡西米尔');
+  assert.equal(focusWhenMateBuilds(KAZIMIERZ), 'sargonShip', 'the human builds 卡西米尔: the bot takes 萨尔贡');
+});
+
 test('cost guard: the prep heuristics of a late-round 4-bot match stay cheap (rehearsal off)', () => {
   const seats = [0, 1, 2, 3].map((i) => ({ seat: i, playerId: `ai_${i}`, name: `AI${i}`, isBot: true, connected: true }));
   const h = makeMatch({ mode: 'coop', difficulty: 'NORMAL', seats, seed: 13, fake: true }).start();
@@ -170,8 +289,8 @@ test('cost guard: the prep heuristics of a late-round 4-bot match stay cheap (re
     const u = process.cpuUsage(u0);
     worst = Math.max(worst, (u.user + u.system) / 1000);
   }
-  // ≈ 10–40 ms on a quiet desktop (tools/botbench.mjs); the bound only catches an accidental blow-up
-  assert.ok(worst < 1500, `worst bot prep ${worst.toFixed(1)} ms of CPU`);
+  // 7–35 ms of CPU per bot prep R6–R13 (seeds 13–15); ≈ 10× headroom for a loaded host
+  assert.ok(worst < 300, `worst bot prep ${worst.toFixed(1)} ms of CPU`);
   assert.equal(m.errorCount, 0);
   m.dispose();
 });
