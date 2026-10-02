@@ -2190,18 +2190,19 @@ const KITS = {
       else battle.removeBuff(unit, 'mlynar:traitUp');
     };
     /**
-     * "仅自身普通攻击（与该次攻击附带的伤害）击倒非角色类单位" (PRTS S2 / S3 备注): `onKill(victim)` for each enemy whose
-     * last damage from him came from his attack or the mark that attack set off (tagged 'mlynarOwn') while his skill
-     * runs; `onAttack()` after each of his attacks ("加成降低于当次攻击后统一结算").
+     * "仅自身普通攻击（与该次攻击附带的伤害）击倒非角色类单位" (PRTS S2 / S3 备注): `onKill(victim)` for each enemy he
+     * knocks out, while his skill runs, that his current attack hit (or the mark it set off, tagged 'mlynarOwn') — so a
+     * kill by the damage that attack carries (天马之枪, the 卡西米尔 bond's true damage, the mark) counts too, in any
+     * hook order; `onAttack()` after each of his attacks ("加成降低于当次攻击后统一结算"), which also closes the set.
+     * 无动于衷's reflection and a mark another operator's attack set off happen outside his attack: never counted.
      */
     const ownKills = (battle, unit, onKill, onAttack = null) => {
-      let last = null;
+      const hit = new Set();
       battle.on('damaged', (c) => {
-        if (c.source !== unit) return;
-        last = c.dmg?.isAttack || (c.dmg?.tags || []).includes('mlynarOwn') ? c.target : null;
+        if (c.source === unit && (c.dmg?.isAttack || (c.dmg?.tags || []).includes('mlynarOwn'))) hit.add(c.target);
       }, { owner: unit, priority: 1000 });
-      battle.on('kill', (c) => { if (c.killer === unit && c.victim === last && c.victim.side === 'enemy' && unit.skill?.active) onKill(c.victim); }, { owner: unit });
-      battle.on('attack', (c) => { if (c.attacker !== unit) return; last = null; if (onAttack) onAttack(); }, { owner: unit });
+      battle.on('kill', (c) => { if (c.killer === unit && hit.has(c.victim) && c.victim.side === 'enemy' && unit.skill?.active) onKill(c.victim); }, { owner: unit });
+      battle.on('attack', (c) => { if (c.attacker !== unit) return; hit.clear(); if (onAttack) onAttack(); }, { owner: unit });
     };
     return {
       skills: lazySkills({

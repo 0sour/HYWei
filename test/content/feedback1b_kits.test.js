@@ -213,3 +213,61 @@ test('B4 玛恩纳 S3 per-kill rule (PRTS 备注): trait ATK bonus −10 % per k
   assert.deepEqual(h.b.errors.map((e) => `${e.label}: ${e.message}`), []);
   checkInvariants(h.b);
 });
+
+test('B4 玛恩纳: a kill by the damage his attack carries (卡西米尔 bond true damage, 天马之枪) is a kill of his own attack — S2 keeps the ramp, S3 lowers the bonus', () => {
+  const weak = (key) => enemyRec({ key, hp: 1, def: 0, speed: 0, atk: 0 });
+  const KAZ6 = { kazimierzShip: { count: 6, active: true, tier: 2, layers: 0 } };
+  const PEGASUS = ['chess_item_5_09_e_a', 'chess_item_6_01_e_a']; // 天马之盔 + 天马之枪: every damage instance + 30 % ATK true
+  for (const [label, items, bonds, carried] of [['卡西米尔 6', [], KAZ6, 'bond:kazimierz'], ['天马之盔 + 天马之枪', PEGASUS, {}, 'item:pegasus']]) {
+    const setup = (skillIndex) => {
+      const h = makeBattle({
+        defs: { enemies: { enemy_weak: weak('enemy_weak') } },
+        units: [{ chessId: MLYNAR, row: 10, col: 4, dir: 'RIGHT', items, skillIndex }], bonds, autoFinish: false, timeLimit: 200,
+      });
+      const u = h.unit(MLYNAR);
+      // which damage instance of his knocked each victim out (the last one he dealt it before the kill)
+      const lastTags = new Map(), killedBy = [];
+      h.b.on('damaged', (c) => { if (c.source === u) lastTags.set(c.target, c.dmg?.tags || []); });
+      h.b.on('kill', (c) => { if (c.killer === u) killedBy.push(lastTags.get(c.victim) || []); });
+      return { h, u, killedBy };
+    };
+    // S2 未宽解的悲哀: "技能期间若击倒敌人，技能结束时特性效果不重置"
+    {
+      const { h, u, killedBy } = setup(1);
+      assert.equal(u.def.skill.id, 'skchr_mlynar_2');
+      h.run(20.5);
+      const ramp = u.trait.ramp;
+      approx(ramp, 1, 1e-9, `${label}: ramp after 20 s`);
+      h.spawn('enemy_weak', { pos: [10, 5] });
+      u.skill.gainSp(1000);
+      assert.ok(h.runUntil(() => u.skill.active, 2));
+      assert.ok(h.runUntil(() => !u.skill.active, 40));
+      h.step();
+      assert.equal(killedBy.length, 1, `${label}: S2 knocked the enemy out`);
+      assert.ok(killedBy[0].includes(carried), `${label}: the carried damage landed the kill (${killedBy[0]})`);
+      approx(u.trait.ramp, ramp, 1e-9, `${label}: S2 kill of his attack keeps the ramp`);
+    }
+    // S3 未照耀的荣光: −10 % trait bonus per own kill
+    {
+      const { h, u, killedBy } = setup(2);
+      assert.equal(u.def.skill.id, 'skchr_mlynar_3');
+      const bb = u.def.skill.bb;
+      h.run(10.5);
+      const ramp = u.trait.ramp;
+      for (const p of [[10, 5], [10, 6], [10, 7], [11, 5], [9, 5]]) h.spawn('enemy_weak', { pos: p });
+      const bonus = () => u.s.atk / u.base.atk - 1;
+      let atCast = null;
+      h.b.on('skillStart', (c) => { if (c.unit === u) atCast = bonus(); }, { priority: -1000 });
+      u.skill.gainSp(1000);
+      assert.ok(h.runUntil(() => u.skill.active, 2));
+      assert.ok(h.runUntil(() => killedBy.length >= 5, 3), `${label}: S3 knocks the 5 enemies out`);
+      h.step();
+      // the carried damage (or the S3 mark his attack set off, whichever hook runs first) landed the kills
+      assert.ok(killedBy.every((t) => t.includes(carried) || t.includes('mlynarOwn')), `${label}: carried damage landed the kills`);
+      assert.ok(killedBy.some((t) => t.includes(carried)) || carried === 'bond:kazimierz', `${label}: some kill by ${carried}`);
+      assert.equal(u.mem.mlyKills, 5, `${label}: 5 own kills`);
+      approx(bonus() - atCast, 5 * bb.per_kill_reduce, 1e-9, `${label}: 5 kills: −50 points (ramp ${ramp})`);
+      assert.deepEqual(h.b.errors.map((e) => `${e.label}: ${e.message}`), []);
+    }
+  }
+});
