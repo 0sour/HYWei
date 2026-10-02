@@ -618,7 +618,8 @@ const refraction = (res, hpPct = 0) => ({
  * splash, ground traps and terrain skip it; ranged attacks hit it) with 失衡免疫 (`noDisplace`, "初始模式：近地悬浮，失衡
  * 免疫" on the enemies' PRTS pages) — its `motion` stays WALK, so it keeps the ground path (and 浮空 can still lift it:
  * Battle.applyStatus refuses data flyers only). Losing the float is each
- * enemy's own ability (PRTS; 缚地 "使部分近地悬浮敌人掉落" is "实为敌人自身的能力"): kitSyufo, kitParrot.
+ * enemy's own ability (PRTS; 缚地 "使部分近地悬浮敌人掉落" is "实为敌人自身的能力"): kitSyufo, kitParrot. 喷气人's 飞行模式 is
+ * the same state for 7 s (its 'ab:takeoff' buff carries the flags; kitLeaderMisc).
  */
 const FLOAT_KEY = 'ab:float';
 const setFloat = (b, e, on) => {
@@ -1721,9 +1722,12 @@ function kitLeaderMisc(key, ab, e) {
       }, { cond: (b, e2) => cands(b, e2).length > 0 })];
     }
     case 'enemy_2004_balloon': {
+      // 喷气人 · 升空 when blocked → 飞行模式 for `duration` s: PRTS 喷气人 "近地悬浮，不可阻挡，失衡免疫，移动速度+50%，不进行
+      // 攻击" — an air unit meanwhile (flag `float`: melee cannot hit it; it keeps the ground path, as setFloat), never
+      // displaced. [ASSUMED] not modelled: the −90 % move speed for 1.5 s after take-off and 1.333 s after landing.
       const s = ab.sk.TakeOff;
       return [skill(s, (b, e2) => {
-        b.addBuff(e2, { key: 'ab:takeoff', duration: s.bb.duration ?? 0, flags: { unblockable: true }, mods: { moveMul: 1 + (s.bb['balloon_s[fly].move_speed'] ?? 0) }, visible: true });
+        b.addBuff(e2, { key: 'ab:takeoff', duration: s.bb.duration ?? 0, flags: { unblockable: true, float: true, noDisplace: true }, mods: { moveMul: 1 + (s.bb['balloon_s[fly].move_speed'] ?? 0) }, visible: true });
         b.fx('telegraph', { x: e2.x, y: e2.y, r: 0.5, kind: 'takeoff', id: e2.id });
       }, { cond: (b, e2) => !!e2.blockedBy })];
     }

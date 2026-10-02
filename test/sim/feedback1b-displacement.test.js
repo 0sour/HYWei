@@ -9,6 +9,7 @@
 //     enemies.json `staticBody` (tools/build-data.mjs STATIC_BODIES) → Battle._displaceable: 0 tiles from every source.
 //   - the skills keep their reach: 薄绿 (阵法术师 "攻击时可对空"), 锏 S3 ("※可对空"), the 钩索师 … still hit the drones.
 //   - 刺胄之弹 / “斩胄之剑” / “破胄之锤” are also 失衡免疫 (PRTS 天赋 "{{特殊机制|静态刚体}}，…失衡免疫…").
+//   - 喷气人's 飞行模式 (PRTS 喷气人 "近地悬浮，不可阻挡，失衡免疫，移动速度+50%，不进行攻击") hovers like the two 近地悬浮 enemies.
 // Unchanged: ground enemies keep the 力度 − 重量 tables (DESIGN §20.3); the hovering 吉兆飞鳞 / 掠海漂移体 are 失衡免疫 while they
 // hover and displaceable once grounded (no 静态刚体 on their pages). [ASSUMED] the 0.1 s 失衡硬直 of a 静态刚体 is not modelled.
 
@@ -30,7 +31,7 @@ const AGENT = 'enemy_1046_agent';        // 步兵: ground, weight 1
 const PARROT = 'enemy_10045_parrot';     // 吉兆飞鳞: 近地悬浮, weight 0
 const SYUFO = 'enemy_2025_syufo';        // 掠海漂移体: 近地悬浮, weight 4
 const SHELL = 'enemy_9016_acstmr';       // 刺胄之弹: FLY, weight 2, 静态刚体 + 失衡免疫
-const BALLOON = 'enemy_2004_balloon';    // 喷气人: ground, weight 3
+const BALLOON = 'enemy_2004_balloon';    // 喷气人: ground, weight 3; 飞行模式 = 近地悬浮 + 失衡免疫
 const LOON = 'enemy_9012_acloon';        // “炎佑”: FLY, weight 10, no 静态刚体 on PRTS
 // synthetic bodies: the rule is the rigidbody, not the movement ("是否为静态刚体与单位的行动方式无关")
 const DYN_FLY = 'enemy_test_dynfly';     // a FLY body that is not static (none in this mode but “炎佑”)
@@ -353,3 +354,24 @@ test('B5: 刺胄之弹 / 斩胄之剑 / 破胄之锤 are 静态刚体 + 失衡�
   }
 });
 
+test('喷气人 飞行模式 = 近地悬浮 + 不可阻挡 + 失衡免疫 (PRTS 喷气人): an air unit nothing moves; on the ground again afterwards', REAL, () => {
+  const ds = getDefaultSource();
+  const s = ds.rawEnemy(BALLOON).skills.find((k) => k.prefabKey === 'TakeOff');
+  const wall = chessRec({ id: 't_wall', profession: 'TANK', stats: { atk: 0, maxHp: 1e7, blockCnt: 3 }, rangeGrid: [[0, 0]], skill: null });
+  const h = makeBattle({
+    defs: { chess: { t_wall: wall } }, kits: { t_wall: () => ({ trait: { noAttack: true } }) },
+    units: [{ chessId: 't_wall', row: 9, col: 5 }], autoFinish: false, timeLimit: 60,
+  });
+  h.step();
+  const e = h.spawn(BALLOON, { pos: [9, 5], routeIndex: 0, mods: { speedMul: 0, atkMul: 0 } });
+  assert.ok(h.runUntil(() => !!e.findBuff('ab:takeoff'), s.initCooldown + 1), 'takes off when blocked');
+  h.step();
+  assert.ok(e.isFlying && e.s.flags.unblockable && e.s.flags.noDisplace && !e.blockedBy, '近地悬浮, 不可阻挡, 失衡免疫');
+  assert.equal(e.motion, 'WALK', 'keeps the ground path');
+  // 较大力 (2) − weight 3 = −1 would move a ground 喷气人 35 % of the way
+  assert.equal(h.b.pull(e, 2, { to: { x: 9, y: 9 }, stop: 0 }), 0, 'not pulled');
+  assert.equal(h.b.push(e, 3, { from: { x: 3, y: 9 } }), 0, 'not pushed');
+  h.run(s.bb.duration + 0.2);
+  assert.ok(!e.findBuff('ab:takeoff') && !e.isFlying && !e.s.flags.noDisplace, 'landed: a ground unit');
+  approx(h.b.push(e, 3, { from: { x: 3, y: 9 } }), PUSH_TILES[0], 1e-9, '大力 − 3 = 0 → 1.7 tiles');
+});
