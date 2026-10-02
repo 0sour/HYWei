@@ -2,10 +2,11 @@
 //
 // b.snap  = { fieldId, t, units: [[id, x, y, hp, maxHp, sp, spMax, flags, anim]], dp, killed, total }
 // UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?,
-//   form?, skillIndex?, moduleId? }  (form = an enemy's current model form, content/enemies.js setForm — 掠海漂移体 'crawl',
-//   暴鸰 'bombed', 转译基底·α's forms …: a view built after the change, a field opened mid-battle, draws it — render/units.js
-//   FORMS)
+//   form?, skillIndex?, moduleId?, items? }  (form = an enemy's current model form, content/enemies.js setForm — 掠海漂移体
+//   'crawl', 暴鸰 'bombed', 转译基底·α's forms …: a view built after the change, a field opened mid-battle, draws it —
+//   render/units.js FORMS)
 //   dir = 'UP'|'RIGHT'|'DOWN'|'LEFT' (allies: the deploy direction, sim/dir.js); facing = its horizontal sign (±1).
+//   items = an ally operator's equipped item ids (absent without any).
 // flags bits & anim codes come from shared/constants.js (UF / ANIM); an enemy's stealth bit = its 隐匿 is on (not while it
 // is blocked or revealed), an ally's = 隐匿 / 迷彩 whatever it blocks.
 
@@ -45,6 +46,9 @@ export function unitInfo(u) {
     // DESIGN §16: an elite ally's equipped module (uniEquipId | 'none'; display only — a teammate's unit in a shared
     // field shows its owner's module in the detail card)
     moduleId: u.side === 'ally' && d.golden && typeof d.loadout?.moduleId === 'string' ? d.loadout.moduleId : undefined,
+    // an ally operator's equipped item ids (display: a 变形同构体 wearer counts for the bond it grants — the bond popup's
+    // member list and the detail card's bond chips of a teammate's unit)
+    items: u.side === 'ally' && u.kind === 'op' && Array.isArray(u.items) && u.items.length ? [...u.items] : undefined,
   };
 }
 
