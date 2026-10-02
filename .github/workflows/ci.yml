@@ -61,7 +61,10 @@ jobs:
           done
           echo
           [ -n "$ok" ] || { cat server.log; exit 1; }
-          curl -fsS http://127.0.0.1:3000/ | grep -qi '<html'
+          # Save the page first: piping curl into `grep -q` let grep exit on the first match, curl then failed with a
+          # write error (23) and pipefail turned that into a flaky red step.
+          curl -fsS -o index.out http://127.0.0.1:3000/
+          grep -qi '<html' index.out
           curl -fsS -o /dev/null http://127.0.0.1:3000/vendor/pixi.min.js
           node tools/doctor.mjs || true
           kill $pid || true
