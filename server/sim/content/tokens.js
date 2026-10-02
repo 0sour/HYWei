@@ -31,7 +31,8 @@
 //                 after duration_switch s on the field) and sluggish; the bomb is used up ('expired', never a knock-out;
 //                 its blast fx carries `consumed: true` so clients play the explosion, not a death sound)
 //   从不混淆的方向 untargetable marker; when the owner's skill ends it vanishes and the owner returns to its tile
-//   黄金盟誓      attacks deal true damage (trait); lasts while the owner's skill runs
+//   黄金盟誓      attacks deal true damage (trait); lasts while the owner's skill runs; 维娜 S3 places one on every
+//                 free deployable tile around her (kits/tier6.js) — no per-owner deploy limit (SKILL_SUMMON_UNCAPPED)
 //   防护单元      untargetable, invulnerable device placed by the player (a hand piece, user playtest #6): shield =
 //                 凯瑟琳 max HP × max_shield_ratio on the operator in its range (range 1-1: the tile it faces; effects do
 //                 not stack — `cathy:shield`, read by 凯瑟琳 S1 岁月锻打), in full whenever it takes a new operator,
@@ -41,7 +42,8 @@
 //   炎佑 (enemy_9012_acloon)  flying ally: flies after the highest-aggro enemy of the field and hovers over it, stays
 //                 put when there is none; 3-target arts + burn on every hit, 元素脆弱 aura, 祛恶之焰 channel (yanyouKit)
 //   预备干员-医疗 / Touch (band map characters)  generic kit / 恳切福音 kit
-// Common rules: deploy limit per owner for tokens running these kits (data `deployLimit`; the oldest is withdrawn),
+// Common rules: deploy limit per owner for tokens running these kits (data `deployLimit`; the oldest is withdrawn —
+// except SKILL_SUMMON_UNCAPPED, whose data limit is the hand count the skill does not obey),
 // `summonKill` hook ({ token, owner, victim }) whenever a token kills, lifetimes never outlive a shorter
 // `opts.duration`; summon tiles skip `battle.isReservedTile` (home tiles of pieces not deployed yet).
 // Managed mode: when the summoner runs a hand-authored kit (content/kits), the owner-coupled parts of its summon
@@ -1395,8 +1397,17 @@ const SKILL_SUMMONS = Object.freeze({
   [TOKEN_IDS.radiantSword]: 'plus',
   [TOKEN_IDS.rosmonGear]: 'melee',
 });
-/** Pieces per cast of the skill summons placed several at a time (skill description; default 1). */
-const SKILL_SUMMON_PER_CAST = Object.freeze({ [TOKEN_IDS.rosmonGear]: 2 });
+/**
+ * Pieces per cast of the skill summons placed several at a time (skill description; default 1). 黄金盟誓: "立即在天赋
+ * 一生效范围内可部署地面召唤" — every free tile of the 8 around 维娜 (EN client "Summons Golden Vows on deployable tiles
+ * within Talent 1's range"; player report B3 after 0.1.0).
+ */
+const SKILL_SUMMON_PER_CAST = Object.freeze({ [TOKEN_IDS.rosmonGear]: 2, [TOKEN_IDS.goldenOath]: 8 });
+/**
+ * Skill summons the per-owner deploy limit does not apply to: the data `deployLimit` (character_table phase maxDeployCount 1)
+ * of 黄金盟誓 is a hand count, while 维娜 S3 summons one on every free deployable tile of her talent-1 area at once.
+ */
+const SKILL_SUMMON_UNCAPPED = new Set([TOKEN_IDS.goldenOath]);
 /** Tactician talent tokens that replace the engine's generic 援军. */
 const TACTICIAN_TOKENS = new Set([TOKEN_IDS.wolfPack, TOKEN_IDS.manifold]);
 
@@ -1462,7 +1473,7 @@ export function install(battle) {
   // deploy limit per owner (data deployLimit): a new summon withdraws the oldest one of the same kind
   battle.on('deploy', (ctx) => {
     const u = ctx.unit;
-    if (!u || u.kind !== 'token' || !u.ownerUnit || u.mem.isClone || !u.kit?.fromTokens) return;
+    if (!u || u.kind !== 'token' || !u.ownerUnit || u.mem.isClone || !u.kit?.fromTokens || SKILL_SUMMON_UNCAPPED.has(u.defId)) return;
     const lim = deployLimitOf(u);
     if (!(lim >= 1) || !Number.isFinite(lim)) return;
     const same = battle.allyUnits.filter((t) => t.alive && t.kind === 'token' && t.defId === u.defId && t.ownerUnit === u.ownerUnit && !t.mem.isClone && t.kit?.fromTokens);
