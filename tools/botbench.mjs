@@ -19,7 +19,8 @@
 // bot and round: LP, shop level, deployed units, active bonds and Σ bond tiers, activated layers, board value (Σ shop
 // price of the deployed chess, an elite = goldenCopies copies), elites deployed, items equipped, funds lost at the prep
 // end (leftover funds are lost, PlayerState.endPrep), leaks (bounty leaks apart) and the bounty cards taken — with the
-// bot's own kill-chance estimate when the bot has one (bot.bountyKillChance), for a calibration table.
+// bot's own kill-chance estimate when the bot has one (bot.bountyKillChance) for a calibration table, and the best
+// estimate among the draft's cards (was a likelier card on offer?).
 // Decision time: every bot prep runs in one scheduler callback in virtual time (Match.scheduleBotPrep); the tool times
 // those callbacks (Match.later on the instance; wall clock and process CPU time) and splits off the rehearsal battles'
 // stepping (Battle.step of the rehearsal fields 'r:<pid>') — "heuristics" = the prep minus the rehearsal. A 机变 pick is
@@ -124,8 +125,10 @@ function runOne(cfg, seed) {
       // the bot's own kill-chance estimate (when this bot version has one), for the calibration table
       const c0 = performance.now();
       const p = typeof bot.bountyKillChance === 'function' ? bot.bountyKillChance(m, ps, card) : null;
+      // the best estimate among the draft's bounty cards still untaken (was a likelier one on offer?)
+      const best = p == null ? null : Math.max(p, ...m.sp.cards.filter((c) => c && c.kind === 'bounty' && m.sp.taken[c.idx] == null).map((c) => bot.bountyKillChance(m, ps, c)));
       calMs += performance.now() - c0;
-      rec.bounties.push({ round: m.round, pid: ps.playerId, enemyKey: card.enemyKey, count: card.count, tier: card.tier, payout: card.payout, battles: card.rounds, p });
+      rec.bounties.push({ round: m.round, pid: ps.playerId, enemyKey: card.enemyKey, count: card.count, tier: card.tier, payout: card.payout, battles: card.rounds, p, best });
     }
     return apply(ps, idx);
   };
@@ -299,6 +302,13 @@ function compare(runs, names) {
     console.log('\n| run | bounty kill-chance estimate (bot.bountyKillChance) → share of bounty enemies actually killed, picks per bin |');
     console.log('|---|---|');
     runs.forEach((rs, i) => { if (calib[i].some((b) => b.n)) console.log(`| ${names[i]} | ${calib[i].filter((b) => b.n).map((b) => `p ${b.lo}–${Math.min(1, b.hi)}: ${(100 * (1 - b.leaked / Math.max(1, b.units))).toFixed(0)} % (${b.n})`).join(' · ')} |`); });
+    // the picks against what the draft offered (records with `best`)
+    console.log('\n| config | run | bounty picks | p < 0.5 picked while a p ≥ 0.5 card was offered | drafts with no card p ≥ 0.5 |');
+    console.log('|---|---|---|---|---|');
+    for (const c of cfgs) runs.forEach((rs, i) => {
+      const b = rs.filter((r) => r.config === c).flatMap((r) => r.bounties).filter((x) => x.best != null);
+      if (b.length) console.log(`| ${c} | ${names[i]} | ${b.length} | ${b.filter((x) => x.p < 0.5 && x.best >= 0.5).length} | ${b.filter((x) => x.best < 0.5).length} |`);
+    });
   }
   console.log('\n| config | run | bot preps | prep CPU ms p50 / p95 | heuristics CPU ms p50 / p95 | Σ prep CPU s | Σ heuristics CPU s | per match: prep CPU s |');
   console.log('|---|---|---|---|---|---|---|---|');

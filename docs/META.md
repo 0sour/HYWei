@@ -172,9 +172,11 @@ The rest of this section is the legacy server-run mode
 ### 1.5 AI player (bot.js)
 Buys toward a full board first (the cap is 8 from R1; leftover funds are lost), completes the merges it can afford,
 then levels on a curve (L2 ≈ R3, L3 ≈ R5, L4 ≈ R7, L5 ≈ R10, L6 ≈ R12 — the competent curve of docs/BALANCE.md; free
-levels always), then spends the rest. It builds around a **focus core bond** (owned members × 10 + members the shop
-can still bring at its level + banked layers + 6 for last round's focus, − 6 when a teammate already builds it: the
-pool is shared) and a **second bond** (most owned members, next threshold within reach); its keepers are the deployed
+levels always), then spends the rest (a band that keeps its leftover funds — 坎诺特 利滚利 — holds its interest capital
+of 5 back from refreshes, full-board buys that complete nothing, items and spare level-ups). It builds around a
+**focus core bond** (owned members × 10 + members the shop can still bring at its level + banked layers + 6 for last
+round's focus, − 6 when it is a teammate's main core bond on that teammate's bond strip — humans included: the pool is
+shared) and a **second bond** (most owned members, next threshold within reach); its keepers are the deployed
 operators, the focus / second members and chess of tier ≥ shop level − 1. With a full board a purchase must be merge
 progress or a lineup upgrade **and** be worth more than the refreshes its price would pay for: a refresh is worth
 Σ over the held pairs of P(the refresh shows the third copy) × the value of an elite (the shop's copy-weighted odds
@@ -186,18 +188,23 @@ share of a dealer's damage that gets through the round's DEF / RES — `mitigate
 the wave). The deployed set maximizes unit value + activated bond tiers (exact counting via `computeBonds`; every
 deployed focus member counts toward the next threshold). Items by what they do: equipment on the strongest deployed
 damage dealers (survival items on blockers first, bond signature items on a member), 信标 on a bench single (never the
-lineup when a bench single exists), 拟态物质 on a pair, 博士投影 on the strongest normal operator, 突变细胞 on the weakest
-normal one below VI, 身份牌 / 通讯机 / 寻呼模块 on a focus member; 画卷 copies the most valuable deployed operator; 教鞭 /
-“神秘顾客” are used only after a perfect battle (otherwise dropped / destroyed for funds). 机变: a bounty card is scored
-by its expected payout minus its expected leaks × the value of an LP (2 + 20 / LP), the kill chance from the exposure
-model below for that one enemy against the own board as it stands (its HP × the round's multiplier, DEF / RES, speed,
-route kind) — the bot never takes a card its board cannot beat while a beatable one is offered; tactic cards by what
+lineup when a bench single exists), 拟态物质 on a pair, 博士投影 (both qualities — neither takes an elite) on the strongest
+normal operator, 突变细胞 on the least valuable normal operator below 6阶 (deployed or benched — never an elite, never one
+of a merge pair, never one already carrying a cell), 身份牌 / 通讯机 / 寻呼模块 on a focus member; 画卷 copies the most
+valuable deployed operator; 教鞭 / “神秘顾客” are used after a perfect battle and otherwise kept in the hand — a bot drops
+a kept one only when it needs the hand slot (“神秘顾客” then pays its fund), a human's seat under AI 托管 never. 机变: a
+bounty card is scored by its expected payout minus its expected leaks × the value of an LP (2 + 20 / LP), the kill
+chance from the exposure model below for that one enemy against the own board as it stands (its HP × the round's
+multiplier, DEF / RES, speed, route kind) — an expected-value comparison: it prefers the card with the best payout
+minus expected LP loss and takes one it is unlikely to beat only when nothing better is offered or the pay difference
+is large (in co-op 绝境 most remaining bounty leaks come from drafts with no beatable card at all); tactic cards by what
 they act on (a 盟誓 / 驰援 card on its bonds, 升华, …). Placement uses the round's enemy preview: every route is traced
 over the own board (ground: the stage's device-aware ground paths; flyers: through their checkpoints) and weighted by
 its enemies; an exposure model (time on each tile × DPS against the round's armour of the units covering it, blocker
 hold time, anti-air only on flying routes) is maximized greedily (blockers, then damage dealers, then healers); a
-tactician's 援军 goes on a tile of the tactician's attack range, and a tile the server's `g.move` refuses is skipped for
-the next best one (legality is never duplicated: the planner reads `board.js legalTiles` on the deploy map). Boss
+tactician's 援军 goes on a tile of the tactician's attack range (`PlayerState.summonRange` when the server has it, else
+the owner's range grid), and a tile the server's `g.move` refuses is skipped for the next best one (the planner reads
+`board.js legalTiles` on the deploy map; `g.move` is the judge). Boss
 rounds: the player's boss-field template (`Match.bossWaves`) is mapped onto the own board (rows −7, the right player
 of a pair mirrored, only the routes that end on its half) and the leader counts as 10 tough enemies with a 30 s dwell
 on its first tiles, so the damage dealers reach stationary leaders.
