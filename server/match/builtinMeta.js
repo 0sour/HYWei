@@ -17,11 +17,13 @@
 //   use_equip_recruit_new_char_and_give_char_to_player_most_bond {refresh_cnt} 信标 destroy target, offer N same-tier
 //                                                                                chess, gift the original next prep
 //   sell_char_count_gain_equip_owner_bond {count}         商业包装方案           every `count` sells → same-bond chess
-//   char_chess_transformation_equip                       突变细胞               after battle: holder → random tier+1
+//   char_chess_transformation_equip                       突变细胞               after battle: holder → random NORMAL tier+1
+//                                                                                (max 6); its equipment, the cell included,
+//                                                                                returns to the hand (not consumed)
 //   trap_copy_front_char                                  画卷 (Art)            copy the chess on the tile / in front
 //   trap_create_self_choice {choice_event}                教鞭 / 神秘顾客 (Art)  add a random bounty to your next battle
-// [ASSUMED simplifications, documented in docs/META.md: 教鞭/神秘顾客 pick the bounty for the player instead of opening
-//  a personal choice overlay; 突变细胞 consumes itself.]
+// [ASSUMED simplification, documented in docs/META.md: 教鞭/神秘顾客 pick the bounty for the player instead of opening
+//  a personal choice overlay.]
 
 import { getData } from '../data.js';
 import { itemKey } from './gamedata.js';
@@ -175,15 +177,19 @@ const ITEM_HANDLERS = {
       }
     },
   },
+  // 突变细胞 "战斗结束后，装备者替换为高一阶的随机干员": the carrier is replaced by a random NORMAL operator one tier higher
+  // (at most 6; an elite carrier too — PRTS 卫戍协议：盟约 下半/PRTS盟约记录 备注 "生效时，原干员销毁，获得一名高一阶的随机
+  // 初始干员（最高六阶）"); the destroyed operator's equipment, the cell included, returns to the hand (the official text
+  // never says 销毁 — unlike every consumable item —, and players re-inject it every round: "之后就是一直打针，扎到核心卡
+  // …就换人扎", bilibili cv47000418; player feedback after 0.1.0). The new operator keeps the tile when legal.
   char_chess_transformation_equip: {
     onBattleResult(ctx) {
       const { piece, holder } = ctx.source;
-      if (!piece || !holder) return;
+      if (!piece || !holder || !ctx.piece(holder.uid)) return;
       const tier = Math.min(6, ctx.gd.tierOf(holder.id) + 1);
       const id = ctx.rollChess({ tier });
       if (!id) return;
-      ctx.destroyPiece(piece.uid);
-      ctx.transform(holder.uid, id);
+      ctx.transform(holder.uid, ctx.gd.baseIdOf(id), { returnItems: true });
     },
   },
   trap_copy_front_char: {

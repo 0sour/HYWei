@@ -35,7 +35,9 @@
 //      order as the one-shot functions (runSteps), hence the same rng draws and decisions.
 //      The summon cards of the placed operators (赫默's 医疗探机, 伺夜's 狼群 …; user playtest #6) are placed after
 //      them on the best remaining tiles, 凯瑟琳's 支援装置 next to the best operator no device faces yet, facing it.
-//   5. equip items on the strongest deployed damage dealers (consume-on-equip items / Arts only with a handler)
+//   5. equip items on the strongest deployed damage dealers (consume-on-equip items / Arts only with a handler);
+//      突变细胞 (it comes back after every transformation) on the least valuable single normal operator below 6阶 —
+//      never an elite or one of a merge pair (cellTarget)
 //   6. resolve the temp slots, keep one hand slot free, then Ready.
 // Placement quality (tools/matchrun sweeps, research-faithful waves): the planner beats random layouts by ≈ 8 points
 // of kill rate and rehearsal adds ≈ 5 more; see docs/META.md §1.5.
@@ -1159,6 +1161,27 @@ function* placeTokensSteps(m, ps) {
   }
 }
 
+/** 突变细胞 (buff char_chess_transformation_equip): after the battle its carrier becomes a random operator one tier higher. */
+const isMutationCell = (gd, itemId) => { const rec = gd.item(itemId); return !!(rec && Array.isArray(rec.buffs) && rec.buffs.some((b) => b && b.key === 'char_chess_transformation_equip')); };
+
+/**
+ * Whom the bot injects with 突变细胞 (after the battle the carrier is replaced by a random NORMAL operator one tier
+ * higher and the cell comes back — builtinMeta char_chess_transformation_equip): its least valuable normal operator
+ * below 6阶 with a free equip slot — never an elite or one of a merge pair (both would be lost), nobody already carrying
+ * a cell. null: the cell waits in the hand.
+ */
+export function cellTarget(m, ps, ctx = context(m, ps)) {
+  const gd = m.gd;
+  const cands = ps.allChess().filter((p) => !gd.isGolden(p.id) && gd.tierOf(p.id) < 6 && (p.items || []).length < gd.equipPerChess
+    && !(p.items || []).some((it) => isMutationCell(gd, it.id)) && ps.countCopies(gd.baseIdOf(p.id)) < 2);
+  let best = null, bv = Infinity;
+  for (const p of cands) {
+    const v = pieceValue(m, ps, p, ctx);
+    if (v < bv) { bv = v; best = p; }
+  }
+  return best;
+}
+
 function equipItems(m, ps) {
   const gd = m.gd;
   const ctx = context(m, ps);
@@ -1168,6 +1191,11 @@ function equipItems(m, ps) {
     const item = [...ps.hand, ...ps.temp].find((p) => p && p.kind === 'item' && canUseItem(m, ps, p) && !tried.has(p.uid));
     if (!item) break;
     tried.add(item.uid);
+    if (isMutationCell(gd, item.id)) {
+      const target = cellTarget(m, ps, ctx);
+      if (target) tryDo(() => ps.equip(item.uid, target.uid));
+      continue;
+    }
     const rec = gd.item(item.id);
     if (rec && rec.itemType === 'MAGIC') {
       const board = [...ps.board.entries()].filter(([, p]) => p.kind === 'chess');

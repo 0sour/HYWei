@@ -30,6 +30,11 @@
 //     the one that deploys first — board.js mergeTile, [ASSUMED]); it replaces a deployed copy, so the deploy count
 //     never grows, and it gets its own summon stack (grantTokensFor). Otherwise to the hand, overflow temp — also
 //     outside PREP (a SETTLE merge's elite waits in temp for the next prep).
+//   * Per-piece round counters (pieceRoundCount, piece.meta.round): an operator's own counts of the current round
+//     (拉普兰德: the manual refreshes she witnessed — player feedback after 0.1.0); a new piece starts at 0, an elite
+//     merged this round keeps the highest of its copies' [ASSUMED].
+//   * Transformations (transformChess, 突变细胞): the new chess keeps the tile when legal; `returnItems` sends the old
+//     piece's equipment to the hand (overflow temp) like a destroyed operator's.
 //   * Items: equip max 2 (a 3rd replaces the equipped item the player picks — g.equip replaceUid, the oldest when
 //     absent; equipped items are otherwise locked: g.destroy refuses them),
 //     2 identical normal items (hand/temp/equipped) merge into the golden item in the hand, items are never sold
@@ -353,6 +358,27 @@ export class PlayerState {
     return null;
   }
 
+  /**
+   * Per-piece counter of the current round (`piece.meta.round` = { r, n: { key: count } }): 0 for a key not counted yet
+   * this round. The counters belong to the operator: a move keeps them, a new piece (bought, granted, transformed)
+   * starts at 0, and an elite merged this round keeps the highest count of its copies (_mergeChess) — 拉普兰德's
+   * "本回合首次主动刷新" is the first manual refresh she witnesses (player feedback after 0.1.0, garrisons/meta.js).
+   */
+  pieceRoundCount(piece, key) {
+    const rc = piece && piece.meta && piece.meta.round;
+    return rc && rc.r === this.m.round && Number.isFinite(rc.n[key]) ? rc.n[key] : 0;
+  }
+
+  /** Add `n` to a piece's counter of the current round (pieceRoundCount); returns the new count. */
+  bumpPieceRoundCount(piece, key, n = 1) {
+    if (!piece || typeof key !== 'string' || !Number.isFinite(n)) return 0;
+    if (!piece.meta || typeof piece.meta !== 'object') piece.meta = {};
+    const v = this.pieceRoundCount(piece, key) + n;
+    if (!piece.meta.round || piece.meta.round.r !== this.m.round) piece.meta.round = { r: this.m.round, n: {} };
+    piece.meta.round.n[key] = v;
+    return v;
+  }
+
   /** Return a piece's pool copies (and its equipped items are handled by the caller). */
   returnCopies(piece) {
     if (piece && piece.kind === 'chess' && piece.poolCopies > 0) {
@@ -503,6 +529,12 @@ export class PlayerState {
       l.piece.items = [];
     }
     const elite = this.newPiece('chess', goldenId, { poolCopies: copies });
+    // this round's per-piece counters: the highest of the copies' (an elite made from 拉普兰德 that already saw their
+    // first refresh this round does not fire again this round — [ASSUMED] conservative, pieceRoundCount)
+    for (const l of consumed) {
+      const rc = l.piece.meta && l.piece.meta.round;
+      if (rc && rc.r === this.m.round) for (const [k, v] of Object.entries(rc.n)) this.bumpPieceRoundCount(elite, k, Math.max(0, v - this.pieceRoundCount(elite, k)));
+    }
     const deployed = consumed.filter((l) => l.key && !this.board.has(l.key)).map((l) => ({ key: l.key, dir: l.area === 'new' ? l.dir : pieceDir(l.piece) }));
     const toTile = (t) => { elite.dir = parseDir(t.dir) || 'RIGHT'; this.board.set(t.key, elite); return 'board'; };
     const tile = mergeTile(deployed, (r, c) => this._legal(elite, r, c));
@@ -548,10 +580,15 @@ export class PlayerState {
 
   /**
    * Replace a chess piece by another chess (突变细胞 and similar). The new piece keeps the tile when legal (else goes
-   * to the hand/temp) and keeps the equipment; pool copies are swapped; completes a merge when possible — a deployed
-   * piece's tile then counts as a consumed copy's for the elite (_mergeChess fromKey, when legal for it).
+   * to the hand/temp) and keeps the equipment — or, with `returnItems`, the equipment returns to the hand like the
+   * equipment of a destroyed / promoted operator (突变细胞: PRTS 备注 "生效时，原干员销毁，获得一名高一阶的随机初始干员"; the
+   * cell itself comes back, player feedback after 0.1.0), overflowing into temp; with both full an item stays on the new
+   * piece up to its equipPerChess slots (any further one is destroyed with a log warning, as in a merge). Pool copies are
+   * swapped; completes a merge when possible — a deployed piece's tile then counts as a consumed copy's for the elite
+   * (_mergeChess fromKey, when legal for it).
+   * @param {{ returnItems?: boolean }} [opts]
    */
-  transformChess(piece, newId) {
+  transformChess(piece, newId, { returnItems = false } = {}) {
     const loc = this.find(piece.uid);
     const rec = this.gd.chess(newId);
     if (!loc || loc.piece.kind !== 'chess' || !rec) return null;
@@ -563,14 +600,23 @@ export class PlayerState {
     const base = this.gd.baseIdOf(newId);
     const taken = this.m.pool.take(base, rec.isGolden ? this.gd.goldenCopies : 1);
     let np = this.newPiece('chess', newId, { poolCopies: taken });
-    np.items = items;
+    np.items = returnItems ? [] : items;
     if (!rec.isGolden && this.completesChessMerge(newId)) {
       np = this._mergeChess(base, np, loc.area === 'board' ? { fromKey: loc.key, fromDir: pieceDir(piece) } : undefined);
-      if (!np) { this.recompute(); return null; }
+      if (!np && !returnItems) { this.recompute(); return null; }
     } else if (loc.area === 'board') {
       const [r, c] = parseKey(loc.key);
       if (this._legal(np, r, c)) { np.dir = pieceDir(piece); this.board.set(loc.key, np); this.grantTokensFor(np); } else if (!this.stow(np, { allowTemp: true })) { this.returnCopies(np); np = null; }
     } else if (!this._putBack(loc, np)) { this.returnCopies(np); np = null; }
+    // after the new piece took its place (a hand piece keeps its slot), its predecessor's equipment comes off
+    if (returnItems) {
+      for (const it of items) {
+        if (this.stow(it, { allowTemp: true })) continue;
+        if (np && np.items.length < this.gd.equipPerChess) { np.items.push(it); continue; }
+        this.m.log.warn?.(`[match ${this.m.roomCode}] ${this.playerId}: returned item ${it.id} destroyed (no space)`);
+      }
+      this.checkItemMerges();
+    }
     this.recompute();
     if (np) this.m.dispatch(this, 'onGain', { piece: np, kind: 'chess', source: 'transform' });
     return np;

@@ -251,6 +251,7 @@ Param names below are the keys of `items[].normal.params` / `items[].golden.para
 - **商业包装方案** (`chess_item_5_07_e_a`, TV, 3) - Stays equipped. Counter of operators SOLD by the player (any): every `count` sales, give 1 random NORMAL operator sharing a bond with the carrier, tier <= current shop level.  
   params: `count=8.0/7.0`; buff keys: `sell_char_count_gain_equip_owner_bond`
 - **突变细胞** (`chess_item_5_08_e_a`, TV, 2) - After the battle ends: replace the carrier with a random operator one tier higher (max tier 6); item consumed [ASSUMED]. Keeps elite status? [ASSUMED: result is NORMAL quality; other equipped item returns to hand]. Never merges.  
+  **Addendum (player feedback after 0.1.0):** the cell is **not consumed**. PRTS 卫戍协议：盟约 下半/PRTS盟约记录 备注: "生效时，原干员销毁，获得一名高一阶的随机初始干员（最高六阶）" (normal result confirmed); the official text never says 销毁 (every consumable's does); players re-inject it every round (bilibili cv47000418 "之后就是一直打针，扎到核心卡或者叠层手干员就换人扎", BV1pEQ3BhEEi "如果四回合出了伊内丝，就考虑先不扎针") — the destroyed operator's equipment, the cell included, returns to the hand.  
   params: `-`; buff keys: `char_chess_transformation_equip`
 - **人事部文档** (`chess_item_6_08_e_a`, TVI, 4) - On equip: destroy item; player's max deployable operator count becomes `count` (9) (base maxBattleChessCnt = 8). Never merges; a second copy has no further effect [ASSUMED].  
   params: `count=9.0`; buff keys: `equip_destory_deployment_cnt_change`
@@ -441,7 +442,7 @@ Pools referenced but NOT defined in client data (server-side) - proposed content
 3. Whether equipped copies count toward the 2-copy merge (assumed yes).
 4. Exact contents of server pools (`pool_equip_*`) and of `hunter_band_1` bounty choices.
 5. 道具补给 / 机密商店 offer size and tier (3-pick-1 assumed); round schedule taken from a community post.
-6. M3茧甲 revive HP (full assumed); 突变细胞 result quality (normal assumed) and whether the other equipped item returns to hand.
+6. M3茧甲 revive HP (full assumed); 突变细胞 result quality and equipment — resolved after 0.1.0: a normal operator (PRTS 备注 "随机初始干员"), the equipment and the cell return to the hand (addendum above).
 7. 天马之枪 "30% true damage": `atk_scale=0.3` suggests 30% of ATK per damage instance; alternative reading 30% of damage dealt. We use 30% ATK.
 8. 蒸汽之心 doubling for 战栗锤: prob or duration? (we double prob 10%->20%).
 

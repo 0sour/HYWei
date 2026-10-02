@@ -1357,6 +1357,23 @@ const SHOP_EXCLUDED_ITEMS = Object.freeze({
 });
 
 /**
+ * Rules the official item text leaves out, by normal item id (both qualities): `note` = a player-facing line shown under
+ * the effect in the item card (items.json `note`), `implFormula` replaces research 04's formula.
+ *   突变细胞 — not consumed (player feedback after 0.1.0): PRTS 卫戍协议：盟约 下半/PRTS盟约记录 备注 "生效时，原干员销毁，
+ *     获得一名高一阶的随机初始干员（最高六阶）"; the text never says 销毁 for the cell (every consumable item's does), and
+ *     players re-inject it every round ("之后就是一直打针，扎到核心卡或者叠层手干员就换人扎", bilibili cv47000418;
+ *     BV1pEQ3BhEEi "如果四回合出了伊内丝，就考虑先不扎针") — the destroyed operator's equipment returns to the hand.
+ */
+const ITEM_RULES = Object.freeze({
+  chess_item_5_08_e_a: {
+    note: '生效时原干员销毁，获得一名高一阶的随机初始干员（最高6阶）；突变细胞与其他装备退回整备区，可再次配发',
+    implFormula: 'After the battle: the carrier is destroyed and replaced by a random NORMAL operator one tier higher (max 6; '
+      + 'an elite carrier too) on its tile when legal; its equipment, the cell included, returns to the hand (the cell is '
+      + 'not consumed). Never merges.',
+  },
+});
+
+/**
  * Build data/items.json: every item chess (EQUIP normal + golden, MAGIC Arts), keyed by chessId.
  */
 function buildItems(ctx, effects) {
@@ -1381,6 +1398,7 @@ function buildItems(ctx, effects) {
     const isGolden = !!t.isGolden;
     const upgradeNum = t.upgradeNum;
     const excluded = Object.hasOwn(SHOP_EXCLUDED_ITEMS, baseId) ? SHOP_EXCLUDED_ITEMS[baseId] : null;
+    const rule = Object.hasOwn(ITEM_RULES, baseId) ? ITEM_RULES[baseId] : null;
     out[chessId] = {
       id: chessId, baseId, goldenId: shop?.goldenItemId || null, isGolden,
       trapId: t.charId, iconId: t.charId, identifier: t.identifier,
@@ -1398,7 +1416,8 @@ function buildItems(ctx, effects) {
       buffs: (eff?.buffs || []).map((b) => ({ key: b.key, countType: b.countType, bb: b.bb, bbStr: b.bbStr })),
       params: eff?.params || {},
       category: ri?.category || null, kind: ri?.kind || null, family: ri?.family || null,
-      implFormula: ri?.implFormula || null,
+      implFormula: rule?.implFormula || ri?.implFormula || null,
+      note: rule?.note || null,
       rangeGrid: Array.isArray(ri?.rangeGrids) ? ri.rangeGrids.map((g) => [g.row, g.col]) : null,
       flavor: ri?.flavor || null,
     };
