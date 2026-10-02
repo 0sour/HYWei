@@ -4,7 +4,9 @@
 // the avatar-in-rarity-diamond fallback) + HUD container (bar layer: HP bar with delayed "ghost" damage, SP bar
 // with ready glow / draining skill bar, tier chip, status icons, blocked marker). The fallback shows at once and
 // cross-fades to the Spine model when it has loaded; missing or failed models keep the fallback forever (the
-// game never blocks on Spine). Every bar is a tinted Texture.WHITE sprite, so HUDs batch into few draw calls.
+// game never blocks on Spine) — except an optional local-client model (assets.js spineEntry `fallback`, DESIGN §13:
+// 灼热源石虫 / 炽焰源石虫), which falls back to the web model first. Every bar is a tinted Texture.WHITE sprite, so
+// HUDs batch into few draw calls.
 //
 // Placement: feet anchored at world (x, y, z); scale = camera px-per-tile at the feet × UNIT.modelScale, so
 // chibis shrink with distance like the original. An enemy's model is also scaled by its official prefab factor
@@ -308,10 +310,19 @@ export class UnitView {
     const back = this._wantsBack();
     const entry = id ? a.spineEntry(id, { back }) : null;
     if (!entry || this.ctx.settings?.quality === 'low' && this.isEnemy && !this.isBoss && this.ctx.crowded?.()) return;
-    // every acquire is paired with exactly one release: a superseded / failed / post-destroy load releases its own
-    // entry; the displayed model's entry (`_actorEntry`) is released when that model is replaced or destroyed
-    this.entry = entry;
     this.entryBack = back;
+    this._acquireSpine(entry, id);
+  }
+
+  /**
+   * Load `entry` and show it. Every acquire is paired with exactly one release: a superseded / failed / post-destroy
+   * load releases its own entry; the displayed model's entry (`_actorEntry`) is released when that model is replaced or
+   * destroyed. A model that fails to load keeps the fallback diamond — unless the entry names a `fallback` (an optional
+   * local-client model, assets.js spineEntry: DESIGN §13), which is loaded in its place.
+   */
+  _acquireSpine(entry, id) {
+    const a = this.ctx.assets;
+    this.entry = entry;
     const req = this._spineReq = (this._spineReq || 0) + 1;
     a.spine.acquire(entry).then((data) => {
       if (this.destroyed || req !== this._spineReq) { this._releaseEntry(entry); return; }
@@ -345,7 +356,11 @@ export class UnitView {
         if (this.flags & UF.SKILL) this.actor.setSkill(true);
         this.actor.setBase(this._baseFromAnim());
       }
-    }, () => { this._releaseEntry(entry); /* keep the fallback */ });
+    }, () => {
+      this._releaseEntry(entry);
+      if (entry.fallback && !this.destroyed && req === this._spineReq) this._acquireSpine(entry.fallback, id);
+      // else keep the fallback diamond
+    });
   }
 
   _formSpec() {

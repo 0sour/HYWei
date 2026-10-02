@@ -5,9 +5,12 @@
 //   public/fonts/**    Bender / Novecento (.otf/.ttf + .woff2) and fonts.css
 //   data/assets.json   manifest used by the client (schema: docs/ASSETS.md)
 //
-// Enemy models no dump carries are taken from the local client when
-// tools/local-extract/extract.py has extracted them (public/assets/local/spine/
-// enemy/<id>/, ASSETS.md "Enemy aliases"); otherwise another enemy's model.
+// Enemy models no dump carries get another enemy's model (ASSETS.md "Enemy
+// aliases"); the official ones the local client has (tools/local-extract/
+// extract.py ENEMY_SPINES, optional) are added as `spineLocal` from the
+// committed tools/assets/local-enemy-spines.json — never from the disk, so the
+// manifest is the same with or without the extraction. --local-spines rewrites
+// that file from the extracted models (after a game update).
 //
 // Idempotent: existing files with the right size are skipped, so re-running is
 // cheap. Downloads use ~16 parallel connections, 3 retries per source and a
@@ -15,7 +18,8 @@
 // enemies); every skeleton is parsed to resolve animation roles.
 //
 // Usage: node tools/fetch-assets.mjs [--concurrency=16] [--force] [--offline]
-//                                    [--dry-run] [--refresh-index] [--prune] [--help]
+//                                    [--dry-run] [--refresh-index] [--prune]
+//                                    [--local-spines] [--help]
 
 import { readFile, writeFile, mkdir, rename, readdir, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -25,7 +29,7 @@ import { Downloader } from './assets/downloader.mjs';
 import { loadIndexes } from './assets/cache.mjs';
 import { indexAudio } from './assets/audio.mjs';
 import { buildPlan } from './assets/plan.mjs';
-import { processModels, findLocalEnemyModels } from './assets/spine.mjs';
+import { processModels, findLocalEnemyModels, localEnemySpineMeta, loadLocalEnemySpines, LOCAL_ENEMY_SPINES_FILE } from './assets/spine.mjs';
 import { collectLeaves, downloadLeaves, resolveTemplate, totalBytes, contentHash, MANIFEST_VERSION } from './assets/manifest.mjs';
 import { fontJobs, buildFonts } from './assets/fonts.mjs';
 import { skelParserAvailable } from './assets/skel.mjs';
@@ -36,6 +40,7 @@ const FONTS = join(ROOT, 'public', 'fonts');
 const CACHE = join(ROOT, '.cache');
 const MANIFEST = join(ROOT, 'data', 'assets.json');
 const REPORT = join(CACHE, 'assets-report.json');
+const LOCAL_SPINES = join(ROOT, LOCAL_ENEMY_SPINES_FILE);
 
 const HELP = `Usage: node tools/fetch-assets.mjs [options]
   --concurrency=N   parallel downloads (default 16)
@@ -44,15 +49,18 @@ const HELP = `Usage: node tools/fetch-assets.mjs [options]
   --dry-run         print the plan and exit
   --refresh-index   re-download audio_data.json / models_data.json indexes
   --prune           delete files under public/assets that the manifest no longer references
+                    (public/assets/local/** of tools/local-extract is never deleted)
+  --local-spines    rewrite ${LOCAL_ENEMY_SPINES_FILE} from the enemy models extracted
+                    by tools/local-extract/extract.py (public/assets/local/spine/enemy/)
   --help            this text`;
 
 /**
  * Parse CLI flags.
  * @param {string[]} argv
- * @returns {{concurrency:number, force:boolean, offline:boolean, dryRun:boolean, refreshIndex:boolean, prune:boolean, help:boolean}}
+ * @returns {{concurrency:number, force:boolean, offline:boolean, dryRun:boolean, refreshIndex:boolean, prune:boolean, localSpines:boolean, help:boolean}}
  */
 function parseArgs(argv) {
-  const o = { concurrency: 16, force: false, offline: false, dryRun: false, refreshIndex: false, prune: false, help: false };
+  const o = { concurrency: 16, force: false, offline: false, dryRun: false, refreshIndex: false, prune: false, localSpines: false, help: false };
   for (const a of argv) {
     const [k, v] = a.split('=');
     if (k === '--concurrency') o.concurrency = Math.max(1, Math.min(64, parseInt(v, 10) || 16));
@@ -61,6 +69,7 @@ function parseArgs(argv) {
     else if (k === '--dry-run') o.dryRun = true;
     else if (k === '--refresh-index') o.refreshIndex = true;
     else if (k === '--prune') o.prune = true;
+    else if (k === '--local-spines') o.localSpines = true;
     else if (k === '--help' || k === '-h') o.help = true;
     else throw new Error(`unknown option ${a}\n${HELP}`);
   }
@@ -140,6 +149,38 @@ function requiredMisses(m, charIds) {
   return out;
 }
 
+/**
+ * Metadata of the local-client enemy models (the committed LOCAL_SPINES). With --local-spines it is rewritten from the
+ * models extracted under public/assets/local/spine/enemy/ (read only); otherwise extracted models whose metadata differs
+ * from the committed one only get a warning — the manifest never depends on what this machine extracted.
+ */
+async function syncLocalEnemySpines(opts) {
+  const committed = await loadLocalEnemySpines(LOCAL_SPINES);
+  const found = await findLocalEnemyModels(ASSETS);
+  if (!Object.keys(found).length) {
+    if (opts.localSpines) log(`[local-spines] no extracted enemy model under public/assets/local/spine/enemy/ — ${LOCAL_ENEMY_SPINES_FILE} kept`);
+    return committed;
+  }
+  const { meta, problems } = await localEnemySpineMeta(ASSETS, found);
+  for (const p of problems) log(`[local-spines] ${p}`);
+  if (opts.localSpines && !opts.dryRun) {
+    const models = { ...committed, ...meta };
+    const sorted = Object.fromEntries(Object.keys(models).sort().map((k) => [k, models[k]]));
+    const doc = {
+      about: 'Spine metadata of the enemy models only the local client has (tools/local-extract/extract.py ENEMY_SPINES); '
+        + 'data/assets.json enemies[id].spineLocal. Written by node tools/fetch-assets.mjs --local-spines (docs/ASSETS.md "Enemy aliases").',
+      models: sorted,
+    };
+    await writeJsonAtomic(LOCAL_SPINES, doc, 2);
+    log(`[local-spines] ${Object.keys(meta).length} model(s) → ${LOCAL_ENEMY_SPINES_FILE}`);
+    return sorted;
+  }
+  for (const [id, m] of Object.entries(meta)) {
+    if (JSON.stringify(m) !== JSON.stringify(committed[id])) log(`[local-spines] ${id}: the extracted model differs from ${LOCAL_ENEMY_SPINES_FILE} (re-run with --local-spines to update it)`);
+  }
+  return committed;
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) { log(HELP); return 0; }
@@ -161,12 +202,13 @@ async function main() {
     ['data/enemies.json', 'data/tokens.json', 'data/bosses.json'].map((f) => readJson(f).catch(() => null)));
   const extraHandbook = {};
   for (const b of Object.values(dataBosses || {})) if (b?.enemyKey && typeof b.handbookId === 'string') extraHandbook[b.enemyKey] = b.handbookId;
+  const localEnemySpines = await syncLocalEnemySpines(opts);
   const plan = buildPlan({
     assets07, ops03, enemies05, maps05, audio, modelsData,
     extraEnemyIds: Object.keys(dataEnemies || {}),
     extraTokenIds: Object.keys(dataTokens || {}),
     extraHandbook,
-    localEnemyModels: await findLocalEnemyModels(ASSETS),
+    localEnemySpines,
   });
   const leaves = collectLeaves(plan.template);
   log(`[plan] ${leaves.length} files + ${plan.models.size} Spine models ` +
@@ -220,7 +262,7 @@ async function main() {
   await writeJsonAtomic(MANIFEST, manifest);
 
   // Orphans: files on disk that the manifest does not reference (e.g. after a mapping change). public/assets/local/**
-  // belongs to tools/local-extract (data/local-assets.json) and is never an orphan: --prune used to delete it.
+  // belongs to tools/local-extract (data/local-assets.json) and is never an orphan: --prune used to delete all of it.
   const orphans = (await listFiles(ASSETS)).filter((r) => !resolved.files.has(r) && !r.startsWith('local/'));
   if (opts.prune) for (const r of orphans) { try { await unlink(join(ASSETS, r)); } catch { /* ignore */ } }
 

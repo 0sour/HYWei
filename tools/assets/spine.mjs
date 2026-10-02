@@ -1,8 +1,14 @@
 // Spine model pipeline: download skel/atlas/page PNGs, fetch extra atlas pages,
 // normalize atlases (size:/pma:), parse skeletons and resolve animation roles.
-// Produces the per-model `spine` entries of data/assets.json. Enemy models that
-// no dump carries may come from the local client instead (findLocalEnemyModels:
-// tools/local-extract/extract.py ENEMY_SPINES → public/assets/local/spine/enemy/).
+// Produces the per-model `spine` entries of data/assets.json.
+//
+// Enemy models that no dump carries but the local client has (tools/local-extract/
+// extract.py ENEMY_SPINES → public/assets/local/spine/enemy/<id>/, optional and
+// git-ignored) are an overlay, never the manifest's `spine`: their metadata lives
+// in the committed tools/assets/local-enemy-spines.json (loadLocalEnemySpines),
+// refreshed from the extracted files by `fetch-assets --local-spines`
+// (findLocalEnemyModels + localEnemySpineMeta, read only), so data/assets.json
+// is the same with or without the extraction (ASSETS.md "Enemy aliases").
 
 import { readFile, readdir, writeFile, stat, rename, mkdir, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -16,6 +22,8 @@ async function fileStat(p) { try { const s = await stat(p); return s.isFile() ? 
 
 /** Where tools/local-extract/extract.py writes enemy Spine models, under public/assets. */
 export const LOCAL_ENEMY_SPINE_DIR = 'local/spine/enemy/';
+/** Its data/local-assets.json group of an enemy (`spine/enemy/<id>`; the client resolves the file names through it). */
+export const localEnemySpineGroup = (id) => `spine/enemy/${id}`;
 
 /**
  * Enemy Spine models extracted from the local client (tools/local-extract/extract.py ENEMY_SPINES): every
@@ -42,6 +50,67 @@ export async function findLocalEnemyModels(root) {
 }
 
 /**
+ * @typedef {{ skel: string, atlas: string, textures: string[], pma: boolean, anims: any, animations: Record<string, number>,
+ *   events: string[], hits: Record<string, number[]>, bounds: any }} LocalSpineMeta file names relative to the model's
+ *   data/local-assets.json group (localEnemySpineGroup), the rest as a manifest SpineEntry
+ */
+
+/**
+ * Spine metadata of the extracted enemy models (findLocalEnemyModels), parsed like processModels does — but read only:
+ * the atlas is sized / pma-normalized in memory (extract.py already writes it so), nothing on disk changes.
+ * @param {string} root absolute public/assets directory
+ * @param {Record<string, { dir: string, skel: string, atlas: string, pngs: string[] }>} found
+ * @returns {Promise<{ meta: Record<string, LocalSpineMeta>, problems: string[] }>}
+ */
+export async function localEnemySpineMeta(root, found) {
+  const meta = {};
+  const problems = [];
+  const base = (rel) => rel.slice(rel.lastIndexOf('/') + 1);
+  for (const id of Object.keys(found || {}).sort()) {
+    const m = found[id];
+    try {
+      const text = await readFile(join(root, m.atlas), 'utf8');
+      const sizes = new Map();
+      for (const page of atlasInfo(text).pages) {
+        const sz = pngSize(await readFile(join(root, m.dir + page)));
+        if (!sz) throw new Error(`invalid page ${page}`);
+        sizes.set(page, sz);
+      }
+      const norm = normalizeAtlas(text, { pageSize: (p) => sizes.get(p) || null, pma: true });
+      if (norm.missingSize.length) throw new Error(`cannot size pages ${norm.missingSize.join(',')}`);
+      const info = atlasInfo(norm.text);
+      if (!info.pages.length) throw new Error('atlas without pages');
+      const sk = parseSkel(await readFile(join(root, m.skel)), info.regions);
+      if (!sk.animations.length) throw new Error('skeleton has no animations');
+      if (sk.missingRegions?.length) problems.push(`${id}: ${sk.missingRegions.length} attachment(s) not in atlas (e.g. ${sk.missingRegions[0]})`);
+      meta[id] = {
+        skel: base(m.skel), atlas: base(m.atlas), textures: info.pages, pma: true,
+        anims: resolveRoles(sk.animations, { skillIndices: [0], durations: sk.durations }),
+        animations: sk.durations, events: sk.events, hits: sk.hits, bounds: sk.bounds,
+      };
+    } catch (e) {
+      problems.push(`${id}: ${e.message}`);
+    }
+  }
+  return { meta, problems };
+}
+
+/** Committed metadata of the local-client enemy models: tools/assets/local-enemy-spines.json. */
+export const LOCAL_ENEMY_SPINES_FILE = 'tools/assets/local-enemy-spines.json';
+
+/**
+ * The `models` of tools/assets/local-enemy-spines.json (enemyId → LocalSpineMeta); {} when the file is missing or bad.
+ * @param {string} path absolute path of the file
+ * @returns {Promise<Record<string, LocalSpineMeta>>}
+ */
+export async function loadLocalEnemySpines(path) {
+  try {
+    const j = JSON.parse(await readFile(path, 'utf8'));
+    return j && typeof j.models === 'object' && j.models && !Array.isArray(j.models) ? j.models : {};
+  } catch { return {}; }
+}
+
+/**
  * @typedef {{ skel: string, atlas: string, textures: string[], pma: boolean, anims: any,
  *   animations: Record<string, number>, events: string[], hits: Record<string, number[]>, bounds: any }} SpineEntry
  */
@@ -61,14 +130,12 @@ export async function processModels(models, { root, dl, cachePath, download = tr
   const problems = [];
   const list = [...models.values()];
   if (download) {
-    // local-client models (`local`: findLocalEnemyModels) are on disk already: nothing to download
-    const remote = list.filter((m) => !m.local);
     const jobs = [];
-    for (const m of remote) jobs.push(m.skel, m.atlas, ...m.pngs);
+    for (const m of list) jobs.push(m.skel, m.atlas, ...m.pngs);
     await dl.run(jobs, 'spine');
     // Atlases may reference more pages than the index lists.
     const extra = [];
-    for (const m of remote) {
+    for (const m of list) {
       const text = await readFile(join(root, m.atlas.rel), 'utf8').catch(() => null);
       if (!text) continue;
       for (const page of atlasInfo(text).pages) {

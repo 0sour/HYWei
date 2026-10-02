@@ -75,8 +75,10 @@
 // three.js PerspectiveCamera is synced from it every change. Missing art / three / WebGL2, a failed init or a lost
 // context fall back to the 2D atlas board. `opts.board`: 'auto' (default) | '3d' | '2d'; `?board=2d|3d` in the URL
 // overrides (dev; '3d' also accepts a slow / software GPU). stats().board3d → { on, calls, triangles, cpuMs }.
-// three.js is only downloaded when the local-art manifest lists the board atlas. The built 3D area, the drawn 2D rows
-// and the lit rect follow `viewKind` (a 'prep' camera on the boss rows = the Final Assault prep = the boss field).
+// three.js is only downloaded when the local-art manifest lists the board atlas. That manifest is awaited with the asset
+// manifest (≤ 4 s), so an enemy whose model only the local client has draws it (assets.js spineEntry). The built 3D
+// area, the drawn 2D rows and the lit rect follow `viewKind` (a 'prep' camera on the boss rows = the Final Assault
+// prep = the boss field).
 // Battle device boxes (`ctx.createBox`) follow the board layer (switchableBox), so a 3D ⇄ 2D switch keeps crates.
 // Crowds and clipped Spine skeletons render through the shared impostor atlas (render/impostor.js), flushed once per
 // frame before the main pass.
@@ -357,7 +359,10 @@ export async function createFieldView(host, options = {}) {
   const artListed = want3d ? boardArtListed(assets).catch(() => false) : Promise.resolve(false);
   const threePromise = artListed.then((ok) => (ok ? loadThree() : null));
   const packPromise = artListed.then((ok) => (ok ? Promise.resolve(assets.ready ? assets.ready() : null).catch(() => null).then(() => loadBoardPack(assets)) : null));
-  await withTimeout(Promise.resolve(assets.ready ? assets.ready() : null).catch(() => {}), 4000);
+  // the manifest, and the optional local-art manifest in parallel: unit views pick an enemy's local-client model by it
+  // (assets.js spineEntry, DESIGN §13 — 灼热源石虫 / 炽焰源石虫); absent or slow, they draw the web models
+  await withTimeout(Promise.all([assets.ready ? assets.ready() : null, assets.local ? assets.local() : null]
+    .map((p) => Promise.resolve(p).catch(() => {}))), 4000);
   // web fonts for the bitmap damage numbers / tier chips (never block long)
   try { if (document.fonts?.load) await withTimeout(Promise.all([document.fonts.load('700 40px Bender'), document.fonts.load('700 40px Oxanium')]), 1500); } catch { /* ignore */ }
 

@@ -10,7 +10,9 @@ aklz4.py registers a decoder for it. This script pulls the art the web sources l
   - the autochess guidebook pages, battle projectile sprites and a few token/skin Spine models missing upstream
   - the enemy battle Spine models no community dump carries (ENEMY_SPINES: 灼热源石虫 / 炽焰源石虫), from the enemy art
     bundles (refs/arts/enm_art_*.ab) → spine/enemy/<enemyId>/<stem>.skel|.atlas + page PNGs with the [alpha] texture
-    merged in (premultiplied RGB + A, the Ark-Models format); tools/fetch-assets.mjs plans them in place of an alias
+    merged in (premultiplied RGB + A, the Ark-Models format; the atlas gets `size:` / `pma: true` like the fetched
+    enemies); the client draws them instead of the web alias once this manifest lists them (data/assets.json
+    enemies[id].spineLocal, docs/ASSETS.md "Enemy aliases")
   - for the official 3D board (DESIGN §15): the map theme's Material parameters (map/<theme>/materials.json; shader
     names resolved through the shaders/*.ab bundles), the background / device meshes as Wavefront OBJ
     (mesh/<bundle>/<mesh>.obj; UnityPy's exporter, X mirrored into a right-handed frame) and their GameObject
@@ -94,12 +96,14 @@ JOBS = [
 ]
 
 # Enemy battle Spine models that no community dump carries (isHarryh/Ark-Models lists them with an empty assetList, so
-# tools/fetch-assets.mjs used to alias them to another enemy's skeleton): every enemy of data/enemies.json whose official
-# battle prefab draws a skeleton of its own that is missing upstream (audited against the client's prefabs, user feedback
-# after 0.1.0 report D3: 灼热源石虫 / 炽焰源石虫 — the ELEMENT faction's slugs — were drawn as the plain 源石虫). Read from
-# the enemy art bundles: Assets/Torappu/Arts/Enemies/Spines/<…>/<id>_SkeletonData.asset → its skeleton TextAsset, the
-# atlas TextAsset of its atlas asset and every page texture of the atlas materials (_MainTex, with its _AlphaTex merged
-# in as A). Output: spine/enemy/<id>/ (manifest group spine/enemy/<id>).
+# tools/fetch-assets.mjs aliases them to another enemy's skeleton — the web model): every enemy of data/enemies.json whose
+# official battle prefab draws a skeleton of its own that is missing upstream (audited against the client's prefabs, user
+# feedback after 0.1.0 report D3: 灼热源石虫 / 炽焰源石虫 — the ELEMENT faction's slugs — were drawn as the plain 源石虫).
+# Read from the enemy art bundles: Assets/Torappu/Arts/Enemies/Spines/<…>/<id>_SkeletonData.asset → its skeleton
+# TextAsset, the atlas TextAsset of its atlas asset and every page texture of the atlas materials (_MainTex, with its
+# _AlphaTex merged in as A). Output: spine/enemy/<id>/ (manifest group spine/enemy/<id>); the client draws the model
+# when the group lists every file of data/assets.json enemies[id].spineLocal (whose metadata
+# tools/assets/local-enemy-spines.json keeps: `node tools/fetch-assets.mjs --local-spines` after a game update).
 ENEMY_SPINES = ['enemy_1305_mhslim', 'enemy_1305_mhslim_2']
 ENEMY_ART = 'refs/arts/enm_art_*.ab'
 ENEMY_SPINE_SUB = 'spine/enemy'
@@ -426,6 +430,41 @@ def merge_alpha(rgb, alpha):
     return Image.merge('RGBA', tuple(ImageChops.darker(ch, a) for ch in (r, g, b)) + (a,))
 
 
+def normalize_atlas(text, sizes):
+    """Spine atlas text with every page header carrying its real `size: w,h` (`sizes`: page name → (w, h)) and
+    `pma: true` (the pages are premultiplied: merge_alpha) — what tools/assets/atlas.mjs normalizeAtlas gives the fetched
+    enemy atlases, so the client loads the extracted model as it is. Page fields are the unindented `key: value` lines
+    right after a page name (a line after a blank line, or the first line); everything else is kept."""
+    lines = text.replace('\r\n', '\n').replace('\r', '\n').lstrip('\ufeff').split('\n')
+    out, i, n = [], 0, len(lines)
+    while i < n:
+        line = lines[i]
+        starts_page = line.strip() and ':' not in line and not line[:1].isspace() and (i == 0 or not lines[i - 1].strip())
+        if not starts_page:
+            out.append(line)
+            i += 1
+            continue
+        name = line.strip()
+        fields, j = [], i + 1
+        while j < n and lines[j].strip() and not lines[j][:1].isspace() and ':' in lines[j]:
+            fields.append(lines[j])
+            j += 1
+        keys = [f.split(':', 1)[0].strip() for f in fields]
+        size = sizes.get(name)
+        if size:
+            sz = f'size: {size[0]},{size[1]}'
+            if 'size' in keys:
+                fields[keys.index('size')] = sz
+            else:
+                fields.insert(0, sz)
+        if 'pma' not in keys:
+            fields.append('pma: true')
+        out.append(line)
+        out.extend(fields)
+        i = j
+    return '\n'.join(out)
+
+
 def write_enemy_spine(objects, sda, eid, out_root, manifest, log):
     """Write one enemy model (skeleton, atlas, merged pages) of a SkeletonDataAsset typetree; returns the file count."""
     get = lambda pptr: objects.get(pptr['m_PathID']) if pptr and not pptr.get('m_FileID') else None  # noqa: E731
@@ -462,6 +501,8 @@ def write_enemy_spine(objects, sda, eid, out_root, manifest, log):
     if f'{stem}.atlas' not in files or not pages:
         log(f'  warn {eid}: atlas or page textures missing')
         return 0
+    sizes = {name: img.size for name, img in pages.items()}
+    files[f'{stem}.atlas'] = normalize_atlas(files[f'{stem}.atlas'].decode('utf-8'), sizes).encode('utf-8')
     for fname, blob in files.items():
         (out_dir / fname).write_bytes(blob)
         manifest.setdefault(sub, {})[fname] = {'path': f'/assets/local/{sub}/{fname}', 'kind': 'TextAsset'}
