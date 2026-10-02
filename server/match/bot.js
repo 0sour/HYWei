@@ -38,7 +38,8 @@
 //   5. equip items on the strongest deployed damage dealers (consume-on-equip items / Arts only with a handler);
 //      突变细胞 (it comes back after every transformation) on the least valuable single normal operator below 6阶 —
 //      never an elite or one of a merge pair (cellTarget)
-//   6. resolve the temp slots, keep one hand slot free, then Ready.
+//   6. resolve the temp slots (a 突变细胞 left there gets a hand slot made for it — makeHandRoom — instead of being
+//      destroyed), keep one hand slot free, then Ready.
 // Placement quality (tools/matchrun sweeps, research-faithful waves): the planner beats random layouts by ≈ 8 points
 // of kill rate and rehearsal adds ≈ 5 more; see docs/META.md §1.5.
 
@@ -806,12 +807,15 @@ function context(m, ps) {
   return { owned, focus: focusBond(m, ps, owned), roles: roles(m, ps), fly: model.flyTotal, model };
 }
 
-/** Sell the weakest bench chess that is not part of a merge pair (or anything when keepPairs is false). */
-function sellWeakestHand(m, ps, { keepPairs = true, below = Infinity } = {}) {
+/**
+ * Sell the weakest bench chess (temp and hand; the hand only with `handOnly`) that is not part of a merge pair (or
+ * anything when keepPairs is false).
+ */
+function sellWeakestHand(m, ps, { keepPairs = true, below = Infinity, handOnly = false } = {}) {
   const ctx = context(m, ps);
   let worst = null;
   let worstV = Infinity;
-  for (const p of [...ps.temp, ...ps.hand]) {
+  for (const p of handOnly ? ps.hand : [...ps.temp, ...ps.hand]) {
     if (!p || p.kind !== 'chess') continue;
     const base = m.gd.baseIdOf(p.id);
     if (keepPairs && !m.gd.isGolden(p.id) && ps.countCopies(base) >= 2) continue;
@@ -1215,6 +1219,20 @@ function equipItems(m, ps) {
   }
 }
 
+/**
+ * Free a hand slot for an item worth keeping (突变细胞): sell the weakest single hand chess, else destroy the cheapest
+ * other hand item, else sell the weakest hand chess even of a pair. false: the hand stays full (summon cards only).
+ */
+function makeHandRoom(m, ps) {
+  if (freeSlot(ps.hand) >= 0) return true;
+  if (sellWeakestHand(m, ps, { handOnly: true }) && freeSlot(ps.hand) >= 0) return true;
+  const gd = m.gd;
+  const junk = ps.hand.filter((p) => p && p.kind === 'item' && !isMutationCell(gd, p.id))
+    .sort((a, b) => ((gd.item(a.id) || {}).price || 0) - ((gd.item(b.id) || {}).price || 0) || a.uid - b.uid)[0];
+  if (junk && tryDo(() => ps.destroy(junk.uid)) && freeSlot(ps.hand) >= 0) return true;
+  return sellWeakestHand(m, ps, { handOnly: true, keepPairs: false }) && freeSlot(ps.hand) >= 0;
+}
+
 function resolveTemp(m, ps) {
   for (let i = 0; i < ps.temp.length; i++) {
     const p = ps.temp[i];
@@ -1228,6 +1246,11 @@ function resolveTemp(m, ps) {
         if (j >= 0) tryDo(() => ps.move(p.uid, { area: 'hand', idx: j }));
       }
     } else if (p.kind === 'item') {
+      // 突变细胞 comes back after every transformation (昆图斯's strategy item): make room in the hand rather than lose it
+      if (isMutationCell(m.gd, p.id) && makeHandRoom(m, ps)) {
+        const j = freeSlot(ps.hand);
+        if (j >= 0 && tryDo(() => ps.move(p.uid, { area: 'hand', idx: j }))) continue;
+      }
       tryDo(() => ps.destroy(p.uid));
     }
   }

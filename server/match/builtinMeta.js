@@ -179,9 +179,10 @@ const ITEM_HANDLERS = {
   },
   // 突变细胞 "战斗结束后，装备者替换为高一阶的随机干员": the carrier is replaced by a random NORMAL operator one tier higher
   // (at most 6; an elite carrier too — PRTS 卫戍协议：盟约 下半/PRTS盟约记录 备注 "生效时，原干员销毁，获得一名高一阶的随机
-  // 初始干员（最高六阶）"); the destroyed operator's equipment, the cell included, returns to the hand (the official text
-  // never says 销毁 — unlike every consumable item —, and players re-inject it every round: "之后就是一直打针，扎到核心卡
-  // …就换人扎", bilibili cv47000418; player feedback after 0.1.0). The new operator keeps the tile when legal.
+  // 初始干员（最高六阶）"); the destroyed operator's equipment, the cell included, returns to the hand (PRTS 卫戍协议/帮助
+  // "佩戴的装备无法手动卸除，在失去该干员（干员出售、销毁、合并等）或装备合并为进阶品质时自动卸除"; the official text never
+  // says 销毁 for the cell — unlike every consumable item —, and players re-inject it every round: "之后就是一直打针，扎到
+  // 核心卡…就换人扎", bilibili cv47000418; player feedback after 0.1.0). The new operator keeps the tile when legal.
   char_chess_transformation_equip: {
     onBattleResult(ctx) {
       const { piece, holder } = ctx.source;

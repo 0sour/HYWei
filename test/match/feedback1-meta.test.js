@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeMatch, give, giveItem, legalTileFor, checkInvariants, DATA } from './harness.js';
 import { createRegistry } from '../../server/match/effectsMeta.js';
-import { botPrep, cellTarget } from '../../server/match/bot.js';
+import { botPrep, botPrepEnd, cellTarget } from '../../server/match/bot.js';
 
 const QUIET = { warn() {}, error() {}, info() {} };
 const REG = createRegistry({ log: QUIET });
@@ -278,4 +278,74 @@ test('#4 strategy 昆图斯 end to end: the R3 cell survives its first transform
   assert.ok(carrierOf, 'the bot equipped the cell');
   assert.ok(!m2.gd.isGolden(carrierOf.id) && m2.gd.tierOf(carrierOf.id) < 6, 'never an elite or a 6阶');
   m2.dispose();
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// #4 follow-up: the returned cell must not be pushed into temp by the new operator's summon card (it would be lost at
+// the deadline), and a bot never throws it away
+
+const VIGIL = 'chess_char_3_19_a'; // 伺夜 (Ⅲ) — a placeable 狼群 summon card
+/** Distinct normal equipment ids (never merge with each other), the cell excluded. */
+const fillerItems = () => Object.values(DATA.items).filter((it) => it.itemType === 'EQUIP' && !it.isGolden && it.id !== CELL).map((it) => it.id).sort();
+/** Fill every free hand slot but `leave` with distinct items. */
+const fillHand = (m, ps, leave = 1) => {
+  const ids = fillerItems().filter((id) => ![...ps.hand, ...ps.temp].some((p) => p && p.id === id));
+  while (ps.hand.filter((x) => x == null).length > leave) giveItem(m, ps, ids.shift());
+};
+/** Force the cell's roll (the random draw) to 伺夜 for tier 3; everything else stays the real path. */
+const forceVigil = (m) => { const roll = m.pool.roll.bind(m.pool); m.pool.roll = (rng, o = {}) => (o.tier === 3 ? VIGIL : roll(rng, o)); };
+const where = (ps, pred) => (ps.hand.some((p) => p && pred(p)) ? 'hand' : ps.temp.some((p) => p && pred(p)) ? 'temp' : null);
+
+test('#4 one free hand slot, the new operator brings a summon card: the returned cell takes the slot, the card waits in temp', () => {
+  const s = setup({ seed: 31 });
+  const { m, ps } = s;
+  forceVigil(m);
+  const t2 = plainOf(m, 2)[0];
+  const carrier = give(m, ps, t2, 'board', legalTileFor(m, ps, t2));
+  const at = ps.find(carrier.uid).key;
+  assert.deepEqual(equip(m, giveItem(m, ps, CELL), carrier), OK);
+  fillHand(m, ps, 1);
+  m.dispatch(ps, 'onBattleResult', { result: {}, lpLoss: 0, perfect: true });
+  const next = ps.board.get(at);
+  assert.equal(next && next.id, VIGIL, '伺夜 takes the carrier\'s tile');
+  assert.equal(where(ps, (p) => p.id === CELL), 'hand', 'the cell came back into the hand (it would be lost in temp at the deadline)');
+  assert.equal(where(ps, (p) => p.kind === 'token' && p.ownerUid === next.uid), 'temp', 'the 狼群 card overflows into temp (it comes back at the next round start)');
+  checkInvariants(m);
+  m.dispose();
+});
+
+test('#4 the transformation completes a merge on the board: the cell is returned before the elite\'s summon card', () => {
+  const s = setup({ seed: 32 });
+  const { m, ps } = s;
+  forceVigil(m);
+  const copies = [give(m, ps, VIGIL, 'board', legalTileFor(m, ps, VIGIL))];
+  copies.push(give(m, ps, VIGIL, 'board', legalTileFor(m, ps, VIGIL)));
+  for (const c of copies) ps.removeTokensOf(c.uid); // keep the hand count exact
+  const t2 = plainOf(m, 2)[0];
+  const carrier = give(m, ps, t2, 'board', legalTileFor(m, ps, t2));
+  assert.deepEqual(equip(m, giveItem(m, ps, CELL), carrier), OK);
+  fillHand(m, ps, 1);
+  m.dispatch(ps, 'onBattleResult', { result: {}, lpLoss: 0, perfect: true });
+  const elite = [...ps.board.values()].find((p) => p.id === m.gd.goldenIdOf(VIGIL));
+  assert.ok(elite, 'the elite 伺夜 is deployed on a consumed copy\'s tile');
+  assert.equal(where(ps, (p) => p.id === CELL), 'hand', 'the cell is in the hand');
+  assert.equal(where(ps, (p) => p.kind === 'token' && p.ownerUid === elite.uid), 'temp', 'the elite\'s 狼群 card in temp');
+  checkInvariants(m);
+  m.dispose();
+});
+
+test('#4 a bot never destroys the cell: left in temp with a full hand and nobody to inject, it gets a hand slot', () => {
+  const s = setup({ seed: 33 });
+  const { m, ps } = s;
+  ps.isBot = true;
+  const elites = [1, 2, 3, 4, 5, 6].flatMap((t) => plainOf(m, t)).map((id) => m.gd.goldenIdOf(id)).filter((g) => g && m.pool.left(m.gd.baseIdOf(g)) >= m.gd.goldenCopies);
+  for (let i = 0; i < 8; i++) { const id = elites.shift(); give(m, ps, id, 'board', legalTileFor(m, ps, id)); }
+  while (ps.hand.some((x) => x == null)) give(m, ps, elites.shift(), 'hand');
+  giveItem(m, ps, CELL, 'temp');
+  assert.equal(cellTarget(m, ps), null, 'elites only: nobody to inject');
+  botPrepEnd(m, ps); // the end of the bot's prep: temp → hand / sell / destroy, a free hand slot, Ready
+  assert.equal(ownedItems(ps, CELL).length, 1, 'the bot kept its strategy item (a hand chess was sold for the slot)');
+  assert.ok(ps.tempEmpty, 'temp resolved');
+  checkInvariants(m);
+  m.dispose();
 });

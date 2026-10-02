@@ -49,3 +49,8 @@ test('ItemDetail: 突变细胞 (both qualities) says it returns to the hand; an 
   assert.equal(plain.note, null);
   assert.equal(rule(plain), undefined);
 });
+
+test('the rule line has its own style (game-panels.css .dhint--rule), not only a test hook', () => {
+  const css = readFileSync(path.join(ROOT, 'public/css/screens/game-panels.css'), 'utf8');
+  assert.match(css, /\.dhint--rule\s*\{[^}]*color:/);
+});

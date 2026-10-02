@@ -175,7 +175,8 @@ Buys toward a full board first (the cap is 8 from R1; leftover funds are lost), 
 spends the rest on merge progress, bond thresholds around a focus core bond (most owned members, ties → most copies
 left in the shared pool), role needs (2 blockers, anti-air when the wave flies, ≤ 2 healers), 特质 that keep adding
 layers (every prep / refresh — the layer engines) and items for free carriers (突变细胞 on its least valuable single
-normal operator below 6阶 — never an elite or one of a merge pair, `bot.js cellTarget`); refreshes while a purchase stays
+normal operator below 6阶 — never an elite or one of a merge pair, `bot.js cellTarget`; a cell left in temp gets a hand
+slot made for it, `makeHandRoom`); refreshes while a purchase stays
 affordable; sells bench chess that neither make the lineup nor build toward something (a live pair, the focus bond,
 an elite). The deployed set maximizes unit value + activated bond tiers (exact counting via `computeBonds`). Placement
 uses the round's enemy preview: every route is traced over the own board (ground: the stage's device-aware ground
@@ -297,8 +298,9 @@ shopSlots() effect(id)` (`piece(uid)` adds `area`, `holderUid`, `idx`; "身前�
 counters `counter(k) setCounter(k, v) incCounter(k, n)` (player scope, persistent; prefix keys with your module) and
 `pieceCounter(uid, k) incPieceCounter(uid, k, n)` (per piece, current round only: 0 in a new round and for a new piece —
 bought, granted, transformed —; a move keeps it; an elite merged this round keeps the highest of its copies'
-[ASSUMED]; `PlayerState.pieceRoundCount`) — 拉普兰德's "本回合首次主动刷新" is the first manual refresh that copy witnesses
-(player feedback after 0.1.0: "获得该干员后该回合的首次刷新" also stacks).
+[ASSUMED]; `PlayerState.pieceRoundCount`; prefix keys with your module too) — 拉普兰德's "本回合首次主动刷新" is the
+first manual refresh that copy witnesses (player feedback after 0.1.0: "获得该干员后该回合的首次刷新" also stacks; a copy
+bought after selling one this round is a new copy and fires on its own first refresh [ASSUMED]).
 
 Writes (all validated, never throw on bad input, never make funds / pools negative):
 
@@ -343,8 +345,9 @@ Built-ins (builtinMeta.js, overridable): 盟约之币 / 骑士储蓄罐 (random 
 (+funds next round), 人事部文档 (cap 9), 博士投影 (elite now / at the next round start), 寻呼模块 / 信标 (pick-one
 offers; 信标 gifts the original chess to the teammate with the most members of its bonds next round), 商业包装方案 (every
 N sells → same-bond chess), 突变细胞 (after battle → a random NORMAL chess one tier higher, max 6, on the carrier's tile;
-the carrier's equipment, the cell included, returns to the hand — the cell is not consumed: PRTS 下半 记录 备注 "生效时，
-原干员销毁，获得一名高一阶的随机初始干员（最高六阶）", players re-inject it every round; player feedback after 0.1.0),
+the carrier's equipment, the cell included, returns to the hand before the new operator's summon cards — the cell is
+not consumed: PRTS 下半 记录 备注 "生效时，原干员销毁，获得一名高一阶的随机初始干员（最高六阶）", PRTS 卫戍协议/帮助 "佩戴的装备
+无法手动卸除，在失去该干员（干员出售、销毁、合并等）…时自动卸除", players re-inject it every round; player feedback after 0.1.0),
 画卷 (copy the operator in range with its
 items), 教鞭 / “神秘顾客” (a random bounty is added).
 
@@ -640,7 +643,9 @@ receiver only), plus CUSTOM texts (eliminations, 联防, hidden core).
   cell included).
 * An elite merged in a round keeps the highest per-piece round counter of its copies (`pieceRoundCount`): an elite made
   from 拉普兰德 copies that already fired this round does not fire again before the next round (conservative; the
-  official server's instance handling is not observable).
+  official server's instance handling is not observable). A 拉普兰德 bought after selling one in the same round is a new
+  copy and fires on its own first refresh ("获得该干员后"; each such +4 costs 3 + 1 refresh − 1 refund and needs her in
+  the shop).
 * Chess granted by effects need a free pool copy unless `requirePool: false` (then they hold 0 copies).
 * Boss-round `local` pack spawns (boss parts) all spawn; content scripts (bosses.js) decide their behaviour.
 * The Final Assault ends as a defeat when every field finished with the boss pool above 0 (boss escaped).

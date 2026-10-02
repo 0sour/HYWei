@@ -34,7 +34,8 @@
 //     (拉普兰德: the manual refreshes she witnessed — player feedback after 0.1.0); a new piece starts at 0, an elite
 //     merged this round keeps the highest of its copies' [ASSUMED].
 //   * Transformations (transformChess, 突变细胞): the new chess keeps the tile when legal; `returnItems` sends the old
-//     piece's equipment to the hand (overflow temp) like a destroyed operator's.
+//     piece's equipment to the hand (overflow temp) like a destroyed operator's — before the new piece's summon stack,
+//     as in a merge, so a summon card never pushes the returned 突变细胞 into temp.
 //   * Items: equip max 2 (a 3rd replaces the equipped item the player picks — g.equip replaceUid, the oldest when
 //     absent; equipped items are otherwise locked: g.destroy refuses them),
 //     2 identical normal items (hand/temp/equipped) merge into the golden item in the hand, items are never sold
@@ -585,7 +586,9 @@ export class PlayerState {
    * cell itself comes back, player feedback after 0.1.0), overflowing into temp; with both full an item stays on the new
    * piece up to its equipPerChess slots (any further one is destroyed with a log warning, as in a merge). Pool copies are
    * swapped; completes a merge when possible — a deployed piece's tile then counts as a consumed copy's for the elite
-   * (_mergeChess fromKey, when legal for it).
+   * (_mergeChess fromKey, when legal for it), and the merge returns the equipment itself. A new piece on the board gets
+   * its summon stack only after the equipment came back (like _mergeChess: a summon card must not push the returned
+   * equipment — 突变细胞 — into temp, where it would be lost at the deadline).
    * @param {{ returnItems?: boolean }} [opts]
    */
   transformChess(piece, newId, { returnItems = false } = {}) {
@@ -600,23 +603,26 @@ export class PlayerState {
     const base = this.gd.baseIdOf(newId);
     const taken = this.m.pool.take(base, rec.isGolden ? this.gd.goldenCopies : 1);
     let np = this.newPiece('chess', newId, { poolCopies: taken });
-    np.items = returnItems ? [] : items;
-    if (!rec.isGolden && this.completesChessMerge(newId)) {
+    const merging = !rec.isGolden && this.completesChessMerge(newId);
+    // a merge returns the consumed copies' equipment (this one's too) before the elite's summons (_mergeChess)
+    const pending = returnItems && !merging ? items : [];
+    np.items = returnItems && !merging ? [] : items;
+    let deployed = false;
+    if (merging) {
       np = this._mergeChess(base, np, loc.area === 'board' ? { fromKey: loc.key, fromDir: pieceDir(piece) } : undefined);
-      if (!np && !returnItems) { this.recompute(); return null; }
     } else if (loc.area === 'board') {
       const [r, c] = parseKey(loc.key);
-      if (this._legal(np, r, c)) { np.dir = pieceDir(piece); this.board.set(loc.key, np); this.grantTokensFor(np); } else if (!this.stow(np, { allowTemp: true })) { this.returnCopies(np); np = null; }
+      if (this._legal(np, r, c)) { np.dir = pieceDir(piece); this.board.set(loc.key, np); deployed = true; } else if (!this.stow(np, { allowTemp: true })) { this.returnCopies(np); np = null; }
     } else if (!this._putBack(loc, np)) { this.returnCopies(np); np = null; }
     // after the new piece took its place (a hand piece keeps its slot), its predecessor's equipment comes off
-    if (returnItems) {
-      for (const it of items) {
-        if (this.stow(it, { allowTemp: true })) continue;
-        if (np && np.items.length < this.gd.equipPerChess) { np.items.push(it); continue; }
-        this.m.log.warn?.(`[match ${this.m.roomCode}] ${this.playerId}: returned item ${it.id} destroyed (no space)`);
-      }
-      this.checkItemMerges();
+    for (const it of pending) {
+      if (this.stow(it, { allowTemp: true })) continue;
+      if (np && np.items.length < this.gd.equipPerChess) { np.items.push(it); continue; }
+      this.m.log.warn?.(`[match ${this.m.roomCode}] ${this.playerId}: returned item ${it.id} destroyed (no space)`);
     }
+    if (returnItems) this.checkItemMerges();
+    // deployed in its predecessor's place: its manually deployable summons join the hand, after the returned equipment
+    if (deployed) this.grantTokensFor(np);
     this.recompute();
     if (np) this.m.dispatch(this, 'onGain', { piece: np, kind: 'chess', source: 'transform' });
     return np;
