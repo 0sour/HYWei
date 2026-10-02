@@ -350,7 +350,7 @@ test('道具补给 E2E (co-op): 6 free normal items within the round window; the
   m.dispose();
 });
 
-test('机密商店 E2E (solo HARD R11): 3 free normal items of any tier I–VI; a second copy merges into the 进阶 item', () => {
+test('机密商店 E2E (solo HARD R11): 3 free normal items of the official composition; a second copy merges into the 进阶 item', () => {
   const data = dataWith('mode_single_hard', 11, 'shop');
   const h = makeMatch({ mode: 'solo', difficulty: 'HARD', humans: 1, seed: 42, data, registry: REG, fake: true });
   const m = h.m;
@@ -372,20 +372,60 @@ test('机密商店 E2E (solo HARD R11): 3 free normal items of any tier I–VI; 
   m.dispose();
 });
 
-test('机密商店 draws every tier I–VI with duplicates allowed (generation, 30 drafts)', () => {
+test('机密商店 draws the official composition with duplicates allowed (generation, 30 drafts; the evidence is test/match/feedback1-secret-shop.test.js)', () => {
   const h = makeMatch({ mode: 'coop', difficulty: 'HARD', humans: 1, seed: 5, data: dataWith('mode_multi_hard', 11, 'shop'), registry: REG, fake: true });
+  const coin = DATA.choices.shopDraft.coin;
   const tiers = new Set();
   let dupes = 0;
   for (let i = 0; i < 30; i++) {
     const d = generateDraft(h.m.gd, h.m.rngDraft, 11, { stageId: h.m.stageId });
     assert.equal(d.family, 'shop');
     assert.equal(d.cards.length, 6);
+    assert.equal(d.cards.filter((c) => DATA.items[c.id].tier === 6).length, 2, 'two tier-VI items');
+    assert.ok(d.cards.some((c) => c.id === coin), 'a 盟约之币');
     for (const c of d.cards) tiers.add(DATA.items[c.id].tier);
     if (new Set(d.cards.map((c) => c.id)).size < d.cards.length) dupes++;
   }
   h.m.dispose();
-  assert.deepEqual([...tiers].sort(), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual([...tiers].sort(), [1, 3, 4, 5, 6], 'tiers III–VI and the tier-I 盟约之币');
   assert.ok(dupes > 0, 'duplicates allowed');
+});
+
+test('机密商店 E2E (co-op): two identical cards are two cards — both can be taken, by index, and each picker gets the item', () => {
+  // six 变形同构体: every slot draws the one item `coin` names
+  const one = Object.values(DATA.items).find((i) => i.name === '变形同构体' && !i.isGolden).id;
+  const data = dataWith('mode_multi_hard', 3, 'shop');
+  data.choices = { ...data.choices, shopDraft: { ...data.choices.shopDraft, slots: Array.from({ length: 6 }, () => ({ coin: 1 })), coin: one } };
+  const h = makeMatch({ mode: 'coop', difficulty: 'HARD', humans: 2, bots: 2, seed: 43, data, registry: REG, fake: true });
+  const m = h.m;
+  h.start();
+  const sp = toDraft(h, 3);
+  assert.equal(sp.family, 'shop');
+  const pub = m.publicView().sp;
+  assert.deepEqual(pub.cards.map((c) => c.id), Array(6).fill(one), 'six identical offers');
+  assert.deepEqual(pub.cards.map((c) => c.idx), [0, 1, 2, 3, 4, 5], 'each its own index');
+  const funds = { p_0: h.ps('p_0').funds, p_1: h.ps('p_1').funds };
+  const picked = {};
+  for (let guard = 0; guard < 1000 && m.phase === 'SP_DRAFT'; guard++) {
+    const pid = m.spTurn();
+    if (pid !== 'p_0' && pid !== 'p_1') { h.sched.runNext(); continue; }
+    // a taken card is refused even though an identical one is still free
+    const taken = Object.keys(m.sp.taken).map(Number);
+    if (taken.length) assert.deepEqual(m.handle(pid, { t: 'g.choice', idx: taken[0] }), { error: 'SOLD_OUT' }, 'a taken index stays taken');
+    const idx = m.sp.cards.find((c) => m.sp.taken[c.idx] == null).idx;
+    assert.deepEqual(m.handle(pid, { t: 'g.choice', idx }), { ok: true });
+    picked[pid] = idx;
+  }
+  assert.equal(m.phase, 'PREP');
+  assert.notEqual(picked.p_0, picked.p_1, 'two different cards of the same item');
+  assert.equal(Object.keys(sp.taken).length, 4, 'every player took one of the identical cards');
+  for (const pid of ['p_0', 'p_1']) {
+    const ps = h.ps(pid);
+    assert.ok([...ps.hand, ...ps.temp].some((p) => p && (p.id === one || p.id === DATA.items[one].goldenId)), `${pid} holds the item`);
+    assert.equal(ps.funds, funds[pid], 'free');
+  }
+  matchInvariants(m);
+  m.dispose();
 });
 
 // =====================================================================================================================

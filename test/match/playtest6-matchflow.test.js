@@ -109,7 +109,7 @@ test('#19 a tier short of different operators: the offer tops up from the tier b
 // v2.4.1 drafted 战术特训 (only 法术教鞭 makes those) and the hidden 鸭爵 set, put one or more multi-round "之后 / 后续的每场
 // 作战" cards in about half of the co-op R3 drafts and showed every card as plain text, so a "每场" card looked like a
 // "下场" one. Now: no 战术特训 / 鸭爵 set (战术特训 is the 教鞭 Art's, test/content/items.test.js); since player feedback
-// #2 the drafts follow the 33 official screenshots (test/match/feedback1-bounty.test.js), where no multi-round card
+// #2 the drafts follow the 66 official screenshots (test/match/feedback1-bounty.test.js), where no multi-round card
 // appears; each card names its battles in the official colours (blue "下场作战" / "两场作战", red "每场"); a 1–2-battle
 // bounty stops after its battles; a multi-round card (教鞭's 法术大师A2·多轮战术特训) lasts two battles.
 
@@ -161,9 +161,9 @@ test('#4 data: cards.bounty marks the draft pool — 战术特训 (教鞭), the 
   assert.equal(list.filter((c) => c.draft).length, 86);
   const multi = list.filter((c) => c.rounds >= 99 && c.payout === 'kill');
   assert.equal(multi.length, 7, '多轮悬赏 · 假想敌 ×6 + 山海众头目·多轮悬赏');
-  assert.ok(multi.every((c) => !c.draft && c.draftExcluded === 'unseen'), 'in none of the 27 official bounty drafts');
+  assert.ok(multi.every((c) => !c.draft && c.draftExcluded === 'unseen'), 'in none of the 59 official bounty drafts');
   const slime = list.find((c) => c.effectId === 'enemyeffect_5_1');
-  assert.ok(slime.draft && slime.draftPool === 'boss', '源石虫·特训 is an R9 card (8 of the 11 official R9 drafts)');
+  assert.ok(slime.draft && slime.draftPool === 'boss', '源石虫·特训 is an R9 card (16 of the 23 official R9 drafts)');
 });
 
 /** Drive a co-op 绝境 match to its R3 bounty draft; the human takes the first free card `want(card, free)` accepts. */
