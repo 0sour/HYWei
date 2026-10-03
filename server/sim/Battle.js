@@ -1051,13 +1051,14 @@ export class Battle {
     for (const u of this.allyUnits) {
       if (u.alive || u.removed || u.kind !== 'op') continue;
       if (this.time + 1e-9 < u.respawnAt) continue;
+      // the DP first: an operator past its timer mostly waits for DP, and the tile checks scan every ally
+      const ps = this.getPlayer(u.ownerId);
+      const cost = u.base.cost;
+      if (!ps || ps.dp + 1e-9 < cost) continue;
       const [r, c] = this.restTile(u);
       const occ = this._occ[r * COLS + c];
       if (occ && occ.alive && occ !== u) continue;
       if (this.downOn(r, c, u)) continue;
-      const ps = this.getPlayer(u.ownerId);
-      const cost = u.base.cost;
-      if (!ps || ps.dp + 1e-9 < cost) continue;
       ps.dp = Math.max(0, ps.dp - cost);
       this._deploy(u, { initial: false, tile: r === u.homeR && c === u.homeC ? null : [r, c] });
     }
@@ -2040,17 +2041,19 @@ export class Battle {
   /**
    * Where a knocked-out operator lies (it redeploys there): the tile it fell on, except — "若干员被击倒的位置为其他干员或
    * 召唤物的初始位置，则在被击倒后，尝试返回其自身的初始位置" (PRTS 卫戍协议/帮助) — a tile that is another board piece's
-   * home (a piece with a board uid: the 初始位置 is the prep placement), where it goes back to its own home tile when
-   * that is in the rect and free (isReservedTile: no living unit, no other body, no other waiting piece's tile). It
-   * stays where it fell when its home is taken [ASSUMED: one attempt, at the knock-out]. Only an operator moved off its
-   * board tile — a 突袭 jump, 乌尔比安's anchor — can fall elsewhere. Sets `u.body` (b.snap `down` carries it); x / y /
-   * tileR / tileC keep where it fell, so the `kill` / `death` handlers (被击倒时 effects) still act there.
+   * home (a piece with a board uid: the 初始位置 is the prep placement — whether that piece is on the field, waiting or
+   * gone: a summon only leaves its home free once it has expired or been killed, so a removed one must count too), where
+   * it goes back to its own home tile when that is in the rect and free (isReservedTile: no living unit, no other body,
+   * no other waiting piece's tile). It stays where it fell when its home is taken [ASSUMED: one attempt, at the
+   * knock-out]. Only an operator moved off its board tile — a 突袭 jump, 乌尔比安's anchor — can fall elsewhere. Sets
+   * `u.body` (b.snap `down` carries it); x / y / tileR / tileC keep where it fell, so the `kill` / `death` handlers
+   * (被击倒时 effects) still act there.
    */
   _layBody(u) {
     const r = u.tileR, c = u.tileC, hr = u.homeR, hc = u.homeC;
     u.body = [r, c];
     if (r === hr && c === hc) return;
-    if (!this.allyUnits.some((a) => a !== u && a.uid != null && !a.removed && (a.kind === 'op' || a.kind === 'token') && a.homeR === r && a.homeC === c)) return;
+    if (!this.allyUnits.some((a) => a !== u && a.uid != null && (a.kind === 'op' || a.kind === 'token') && a.homeR === r && a.homeC === c)) return;
     if (!this.grid.inRect(hr, hc) || this.isReservedTile(hr, hc)) return;
     u.body = [hr, hc];
   }

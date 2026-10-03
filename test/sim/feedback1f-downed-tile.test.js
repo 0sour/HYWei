@@ -205,6 +205,44 @@ test('F5 "若干员被击倒的位置为其他干员或召唤物的初始位置�
   }
 });
 
+// Rule 3 for a SUMMON's initial position (QA after the integration): a summon leaves its home free only once it has
+// expired or been killed — and the removed summon was not counted, so the clause never applied: a 突袭 member that
+// landed on the free tile of 浊心斯卡蒂's 海嗣 and fell there lay on it and kept the 海嗣 (远古血亲: it comes back on its
+// tile) off the field. Every board piece's 初始位置 counts now, on the field or not.
+test('F5 rule 3: a body on the home of a summon that has expired or been killed goes back to its own; the summon comes back', () => {
+  for (const how of ['expired', 'killed']) {
+    const h = makeBattle({
+      stageId: 'flat', autoFinish: false, timeLimit: 400, bonds: RAID,
+      units: [
+        { chessId: 'chess_char_6_04_a', row: 10, col: 3, uid: 1 },
+        { kind: 'token', tokenId: 'token_10017_skadi2_dedant', row: 10, col: 5, uid: 2, ownerUid: 1 },
+        { chessId: 'chess_char_1_18_a', row: 12, col: 3, uid: 3 },
+      ],
+    });
+    h.step();
+    const b = h.b;
+    const sea = b.allyUnits.find((u) => u.kind === 'token' && u.uid === 2);
+    const yan = h.unit(3);
+    assert.ok(sea.alive && sea.tileR === 10 && sea.tileC === 5, 'the 海嗣 on its placed tile');
+    if (how === 'killed') kill(b, sea);
+    else h.runUntil(() => !sea.alive, 120);
+    assert.ok(!sea.alive && sea.removed, `${how}: the 海嗣 is gone`);
+    assert.equal(b.isReservedTile(10, 5), false, 'its home is free for an automatic placement');
+    b.retreat(yan, { reason: 'raid' });                 // the 突袭 landing (raidRedeploy: retreat + redeploy on a free tile)
+    assert.ok(b.redeploy(yan, { free: true, tile: [10, 5], keepSp: true }), `${how}: 宴 lands on the 海嗣's home`);
+    kill(b, yan);
+    assert.deepEqual(b.restTile(yan), [12, 3], `${how}: 宴 lies on her own home, not on the 海嗣's`);
+    assert.deepEqual(bodyOf(b, yan), [12, 3], 'the client draws her there');
+    assert.equal(b.isReservedTile(10, 5), false, 'the 海嗣\'s home stays free');
+    if (how === 'expired') {
+      const back = () => b.allyUnits.find((u) => u.kind === 'token' && u.alive && u.defId === sea.defId) ?? null;
+      assert.ok(h.runUntil(() => back() != null, 60), 'the 海嗣 comes back (while 宴 still waits to redeploy)');
+      assert.deepEqual(tileOf(back()), [10, 5], 'on its own tile');
+    }
+    checkInvariants(b);
+  }
+});
+
 test('F5 safeguard: the `down` state reports WAIT_TILE whenever _checkRedeploys holds a body back — a living unit or another body on its tile', async () => {
   const { DOWN_STATE } = await import('../../server/sim/constants.js');
   const op = (id) => chessRec({ id, profession: 'WARRIOR', stats: { atk: 0, maxHp: 1000, def: 0, blockCnt: 0, cost: 1, respawnTime: 2 }, skill: null });
