@@ -186,7 +186,14 @@ to a new pick. A `wait` leg keeps counting; when the fear ends the route re-plan
 user playtest #5 item 4): an unblocked, blockable enemy is blocked by an ally (or device) whose centre is within its
 block radius of the enemy's position — `constants.js BLOCK_RADIUS`: ground 0.7071 (compared as d² < 0.49999037, the
 tile's circumscribed circle), air 0.8944 (blockFly units against flyers), devices 0.4472 — while that blocker has free
-capacity for the enemy's `blockWeight` (data `blockCnt`). It is checked every tick for every unblocked enemy, moving or
+capacity for the enemy's `blockWeight` (data `blockCnt`). A unit standing on a tile ground units cannot pass — the
+fenced 围墙 / 围栏 tiles (`b`: low, deployable, flyers only; the only low tiles of that kind on the stages) — blocks no
+ground enemy (PRTS 围墙 / 围栏 地形机制 "部署在其中的单位，若当前阻挡类型为'地面阻挡'则无法阻挡敌人";
+`Battle._blockerFor`). Nothing walks onto those tiles, but a push or pull stops an enemy at the fence edge, 0.5 from the
+unit; it walks on from there (found while checking community report F4 after 0.1.0, 深巡 on a fenced tile: 薄绿 S2 held
+the enemies she dragged against the fence; test/sim/feedback1f-fence.test.js). Air blocking (blockFly against flyers)
+stays [ASSUMED: PRTS restricts the rule to 地面阻挡], and a unit on a fenced tile still attacks whatever stands on its
+range tiles. It is checked every tick for every unblocked enemy, moving or
 not: an enemy that overlaps an operator when its blocker dies / is withdrawn / is stunned, or when the operator's
 blocked enemy dies, is taken over at once; an enemy that finds no room walks on (pass-through). Several blockers in
 contact → the nearest [ASSUMED]. A head-on enemy therefore stops at contact, ~0.71 tile from the blocker's centre, on the
