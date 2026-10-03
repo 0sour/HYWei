@@ -924,7 +924,7 @@ Members (5 chess, 4 in current shop pool; by tier in shop: {'2': 1, '3': 1, '5':
 - **[L >= 50]** ALL operators ASPD +50.
 - Formulas: `atkHpMultiplier = 1.25 + 0.01*L`; `idleSec = 10`; `aspdAll(L>=50) = 50`
 - How layers are gained: 史尔特尔 部署时 +8 (<=50/battle); 休谟斯 each 2 kills +1; 瑕光 +4/deploy; 斯卡蒂; 伊内丝 +5; 机变 "斯卡蒂的盟誓" +8, "德克萨斯的盟誓" +10.
-- [ASSUMED] target enemy = the ground enemy closest to the player's objective; landing tile = nearest free deployable tile adjacent to it
+- [ASSUMED] target enemy = the ground enemy closest to the player's objective (its own field's first) that the member can reach; landing tile = the nearest free deployable tile within 2 tiles of it from which the member's attack range covers it. No such tile for any of the 8 most advanced → no jump; the poll looks again every 0.25 s (GitHub issue #51 — up to 0.1.1 the idle trigger landed out of reach and hopped every 10 s; DESIGN §22.2)
 - [ASSUMED] the buff lasts until the operator leaves the field
 - Bond item (with 变形同构体 grants this bond): 突袭手雷 `chess_item_3_11_e` (1 gold: 每次部署后的10秒内，攻击时使目标晕眩2秒)
 - Garrisons that explicitly add layers to this bond: `garrison_38`, `garrison_64`, `garrison_74`, `garrison_77`, `garrison_107` (see section 4; plus the generic ones)
