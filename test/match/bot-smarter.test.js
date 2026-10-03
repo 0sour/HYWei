@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PHASE } from '../../shared/constants.js';
-import { botPickCard, bountyKillChance, itemTarget, arrange, botPrepBegin, botPrepEnd, bondPlan, rangeTiles } from '../../server/match/bot.js';
+import { botPickCard, bountyKillChance, itemTarget, arrange, botPrepBegin, botPrepEnd, bondPlan, rangeTiles, effDps, rangeRec } from '../../server/match/bot.js';
 import { parseKey, tileKey } from '../../server/match/board.js';
 import { makeMatch, checkInvariants, give, giveItem, legalTileFor, DATA } from './harness.js';
 
@@ -272,6 +272,28 @@ test('bond plan: a teammate\'s main core bond (its bond strip — a human\'s too
   };
   assert.equal(focusWhenMateBuilds(SARGON), 'kazimierzShip', 'the human builds 萨尔贡: the bot takes 卡西米尔');
   assert.equal(focusWhenMateBuilds(KAZIMIERZ), 'sargonShip', 'the human builds 卡西米尔: the bot takes 萨尔贡');
+});
+
+test('merged rules (0.1.1): an attack on every enemy in range counts double (阵法术师 / 轰击术师 rangeAoe); a unit is planned with the range it is deployed with', () => {
+  const rec = (id) => DATA.chess[id];
+  const raw = (r) => (r.stats.atk / (r.stats.bat * 100 / r.stats.aspd));
+  // 阿罗玛 (轰击术师, attacks every enemy on her line) vs a single-target sniper: effDps without a field model is the raw DPS
+  // × the crowd factor
+  const aroma = rec('chess_char_4_10_a'), inside = rec('chess_char_1_01_a');
+  assert.ok(Math.abs(effDps(null, aroma) - raw(aroma) * 2) < 1e-6, '轰击术师 ×2');
+  assert.ok(Math.abs(effDps(null, inside) - raw(inside)) < 1e-6, 'a single-target dealer ×1');
+  // the elite 信仰搅拌机 with SPT-Y (特性 攻击距离 +1): the bot covers the extended grid the server's summonRange and the card use
+  const h = makeMatch({ mode: 'solo', difficulty: 'NORMAL', seed: 3, fake: true }).start();
+  const ps = h.ps('p_0');
+  const mixer = rec('chess_char_4_01_b');
+  const mod = (mixer.modules || []).find((x) => x.typeName === 'SPT-Y');
+  if (mod) {
+    ps.loadout = Object.freeze({ chess_char_4_01_a: Object.freeze({ skill: mixer.skill?.index ?? 2, module: mod.uniEquipId }) });
+    const r = rangeRec(ps, mixer);
+    assert.ok(r.rangeGrid.length > mixer.rangeGrid.length, `the deployed grid (${r.rangeGrid.length} tiles) is the extended one (${mixer.rangeGrid.length})`);
+  }
+  assert.equal(rangeRec(ps, inside), inside, 'no loadout difference: the record itself');
+  h.m.dispose();
 });
 
 test('cost guard: the prep heuristics of a late-round 4-bot match stay cheap (rehearsal off)', () => {

@@ -362,6 +362,18 @@ and 86 / 175 → 83 / 162 ms, CPU 131 / 314 → 124 / 329 ms and 97 / 209 → 91
 refreshes); a 机变 pick 0.07 → 0.15 ms (p50). Over the 40-seed A/B the summed prep CPU per match moved −6 % … +2 %. The
 tuning sweeps used seeds 101–148 with the rehearsal off; the tables above are separate seed ranges.
 
+**0.1.1 integration (DESIGN §21.6).** With all 18 workstreams merged (the official bounty draft structures, the AoE,
+displacement and enemy fixes) the same bot on the same seeds wins 27 / 40 solo 绝境 and 9 / 40 co-op 绝境 (co-op bounty
+enemies leaked 120 of 380 picks: 232 drafts offered no card at a kill chance ≥ 0.5 — the R9 boss groups). The bot was
+then reconciled with the merged rules: it plans each unit with the range it is deployed with (`rangeRec`:
+`attackRangeGrid`, the server's `summonRange` grid — no outcome changed on these seeds) and values an attack on every
+enemy in range ×2 (阵法术师 / 轰击术师, now `rangeAoe`), a splash ×1.3 and a chain ×1.4 [ASSUMED] (`CROWD`). Seeds 1–40,
+rehearsal 3, before → after: solo 绝境 27 → 27 wins, LP left 17.9 → 18.4, bounty enemies leaked 8 → 5 of 104; co-op 绝境
+9 → 11 wins, LP left 14.8 → 14.1, leaks per match 215 → 220 — within the noise of 40 seeds (the ×2-only variant: 25 /
+11 wins). Decision time stays at the WF numbers (one thread, back to back, seeds 1–6): heuristics CPU p50 / p95 25 / 59
+→ 24 / 57 ms solo and 16 / 36 → 16 / 36 ms co-op; the whole prep with its rehearsal wall clock 80 / 148 → 78 / 153 ms and
+74 / 152 → 73 / 151 ms.
+
 ---
 
 ## 6. Match follow-ups shipped with this pass

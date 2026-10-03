@@ -21,7 +21,8 @@
 //      over the shared pool) × MERGE_HIT (an elite plus the merge's free pick of the next tier) — else it refreshes. A
 //      third copy it cannot afford freezes the shop for the next round (maybeFreeze). Purchase scores: merge progress >
 //      bond thresholds (focus, second) > role needs (blockers, anti-air when the wave flies, one or two healers) >
-//      tier and armour fit (the share of a dealer's damage the round's DEF / RES lets through, effDps). A merge that
+//      tier and armour fit (the share of a dealer's damage the round's DEF / RES lets through, effDps; an attack on every
+//      enemy in range — 阵法术师 / 轰击术师 — counts double, splash and chain a little, CROWD). A merge that
 //      consumes a deployed copy leaves the elite on that copy's tile (PRTS 卫戍协议/帮助, PlayerState._mergeChess):
 //      nothing here assumes it in the hand — steps 3–4 plan it like any owned unit (kept, moved or benched).
 //   3. lineup: the deployed set maximizes unit value (tier, elite, items, armour fit) + activated bond tiers (exact
@@ -32,7 +33,8 @@
 //      the ground path but count as flyers) and weighted by their enemies; an exposure model (tile time × DPS of the
 //      covering units against the round's DEF / RES, blocker hold time, flyers only for anti-air) is maximized
 //      greedily — blockers first, then damage dealers by DPS, then healers — over every
-//      (legal tile, direction) pair: each unit's range grid is rotated per direction (DESIGN §3; RIGHT is tried first
+//      (legal tile, direction) pair of the server's deploy map (no 深水区): each unit's range grid — the one it is
+//      deployed with, rangeRec (loadoutRecord attackRangeGrid) — is rotated per direction (DESIGN §3; RIGHT is tried first
 //      and kept on ties, so symmetric ranges and melee units whose front adds nothing stay facing the gates), so
 //      ranged units turn toward the enemy path tiles they cover best and blockers toward the road; on 气流 tiles
 //      (act2 m01 blowers) the DPS is scaled by the blower ATK bonus of that direction (with / against / across). The last
@@ -75,6 +77,7 @@ import { computeBonds } from './bondsMeta.js';
 import { withBounties, isFlyKey } from './waves.js';
 import { mitigate } from '../sim/damage.js';
 import { HOVER_KEYS } from '../sim/content/enemies.js';
+import { attackRangeGrid, loadoutRecord, resolveRecordLoadout } from '../../shared/loadoutRecord.js';
 
 /**
  * Drive a step generator (planLayoutSteps, createRehearsalSteps, arrangeSteps, botPrepBeginSteps …) to its end in one
@@ -179,7 +182,7 @@ export function bountyKillChance(m, ps, card) {
   const tileTime = Math.max(0.4, Math.min(6, 1 / (speed * 0.5)));
   const units = [];
   for (const [k, p] of ps.board) {
-    const rec = p.kind === 'token' ? gd.token(p.id) : gd.chess(p.id);
+    const rec = p.kind === 'token' ? gd.token(p.id) : rangeRec(ps, gd.chess(p.id));
     if (!rec) continue;
     const [r, c] = parseKey(k);
     const u = unitOf(rec, k, r, c, pieceDir(p), model);
@@ -753,12 +756,21 @@ export function rangeTiles(rec, r, c, dir = 'RIGHT') {
   return grid.map(([dr, dc]) => { const [a, b] = rotateOffset(dr, dc, dir); return tileKey(r + a, c + b); });
 }
 
+/**
+ * Enemies an attack strikes at once, as a factor on a dealer's DPS (the exposure model gives every unit's DPS to each
+ * enemy on a covered tile, so a single-target dealer is overrated in a crowd): 阵法术师 / 轰击术师 strike every enemy in
+ * range (sim professions.js rangeAoe, community report E3 after 0.1.0 — the 阵法术师's skill-off pause is the 0.4 of a
+ * non-attacker), splash and chain branches a few [ASSUMED values, botbench A/B in BALANCE.md].
+ */
+const CROWD = Object.freeze({ phalanx: 2, blastcaster: 2, splashcaster: 1.3, aoesniper: 1.3, bombarder: 1.3, chain: 1.4 });
+const crowdOf = (rec) => CROWD[rec && rec.subProfessionId] ?? 1;
+
 /** Damage per second of a record (attack / attack interval; healers and non-attackers 0). */
 function dpsOf(rec) {
   const st = rec && rec.stats;
   if (!st || isHealer(rec)) return 0;
   const interval = Math.max(0.2, (st.bat || 1) * 100 / Math.max(ASPD_MIN, st.aspd || 100));
-  const d = (st.atk || 0) / interval;
+  const d = ((st.atk || 0) / interval) * crowdOf(rec);
   return rec.attackKind === 'none' ? d * 0.4 : d;
 }
 
@@ -767,8 +779,29 @@ function dpsVs(rec, def, res) {
   const st = rec && rec.stats;
   if (!st || isHealer(rec)) return 0;
   const interval = Math.max(0.2, (st.bat || 1) * 100 / Math.max(ASPD_MIN, st.aspd || 100));
-  const d = mitigate(st.atk || 0, rec.dmgType === 'arts' ? 'arts' : 'phys', { def, res }) / interval;
+  const d = (mitigate(st.atk || 0, rec.dmgType === 'arts' ? 'arts' : 'phys', { def, res }) / interval) * crowdOf(rec);
   return rec.attackKind === 'none' ? d * 0.4 : d;
+}
+
+/**
+ * The record a chess fights with for range purposes: its range grid replaced by the one it is deployed with under the
+ * player's loadout — a passive 攻击范围扩大 skill, a module's range or 攻击距离 (shared/loadoutRecord.js attackRangeGrid:
+ * what the server's summonRange, the deploy wheel and the card use since 0.1.1) — else the record itself. Cached per
+ * player and loadout.
+ */
+export function rangeRec(ps, rec) {
+  if (!rec || !rec.chessId || typeof ps.loadoutFor !== 'function') return rec;
+  const lo = ps.loadoutFor(rec);
+  const key = `${rec.chessId}|${lo ? `${lo.skill ?? ''}:${lo.module ?? ''}` : ''}`;
+  const cache = ps._botRangeRecs || (ps._botRangeRecs = new Map());
+  if (cache.has(key)) return cache.get(key);
+  let out = rec;
+  try {
+    const g = attackRangeGrid(loadoutRecord(rec, resolveRecordLoadout(rec, lo)));
+    if (Array.isArray(g) && g.length && JSON.stringify(g) !== JSON.stringify(rec.rangeGrid)) out = Object.freeze({ ...rec, rangeGrid: g });
+  } catch { out = rec; }
+  cache.set(key, out);
+  return out;
 }
 
 /**
@@ -882,7 +915,7 @@ export function planLayout(m, ps, pieces, params = LAYOUT_PARAMS, opts = {}) {
 export function* planLayoutSteps(m, ps, pieces, params = LAYOUT_PARAMS, { occupied = new Set(), recOf = null } = {}) {
   const model = fieldModel(m, ps);
   const map = ps.deployMap();
-  const rec = recOf || ((p) => (p.kind === 'token' ? m.gd.token(p.id) : m.gd.chess(p.id)));
+  const rec = recOf || ((p) => (p.kind === 'token' ? m.gd.token(p.id) : rangeRec(ps, m.gd.chess(p.id))));
   const layout = new Layout(model, params);
   const rank = (p) => { const r = rec(p); return isBlocker(r) ? 0 : isHealer(r) ? 2 : 1; };
   const order = pieces.slice().sort((a, b) => rank(a) - rank(b) || dpsOf(rec(b)) - dpsOf(rec(a)) || a.uid - b.uid);

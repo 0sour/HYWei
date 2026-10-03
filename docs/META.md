@@ -200,7 +200,8 @@ over the remaining pool; an elite also brings the merge's free pick of the next 
 freezes the shop for the next round (freeze is free). Purchase scores: merge progress > bond thresholds > role needs
 (2 blockers, anti-air when the wave flies, ≤ 2 healers) > tier, the 特质 that keep adding layers, and armour fit (the
 share of a dealer's damage that gets through the round's DEF / RES — `mitigate` of the sim per hit, HP-weighted over
-the wave). The deployed set maximizes unit value + activated bond tiers (exact counting via `computeBonds`; every
+the wave; an attack on every enemy in range counts ×2 — 阵法术师 / 轰击术师, `rangeAoe` since 0.1.1 —, a splash ×1.3, a
+chain ×1.4 [ASSUMED], `CROWD`). The deployed set maximizes unit value + activated bond tiers (exact counting via `computeBonds`; every
 deployed focus member counts toward the next threshold). Items by what they do: equipment on the strongest deployed
 damage dealers (survival items on blockers first, bond signature items on a member), 信标 on a bench single (never the
 lineup when a bench single exists), 拟态物质 on a pair, 博士投影 (both qualities — neither takes an elite) on the strongest
@@ -219,8 +220,10 @@ minus expected LP loss and takes one it is unlikely to beat only when nothing be
 is large (in co-op 绝境 most remaining bounty leaks come from drafts with no beatable card at all); tactic cards by what
 they act on (a 盟誓 / 驰援 card on its bonds, 升华, …). Placement uses the round's enemy preview: every route is traced
 over the own board (ground: the stage's device-aware ground paths; flyers: through their checkpoints) and weighted by
-its enemies; an exposure model (time on each tile × DPS against the round's armour of the units covering it, blocker
-hold time, anti-air only on flying routes) is maximized greedily (blockers, then damage dealers, then healers); a
+its enemies; an exposure model (time on each tile × DPS against the round's armour of the units covering it — each
+unit's cover is the range it is deployed with under the player's loadout, `rangeRec` = `attackRangeGrid`, the grid the
+server's `summonRange` and the card use —, blocker hold time, anti-air only on flying routes) is maximized greedily
+(blockers, then damage dealers, then healers) over the server's deploy map (no 深水区, PlayerState.deployMap); a
 tactician's 援军 goes on a tile of the tactician's attack range (`PlayerState.summonRange`, the server's own rule; player
 report #9 after 0.1.0), and a tile the server's `g.move` refuses is skipped for the next best one (the planner reads
 `board.js legalTiles` on the deploy map; `g.move` is the judge). Boss
