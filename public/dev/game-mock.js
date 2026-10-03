@@ -282,11 +282,14 @@ function setPhase(phase, variant) {
       break;
     case PHASE.SP_DRAFT: {
       pub.round = 9; pub.deadline = Date.now() + 14000;
-      const fam = VARIANTS.has('supply') ? 'supply' : VARIANTS.has('tactic') ? 'tactic' : 'bounty';
+      const fam = VARIANTS.has('supply') ? 'supply' : VARIANTS.has('shop') ? 'shop' : VARIANTS.has('tactic') ? 'tactic' : 'bounty';
       const ch = data.get('choices');
       let cards;
       if (fam === 'supply') cards = shuffle(shopItems().filter((i) => i.tier >= 3)).slice(0, 6).map((i) => ({ itemId: i.id }));
-      else if (fam === 'tactic') cards = shuffle(ch.cards.tactic.filter((t) => t.kind !== 'terrain')).slice(0, 6).map((t) => ({ effectId: t.effectId }));
+      // the official 机密商店 of match 8 R11 (test/fixtures/official-bounty-drafts.json): the same item twice
+      else if (fam === 'shop') cards = ['变形同构体', '盟约之币', '商业包装方案', '变形同构体', '天马之盔', '双模机械臂'].map((n) => ({ itemId: shopItems().find((i) => i.name === n).id }));
+      // the official 战术决策 of match 7 R11 (test/fixtures/official-bounty-drafts.json): the same card twice
+      else if (fam === 'tactic') cards = ['补给', '补给', '谢拉格驰援', '列装', '莫斯提马的盟誓', '升华'].map((n) => ({ effectId: ch.cards.tactic.find((t) => t.name === n).effectId }));
       else cards = shuffle(ch.cards.bounty.filter((b) => b.draft !== false)).slice(0, 6).map((b) => ({ effectId: b.effectId }));
       if (solo) { cards = cards.slice(0, 3); pub.deadline = 0; }
       pub.sp = { family: fam, cards, order: solo ? ['p1'] : ['p4', 'p1', 'ai_2', 'p3'], turn: solo ? 'p1' : 'p1', picks: solo ? {} : { p4: 2 }, untimed: solo };
@@ -698,7 +701,7 @@ const SWITCH = [
   ['BATTLE_CHECK', PHASE.BATTLE_CHECK, ''], ['PREP', PHASE.PREP, ''], ['PREP + reward', PHASE.PREP, 'reward'],
   ['PREP + temp', PHASE.PREP, 'temp'], ['PREP frozen', PHASE.PREP, 'frozen'], ['PREP dead', PHASE.PREP, 'dead'],
   ['PREP boss (L)', PHASE.PREP, 'boss'], ['PREP boss (R)', PHASE.PREP, 'bossR'],
-  ['SP bounty', PHASE.SP_DRAFT, 'bounty'], ['SP supply', PHASE.SP_DRAFT, 'supply'], ['SP tactic', PHASE.SP_DRAFT, 'tactic'], ['SP solo', PHASE.SP_DRAFT, 'solo'],
+  ['SP bounty', PHASE.SP_DRAFT, 'bounty'], ['SP supply', PHASE.SP_DRAFT, 'supply'], ['SP shop', PHASE.SP_DRAFT, 'shop'], ['SP tactic', PHASE.SP_DRAFT, 'tactic'], ['SP solo', PHASE.SP_DRAFT, 'solo'],
   ['COMBAT', PHASE.COMBAT, ''], ['COMBAT done', PHASE.COMBAT, 'done'], ['UNITE', PHASE.UNITE, ''], ['UNITE leaker', PHASE.UNITE, 'leaker'], ['SETTLE', PHASE.SETTLE, ''],
   ['FINAL_ASSAULT', PHASE.FINAL_ASSAULT, ''], ['FA overtime soon', PHASE.FINAL_ASSAULT, 'overtime'], ['FA draining', PHASE.FINAL_ASSAULT, 'drain'],
   ['HIDDEN_CORE', PHASE.HIDDEN_CORE, ''], ['COMBAT solo (pause)', PHASE.COMBAT, 'solo'], ['FA solo paused', PHASE.FINAL_ASSAULT, 'solo,paused'],

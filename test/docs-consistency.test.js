@@ -625,7 +625,9 @@ test('player feedback after 0.1.0 (DESIGN §21, v0.1.1): every report mapped, th
   // settled: the tactician re-orientation (user-confirmed) and the screenshot-based bounty structures
   const s2120 = sub(20);
   assert.match(s2120, /A tactician re-oriented in place \(§21\.3\) \| a range-bound summon still inside the new range stays[^\n]*user-confirmed 2026-10-03/);
-  assert.match(s2120, /Bounty drafts \(§21\.2\) \| the official structure of each round from the user's 33 screenshots/);
+  assert.match(s2120, /Bounty drafts \(§21\.2\) \| the official structure of each round from the user's 66 screenshots of 22 matches/);
+  assert.match(s2120, /机密商店 \/ 战术决策 repeats \(§21\.2\) \| the same card can be offered twice/);
+  assert.ok(!/the remake's never do/.test(sub(2)), '§21.2: the 机密商店 and the 战术决策 repeat');
   assert.match(s2120, /MULTI_ROUND_BOUNTY_BATTLES = null/);
   // §21.2 = §7 = §20.6 superseded = the data
   assert.match(sub(2), /initial 42, boss 20, hunter 24 \(86 drafted\)/);

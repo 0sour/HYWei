@@ -5,15 +5,18 @@
 // count is `cards` (co-op 6, solo 3):
 //   bounty  悬赏决策  six distinct cards.bounty entries (solo: 3 of them) built like the official draft of the round
 //                     (`bountyDraftCards`; player feedback after 0.1.0, report #2 — late bounty enemies in the early
-//                     drafts; 33 official screenshots, tools/build-data.mjs BOUNTY_INITIAL_SETS): schedule `bountyDraft`
-//                     names the kind and choices.json `bountyDrafts[kind]` its structure —
-//                       initial (R3, 险境 R6 [ASSUMED]): one of the 10 official sets of "接下来两场作战" cards — a seen
-//                               set, or for an unseen slot one card from each of 6 of the series 10–15 / 20 with the
-//                               tiers I I I II II III;
-//                       boss (R9): a seen group of named bosses + the group's cheap boss bounties / 源石虫·特训 to 6;
-//                       hunter (R11): one of the 15 official events — a seen group (a 特异III giant + its tier-II
-//                               "下场战斗" cards, always together) or for an unseen slot a group of that shape
-//                               [ASSUMED] — filled to 6 with tier-I cards, at most one card per faction series;
+//                     drafts; 66 official screenshots of 22 matches, tools/build-data.mjs BOUNTY_INITIAL_SETS): schedule
+//                     `bountyDraft` names the kind and choices.json `bountyDrafts[kind]` its card lists — the event is a
+//                     fixed list and the draft shows 6 different cards of it, each drawn with its weight (1 + the
+//                     official drafts of the group it showed in):
+//                       initial (R3, 险境 R6 [ASSUMED]): one of the 10 official sets of six "接下来两场作战" cards (all
+//                               six) — 9 seen, the 10th built by `rule` (I I I II II III) [ASSUMED];
+//                       boss (R9): one of the 6 groups (9, 9, 9, 9, 8 and 6 cards) of boss bounties / 源石虫·特训,
+//                               picked by the matches it came in [ASSUMED];
+//                       hunter (R11): one of the 7 seen lists of 7 "下场战斗" cards, uniform, so no list is invented
+//                               [ASSUMED: which of the 15 bounty_hunter events R11 fires is open — by the data's blocks
+//                               8..15]; a list seen with 6 cards gets its 7th (`open`) by `rule`
+//                               (one 特异III giant, else a tier I / II card of a free faction series) [ASSUMED];
 //                     only `draft` cards of that `draftPool` (never 战术特训 — 法术教鞭 only —, the 鸭爵 set, the 7
 //                     multi-round cards or the pre-series cards: no official draft shows them); positions shuffled; the
 //                     mode's inactive enemy list does not apply (PRTS 卫戍协议：盟约 11/18 note "以上调整仅针对战术特训敌人，
@@ -22,13 +25,26 @@
 //                     MULTI_ROUND_BOUNTY_BATTLES battles and says so (`bountyBattles` / `bountyText`: the user's call
 //                     after playtest #6 — "我不记得有过多轮悬赏")
 //   supply  道具补给  random normal EQUIP shop items with tier in supplyTiers [lo, hi] (duplicates allowed)
-//   shop    机密商店  random normal EQUIP shop items of any tier I–VI (duplicates allowed); FREE — the official card
-//                     text is "无需消耗资金，获得装备补给" (research 01 A4/04 addendum), so the price is 0
-//   tactic  战术决策  distinct cards.tactic entries; terrain cards only for the match stage; a 驰援 card
-//                     (single_special_choice_gain_bond_chess) or a 盟誓 card (global_special_choice_bond_addlayer)
-//                     only while at least one of its bonds is live in this match (opts.bondAvailable = Match.bondLive:
-//                     not in the mode's static inactive list — 标准 turns off 拉特兰 / 阿戈尔 / 卡西米尔 / 奥术 … —
-//                     and still with chess in the pool); a card acting only on dead bonds would do nothing
+//   shop    机密商店  at the rounds of choices.json `shopDraft` (R11: the 4 official 机密商店; the user: "机密商店按官方改
+//                     成可以重复吧"): six slots, each drawn on its own — with replacement, so the same item can be
+//                     offered twice (official: 盟约之币 ×2, 变形同构体 ×2): VI, VI, V, 盟约之币 and twice V / IV / III /
+//                     盟约之币, an item within its tier by `itemWeights` (solo: 3 of the 6 slots [ASSUMED]); other rounds
+//                     (标准 / 险境, no screenshot) and without `shopDraft`: random normal EQUIP shop items of any tier I–VI,
+//                     each card on its own (duplicates allowed) [ASSUMED]. FREE — the official card text is "无需消耗资金，获得装备
+//                     补给" (research 01 A4/04 addendum), so the price is 0. Two identical cards are two cards: picks,
+//                     `taken` and the client go by the card's `idx`
+//   tactic  战术决策  cards.tactic entries, each card drawn on its own — with replacement, so the same card can be
+//                     offered twice (the 4 official 战术决策, R11 of matches 7 / 9 / 18 / 20: 补给 ×2 in match 7; the
+//                     user: "战术决策也按官方改成可以重复吧"; `tacticDraftCards`): at the rounds of choices.json
+//                     `tacticDraft` (R11) only its `kinds` (the ally cards — the official 24 cards hold no debuff and
+//                     no terrain card), a card by `weights` (1 + the official cards it showed on) [ASSUMED: the
+//                     weights]; other rounds (标准 / 险境, no screenshot) every card uniform, terrain cards only for
+//                     the match stage [ASSUMED]; a 驰援 card (single_special_choice_gain_bond_chess) or a 盟誓 card
+//                     (global_special_choice_bond_addlayer) only while at least one of its bonds is live in this match
+//                     (opts.bondAvailable = Match.bondLive: not in the mode's static inactive list — 标准 turns off
+//                     拉特兰 / 阿戈尔 / 卡西米尔 / 奥术 … — and still with chess in the pool); a card acting only on dead
+//                     bonds would do nothing. Two identical cards are two cards: picks, `taken` and the client go by
+//                     the card's `idx`, and each pick applies its own card once (two picks of one team card stack)
 // Application (applyCard): a registered `choice:<effectId>` handler (content) wins; otherwise the family default:
 //   bounty → the picker's bounty list (waves.js adds the enemies to the next `rounds` battles; kill payout to the
 //            killer via the Battle, perfect payout at settlement when the picker's own battle was perfect)
@@ -185,76 +201,108 @@ export function bountyCard(gd, c) {
   };
 }
 
-/** Up to `k` cards of `list` not in `taken`, at most one per series of `onePer` (a Set), in a shuffled order. */
-function drawDistinct(rng, list, k, taken, onePer = null) {
+/** Up to `k` cards of `list` not in `taken`, in a shuffled order. */
+function drawDistinct(rng, list, k, taken) {
   const out = [];
-  const used = new Set([...taken].map((c) => c.series));
   for (const c of rng.shuffle(list.slice())) {
     if (out.length >= k) break;
     if (taken.has(c)) continue;
-    if (onePer && onePer.has(c.series) && used.has(c.series)) continue;
     out.push(c);
     taken.add(c);
-    used.add(c.series);
+  }
+  return out;
+}
+
+/** `k` different entries of `list` drawn one by one with weights `weights` (missing / bad weights count 1). */
+function drawWeighted(rng, list, weights, k) {
+  const pool = list.map((c, i) => [c, Math.max(0, Number(weights && weights[i]) || 1)]);
+  const out = [];
+  while (out.length < k && pool.length) {
+    const c = weightedPick(rng, pool);
+    out.push(c);
+    pool.splice(pool.findIndex(([x]) => x === c), 1);
   }
   return out;
 }
 
 /**
- * The cards of a 悬赏决策 of kind `kind` after its official structure (choices.json `bountyDrafts[kind]`, see the module
+ * The cards of an unseen R3 set (`spec.rule`, [ASSUMED]): one card per tier of `tiers` from the two-battle cards of
+ * `series`, at most `perSeries` of one series; a tier the `prefer` cards have is filled first, by one of them.
+ */
+function initialRuleSet(rng, rule, all) {
+  const out = [];
+  const perSeries = Number.isInteger(rule.perSeries) ? rule.perSeries : 1;
+  const ofSeries = (s) => out.filter((c) => c.series === s).length;
+  const prefer = new Set(Array.isArray(rule.prefer) ? rule.prefer : []);
+  const series = new Set(Array.isArray(rule.series) ? rule.series : []);
+  // the tiers a preferred card has go first, so that it still fits its series
+  const prefTiers = new Set(all.filter((c) => prefer.has(c.effectId)).map((c) => c.tier));
+  const tiers = rng.shuffle((Array.isArray(rule.tiers) ? rule.tiers : []).slice());
+  for (const tier of [...tiers.filter((t) => prefTiers.has(t)), ...tiers.filter((t) => !prefTiers.has(t))]) {
+    const ok = (c) => !out.includes(c) && c.tier === tier && series.has(c.series) && ofSeries(c.series) < perSeries;
+    const pref = all.filter((c) => prefer.has(c.effectId) && ok(c));
+    const c = rng.pick(pref.length ? pref : all.filter(ok));
+    if (c) out.push(c);
+  }
+  return out;
+}
+
+/**
+ * Fill an R11 list up to `rule.size` (an unseen event: from nothing; a seen group: its `open` cards) [ASSUMED]: a list
+ * without a 特异III giant gets one, the rest are tier I / II cards, at most one per `onePerSeries` series and
+ * `maxSeries16` of series 16.
+ */
+function hunterFill(rng, rule, list, byId) {
+  const out = list.slice();
+  const size = Number.isInteger(rule.size) ? rule.size : 7;
+  const giants = (Array.isArray(rule.giants) ? rule.giants : []).map((id) => byId.get(id)).filter(Boolean);
+  const onePer = new Set(Array.isArray(rule.onePerSeries) ? rule.onePerSeries : []);
+  const max16 = Number.isInteger(rule.maxSeries16) ? rule.maxSeries16 : 2;
+  if (out.length < size && !out.some((c) => giants.includes(c))) { const g = rng.pick(giants.filter((c) => !out.includes(c))); if (g) out.push(g); }
+  const fits = (c) => !out.includes(c) && (onePer.has(c.series) ? !out.some((x) => x.series === c.series) : c.series !== 16 || out.filter((x) => x.series === 16 && !giants.includes(x)).length < max16);
+  for (const c of rng.shuffle((Array.isArray(rule.cards) ? rule.cards : []).map((id) => byId.get(id)).filter(Boolean))) {
+    if (out.length >= size) break;
+    if (fits(c)) out.push(c);
+  }
+  return out;
+}
+
+/**
+ * The cards of a 悬赏决策 of kind `kind` after its official card lists (choices.json `bountyDrafts[kind]`, see the module
  * header), over the eligible cards `byId` (effectId → cards.bounty entry). Ids the eligible list lacks are skipped.
+ *   pick 'slot': one of `slots` events, uniform — a seen group, or for an unseen event a list built by `rule` (R3's
+ *               10th set; R11 has `slots` = its 7 seen lists, so none is built);
+ *   pick 'seen': a group by the number of official matches it came in.
+ * The draft is `count` different cards of the list drawn by the group's `weights` (a rule-built card weighs 1).
  */
 function structuredBounty(rng, kind, spec, byId) {
-  const get = (ids) => (Array.isArray(ids) ? ids : []).map((id) => byId.get(id)).filter(Boolean);
-  const taken = new Set();
   const count = Number.isInteger(spec.count) ? spec.count : 6;
-  if (kind === 'initial') {
-    const sets = Array.isArray(spec.sets) ? spec.sets : [];
-    const slot = rng.int(Math.max(sets.length, Number.isInteger(spec.slots) ? spec.slots : 0));
-    if (slot < sets.length) return get(sets[slot].cards).slice(0, count);
-    // an unseen official set: one card from each of `count` series, with the seen sets' tier mix
-    const mx = spec.mixed || {};
-    const series = rng.shuffle((mx.series || []).slice()).slice(0, mx.count || count);
-    const tiers = rng.shuffle((mx.tiers || []).slice());
-    const all = [...byId.values()];
-    const out = [];
-    series.forEach((s, i) => {
-      const ofSeries = all.filter((c) => c.series === s);
-      const want = ofSeries.filter((c) => c.tier === tiers[i]);
-      const c = rng.pick(want.length ? want : ofSeries);
-      if (c) out.push(c);
-    });
-    return out;
-  }
-  if (kind === 'boss') {
-    const t = rng.pick(Array.isArray(spec.templates) ? spec.templates : []);
-    if (!t) return [];
-    const featured = get(t.featured);
-    featured.forEach((c) => taken.add(c));
-    return [...featured, ...drawDistinct(rng, get(t.fill), count - featured.length, taken)].slice(0, count);
-  }
-  if (kind === 'hunter') {
-    // one of the official events: a seen group, or for an unseen slot a group of the same shape; then tier-I fill to 6
-    const onePer = new Set(Array.isArray(spec.onePerSeries) ? spec.onePerSeries : []);
-    const templates = Array.isArray(spec.templates) ? spec.templates : [];
-    const slots = Math.max(templates.length, Number.isInteger(spec.slots) ? spec.slots : 0);
+  const groups = Array.isArray(spec.groups) ? spec.groups : [];
+  let group = null;
+  if (spec.pick === 'seen') {
+    group = weightedPick(rng, groups.map((g) => [g, (Array.isArray(g.seen) ? g.seen.filter((x) => Number.isInteger(x)).length : 0) || 1]));
+  } else {
+    const slots = Math.max(groups.length, Number.isInteger(spec.slots) ? spec.slots : 0);
     const slot = slots > 0 ? rng.int(slots) : 0;
-    let group;
-    let fill;
-    if (slot < templates.length) {
-      group = get(templates[slot].featured);
-      group.forEach((c) => taken.add(c));
-      fill = get(templates[slot].fill);
-    } else {
-      const r = spec.rule || {};
-      const sizes = Array.isArray(r.groupSizes) && r.groupSizes.length ? r.groupSizes : [1];
-      const giant = drawDistinct(rng, get(r.giants), 1, taken);
-      group = [...giant, ...drawDistinct(rng, get(r.groupCards), rng.pick(sizes), taken, onePer)];
-      fill = get(r.fill);
-    }
-    return [...group, ...drawDistinct(rng, fill, count - group.length, taken, onePer)];
+    group = slot < groups.length ? groups[slot] : null;
   }
-  return [];
+  const rule = spec.rule || {};
+  let list;
+  let weights;
+  if (group) {
+    const ids = Array.isArray(group.cards) ? group.cards : [];
+    list = [];
+    weights = [];
+    ids.forEach((id, i) => { const c = byId.get(id); if (c) { list.push(c); weights.push(Array.isArray(group.weights) ? group.weights[i] : 1); } });
+    if (kind === 'hunter' && Number(group.open) > 0) list = hunterFill(rng, { ...rule, size: list.length + Number(group.open) }, list, byId);
+  } else if (kind === 'initial') {
+    list = initialRuleSet(rng, rule, [...byId.values()]);
+  } else if (kind === 'hunter') {
+    list = hunterFill(rng, rule, [], byId);
+  } else {
+    list = [];
+  }
+  return drawWeighted(rng, list, weights, count);
 }
 
 /**
@@ -274,9 +322,72 @@ function bountyDraftCards(gd, rng, n, sch, round) {
   return rng.shuffle(out).slice(0, n).map((c) => bountyCard(gd, c));
 }
 
+/**
+ * The 机密商店 cards (choices.json `shopDraft`, module header): every slot drawn on its own — a tier (or `coin`, the
+ * 盟约之币) by the slot's weights, then an item of that tier by `itemWeights` (1 when unlisted; an empty tier falls back to
+ * the nearest lower one, then any) — so one item can fill two slots. Positions shuffled; `n` < the slots (solo) keeps
+ * `n` of them. Null without a usable `shopDraft` or at a round its `rounds` (when given) does not list.
+ */
+export function shopDraftCards(gd, rng, n, round = null) {
+  const spec = gd.choices.shopDraft;
+  const slots = spec && Array.isArray(spec.slots) ? spec.slots.filter((x) => x && typeof x === 'object') : [];
+  if (!slots.length) return null;
+  if (Array.isArray(spec.rounds) && !spec.rounds.includes(round)) return null;
+  const w = spec.itemWeights && typeof spec.itemWeights === 'object' ? spec.itemWeights : {};
+  const coin = typeof spec.coin === 'string' && gd.item(spec.coin) ? spec.coin : null;
+  const ofTier = (t) => {
+    for (let k = t; k >= 1; k--) if ((gd.shopItemsByTier[k] || []).length) return gd.shopItemsByTier[k];
+    return eligibleItems(gd, 1, 6);
+  };
+  const out = [];
+  for (const slot of slots) {
+    const kinds = Object.entries(slot).filter(([k]) => k === 'coin' ? !!coin : Number.isInteger(Number(k)));
+    const kind = weightedPick(rng, kinds);
+    if (kind == null) continue;
+    const list = kind === 'coin' ? [coin] : ofTier(Number(kind));
+    const id = weightedPick(rng, list.map((x) => [x, Object.hasOwn(w, x) ? w[x] : 1]));
+    if (id) out.push(itemCard(gd, id));
+  }
+  return rng.shuffle(out).slice(0, Math.max(0, n));
+}
+
+/** The draft card of a cards.tactic entry. */
+export function tacticCard(c) {
+  return { kind: 'tactic', id: c.effectId, name: c.name, desc: c.desc || '', tier: null, team: !!c.team, tacticKind: c.kind };
+}
+
+/**
+ * The 战术决策 cards (module header): `n` cards, each drawn on its own — with replacement, so one card can fill two places
+ * (official R11 of match 7: 补给 ×2). At the rounds of choices.json `tacticDraft` (`rounds`; R11) only the cards of its
+ * `kinds` (ally), each by `weights` (1 when unlisted); elsewhere — or when those kinds leave nothing — every card, uniform.
+ * Terrain cards only for the match stage; a card whose every target bond is dead in this match (mode-inactive, or no
+ * chess left in the pool: `bondAvailable`) is never offered.
+ */
+export function tacticDraftCards(gd, rng, n, { stageId = null, bondAvailable = null, round = null } = {}) {
+  const bondOk = (c) => {
+    if (typeof bondAvailable !== 'function') return true;
+    const bonds = cardTargetBonds(gd, c.effectId);
+    return !bonds || bonds.some((b) => !!bondAvailable(b));
+  };
+  const list = Array.isArray(gd.choices.cards && gd.choices.cards.tactic) ? gd.choices.cards.tactic : [];
+  const pool = list.filter((c) => c && (c.kind !== 'terrain' || (stageId && c.stageId === stageId)) && gd.effect(c.effectId) && bondOk(c));
+  const spec = gd.choices.tacticDraft && typeof gd.choices.tacticDraft === 'object' ? gd.choices.tacticDraft : null;
+  const official = !!spec && (!Array.isArray(spec.rounds) || spec.rounds.includes(round));
+  const kinds = official && Array.isArray(spec.kinds) && spec.kinds.length ? spec.kinds : null;
+  const w = official && spec.weights && typeof spec.weights === 'object' ? spec.weights : {};
+  const ofKinds = kinds ? pool.filter((c) => kinds.includes(c.kind)) : pool;
+  const pairs = (ofKinds.length ? ofKinds : pool).map((c) => [c, Object.hasOwn(w, c.effectId) ? w[c.effectId] : 1]);
+  const out = [];
+  for (let i = 0; i < n && pairs.length; i++) out.push(tacticCard(weightedPick(rng, pairs)));
+  return out;
+}
+
 function buildCards(gd, rng, family, n, sch, { stageId = null, bondAvailable = null, round = 1 } = {}) {
-  const cardsData = gd.choices.cards || {};
   if (family === 'bounty') return bountyDraftCards(gd, rng, n, sch, round);
+  if (family === 'shop') {
+    const cards = shopDraftCards(gd, rng, n, round);
+    if (cards) return cards;
+  }
   if (family === 'supply' || family === 'shop') {
     let lo = 1;
     let hi = 6;
@@ -287,18 +398,7 @@ function buildCards(gd, rng, family, n, sch, { stageId = null, bondAvailable = n
     for (let i = 0; i < n && list.length; i++) out.push(itemCard(gd, list[Math.floor(rng() * list.length)]));
     return out;
   }
-  if (family === 'tactic') {
-    // a card whose every target bond is dead in this match (mode-inactive, or no chess left in the pool) does nothing
-    const bondOk = (c) => {
-      if (typeof bondAvailable !== 'function') return true;
-      const bonds = cardTargetBonds(gd, c.effectId);
-      return !bonds || bonds.some((b) => !!bondAvailable(b));
-    };
-    const pool = (Array.isArray(cardsData.tactic) ? cardsData.tactic : []).filter((c) => c && (c.kind !== 'terrain' || (stageId && c.stageId === stageId)) && gd.effect(c.effectId) && bondOk(c));
-    const pick = pool.slice();
-    rng.shuffle(pick);
-    return pick.slice(0, n).map((c) => ({ kind: 'tactic', id: c.effectId, name: c.name, desc: c.desc || '', tier: null, team: !!c.team, tacticKind: c.kind }));
-  }
+  if (family === 'tactic') return tacticDraftCards(gd, rng, n, { stageId, bondAvailable, round });
   return [];
 }
 
