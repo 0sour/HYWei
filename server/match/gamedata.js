@@ -90,6 +90,9 @@ export class GameData {
     for (const k of Object.keys(this.shopItemsByTier)) this.shopItemsByTier[k].sort();
     this.bondIds = Object.keys(this._bonds).sort((a, b) => (numOr(this._bonds[a].identifier, 99) - numOr(this._bonds[b].identifier, 99)) || (a < b ? -1 : 1));
     this.modeInactiveBonds = new Set(Array.isArray(this.mode.inactiveBondIds) ? this.mode.inactiveBondIds : []);
+    /** bond name → id (bandBondIds) and its memo */
+    this._bondByName = new Map(Object.entries(this._bonds).filter(([, r]) => r && typeof r.name === 'string').map(([id, r]) => [r.name, id]));
+    this._bandBonds = new Map();
     this.inactiveEnemies = new Set(Array.isArray(this.mode.inactiveEnemyKeys) ? this.mode.inactiveEnemyKeys : []);
     /** data/tuning.json (titles only, see the header) */
     this.tuning = this.raw.tuning && typeof this.raw.tuning === 'object' ? this.raw.tuning : {};
@@ -456,6 +459,46 @@ export class GameData {
   startLp(bandId) {
     const b = this.band(bandId);
     return b && Number.isInteger(b.totalHp) && b.totalHp > 0 ? b.totalHp : this.defaultStartLp;
+  }
+
+  /**
+   * The bonds a strategy's mechanic is built around, read from its own data (DESIGN §21.26): the bond names its text puts
+   * in <…> — the official note "在<X>部分干员缺席时体验可能不完整" names that bond too — and the bond ids and bond pools its
+   * effect's blackboards name (bb / bbStr values: 克莱门莎's `bond_id` egirShip, 玛恩纳's `bond` kazimierzShip, 潘格尼尼's
+   * `pool` pool_char_later → choices.json pools[pool].bond lateranoShip). Names map to ids through bonds.json; a bracketed
+   * name that is no bond (<寻呼模块>, <画卷>, <鸭爵> …) and a pool without a bond add nothing. Bond ids in data order,
+   * [] for an unknown band or one tied to no bond (华法琳, 阿米娅 …). The bot never picks a strategy tied to a bond the mode
+   * switches off (bot.js botPickBand: 标准's 潘格尼尼 / 克莱门莎 / 玛恩纳).
+   * @param {string} bandId
+   * @returns {string[]}
+   */
+  bandBondIds(bandId) {
+    if (this._bandBonds.has(bandId)) return this._bandBonds.get(bandId);
+    const b = this.band(bandId);
+    const found = new Set();
+    if (b) {
+      for (const [, name] of String(b.desc || '').matchAll(/<([^<>]+)>/g)) {
+        const id = this._bondByName.get(name.trim());
+        if (id) found.add(id);
+      }
+      const pools = this.choices.pools && typeof this.choices.pools === 'object' ? this.choices.pools : {};
+      for (const buff of Array.isArray(b.buffs) ? b.buffs : []) {
+        for (const board of [buff && buff.bb, buff && buff.bbStr]) {
+          if (!board || typeof board !== 'object') continue;
+          for (const v of Object.values(board)) {
+            if (typeof v !== 'string') continue;
+            for (const part of v.split(',').map((s) => s.trim())) {
+              if (this.bond(part)) found.add(part);
+              const pool = own(pools, part);
+              if (pool && typeof pool.bond === 'string' && this.bond(pool.bond)) found.add(pool.bond);
+            }
+          }
+        }
+      }
+    }
+    const out = Object.freeze(this.bondIds.filter((id) => found.has(id)));
+    this._bandBonds.set(bandId, out);
+    return out;
   }
 
   /**

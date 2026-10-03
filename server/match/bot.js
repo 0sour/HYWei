@@ -59,6 +59,9 @@
 //   6. resolve the temp slots (a 突变细胞 left there — it comes back after every transformation — gets a hand slot made
 //      for it, makeHandRoom, instead of being destroyed), keep one hand slot free (freeHandSlot: a kept bounty Art goes
 //      before a chess on a bot's own seat, never on a human's seat under AI 托管), then Ready.
+// Strategy (botPickBand): weighted by starting LP among the offered bands; never one whose mechanic rides on a bond the
+// mode switches off (gd.bandBondIds: the bond its text names in <…> or its effect's blackboards name — 标准's 潘格尼尼,
+// 克莱门莎, 玛恩纳; DESIGN §21.26); alone, 老鲤's withheld first-round funds only rarely (× 0.02).
 // 机变 (botPickCard): a bounty by its expected payout minus the expected LP lost — bountyKillChance runs the exposure
 // model for that one enemy against the own board; a card the board is unlikely to beat wins only when nothing better
 // is offered or it pays much more —; tactic cards by what they act on (a 盟誓 / 驰援 card on the own bonds, 升华 …);
@@ -118,19 +121,32 @@ const ECON_TRAIT_RE = /GOLD|REFRESH|COIN/;
 const DEFAULT_MELEE_RANGE = [[0, 0], [0, 1]];
 
 /**
- * Band pick: weighted by starting LP (sturdier strategies are preferred). Alone, a band that withholds the first
- * rounds' funds (老鲤 "资金暂存": no operator in R1–R2, every enemy leaks) is avoided — only 联防 teammates cover that.
+ * Band pick among the strategies the mode offers (gd.bandIds): weighted by starting LP (sturdier strategies are
+ * preferred). Alone, a band that withholds the first rounds' funds (老鲤 "资金暂存": no operator in R1–R2, every enemy
+ * leaks) is avoided — only 联防 teammates cover that. A band whose mechanic rides on a bond the mode switches off
+ * (gd.bandBondIds ∩ gd.modeInactiveBonds — 标准: 潘格尼尼 <拉特兰>, 克莱门莎 <阿戈尔>, 玛恩纳 <卡西米尔>) weighs 0, never taken
+ * (DESIGN §21.26); with every band excluded, the default band. One rng draw per call (deterministic per seed); modes
+ * without inactive bonds keep exactly the earlier picks.
  */
 export function botPickBand(m, ps) {
-  const ids = m.gd.bandIds();
-  if (!ids.length) return m.gd.defaultBandId;
-  const lateFunds = (id) => /暂存/.test(String(m.gd.band(id)?.desc || ''));
-  const pairs = ids.map((id) => [id, Math.max(1, (m.gd.startLp(id) - 18) ** 2) * (m.isSolo && lateFunds(id) ? 0.02 : 1)]);
+  const gd = m.gd;
+  const ids = gd.bandIds();
+  if (!ids.length) return gd.defaultBandId;
+  const lateFunds = (id) => /暂存/.test(String(gd.band(id)?.desc || ''));
+  const offBond = (id) => gd.bandBondIds(id).some((b) => gd.modeInactiveBonds.has(b));
+  const pairs = ids.map((id) => [id, offBond(id) ? 0 : Math.max(1, (gd.startLp(id) - 18) ** 2) * (m.isSolo && lateFunds(id) ? 0.02 : 1)]);
   let total = 0;
   for (const [, w] of pairs) total += w;
   let r = m.rngBots() * total;
-  for (const [id, w] of pairs) { r -= w; if (r < 0) return id; }
-  return pairs[pairs.length - 1][0];
+  if (!(total > 0)) return gd.defaultBandId;
+  let last = null;
+  for (const [id, w] of pairs) {
+    if (!(w > 0)) continue;
+    last = id;
+    r -= w;
+    if (r < 0) return id;
+  }
+  return last;
 }
 
 /**
