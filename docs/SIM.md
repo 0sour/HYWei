@@ -207,8 +207,12 @@ a special priority (假想敌：铳 / 昆图斯 highest DEF, 假想敌：胄 hig
 breaks ties by taunt, then latest deployed (`aggroCmp`); `untargetable` / sleeping allies and devices are never targets;
 an airborne ally (起飞, flag `liftoff`: 蒂比's skills) never for a ground enemy (对地规避 — `targeting.js evadesGround`,
 PRTS 术语释义 起飞 "无法被不同阵营行动方式为地面的单位选中"; flyers, 近地悬浮 and 浮空 enemies still pick it; content picks
-that bypass `canTargetAlly` — 控潮术师 / 腐败骑士's 周围四格, 陷落雪祀's chain, the 碎铳之簧 bounce, the 自行炮 shells — filter
-it too);
+and one-shot areas that bypass `canTargetAlly` — 控潮术师 / 腐败骑士's 周围四格, 陷落雪祀's chain, the 碎铳之簧 bounce, the
+自行炮 shells, “帝国的甲胄”'s barrage, 鼠王's 沙狱, 烹泉's death blast and steam — filter it too; not selections, so they
+still reach it (`ignoreSelect`): abilities PRTS marks "无视无法选择" (【污染秽蚀】, 假想敌：铳's 【盲信之誓】), direct picks
+(碎铳之簧's 法术护盾 counter on its attacker — PRTS 异常效果 "'直接选中'的能力…不受这些仅在选择时生效的异常效果制约") and
+the blasts of flying units credited to the ground 胄 (刺胄之弹, 斩胄之剑 / 破胄之锤 — whose 掷剑 / 掷锤 pick "（无视无法选择）");
+auras of ground enemies still apply [ASSUMED]);
 a stealthed ally (隐匿, 排气格栅) only for the enemy it blocks — our operators keep 隐匿 while blocking (PRTS 作战机制
 §隐匿; 索敌的概念: a blocked enemy "强行无视对方可选性" attacks its blocker); a camouflaged one (迷彩, flag `camou`: ba.camou
 "不阻挡时不成为敌方普通攻击的目标") likewise (PRTS 异常效果: neither anomaly is "阻挡时解除") [ASSUMED: enemy skills and
@@ -224,13 +228,15 @@ research stages without `active` use `!hidden`. Active platforms/mounds (射击�
 ground obstacles, and an operator standing on one is elevated (`unit.ground = false`: never blocks).
 
 **Enemy damage zones** (`content/enemies.js zone` / `dmgZone` / `pollution`): a zone ticks on the allies inside it
-(flyers, stealthed, untargetable and airborne 起飞 ones included — `ignoreSelect`, PRTS 污染秽蚀 "可对空，无视无法选择";
-[ASSUMED] for 毒雾 / 燃烧区域; `alliesInRadius`) through `dealDamage`, so shields absorb a damage
+(flyers, stealthed and untargetable ones included; `alliesInRadius`) through `dealDamage`, so shields absorb a damage
 tick, damage-taken modifiers scale it and it counts for 受击回复 SP and TAKE_DAMAGE skills like any hit (§4; element fills
 excepted). 【污染秽蚀】 (萨卡兹枯朽战车's 秽蚀轰击,
 萨卡兹枯朽战士's death) is **true** damage, 50 / 25 per second on low / high ground (PRTS "每秒受到50/25点真实普通伤害 …
 同名效果不叠加", user playtest #6): a unit covered by several zones takes one tick per second (`unit.mem.pollutedAt`), so
-a crowd of dying 萨卡兹枯朽战士 totals 50 / s, not 50 × n.
+a crowd of dying 萨卡兹枯朽战士 totals 50 / s, not 50 × n. It is "可对空，无视无法选择": it also burns an airborne 起飞 ally
+(`ignoreSelect`), at the low-ground rate on a low tile. The other zones are no exception to 对地规避: a ground enemy's
+燃烧区域 (集团军重型火炮, PRTS "碰撞不受迷彩制约，不可对空" — 迷彩 only) skips an airborne 起飞 ally; the sourceless 毒雾 of
+假想敌：蚀裂 reaches everyone inside.
 
 **Ownership** (`enemy.ownerId`, used for `killed/total` and leak attribution): `ownerPlayerId` if given, else the
 player whose half contains the spawn tile (cols ≥ 11 = right half / player with colOffset 8 or side R). A leak is
@@ -482,8 +488,9 @@ HP left is refused (damage.js `hasHp`: a lethal hit's `damaged` hook runs before
 
 `battle.dealDamage(source, target, dmg)` → HP removed. `DamageInfo = { amount, type:'phys'|'arts'|'true'|'elemental'|'element',
 element?, defIgnoreFlat, defIgnorePct, resIgnoreFlat, resIgnorePct, mul=1, canDodge (phys/arts), isSkill, isSplash,
-isAttack, attackId, ignoreSleep, ignoreSelect, sourceless, tags[], cancel }` (`ignoreSelect`: the ability "无视无法选择" —
-it reaches an airborne 起飞 ally whatever its source; `sourceless`: 无来源 damage — the source's stats add
+isAttack, attackId, ignoreSleep, ignoreSelect, sourceless, tags[], cancel }` (`ignoreSelect`: no selection 无法选择
+effects stop — an ability "无视无法选择", a direct pick such as a counter on the attacker, a flying unit's blast credited to
+a ground leader — it reaches an airborne 起飞 ally whatever its source; `sourceless`: 无来源 damage — the source's stats add
 nothing and the hooks get `source: null` plus `credit` = the source, which keeps the stats and the kill; a `loseHp` whose
 `from` is 无来源 is 无来源 too; element bursts, leader-part transfers and 坚守 thorns use it — content damage that has a
 responsible unit should pass it as `source` with `sourceless: true` rather than `source: null`, which credits nobody)

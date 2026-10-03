@@ -8,14 +8,15 @@
 //   - no ground enemy (行动方式 ground: data WALK, not hovering / levitated) selects an airborne operator — normal attacks,
 //     the targets its abilities add (控潮术师's 周围四格, chain / bounce jumps) and its area damage and statuses skip her;
 //   - flyers, 近地悬浮 and 浮空 enemies still select her (she stays a ground unit: no 对空 check);
-//   - sourceless damage and abilities that "无视无法选择" (【污染秽蚀】, PRTS 萨卡兹枯朽战士) still reach her, at the
-//     low-ground rate: she is still on her low tile;
+//   - what is no selection still reaches her: sourceless damage, abilities that "无视无法选择" (【污染秽蚀】 at the
+//     low-ground rate — she is still on her low tile; 【盲信之誓】), direct picks (碎铳之簧's counter on its attacker —
+//     PRTS 异常效果 "'直接选中'的能力…不受这些仅在选择时生效的异常效果制约") and flying units' blasts (刺胄之弹, 斩胄之剑);
+//     a ground enemy's zone does not (集团军重型火炮 【燃烧区域】 "碰撞不受迷彩制约，不可对空": 迷彩 only);
 //   - she stays a 地面单位 for ally rules (隐德来希 S2 puts a 血镰 on her; PRTS 备注 "被添加血镰的单位处于起飞时，血镰可对空").
 // Cause: 起飞 was `unit.ground = false` (an operator on a high tile): melee enemies could not reach her (she released them),
 // but every ranged ground enemy kept shooting her and the AoE / skills of ground enemies hit her.
 // [ASSUMED] a ground enemy's damage already under way (a shot in flight, a DoT ticking) is cancelled too (PRTS 作战机制 伤害
-// 流程 7 "取消掉隐匿/无敌状态下的攻击", read for 对地规避); sourceless auras of ground enemies (no selector source in the sim)
-// still apply.
+// 流程 7 "取消掉隐匿/无敌状态下的攻击", read for 对地规避); auras of ground enemies (光环, field-wide debuffs) still apply.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -174,4 +175,196 @@ test('F3: an airborne 蒂比 is still a 地面单位 for 隐德来希 S2 — she
   const cuts = h.hooksOf('damaged').filter((c) => c.target === fl && c.source === et && (c.dmg?.tags || []).includes('bloodSickle'));
   assert.ok(cuts.length > 0, 'her 血镰 hits the flyer (可对空 while she is airborne)');
   done(h);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Review round: which enemy abilities are selections (skip an airborne 蒂比) and which are not (still reach her).
+// PRTS 异常效果 无法选择: "'直接选中'的能力不会进行具体的目标选择，故同样不受这些仅在选择时生效的异常效果制约"; abilities
+// marked "无视无法选择" ignore it; a selector whose 行动方式 is not ground ignores 对地规避 (MOTION_TARGET_FREE).
+
+const UACANN = 'enemy_10122_uacann_2';   // 集团军重型火炮: ground; hits leave a 3 s 【燃烧区域】 (PRTS "碰撞不受迷彩制约，不可对空")
+const SPRING_A = 'enemy_9018_actrpa';    // “碎铳之簧” 法术护盾: phys hits → "对来源造成…无来源物理附加伤害" + erosion
+const GUN2 = 'enemy_9017_achunt_2';      // 假想敌：铳 (隐秘核心): 【盲信之誓】 chains "无视无法选择、迷彩"
+const SPRING_C = 'enemy_9020_actrpc';    // “碎铳之簧” 频次护盾 (a chain end)
+const HELM = 'enemy_9013_acstmk';        // 假想敌：胄 (ground): 【灭顶之灾】 → 刺胄之弹 (行动方式 飞行)
+const BLADE = 'enemy_9014_acstma';       // “斩胄之剑” (行动方式 飞行): 掷剑 "（无视无法选择）"
+const SFHU = 'enemy_1203_sfhu';          // 烹泉: ground; death blast "无视迷彩，不可对空" + 【烹泉减益】
+const MOUSEK = 'enemy_1509_mousek';      // “鼠王”: ground; 【沙狱】 ATK cut + arts per second on a 3×3
+const VTSK = 'enemy_10027_vtsk';         // “帝国的甲胄”: ground; entrance barrage on the highest-HP unit around its lock
+const pool = (hp) => ({ hp, maxHp: hp, damage(pid, a) { this.hp = Math.max(0, this.hp - a); } });
+const WAVES = getDefaultSource();
+const tAt = (c) => c.t ?? c.time;
+/** Steps `h` until 蒂比 has landed (or `max` s); returns [take-off, landing] times. */
+function airborne(h, u, max = 60) {
+  let up = null, down = null;
+  for (let i = 0; i < max * 30 && down == null; i++) {
+    h.step();
+    if (up == null && u.s.flags.liftoff) up = h.b.time;
+    if (up != null && down == null && !u.s.flags.liftoff) down = h.b.time;
+  }
+  return [up, down];
+}
+
+test('F3 review: a ground enemy\'s 【燃烧区域】 (集团军重型火炮, "不可对空", no 无视无法选择) never ticks on an airborne 蒂比; it does once she has landed', REAL, () => {
+  const h = makeBattle({
+    stageId: 'act2autochess_m02', seed: 3, autoFinish: false, timeLimit: 400, hooks: ['damaged'], captureNoisy: true,
+    units: [{ chessId: TIPPI[0], row: 9, col: 5, carryState: { sp: 999 }, skillIndex: skillIndex(TIPPI[0], S1) }, { chessId: BAIT, row: 10, col: 5 }],
+    enemies: [{ key: UACANN, pos: [9, 7], mods: { hpMul: 1e4, speedMul: 0 } }],
+  });
+  const u = h.unit(TIPPI[0]), bait = h.unit(BAIT);
+  const [up, down] = airborne(h, u);
+  assert.ok(up != null && down != null, 'took off and landed');
+  assert.ok(u.alive, 'she survives the window (the zones on 角峰 next to her used to kill her)');
+  const burn = (t, a, z) => h.hooksOf('damaged').filter((c) => c.target === t && (c.dmg?.tags || []).includes('burning') && tAt(c) > a && tAt(c) < z);
+  assert.ok(burn(bait, up, down).length > 0, 'the cannon shoots 角峰 and the zone burns him');
+  assert.deepEqual(burn(u, up + 1e-6, down - 1e-6).map((c) => `${tAt(c).toFixed(1)} ${Math.round(c.amount)}`), [], 'no zone tick on her while airborne');
+  h.run(15);
+  assert.ok(burn(u, down, Infinity).length > 0, 'landed: the zone burns her again');
+  done(h);
+});
+
+test('F3 review: “碎铳之簧” 法术护盾 counter is 无来源 on its attacker (直接选中) — it reaches an airborne 蒂比', REAL, () => {
+  const h = makeBattle({
+    stageId: 'act2autochess_m02', seed: 3, autoFinish: false, timeLimit: 400, hooks: ['damaged'], captureNoisy: true,
+    units: [{ chessId: TIPPI[0], row: 9, col: 5, carryState: { sp: 999 }, skillIndex: skillIndex(TIPPI[0], S1) }],
+    enemies: [{ key: SPRING_A, pos: [9, 7], mods: { hpMul: 1e4, speedMul: 0 } }],
+  });
+  const u = h.unit(TIPPI[0]);
+  assert.ok(h.runUntil(() => u.s.flags.liftoff, 3), 'takes off (the spring is in range)');
+  h.run(10);
+  assert.ok(u.s.flags.liftoff, 'still airborne');
+  const on = h.hooksOf('damaged').filter((c) => c.target === u);
+  assert.ok(on.some((c) => c.dmg.type === 'phys' && (c.dmg.tags || []).includes('springCounter')), 'the physical counter lands');
+  assert.ok(on.some((c) => c.dmg.type === 'element' && (c.dmg.tags || []).includes('springCounter')), 'its erosion lands');
+  assert.ok(!on.some((c) => c.dmg.isAttack), 'the ground spring\'s own attacks never select her');
+  done(h);
+});
+
+test('F3 review: 假想敌：铳\'s 【盲信之誓】 chain ("无视无法选择") hurts an airborne 蒂比 standing on it', REAL, () => {
+  const h = makeBattle({
+    kind: 'boss', sharedBoss: pool(1e7), seed: 3, autoFinish: false, timeLimit: 400, hooks: ['damaged'], captureNoisy: true,
+    setup(b) { b.enemyOverrides = WAVES.getWave('act1autochess_h08_02').overrides; },
+    units: [{ chessId: TIPPI[0], row: 10, col: 7, carryState: { sp: 999 }, skillIndex: skillIndex(TIPPI[0], S1) }],
+  });
+  h.step();
+  const put = (key, pos, o = {}) => h.spawn(key, { pos, routeIndex: 0, mods: { speedMul: 0, ...o.mods }, tag: o.tag ?? null });
+  put(GUN2, [3, 10], { tag: 'boss' }).profile.noAttack = true;
+  put(SPRING_C, [3, 4], { tag: 'part' }).profile.noAttack = true;
+  put(LAZERD, [3, 8.2], { mods: { hpMul: 1e4, atkMul: 0 } });            // her S1 target
+  const u = h.unit(TIPPI[0]);
+  assert.equal(u.y, 3, 'on the chain between 铳 (3,10) and the spring (3,4)');
+  const [up, down] = airborne(h, u);
+  assert.ok(up != null && down != null, 'took off and landed');
+  const chain = h.hooksOf('damaged').filter((c) => c.target === u && (c.dmg?.tags || []).includes('faithLink') && tAt(c) > up && tAt(c) < down);
+  assert.ok(chain.length >= 20, `the chain hurts her every second while airborne: ${chain.length}`);
+  done(h);
+});
+
+test('F3 review: the 刺胄之弹 and 斩胄之剑 blasts (flying units — 对地规避 does not stop them; 无来源 DoT) still stun and hurt an airborne 蒂比', REAL, () => {
+  // 刺胄之弹: 胄 (ground) cannot pick her; the shell flies at 角峰 next to her and its 3×3 blast catches her
+  {
+    const h = makeBattle({
+      kind: 'boss', sharedBoss: pool(1e7), seed: 3, autoFinish: false, timeLimit: 400, hooks: ['damaged', 'statusApplied'], captureNoisy: true,
+      units: [{ chessId: TIPPI[0], row: 10, col: 7, carryState: { sp: 999 }, skillIndex: skillIndex(TIPPI[0], S1) }, { chessId: BAIT, row: 11, col: 7 }],
+    });
+    h.step();
+    h.spawn(LAZERD, { pos: [3, 8.2], routeIndex: 0, mods: { speedMul: 0, hpMul: 1e4, atkMul: 0 } });
+    h.spawn(HELM, { pos: [3, 9], routeIndex: 0, mods: { speedMul: 0 }, tag: 'boss' }).profile.noAttack = true;
+    const u = h.unit(TIPPI[0]);
+    let stunAir = false, dotAir = 0;
+    for (let i = 0; i < 31 * 30; i++) {
+      h.step();
+      if (!u.s.flags.liftoff) continue;
+      if (u.s.flags.stun) stunAir = true;
+      dotAir = h.hooksOf('damaged').filter((c) => c.target === u && (c.dmg?.tags || []).includes('helmShell')).length;
+    }
+    assert.ok(u.s.flags.liftoff, 'still airborne');
+    const st = h.hooksOf('statusApplied').filter((c) => c.status === 'stun');
+    assert.ok(st.some((c) => c.target === h.unit(BAIT)), 'the shell went to 角峰');
+    assert.ok(stunAir, 'she is stunned while airborne');
+    assert.ok(dotAir >= 2, `the DoT ticks on her: ${dotAir}`);
+    done(h);
+  }
+  // 斩胄之剑 掷剑 "选择…攻击力最低的1名我方单位（无视无法选择）": it dives at her while she is airborne, 胄 on the field
+  {
+    const H08 = 'act1autochess_h08_01';
+    const tpl = WAVES.getWave(H08);
+    const origin = tpl.extraRoutes[tpl.branches.left_hand_origin[0][0].routeIndex];
+    const h = makeBattle({
+      kind: 'boss', sharedBoss: pool(1e7), seed: 3, autoFinish: false, timeLimit: 400, hooks: ['damaged', 'statusApplied'], captureNoisy: true,
+      setup(b) { b.opts.templateId = H08; },
+      units: [{ chessId: TIPPI[0], row: 12, col: 15, carryState: { sp: 999 }, skillIndex: skillIndex(TIPPI[0], S1) }],
+    });
+    h.step();
+    h.spawn(LAZERD, { pos: [5, 16], routeIndex: 0, mods: { speedMul: 0, hpMul: 1e4, atkMul: 0 } });
+    h.spawn(HELM, { pos: [2, 9], routeIndex: 0, mods: { speedMul: 0 }, tag: 'boss' }).profile.noAttack = true;
+    h.spawn(BLADE, { pos: origin.start, routeIndex: 0, tag: 'part' });
+    const u = h.unit(TIPPI[0]);
+    let stunAir = false, dotAir = false;
+    for (let i = 0; i < 31 * 30; i++) {
+      h.step();
+      if (!u.s.flags.liftoff) continue;
+      if (u.s.flags.stun) stunAir = true;
+      if (h.hooksOf('damaged').some((c) => c.target === u && (c.dmg?.tags || []).includes('bladeDive'))) dotAir = true;
+    }
+    assert.ok(u.s.flags.liftoff, 'still airborne');
+    assert.ok(stunAir, 'the dive stuns her while airborne');
+    assert.ok(dotAir, 'its DoT hurts her while airborne');
+    done(h);
+  }
+});
+
+test('F3 review: one-shot area abilities of ground enemies skip an airborne 蒂比 — 烹泉 death blast and steam, 鼠王 【沙狱】, “帝国的甲胄” barrage', REAL, () => {
+  // 烹泉: dies next to her while she is airborne (PRTS "死亡爆炸（…无视迷彩，不可对空）": a selection, no 无视无法选择)
+  {
+    const h = makeBattle({
+      stageId: 'act2autochess_m02', seed: 3, autoFinish: false, timeLimit: 400, hooks: ['damaged'], captureNoisy: true,
+      units: [{ chessId: TIPPI[0], row: 9, col: 5, carryState: { sp: 999 }, skillIndex: skillIndex(TIPPI[0], S1) }, { chessId: BAIT, row: 10, col: 5 }],
+      enemies: [{ key: SFHU, pos: [9, 6.5], mods: { hpMul: 0.4, speedMul: 0 } }],
+    });
+    const u = h.unit(TIPPI[0]), bait = h.unit(BAIT);
+    let slowAir = false, baitSlow = false;
+    for (let i = 0; i < 25 * 30; i++) { h.step(); if (u.s.flags.liftoff && u.findBuff('ab:teaBoom')) slowAir = true; if (bait.findBuff('ab:teaBoom')) baitSlow = true; }
+    assert.ok(!h.b.enemies.some((e) => e.alive && e.defId === SFHU), '烹泉 died');
+    assert.ok(u.s.flags.liftoff, 'she is still airborne');
+    const blast = (t) => h.hooksOf('damaged').filter((c) => c.target === t && (c.dmg?.tags || []).includes('teaBoom'));
+    assert.equal(blast(u).length, 0, 'no blast on her');
+    assert.ok(blast(bait).length > 0 && baitSlow, '角峰 takes the blast and the slow');
+    assert.ok(!slowAir, 'no 【烹泉减益】 on her');
+    done(h);
+  }
+  // 鼠王 【沙狱】 centred on 角峰 next to her: neither its ATK cut nor its DoT attaches to her
+  {
+    const h = makeBattle({
+      stageId: 'act2autochess_m02', seed: 3, autoFinish: false, timeLimit: 400, hooks: ['damaged'], captureNoisy: true,
+      units: [{ chessId: TIPPI[0], row: 9, col: 5, carryState: { sp: 999 }, skillIndex: skillIndex(TIPPI[0], S1) }, { chessId: BAIT, row: 10, col: 5 }],
+      enemies: [{ key: MOUSEK, pos: [9, 8], mods: { hpMul: 1e4, speedMul: 0, atkMul: 0.01 } }, { key: LAZERD, pos: [9, 6.2], mods: { hpMul: 1e4, speedMul: 0, atkMul: 0 } }],
+    });
+    const u = h.unit(TIPPI[0]), bait = h.unit(BAIT);
+    assert.ok(h.runUntil(() => u.s.flags.liftoff, 3), 'takes off');
+    const m = h.b.enemies.find((e) => e.defId === MOUSEK);
+    const storm = m.mem.ab.list.find((a) => a && a.cd === m.mem.ab.sk.SandStorm.cd && a.fire);
+    storm.left = 0.1;                                                     // 【沙狱】 now (its initial cooldown is 60 s)
+    h.run(2);
+    assert.ok(bait.findBuff('ab:sandStorm'), '沙狱 on 角峰');
+    assert.ok(u.s.flags.liftoff && !u.findBuff('ab:sandStorm'), 'not on the airborne 蒂比 next to him');
+    done(h);
+  }
+  // “帝国的甲胄” entrance barrage: locks 角峰 (she cannot be selected) and hits the highest-HP unit she is not
+  {
+    const h = makeBattle({
+      stageId: 'act2autochess_m02', seed: 3, autoFinish: false, timeLimit: 400, hooks: ['damaged'], captureNoisy: true,
+      units: [{ chessId: TIPPI[0], row: 9, col: 5, carryState: { sp: 999 }, skillIndex: skillIndex(TIPPI[0], S1) }, { chessId: BAIT, row: 10, col: 5 }],
+      enemies: [{ key: LAZERD, pos: [9, 7], mods: { hpMul: 1e4, speedMul: 0, atkMul: 0 } }],
+    });
+    const u = h.unit(TIPPI[0]), bait = h.unit(BAIT);
+    assert.ok(h.runUntil(() => u.s.flags.liftoff, 3), 'takes off');
+    bait.hp = Math.min(bait.hp, 100);                                     // she has the most HP in the 3×3
+    const e = h.spawn(VTSK, { pos: [9, 8], routeIndex: 0, mods: { speedMul: 0, atkMul: 0.01 } });
+    h.run(1.5);
+    const shots = (t) => h.hooksOf('damaged').filter((c) => c.target === t && c.source === e && !c.dmg.isAttack).length;
+    assert.equal(shots(u), 0, 'no shot on her');
+    assert.equal(shots(bait), ds.rawEnemy(VTSK).skills.find((s) => s.prefabKey === 'Appear').bb.times, 'every shot hits 角峰 instead of being wasted on her');
+    done(h);
+  }
 });

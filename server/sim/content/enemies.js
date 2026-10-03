@@ -30,8 +30,11 @@
 //   special priority (优先攻击防御力最高的… / 生命上限最高的…) sorts by its key, ties by taunt then latest deployed
 //   (targeting.js aggroCmp — PRTS 索敌: 特殊优先级 → 仇恨值). An airborne ally (起飞, flag `liftoff`) is no target of a
 //   ground enemy (对地规避, targeting.js evadesGround): targetsNear / allTargets skip it through canTargetAlly, the picks
-//   that bypass it (周围四格 additions, chain and bounce jumps) filter it, and the engine refuses a ground enemy's damage
-//   and statuses on it; damage zones "无视无法选择" (`ignoreSelect`) still reach it.
+//   and one-shot areas that bypass it (周围四格 additions, chain and bounce jumps, shells, barrages, 沙狱, death blasts)
+//   filter it, and the engine refuses a ground enemy's damage and statuses on it. Not selections, so they still reach
+//   it (`ignoreSelect`): abilities PRTS marks "无视无法选择" (【污染秽蚀】, 【盲信之誓】), direct picks of the attacker
+//   (碎铳之簧's counter — PRTS 异常效果 "'直接选中'的能力…不受这些仅在选择时生效的异常效果制约") and the blasts of flying
+//   units credited to a ground leader (刺胄之弹, 斩胄之剑 / 破胄之锤). Auras of ground enemies still apply [ASSUMED].
 //
 // Special types (factions.json):
 //   FLY        — engine (FLY motion, ranged-only targeting). Flyer kits below (御4, 护障, 寒霜, 萨科塔之翼/眼, 黑云 …).
@@ -41,9 +44,9 @@
 //                create those units (death spawns, embers, blades, 再生).
 //   ELEMENT    — element damage on hit = ATK × ep_damage_ratio into the ally's gauge. 侵蚀 (erosion) is an engine
 //                gauge whose burst is the official one (termDescription ba.dt.erosion: "永久降低100点防御力并受到800点物理伤害").
-//   DOT        — damage zones (污染秽蚀: true damage, one tick per second however many cover a unit; 毒雾, 燃烧区域 —
-//                they ignore 无法选择, PRTS 污染秽蚀 "可对空，无视无法选择": `ignoreSelect`, 起飞 allies included),
-//                bleeding (removed by healing), pulsing auras.
+//   DOT        — damage zones (污染秽蚀: true damage, one tick per second however many cover a unit, "可对空，无视无法选择"
+//                — `ignoreSelect`, 起飞 allies included; 毒雾, 燃烧区域: a ground enemy's zone skips a 起飞 ally — PRTS
+//                集团军重型火炮 "碰撞不受迷彩制约，不可对空", no 无视无法选择), bleeding (removed by healing), pulsing auras.
 //   INVISIBLE  — permanent `stealth` flag (engine: untargetable unless blocked or revealed; AoE still hits).
 //   REFLECTION — 折射 (ba.refraction "生效时，法术抗性+70"): RES +refracting.magic_resistance while NOT silenced
 //                (the ability line is SILENCE-flagged: silencing turns it off); 镜膜 also gets max HP +100 % while on.
@@ -333,15 +336,16 @@ function onTick(b, dt) {
 // ---------------------------------------------------------------------------------------------------------------
 // helpers (exported for bosses.js)
 
-/** Element damage (erosion mapped onto the engine gauge). */
-export function elem(b, src, tgt, el, amount, { ignoreSelect = false } = {}) {
+/** Element damage (erosion mapped onto the engine gauge); `ignoreSelect` / `tags` as hurt(). */
+export function elem(b, src, tgt, el, amount, { ignoreSelect = false, tags = [] } = {}) {
   if (!tgt || !tgt.alive || !(amount > 0)) return 0;
   const element = el === 'erosion' ? EROSION : el;
-  return b.dealDamage(src, tgt, { type: 'element', element, amount, ignoreSelect, tags: ['enemyAbility'] });
+  return b.dealDamage(src, tgt, { type: 'element', element, amount, ignoreSelect, tags: ['enemyAbility', ...tags] });
 }
 
 /**
- * Skill / ability damage (no dodge unless asked). `ignoreSelect` = the ability "无视无法选择" (zones): it also reaches an
+ * Skill / ability damage (no dodge unless asked). `ignoreSelect` = no selection the target's 无法选择 effects stop
+ * (abilities that "无视无法选择", direct picks, a flying unit's blast credited to a ground leader): it also reaches an
  * airborne 起飞 ally, which a ground enemy's damage otherwise skips (damage.js, targeting.js evadesGround).
  */
 export function hurt(b, src, tgt, amount, type = 'phys', { canDodge = false, tags = [], isSkill = true, ignoreSelect = false } = {}) {
@@ -917,14 +921,15 @@ function pollution(b, src, x, y, r, life, low, high) {
 }
 
 /**
- * Damage zone (arts per tick) — on every ally inside, like 【污染秽蚀】 (`ignoreSelect`: 起飞 allies too) [ASSUMED for the
- * zones PRTS gives no 无法选择 note: 毒雾, 燃烧区域].
+ * Damage zone (`amount` per tick, tagged `kind`) on every ally inside. Unlike 【污染秽蚀】 it does not ignore 无法选择:
+ * a ground enemy's zone skips an airborne 起飞 ally (the damage pipeline; PRTS 集团军重型火炮 【燃烧区域】 "碰撞不受迷彩
+ * 制约，不可对空" — 迷彩 only). A sourceless zone (假想敌：蚀裂's 毒雾) reaches everyone inside.
  */
 function dmgZone(b, src, x, y, r, life, iv, amount, type = 'arts', kind = 'zone', el = null, elAmount = 0) {
   zone(b, { x, y, r, life, iv, kind, tick(units) {
     for (const u of units) {
-      hurt(b, src, u, amount, type, { ignoreSelect: true });
-      if (el && elAmount > 0) elem(b, src, u, el, elAmount, { ignoreSelect: true });
+      hurt(b, src, u, amount, type, { tags: [kind] });
+      if (el && elAmount > 0) elem(b, src, u, el, elAmount, { tags: [kind] });
     }
   } });
 }
@@ -1583,12 +1588,14 @@ function kitTeapot(ab) {
       if (c.reason !== 'killed') return;
       const aspd = T(ab, 'DeadBoom.attack_speed') ?? 0, dur = T(ab, 'DeadBoom.duration') ?? 0, iv = T(ab, 'DeadBoom.interval') ?? 1;
       const r = e.base.rangeRadius || 2, atk = e.s.atk, x = e.x, y = e.y;
+      // a selection (PRTS 烹泉 "死亡爆炸（…无视迷彩，不可对空）", no 无视无法选择): an airborne 起飞 ally is skipped
+      const hit = (units) => units.filter((u) => !evadesGround(e, u));
       // 被击倒后爆炸造成范围法术伤害 (one blast of ATK ×1 [ASSUMED scale]) …
       b.fx('explode', { x, y, r, kind: 'teaBoom', id: e.id });
-      for (const u of b.alliesInRadius(x, y, r)) hurt(b, null, u, atk, 'arts');
+      for (const u of hit(b.alliesInRadius(x, y, r))) hurt(b, null, u, atk, 'arts', { tags: ['teaBoom'] });
       // … 使我方攻击速度大幅降低（可被抵抗）: the steam lingers `duration` s; allies inside keep the ASPD cut (re-applied
       // every `interval` s)
-      const slow = (units) => { for (const u of units) b.addBuff(u, { key: 'ab:teaBoom', duration: iv + 0.1, refresh: 'extend', mods: { aspd }, visible: true }); };
+      const slow = (units) => { for (const u of hit(units)) b.addBuff(u, { key: 'ab:teaBoom', duration: iv + 0.1, refresh: 'extend', mods: { aspd }, visible: true }); };
       slow(b.alliesInRadius(x, y, r));
       if (dur > 0) zone(b, { x, y, r, life: dur, iv, kind: 'teaSteam', tick: slow });
     },
@@ -1666,7 +1673,9 @@ function kitLeaderMisc(key, ab, e) {
           if (!t) return;
           const dur = ss.bb.duration ?? 0, x = t.x, y = t.y;
           b.fx('zone', { x, y, r: SANDSTORM_RADIUS, dur, kind: 'sandStorm', id: e2.id });
+          // the 沙狱弹道 "击中…范围内的所有我方单位（弹道可对空）" selects: an airborne 起飞 ally is skipped (no 无视无法选择)
           for (const u of b.alliesInRadius(x, y, SANDSTORM_RADIUS)) {
+            if (evadesGround(e2, u)) continue;
             b.addBuff(u, { key: 'ab:sandStorm', duration: dur, refresh: 'replace', interval: 1, visible: true, mods: { atkPct: ss.bb.atk ?? 0 },
               onTick: ({ battle, unit }) => battle.dealDamage(e2, unit, { amount: ss.bb.damage ?? 0, type: 'arts', canDodge: false, tags: ['enemyAbility', 'sandStorm'] }) });
           }
@@ -2385,7 +2394,8 @@ export const KITS = Object.freeze({
           if (!lock) return;
           b.fx('telegraph', { x: lock.x, y: lock.y, r: 1, kind: 'barrage', id: e.id });
           for (let i = 0; i < n; i++) {
-            const t = alliesInTiles(b, lock.tileR, lock.tileC, 'box', 1).sort((p, q) => q.hp - p.hp)[0];
+            // "对碰撞范围内的1名当前生命值最高的我方单位" — a selection: never an airborne 起飞 ally (PRTS “帝国的甲胄”)
+            const t = alliesInTiles(b, lock.tileR, lock.tileC, 'box', 1).filter((u) => !evadesGround(e, u)).sort((p, q) => q.hp - p.hp)[0];
             if (t) hurt(b, e, t, e.s.atk, 'phys');
           }
         }, { owner: e });

@@ -84,7 +84,8 @@ export function makeDamageInfo(d = {}) {
     cancel: false,
     noSp: !!d.noSp,
     ignoreSleep: !!d.ignoreSleep,
-    // 无视无法选择 (PRTS: 【污染秽蚀】 "可对空，无视无法选择"): reaches an airborne 起飞 ally whatever the source's 行动方式
+    // no selection 无法选择 effects stop (an ability that "无视无法选择" such as PRTS 【污染秽蚀】, a direct pick, a flying
+    // unit's blast credited to a ground leader): reaches an airborne 起飞 ally whatever the source's 行动方式
     ignoreSelect: !!d.ignoreSelect,
     sourceless: !!d.sourceless,
     attackId: d.attackId ?? 0,
@@ -101,7 +102,8 @@ function sleepBlocks(target, source, dmg) {
  * "AOE的判定是对攻击范围内的每个可以被选中的敌人进行判定"), so its splash, area abilities and element fills skip it, and a shot
  * already in flight or a DoT ticking when it took off lands on nothing [ASSUMED: PRTS 伤害流程 7 "取消掉隐匿/无敌状态下的攻击"
  * read for 对地规避]. Checked before the `hit` hook only: 蒂比 S2 takes off inside the hook of the hit that set it off, which
- * then resolves as usual (dodged if physical / arts — PRTS 备注). Sourceless damage and `ignoreSelect` damage still land.
+ * then resolves as usual (dodged if physical / arts — PRTS 备注). Sourceless damage and `ignoreSelect` damage (no
+ * selection: 无视无法选择, direct picks, flying units' blasts — targeting.js evadesGround) still land.
  */
 function liftoffEvades(target, source, dmg) {
   return !!target.s.flags.liftoff && !dmg.ignoreSelect && evadesGround(source, target);
