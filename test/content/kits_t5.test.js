@@ -234,6 +234,38 @@ test('乌尔比安 S3: anchor 135 % ATK + stun on the first enemy ahead, moves t
   clean(h);
 });
 
+test('乌尔比安 S3 while he blocks (e.g. after a 突袭 landing): the anchor lands on his own tile — no 【移动】, no marker (PRTS 备注; GitHub #33)', () => {
+  // PRTS 乌尔比安 S3 备注: target = his own tile (only while blocking) > the nearest tile of the skill range (6-1, from his own
+  // tile on) with an enemy > its farthest tile; the 从不混淆的方向 only when the 【移动】 changes his tile
+  const run = (near) => {
+    const h = makeBattle({
+      defs: { enemies: { enemy_dummy: dummy(), enemy_fly: dummy('enemy_fly', { motion: 'FLY' }) } },
+      units: [{ chessId: 'chess_char_5_05_a', row: 9, col: 3 }],
+      enemies: [{ key: near, pos: [9, 3] }, { key: 'enemy_dummy', pos: [9, 7] }], hooks: ['damaged'], captureNoisy: true, autoFinish: false, timeLimit: 120,
+    });
+    const u = h.unit('chess_char_5_05_a');
+    h.step();
+    const [e0, far] = h.b.enemies;
+    const blocked = e0.blockedBy === u;
+    u.skill.gainSp(1000);
+    assert.ok(h.runUntil(() => u.skill.active, 2), near);
+    const anchor = fxOf(h, 'anchor')[0];
+    assert.deepEqual([anchor[2], anchor[3]], [3, 9], `${near}: the anchor on his own tile`);
+    assert.equal(tagged(h, 'anchor', e0).length, 1, `${near}: the enemy on his tile is hit`);
+    assert.ok(e0.s.flags.stun);
+    assert.equal(tagged(h, 'anchor', far).length, 0, `${near}: 4 tiles ahead, out of the 1.8 radius`);
+    assert.deepEqual([u.tileR, u.tileC], [9, 3], `${near}: no 【移动】`);
+    assert.ok(!h.b.allyUnits.some((x) => x.kind === 'token'), `${near}: no 从不混淆的方向`);
+    assert.ok(h.runUntil(() => !u.skill.active, 30));
+    assert.deepEqual([u.tileR, u.tileC], [9, 3]);
+    clean(h);
+    return blocked;
+  };
+  assert.equal(run('enemy_dummy'), true, 'he blocks the enemy on his tile');
+  // not blocking, a flyer over him: his own tile is the nearest tile of the skill range with an enemy (distance 0)
+  assert.equal(run('enemy_fly'), false, 'a flyer is not blocked');
+});
+
 test('乌尔比安 T1 本性的坚守 heals per hit taken; T2 血脉的哺养 +HP/ATK per kill (abyssal allies half); elite healing ×1.2', () => {
   const h = makeBattle({
     defs: { enemies: { enemy_dummy: dummy() }, chess: { t_abyss: ally('t_abyss', { charId: 'char_143_ghost' }) } },
