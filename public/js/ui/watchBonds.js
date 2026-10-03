@@ -102,7 +102,8 @@ export function playerLayer(field, pub, myId, playerId) {
 
 /**
  * A player's bond list as the views carry it: your own m.private bonds (thresholds / countsHand included), a teammate's
- * m.public players[].bonds ({ bondId, count, active, tier, layers }).
+ * m.public players[].bonds ({ bondId, count, active, tier, layers, harmony? } — `harmony`: 调和's +1 is in `count`, the
+ * popup's 调和 row; DESIGN §21.26).
  * @returns {any[]}
  */
 export function ownerBonds({ pub, priv = null, myId, ownerId }) {

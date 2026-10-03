@@ -405,6 +405,78 @@ export function pieceBondIds(chess, items, getItem = () => null) {
 }
 
 /**
+ * The 变形同构体 pairings — the list its 天赋栏 shows (the item text: "具体对应关系可在模拟中查看本装备天赋栏"; character_table
+ * trap_1073_acarm073 "“炎国短刀”→【炎】盟约 …", 14 bonds; GitHub issue #1: without it the item read as doing nothing).
+ * Built from the same `giveBondId` the server counts with (server/match/bondsMeta.js pieceBonds, grantedBonds here): every
+ * bond an item grants, in bonds.json order, with the items that grant it (one entry per item family — the normal and 进阶
+ * copies share a name —, by tier, then data order). `off`: the mode never activates the bond (modeOffBonds: 本局禁用 — 标准
+ * leaves 5 of the 14 off). `worn`: the wearer's items (`carried`, the card shows the 变形同构体 on an operator) pair it with
+ * one of the bond's items — the pairing in effect on that operator (that item `worn` too).
+ * @param {Iterable<any>} itemRecs items.json records (data.list('items'))
+ * @param {Iterable<any>} bondRecs bonds.json records in data order (data.list('bonds'))
+ * @param {{ off?: Set<string>|null, carried?: Array<string|{id:string}>|null }} [opts]
+ * @returns {Array<{ bondId: string, name: string, off: boolean, worn: boolean, items: Array<{ id: string, name: string, worn: boolean }> }>}
+ */
+export function morphPairings(itemRecs, bondRecs, { off = null, carried = null } = {}) {
+  const recs = [...(itemRecs || [])].filter(isObj);
+  const byId = new Map(recs.map((r) => [r.id, r]));
+  const getItem = (id) => byId.get(id) || null;
+  const worn = new Set(grantedBonds(carried, getItem));
+  const carriedIds = new Set((Array.isArray(carried) ? carried : []).map((it) => (typeof it === 'string' ? it : it?.id)).filter((x) => typeof x === 'string'));
+  const famOf = (r) => (typeof r.baseId === 'string' && r.baseId ? r.baseId : r.id);
+  /** bondId → family id → { id, name, tier, order, ids } */
+  const groups = new Map();
+  recs.forEach((r, order) => {
+    if (r.canGiveBond || typeof r.giveBondId !== 'string' || !r.giveBondId) return;
+    let g = groups.get(r.giveBondId);
+    if (!g) groups.set(r.giveBondId, (g = new Map()));
+    const fam = famOf(r);
+    const e = g.get(fam);
+    if (e) { e.ids.push(r.id); return; }
+    g.set(fam, { id: fam, name: typeof r.name === 'string' && r.name ? r.name : fam, tier: int(r.tier, 99), order, ids: [r.id] });
+  });
+  const out = [];
+  for (const b of bondRecs || []) {
+    const g = isObj(b) ? groups.get(b.bondId) : null;
+    if (!g) continue;
+    const bondWorn = worn.has(b.bondId);
+    const items = [...g.values()].sort((x, y) => (x.tier - y.tier) || (x.order - y.order))
+      .map((e) => ({ id: e.id, name: e.name, worn: bondWorn && e.ids.some((id) => carriedIds.has(id)) }));
+    out.push({ bondId: b.bondId, name: typeof b.name === 'string' && b.name ? b.name : b.bondId, off: !!(off && typeof off.has === 'function' && off.has(b.bondId)), worn: bondWorn, items });
+  }
+  return out;
+}
+
+/**
+ * Bond id of 调和 (bonds.json maniShip, "激活时使场上核心盟约的激活人数+1") — server/match/bondsMeta.js HARMONY_BOND; a test
+ * pins the two. Only to name the 调和 operators: whether a bond's count holds the +1 is the server's word (the view
+ * entry's `harmony`, DESIGN §21.26).
+ */
+export const HARMONY_BOND = 'maniShip';
+
+/**
+ * The 调和 operators on a board, distinct (normal and elite copies of one operator once): who activates the +1 a bond
+ * entry's `harmony` reports (the bond popup's 调和 row names them — 缪尔赛思, the Pith strategy's 盟约·辅助干员).
+ * @param {any} priv m.private — or a teammate's field operators (ui/watchBonds.js ownerBoard)
+ * @param {(id:string)=>any} [getChess]
+ * @returns {Array<{ id: string, name: string }>} base chess ids
+ */
+export function harmonyMembers(priv, getChess = () => null) {
+  const out = [];
+  const seen = new Set();
+  for (const p of Array.isArray(priv?.board) ? priv.board : []) {
+    if (p?.kind !== 'chess') continue;
+    const c = getChess(p.id);
+    if (!Array.isArray(c?.bonds) || !c.bonds.includes(HARMONY_BOND)) continue;
+    const base = c.baseId || (typeof p.id === 'string' ? p.id.replace(/_b$/, '_a') : p.id);
+    if (seen.has(base)) continue;
+    seen.add(base);
+    out.push({ id: base, name: getChess(base)?.name || c.name || base });
+  }
+  return out;
+}
+
+/**
  * Member rows of a bond popup: every visible member with owned / on-board / banned state, plus the player's operators
  * that are members through 变形同构体 (grantedBonds; `granted: true` and `items`: the item ids of the copy that wears the
  * pair — the card the row opens shows them; one row per operator — normal and elite copies are one member, like the
