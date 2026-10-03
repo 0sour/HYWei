@@ -195,7 +195,8 @@ export function checkAssets() {
  * issue #42). Shown by setup and doctor.
  */
 export const LOCAL_ART_FALLBACK = '3D 棋盘改用 2D，部分官方界面图标和灼热/炽焰源石虫模型用替代样式';
-/** Where a machine without the client gets the local art (docs/DEPLOY.md §6「本地客户端素材」). */
+/** Where a machine without the client gets the local art (docs/DEPLOY.md §6「本地客户端素材」); shown by doctor (setup's row,
+ * printed on every start by scripts/launch.mjs, only points to that section). */
 export const LOCAL_ART_COPY_HINT = '没有客户端的服务器可以从同一版本的整合包复制 public/assets/local 和 data/local-assets.json';
 
 /**
@@ -432,7 +433,7 @@ async function main() {
     if (!client) {
       if (already && local.board3d && !local.tiles && !opts.check) cropBoardTiles(log);
       add(already ? 'ok' : 'skip', '本地客户端美术（可选）', already ? `已提取 ${local.count} 项`
-        : `${opts.game ? `找不到 ${opts.game}` : '未检测到本机明日方舟客户端'}：${LOCAL_ART_FALLBACK}（${LOCAL_ART_COPY_HINT}，见 docs/DEPLOY.md 第 6 节）`);
+        : `${opts.game ? `找不到 ${opts.game}` : '未检测到本机明日方舟客户端'}：${LOCAL_ART_FALLBACK}（见 docs/DEPLOY.md 第 6 节）`);
     } else if (!client.autochess) {
       add(already ? 'ok' : 'warn', '本地客户端美术（可选）', `${client.kind} 客户端缺少卫戍协议资源（请在游戏内下载全部资源）：${client.path}`);
     } else if (already && opts.local !== 'force') {

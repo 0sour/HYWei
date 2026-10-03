@@ -80,6 +80,10 @@ test('docs and messages say what falls back without the local art and how a serv
   for (const re of [/3D 棋盘/, /界面图标/, /源石虫/]) assert.match(LOCAL_ART_FALLBACK, re);
   assert.ok(!/表情|玩法说明/.test(LOCAL_ART_FALLBACK), 'the emotes and the 玩法说明 pages are downloaded, not local-only');
   assert.match(LOCAL_ART_COPY_HINT, /同一版本的整合包/);
+  // setup's row is printed on every start (scripts/launch.mjs): it names the fallbacks and points to DEPLOY §6; doctor adds the hint
+  const noClientRow = read('tools/setup.mjs').split('\n').find((l) => l.includes("'未检测到本机明日方舟客户端'"));
+  assert.ok(noClientRow && noClientRow.includes('LOCAL_ART_FALLBACK') && noClientRow.includes('DEPLOY.md 第 6 节') && !noClientRow.includes('LOCAL_ART_COPY_HINT'), noClientRow);
+  assert.match(read('tools/doctor.mjs'), /未提取：\$\{LOCAL_ART_FALLBACK\}（\$\{LOCAL_ART_COPY_HINT\}）/);
   const deploy = read('docs/DEPLOY.md');
   const s6 = deploy.slice(deploy.indexOf('## 6. 本地客户端素材'));
   assert.ok(deploy.includes('## 6. 本地客户端素材') && s6.length > 200, 'DEPLOY §6');

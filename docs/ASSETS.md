@@ -271,7 +271,7 @@ Other renderer rules from research 07 §5.4–5.5:
 
 ### Other fallbacks
 
-- **Emotes and 玩法说明 pages** (`public/js/data.js artUrls / nextArtUrl`): the local-client picture (`data/local-assets.json`) first, then the mirror copy (`ui['emoticon/…']`, `ui['guide/…']`), each tried in turn when one fails to load; with neither, the neutral emote glyph and the official tips text (`config.tips`). The rest of the local-client art (the 3D board, most official HUD sprites, module type icons, the two enemy models above) has no web copy: docs/DEPLOY.md §6 lists what falls back without it.
+- **Emotes and 玩法说明 pages** (`public/js/data.js artUrls / nextArtUrl`, `ui/guide.js guideStage`): the local-client picture (`data/local-assets.json`) first, then the mirror copy (`ui['emoticon/…']`, `ui['guide/…']`), each tried in turn when one fails to load; when none is left — none listed, or every copy failed (for example data/assets.json lists the downloaded pages but the files are not on disk yet: a `git pull` and restart without setup) — the neutral emote glyph, and for a page the official tips text (`config.tips`). The rest of the local-client art (the 3D board, the official HUD sprites, module type icons, the two enemy models above) is not downloaded: the client looks it up in `data/local-assets.json` only (most of the HUD sprites are on the mirror too, DESIGN §22.5); docs/DEPLOY.md §6 lists what falls back without it.
 - **Tokens:**
   - Without an avatar, use `chars[owner].avatar` with a 召唤物 badge, or `prof.battlecard.token`.
   - Without a Spine, draw the avatar sprite with a bob tween.

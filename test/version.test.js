@@ -41,7 +41,7 @@ test('the release version is what players see', () => {
   assert.match(server, /app: APP_VERSION/, '/healthz');
 });
 
-test('the English title is the official one: Stronghold Protocol: Alliance (GitHub issues #38 / #42)', () => {
+test('the English title is the official one: Stronghold Protocol: Alliance (as in the reply to GitHub issue #38, which stays open)', () => {
   // EN client data, activity_table basicInfo.act2autochess.name = "Stronghold Protocol: Alliance" (CN 卫戍协议:盟约);
   // the project used to call it "Covenant". The Chinese title stays 卫戍协议：盟约; the repository keeps its name.
   const readme = read('README.md');
