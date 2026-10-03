@@ -738,7 +738,7 @@ test('batch 6 QA residuals (DESIGN §21.21–§21.25): the lock per deployment f
   assert.match(sub(20), /a running window ends with its deployment and outlasts the lend that started it/);
   assert.match(SIM, /坚固维式重锤 — once per deployment: `items\/battle\.js deploymentOf`/);
   assert.ok(!/the carrier's own non-initial `deploy` re-arms it/.test(SIM), 'SIM: the per-grant deploy hook is gone');
-  assert.match(PLAYING, /被 M3茧甲 \/ 埃芒加德复活）后又能锁一次，娜仁图亚借来的锤子也一样/);
+  assert.match(PLAYING, /被 M3茧甲 \/ 埃芒加德复活）后又能锁一次，娜仁图亚策略借来的锤子也一样/);
   assert.ok(!/First time per battle carrier would take lethal damage/.test(doc('docs/research/04-items.md')), 'research 04: once per deployment');
   // F3: 卢西恩 / 锏 count only the allies they can hurt; the player text keeps auras and counters
   assert.match(doc('server/sim/content/bosses.js'), /LUCIEN_AOE_RADIUS\)\.some\(\(u\) => !evadesGround\(e, u\)\)/);
@@ -761,7 +761,7 @@ test('batch 6 QA residuals (DESIGN §21.21–§21.25): the lock per deployment f
   // CHANGELOG 0.1.1
   const log = doc('CHANGELOG.md');
   assert.match(log, /被击倒再部署或被 M3茧甲、埃芒加德复活后又能锁血/);
-  assert.match(log, /娜仁图亚借给相邻干员的坚固维式重锤同样每次部署锁血一次/);
+  assert.match(log, /娜仁图亚策略下萨尔贡干员借给周围干员的坚固维式重锤同样每次部署锁血一次/);
   assert.match(log, /卢西恩、锏不会再因为身边只有起飞的蒂比就放出打不到人的范围技能/);
   assert.match(log, /倒在已消失的召唤物（如浊心斯卡蒂的海嗣）初始位置上的干员会回到自己的初始位置躺下/);
 });
