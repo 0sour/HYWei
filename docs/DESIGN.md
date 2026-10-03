@@ -1348,7 +1348,7 @@ Still [ASSUMED] (each in its section):
 - §21.1: an elite merged this round keeps its copies' refresh count; a 拉普兰德 re-bought after a sale fires again; a bench 突变细胞 carrier transforms too; a 6阶 carrier becomes another 6阶; with the hand and temp both full the gained operator and an item without a slot follow the rules of every gain.
 - §21.2: the weights inside a group; the unseen 10th R3 set and 险境 R6 drafting like R3; R9 groups by the matches they came in; R11 one of the 7 seen lists and the family weights (solo = co-op); the 机密商店 slots / weights and the earlier shops; the 战术决策 weights, independent draws and twin passives stacking; solo shows 3 of 6. Open for the user: each match's 确认本局信息 page (what decides the R9 group), more R11 悬赏决策 / 机密商店 / 战术决策, solo 绝境 / 终极 R3 / R9 / R11.
 - §21.3: the range is the loadout grid (items and bonds do not widen it); the canoe in the deploy map only.
-- §21.4: the translator immobile and damage-cancelled through its change; the 特战术师 form hits flyers (open for the user); the ember's 10 s after the 重生; 隐匿 back at once after a block; the 重生 whitelist; “余音” unmapped.
+- §21.4: the translator immobile and damage-cancelled through its change; the 特战术师 form hits flyers (open for the user); the ember's 10 s after the 重生; 隐匿 back 3 s after a block ends (§22.8; it was "at once" until 0.1.1); the 重生 whitelist; “余音” unmapped.
 - §21.5: the 鸭爵 swap's 0–2 uniform count and pick, the 60–99 % window, ground only, elites eligible, per-half on pair fields, decided at battle start.
 - §21.6: the bot's tuning constants and `CROWD`.
 - §21.7: strongest rather than earliest for 奥术, an equal re-hit refreshing it; the 本局禁用 look; 整备 next to an owned white.

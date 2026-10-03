@@ -295,7 +295,8 @@ function doHeal(b, u, prof, t) {
     for (let k = 1; k < n; k++) {
       let best = null, bd = Infinity;
       for (const a of b.alliesInRadius(prev.x, prev.y, 2.5, null)) {
-        if (seen.has(a.id) || a.hp >= a.s.maxHp || a.kind === 'device') continue;
+        // 禁疗 / noHeal units are no heal target for the bounces either (as injuredAlliesInKeys; 史尔特尔's 余烬, GitHub #52)
+        if (seen.has(a.id) || a.hp >= a.s.maxHp || a.kind === 'device' || a.s.flags.noHeal || (a.profile && a.profile.noHeal)) continue;
         const d = a.hpRatio;
         if (d < bd) { bd = d; best = a; }
       }

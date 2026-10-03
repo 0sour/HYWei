@@ -358,3 +358,29 @@ describe('深池逐火: an ember knocked out while blocked stays revealed until 
     clean(h);
   });
 });
+
+test('#52 a chain healer\'s bounces skip 史尔特尔 in 余烬 (禁疗: no heal target) and go to the next injured ally', () => {
+  const SURTR = 'chess_char_5_07_a', PAP = 'chess_char_2_06_a', TANK = 'chess_char_1_04_a', MEDIC = 'chess_char_2_02_a';
+  const h = makeBattle({
+    defs: { enemies: { enemy_dummy: enemyRec({ key: 'enemy_dummy', hp: 1e9, speed: 0, atk: 0 }) } }, autoFinish: false, timeLimit: 200, seed: 3,
+    units: [
+      { chessId: SURTR, row: 9, col: 5, dir: 'RIGHT', skillIndex: 0, carryState: { sp: 0 } },
+      { chessId: PAP, row: 10, col: 3, dir: 'RIGHT', skillIndex: 0, carryState: { sp: 0 } },
+      { chessId: TANK, row: 10, col: 5, dir: 'RIGHT' },
+      { chessId: MEDIC, row: 11, col: 5, dir: 'RIGHT', carryState: { sp: 0 } },
+    ],
+    enemies: [{ key: 'enemy_dummy', pos: [9, 9] }],
+  });
+  const s = h.unit(SURTR), tank = h.unit(TANK), med = h.unit(MEDIC);
+  h.run(1);
+  tank.hp = tank.s.maxHp * 0.5; med.hp = med.s.maxHp * 0.7;
+  h.b.dealDamage(null, s, { amount: 1e9, type: 'true', canDodge: false });
+  assert.ok(s.findBuff('surtr:ember'), '余烬 is on');
+  const ev0 = h.events.length;
+  h.run(6);
+  const bounces = h.events.slice(ev0).filter((ev) => ev[0] === 'atk' && ev[3] === 'chainHeal').map((ev) => ev[2]);
+  assert.ok(bounces.length > 0, 'the chain bounced');
+  assert.ok(!bounces.includes(s.id), 'no bounce picks her');
+  assert.ok(bounces.includes(med.id), 'the injured 赫默 gets the bounces');
+  clean(h);
+});

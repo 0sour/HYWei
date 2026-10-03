@@ -2422,7 +2422,7 @@ export const KITS = Object.freeze({
   enemy_1023_jmage: kitStealth,                                      // 隐形术师 · stealth
   enemy_1283_sgkill: kitStealth,                                     // 家族灭迹人 · stealth (清算时刻 n/a)
   enemy_1283_sgkill_2: kitStealth,                                   // 家族暗影灭迹人 · stealth
-  enemy_1299_ymkilr: kitShadowKiller,                                // 山海众头目 · stealth, 1st attack after being blocked ×InvisibleCombat.atk_scale
+  enemy_1299_ymkilr: kitShadowKiller,                                // 山海众头目 · stealth; its 隐匿 turning on brings the mark: next attack ×InvisibleCombat.atk_scale (§22.8)
   enemy_1299_ymkilr_2: kitShadowKiller,                              // 山海众秘使 · same
   enemy_1389_winbab_2: kitStealth,                                   // 访问团强攻冠军 · stealth (供暖器 priority n/a)
   enemy_1404_msnip: kitCrossbow,                                     // 重弩突袭者 · stealth + 直击 (row/column bolt: arts + stun, reveals itself)
