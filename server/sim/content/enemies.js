@@ -1122,7 +1122,8 @@ function kitDeepsea(ab, { swim = false, drown = false }) {
       if (drown && wet) { const v = T(ab, 'Drown.damage') ?? 0; if (v > 0) b.dealDamage(null, e, { ...periodicDamage(v * dt), tags: ['dot', 'periodic', 'drown'] }); }
       a.wet = wet;
     },
-    hitIn(c, b, e, a) { if (swim && a.wet && c.dmg.tags && c.dmg.tags.some((t) => t === 'terrain' || t === 'deepsea' || t === 'drown')) c.dmg.cancel = true; },
+    // 免疫水蚀: the deep-water tick (devices.js, tag 'deepsea') and drowning — not 环境伤害 ('terrain', e.g. 活性源石)
+    hitIn(c, b, e, a) { if (swim && a.wet && c.dmg.tags && c.dmg.tags.some((t) => t === 'deepsea' || t === 'drown')) c.dmg.cancel = true; },
   }];
 }
 

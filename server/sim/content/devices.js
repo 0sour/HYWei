@@ -14,7 +14,8 @@
 //              (fractions are ×100 ASPD) and move speed × (1 + moveMulPerStack × layers), an operator 1 layer of the
 //              ASPD part only; at most maxStacks layers; cleared on leaving
 //   烟雾 g      operators on it cannot be targeted by enemy ranged attacks (stealth flag: blocked enemies still hit them)
-//   深水 d      ground enemies on it: sea_drown[enemy].damage true dmg/s, ASPD attack_speed (×100), move × move_speed
+//   深水 d      ground enemies on it: sea_drown[enemy].damage dmg/s (无来源 true 持续伤害, not 环境伤害: tags dot /
+//              periodic / deepsea), ASPD attack_speed (×100), move × move_speed
 //   活性源石 i  a unit on it (allies and ground enemies) gets a timed effect: damage true dmg/s, ATK + atk, ASPD +
 //              attack_speed for `duration` s from its last contact — an enemy keeps it after walking off; one effect
 //              per unit, its time starts again while the unit is on the tile; the tiles never switch off
@@ -333,8 +334,18 @@ function buildTerrain(battle, st) {
   }
 }
 
-const terrainDamage = (battle, amount) => (ctx) => {
+/** 活性源石's tick: true damage no unit deals (无来源), tagged 'terrain' = 环境伤害 ("受到来自自然环境的伤害" content reads it). */
+const infectionDamage = (battle, amount) => (ctx) => {
   if (amount > 0 && ctx.unit.alive) battle.dealDamage(null, ctx.unit, { amount, type: 'true', canDodge: false, tags: ['terrain'] });
+};
+
+/**
+ * 深水区's 【水蚀】 tick (PRTS 涨潮控制 技能3 深水: "每秒受到40点无来源真实持续伤害（不属于环境伤害，不会触发受击回复）"; PRTS 伤害分类
+ * lists 深水区/涨潮水蚀 as BUFF damage): 无来源 true 持续伤害 — tags 'dot' (锡人's 凋敝魂灵 raises it), 'periodic' and
+ * 'deepsea' (the 免疫水蚀 swimmers cancel it), no 'terrain' (not 环境伤害), no 受击回复 (noSp).
+ */
+const deepWaterDamage = (battle, amount) => (ctx) => {
+  if (amount > 0 && ctx.unit.alive) battle.dealDamage(null, ctx.unit, { amount, type: 'true', canDodge: false, sourceless: true, noSp: true, tags: ['dot', 'periodic', 'deepsea'] });
 };
 
 function enterTerrain(battle, st, u, code) {
@@ -350,7 +361,7 @@ function enterTerrain(battle, st, u, code) {
   if (code === TERRAIN.smog) battle.addBuff(u, { key: BUFF[code], flags: { stealth: true } });
   else if (code === TERRAIN.deepsea) {
     const D = st.deepsea;
-    battle.addBuff(u, { key: BUFF[code], mods: { aspd: D.aspd, moveMul: D.moveMul }, interval: 1, onTick: terrainDamage(battle, D.damage) });
+    battle.addBuff(u, { key: BUFF[code], mods: { aspd: D.aspd, moveMul: D.moveMul }, interval: 1, onTick: deepWaterDamage(battle, D.damage) });
   }
   // mire layers are applied by tickMire, 活性源石 by touchInfection (every tick on the tile)
 }
@@ -365,7 +376,7 @@ function enterTerrain(battle, st, u, code) {
  * extra tick [ASSUMED: the time counts from the last contact — so an operator deployed on it, always in contact, drains
  * past `duration`]. An operator moved off the tile (Battle.relocate: 乌尔比安 S3, 夕's 小自在 …) keeps it for its time;
  * leaving the field drops it with every buff; a 重生 clears it (enemies.js rebirthCleanse: PRTS 特殊机制 §重生 "清空自身
- * 身上除白名单外所有Buff") and contact gives it again while the unit is on the tile [ASSUMED]. The tick (terrainDamage)
+ * 身上除白名单外所有Buff") and contact gives it again while the unit is on the tile [ASSUMED]. The tick (infectionDamage)
  * is true damage no unit deals (无来源), tagged 'terrain' = 环境伤害 (PRTS 自然环境 lists 活性源石), not 'dot' [ASSUMED:
  * PRTS 伤害分类's list of BUFF damage does not name it].
  */
@@ -374,7 +385,7 @@ function touchInfection(battle, st, u) {
   const key = BUFF[TERRAIN.infection];
   const b = u.findBuff(key);
   if (b) { if (b.timeLeft < I.duration) b.timeLeft = I.duration; return; }
-  battle.addBuff(u, { key, duration: I.duration, mods: { atkPct: I.atk, aspd: I.aspd }, interval: 1, onTick: terrainDamage(battle, I.damage) });
+  battle.addBuff(u, { key, duration: I.duration, mods: { atkPct: I.atk, aspd: I.aspd }, interval: 1, onTick: infectionDamage(battle, I.damage) });
 }
 
 /** Layers an enemy gains per 【陷入沼泽】 trigger at 重量 ≥ heavyWeight (PRTS 沼泽控制: "若其重量大于等于3，改为获得2层"). */

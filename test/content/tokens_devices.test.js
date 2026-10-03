@@ -682,6 +682,32 @@ test('深水 (act2 m04): ground enemies in deep water take damage/s, ASPD −60,
   checkInvariants(h.b);
 });
 
+// PRTS 涨潮控制 技能3 深水: "【水蚀】的敌方单位每秒受到40点无来源真实持续伤害（不属于环境伤害，不会触发受击回复）"
+test('深水: the 【水蚀】 tick is 无来源 true 持续伤害, not 环境伤害 (tags dot / periodic / deepsea, no terrain, no 受击回复) — 纠缠藤蔓 does not turn fragile in it', REAL, () => {
+  const bb = ds.getStage('act2autochess_m04').special.deepsea.bb;
+  const dmg = bb['sea_drown[enemy].damage'];
+  const wait = (pos) => ({ motion: 'WALK', start: pos, end: [9, 2], checkpoints: [{ type: 'WAIT', time: 99 }] });
+  const ticks = [];
+  const h = makeBattle({ stageId: 'act2autochess_m04', defs: { enemies: { enemy_dummy: dummy({ speed: 1 }) } },
+    enemies: [{ key: 'enemy_dummy', pos: [11, 6], route: wait([11, 6]) }, { key: 'enemy_2052_smgia', pos: [10, 6], route: wait([10, 6]) }], autoFinish: false, timeLimit: 30,
+    setup: (b) => b.on('hit', ({ source, target, dmg: d }) => { if (target.defId === 'enemy_dummy') ticks.push({ source, type: d.type, tags: [...d.tags], sourceless: d.sourceless, noSp: d.noSp }); }) });
+  h.step();
+  h.run(5);
+  const e = h.enemy('enemy_dummy'), vine = h.enemy('enemy_2052_smgia');
+  assert.deepEqual([terrainAt(h.b, 11, 6), terrainAt(h.b, 10, 6)], ['deepsea', 'deepsea']);
+  assert.equal(ticks.length, 5);
+  for (const t of ticks) {
+    assert.equal(t.source, null);
+    assert.equal(t.type, 'true');
+    assert.deepEqual(t.tags, ['dot', 'periodic', 'deepsea']);
+    assert.ok(t.sourceless && t.noSp);
+  }
+  approx(1e7 - e.hp, 5 * dmg, 1e-9);
+  assert.equal(vine.findBuff('ab:natureWeak'), null, '受到来自自然环境的伤害 does not fire');
+  approx(vine.s.maxHp - vine.hp, 5 * dmg, 1e-9, '40/s, not ×2');
+  checkInvariants(h.b);
+});
+
 test('活性源石 (act1 m04): units on it take damage/s and gain ATK/ASPD (allies and ground enemies)', REAL, () => {
   const bb = ds.getStage('act1autochess_m04').special.infection.bb;
   const g = guard({ stats: { atk: 1000, maxHp: 1e5 } });
