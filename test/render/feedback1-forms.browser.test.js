@@ -12,7 +12,9 @@
 //      blocking 1 s long tasks (every frame a catch-up, and the render clock jumps past its 1.5 game s stale-event
 //      window) across the change of a 转译基底·α that walks into 百炼嘉维尔's block: the view turns 幽灵 (C_*) — the
 //      catch-up filter, and then render/interp.js's stale-event drop, used to lose the form fx, so it stayed on A_Move
-//      and died on B_Die.
+//      and died on B_Die. Whether a stall lands where a queued form fx falls out of the 1.5 game s window depends on the
+//      page's frame timing, so this is the real-page check; the deterministic one is test/match/feedback1-runner-forms
+//      (the runner feeding the render engine's buffer through a 1.2 s stall).
 //
 // Opt-in (starts Chrome): RENDER_E2E=1 node --test test/render/feedback1-forms.browser.test.js
 // Chrome path: $CHROME_PATH or the macOS default. Screenshots → test/e2e/out/feedback1-*.png.
@@ -132,10 +134,10 @@ async function lateViewInPage(page, port, s, atSecs, setupSrc) {
  * real ms long task, for `secs` real s. Returns samples { t, simForm, form, clip, spine, alive } of the 转译基底·α's view and the
  * runner's catch-up count.
  */
-async function runnerInPage(page, port, s, jankMs, secs) {
+async function runnerInPage(page, port, s, jankMs, secs, calmSecs = 0) {
   await page.goto(`http://127.0.0.1:${port}/dev/render-demo.html?scene=normal-m01&paused=1&panel=0`);
   await page.waitForFunction('window.__demo && (window.__demo.ready || window.__demo.error)', { timeout: 30000 });
-  return page.evaluate(async (spec, jankMs, secs) => {
+  return page.evaluate(async (spec, jankMs, secs, calmSecs) => {
     const { createBattleRunner } = await import('/js/battle/runner.js');
     const { data } = await import('/js/data.js');
     const v = window.__demo.view;
@@ -156,21 +158,28 @@ async function runnerInPage(page, port, s, jankMs, secs) {
     const e = [...runner._entries.values()][0];
     const out = [];
     const end = performance.now() + secs * 1000;
-    while (performance.now() < end) {
+    const calmFrom = end;
+    const calmEnd = end + calmSecs * 1000;
+    while (performance.now() < calmEnd) {
       // a blocking long task (the main thread stalls: the render engine's own ticker stalls too, so its clock jumps
-      // jankMs × 2 game s at once — past the 1.5 game s stale-event window), then one free frame
-      const until = performance.now() + jankMs;
-      while (performance.now() < until) { /* stall */ }
-      await sleep(16);
+      // jankMs × 2 game s at once — past the 1.5 game s stale-event window), one free frame for the renderer, then the
+      // runner's catch-up frame. After `secs` the stalls stop and the frames come smoothly for `calmSecs` (the clips
+      // catch up: PIXI caps a frame's delta).
+      const calm = performance.now() >= calmFrom;
+      if (!calm) {
+        const until = performance.now() + jankMs;
+        while (performance.now() < until) { /* stall */ }
+      }
+      await sleep(calm ? 33 : 16);
       for (const fn of queue.splice(0)) fn(performance.now());
       const tr = e.battle.units.find((u) => u.defId === 'enemy_10081_mpplai');
       const view = tr && v.debug.views.get(tr.id);
-      if (tr) out.push({ t: +e.battle.time.toFixed(2), simForm: tr.form, form: view?.form ?? null, clip: view?.actor?.current ?? null, spine: !!view?.spineReady, alive: tr.alive });
+      if (tr) out.push({ t: +e.battle.time.toFixed(2), simForm: tr.form, form: view?.form ?? null, clip: view?.actor?.current ?? null, spine: !!view?.spineReady, alive: tr.alive, calm });
     }
     const catchups = runner.stats().catchups;
     runner.dispose();
     return { out, catchups };
-  }, s, jankMs, secs);
+  }, s, jankMs, secs, calmSecs);
 }
 
 describe('player reports after 0.1.0: the models follow the knock-out forms (headless Chrome, real sim)', { skip }, () => {
@@ -280,14 +289,18 @@ describe('player reports after 0.1.0: the models follow the knock-out forms (hea
   test('the real client runner with blocking 1 s long tasks (every frame a catch-up, the render clock jumps 2 game s): 转译基底·α blocked by 百炼嘉维尔 turns 幽灵 in the view (C_*), never back to A_Move / B_Die', async () => {
     const { p, problems } = await page();
     try {
-      const { out, catchups } = await runnerInPage(p, srv.port, spec('enemy_10081_mpplai', 'runner', 9, 7), 1000, 12);
+      const { out, catchups } = await runnerInPage(p, srv.port, spec('enemy_10081_mpplai', 'runner', 9, 7), 1000, 9, 3);
       await p.screenshot({ path: path.join(OUT, 'feedback1-runner.png') });
       assert.ok(catchups >= 5, `catch-up frames (${catchups})`);
       const changed = out.find((x) => x.simForm === 'translator_youling');
       assert.ok(changed, `the sim's 转译基底·α turned 幽灵 (${JSON.stringify(out.slice(-3))})`);
-      const after = out.filter((x) => x.spine && x.t > changed.t + 2 + LAG);
+      const after = out.filter((x) => x.spine && x.t > changed.t + 2 + LAG && x.alive);
       assert.ok(after.length > 0, 'samples after the change');
-      assert.ok(after.every((x) => x.form === 'translator_youling' && /^C_/.test(x.clip)), `幽灵's clips (${[...new Set(after.map((x) => `${x.form}:${x.clip}`))]})`);
+      // through the stalls the view is in the 幽灵 form (its 2 s change clip may still play: PIXI caps a frame's delta,
+      // so a clip advances 0.1 s per stalled frame) — never the first form's walk again
+      assert.ok(after.every((x) => x.form === 'translator_youling' && /^(C_|A_Die_C)/.test(x.clip)), `幽灵's clips (${[...new Set(after.map((x) => `${x.form}:${x.clip}`))]})`);
+      const calm = after.filter((x) => x.calm);
+      assert.ok(calm.length > 0 && /^C_/.test(calm[calm.length - 1].clip), `smooth frames again: 幽灵's own clips (${[...new Set(calm.map((x) => x.clip))]})`);
       assert.ok(!out.some((x) => x.spine && /^B_/.test(x.clip)), 'never the 寻仇者\'s clips (B_Die was the look of report #5)');
       assert.deepEqual(problems, []);
     } finally {

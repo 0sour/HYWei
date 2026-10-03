@@ -449,7 +449,10 @@ export class UnitView {
     const dur = fx && Number(fx.dur);
     let next = f && f.next ? FORMS[this.info.spine || this.info.defId]?.[f.next]?.roles || null : null;
     if (next && typeof f.roles.die === 'string') next = { ...next, die: f.roles.die };
-    if (f) this.actor.setForm(f.roles, f.change || null, f.end && dur > 0 ? { clip: f.end, in: dur, roles: next } : null);
+    // an fx handed out late (render/app.js: a stall, a hidden tab) skips a change clip that would already have ended
+    const late = fx && Number(fx.late) > 0 ? Number(fx.late) : 0;
+    const change = f && f.change && !(late > 0 && late >= (this.actor.dur?.(f.change) ?? Infinity)) ? f.change : null;
+    if (f) this.actor.setForm(f.roles, change, f.end && dur > 0 ? { clip: f.end, in: dur, roles: next } : null);
     else if (had) this.actor.setForm(null);
   }
 

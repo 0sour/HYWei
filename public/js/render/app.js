@@ -1458,7 +1458,7 @@ export async function createFieldView(host, options = {}) {
         if (form !== undefined) {
           const inf = infos.get(e[4].id);
           if (inf && (form === null || FORMS[inf.spine || inf.defId]?.[form])) inf.form = form;
-          const x = late > 0 && Number(e[4].dur) > 0 ? { ...e[4], dur: Math.max(0, Number(e[4].dur) - late) } : e[4];
+          const x = late > 0 ? { ...e[4], late, ...(Number(e[4].dur) > 0 ? { dur: Math.max(0, Number(e[4].dur) - late) } : {}) } : e[4];
           views.get(e[4].id)?.setForm?.(form, x);
         }
         if (!(late > 0)) fx.simFx(e[1], Number(e[2]), Number(e[3]), e[4]);
