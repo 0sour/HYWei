@@ -501,7 +501,7 @@ Audio: autochess BGM per phase, UI SFX (buy/sell/refresh/level/merge/ready/timer
 - **No crash paths**: every server handler guarded; a thrown error inside a Battle tick for one field must not kill the match (log, force-end that battle as timeout, continue). Invariants asserted in tests: no NaN/Infinity in any unit field; hp ∈ [0, maxHp]; positions inside rect; battles terminate within `timeLimit + 1 s` (boss: terminate by pool/force); pool copy counts never negative and never exceed caps; funds never negative; hand/temp sizes respected.
 - Unit tests per module; content tests per effect; **full-match bot tests**: 1/2/4-player matches of every difficulty with fixed seeds run to RESULT headlessly (fast-forward: no real-time pacing) with zero errors; protocol fuzz (random/invalid intents) never crashes and never corrupts state.
 - **Browser E2E** (puppeteer-core + system Chrome): open 2 tabs, create/join room, add AI, play through prep/combat of several rounds, zero console errors, screenshots saved to `test/e2e/out/` for visual review.
-- Performance: a normal battle tick with 60 enemies + 10 ops < 0.5 ms; 4 parallel fields at 2× real time < 15% CPU of one core.
+- Performance: a normal battle tick with 60 enemies + 10 ops < 0.5 ms; 4 parallel fields at 2× real time < 15% CPU of one core; the heavy 2-player boss field (18 ops, ~130 enemies alive, `test/sim/robustness.test.js`) < 0.5 ms per tick on a development machine, the best of three runs of the same battle — 1.0 ms when `process.env.CI` is set (GitHub's shared windows runners measured 0.51–0.58 ms and failed the 0.5 ms bar on PR #10, #12, #14 and master's own push; a real regression still shows locally).
 
 ---
 
