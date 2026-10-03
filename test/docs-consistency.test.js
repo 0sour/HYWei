@@ -612,3 +612,58 @@ test('playtest6b QA residuals (DESIGN §20.14): the held boss result, the cue be
   assert.match(BALANCE, /\*\*2026-10-02 — the integrated build \(QA 6b/);
   assert.match(BALANCE, /measured on the boss-HP workstream's boards, \*\*before\*\* the elite-to-board merge/);
 });
+
+test('player feedback after 0.1.0 (DESIGN §21, v0.1.1): every report mapped, the settled decisions, the normative lines — code and docs agree', async () => {
+  const sec = (n) => DESIGN.slice(DESIGN.indexOf(`## ${n}.`), DESIGN.indexOf(`## ${n + 1}.`) > 0 ? DESIGN.indexOf(`## ${n + 1}.`) : undefined);
+  const S21 = sec(21);
+  assert.match(DESIGN, /## 21\. Player feedback after 0\.1\.0 \(v0\.1\.1\)/);
+  for (let i = 1; i <= 20; i++) assert.match(S21, new RegExp(`### 21\\.${i} `), `§21.${i}`);
+  const intro = S21.slice(0, S21.indexOf('### 21.1 '));
+  for (let i = 1; i <= 10; i++) assert.match(intro, new RegExp(`#${i} `), `the intro maps report #${i}`);
+  for (const r of ['B1', 'B2', 'B3', 'B4', 'B5', 'C1', 'C2', 'D1', 'D2', 'D3', 'D4', 'D5', 'E1', 'E2', 'E3']) assert.match(intro, new RegExp(`${r} `), `the intro maps report ${r}`);
+  const sub = (n) => { const a = S21.indexOf(`### 21.${n} `); const b = S21.indexOf('\n### 21.', a + 5); return S21.slice(a, b > 0 ? b : undefined); };
+  // settled: the tactician re-orientation (user-confirmed) and the screenshot-based bounty structures
+  const s2120 = sub(20);
+  assert.match(s2120, /A tactician re-oriented in place \(§21\.3\) \| a range-bound summon still inside the new range stays[^\n]*user-confirmed 2026-10-03/);
+  assert.match(s2120, /Bounty drafts \(§21\.2\) \| the official structure of each round from the user's 33 screenshots/);
+  assert.match(s2120, /MULTI_ROUND_BOUNTY_BATTLES = null/);
+  // §21.2 = §7 = §20.6 superseded = the data
+  assert.match(sub(2), /initial 42, boss 20, hunter 24 \(86 drafted\)/);
+  assert.match(sec(7), /86 drafted cards: R3 a fixed set of six 两场 cards/);
+  assert.match(sec(20), /drawn uniformly, no multi-round cap — \*\*superseded by §21\.2\*\*/);
+  const pools = {};
+  for (const c of Object.values(DATA.choices.cards.bounty)) if (c && c.draftPool) pools[c.draftPool] = (pools[c.draftPool] || 0) + 1;
+  assert.deepEqual(pools, { initial: 42, boss: 20, hunter: 24 }, 'choices.json draftPool counts');
+  // §5.4 foesInRadius / §5.3 stealth vs area damage = the engine; splash radii = §5.6 = SIM
+  const { Battle } = await import('../server/sim/Battle.js');
+  assert.equal(typeof Battle.prototype.foesInRadius, 'function');
+  assert.match(sec(5), /`battle\.foesInRadius\(x, y, r\)` \(the enemies an operator's area effect can select/);
+  assert.equal(SIM_CONST.CHAIN_RADIUS, 1.7);
+  assert.equal(SUB.bombarder.splashRadius, 0.9);
+  assert.match(sec(5), /`bombarder` \(ground splash 0\.9 \+ aftershock\), `chain` caster \(bounce ×3, −15%, 1\.7-tile jumps/);
+  assert.match(SIM, /1\.7-tile jumps \(constants\.js CHAIN_RADIUS/);
+  assert.ok(!/\[OPEN\] PRTS 溅射半径一览/.test(SIM), 'SIM: the splash radii are no longer open');
+  // the form fx are state in every client stage (§14 = §21.4 = SIM)
+  const { isCosmeticEvent } = await import('../public/js/render/interp.js');
+  assert.equal(isCosmeticEvent(['fx', 'phase', 0, 0, { id: 1, form: 'husk' }]), false);
+  assert.equal(isCosmeticEvent(['fx', 'burst', 0, 0, {}]), true);
+  assert.match(sec(14), /the render engine's event queue \(`render\/interp\.js isCosmeticEvent`\) never drop a form fx/);
+  assert.match(SIM, /render engine's event queue \(`render\/interp\.js isCosmeticEvent`/);
+  // the ticker priority (§8.2 = §10 = §21.10 = META = the server constant)
+  const { FLOW_TICKER_PRIORITY } = await import('../server/match/Match.js');
+  assert.equal(FLOW_TICKER_PRIORITY, 25);
+  assert.match(sec(8), /`m\.ticker \{text, id, type, priority, playerId\}`/);
+  assert.match(META, /The strip queues by `priority`, highest first/);
+  // UnitInfo / unitStats / rewardOffer shapes (§8)
+  assert.match(sec(8), /skillIndex\?, moduleId\?, items\?, form\? \}/);
+  assert.match(sec(8), /moveSpeed, range\?, base: \{…same\}\}/);
+  assert.match(sec(8), /rewardOffer: null \| \{ tier, source: 'merge'\|'special', label, queued, slots/);
+  // §6.6 describes the new bot; the old one-liner is gone
+  assert.ok(!/buy chess that raise bond counts or complete merges, sell leftovers, place melee on road tiles nearest the enemy path/.test(DESIGN), '§6.6: the 0.1.0 bot description is gone');
+  assert.match(sec(6), /Strategy \(§21\.6\): pick a band/);
+  // §14 ground pathing and §2 grid.js follow §21.15; §20.3 pushes follow §21.13
+  assert.ok(!/smoothing never cuts across floor the grid route does not walk/.test(DESIGN), '§14: the 0.1.0 pathing sentence is gone');
+  assert.ok(!/pathfinding \(8-dir, no corner cutting\)/.test(DESIGN), '§2: grid.js line updated');
+  assert.ok(!/Pushes are radial except 推击手/.test(DESIGN), '§20.3: the push rule follows the client templates');
+  assert.match(sec(20), /\| 野鬃 S2 \| 中力 directional \(knockback\[dir\], §21\.13\)/);
+});
