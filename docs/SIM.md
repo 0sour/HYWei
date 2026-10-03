@@ -284,7 +284,7 @@ skill toggles, and a battle that ended while hidden delivers it when the tab is 
 buffered before a field is entered (`screens/game.js keepEarly`, also while a re-sent field meta re-enters the field on
 screen) and the render engine's event queue (`render/interp.js isCosmeticEvent`: a form fx is never dropped as stale,
 more than 1.5 game s behind the render clock, nor shed from a full queue; one handed out late switches the model
-without its telegraph); dropping them was report #5's look again after a stall or a background tab.
+without its telegraph or a change clip that would already have ended); dropping them was report #5's look again after a stall or a background tab.
 
 **Ownership** (`enemy.ownerId`, used for `killed/total` and leak attribution): `ownerPlayerId` if given, else the
 player whose half contains the spawn tile (cols ≥ 11 = right half / player with colOffset 8 or side R). A leak is
