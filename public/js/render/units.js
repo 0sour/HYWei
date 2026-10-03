@@ -19,12 +19,15 @@
 // the legacy `facing` ±1): the Back model for UP (when one exists, research 07 §5.5), the Front model for RIGHT and
 // DOWN, mirrored for LEFT; the orange ground wedge "›" of prep board pieces points along `dir` (rotated on the ground
 // plane). `setDir(dir)` re-orients a live view (swapping Front ⇄ Back without a fallback flash). Enemies flip by the
-// sign of their horizontal velocity (with hysteresis).
+// sign of their horizontal velocity (with hysteresis). A dead or knocked-out operator facing UP falls and lies with its
+// Front model — 131 of the 135 Back skeletons have no Die clip (GitHub issue #25: the Back model went on with its
+// attack loop under the redeploy ring) — and stands up again with the Back model (`_wantsBack`, `_syncModel`).
 //
 // Knocked-out operators (user playtest #4 item 9, b.snap `down`): `setDown([id, respawnAt, respawnTime, state, row,
 // col])` keeps a dead operator on the tile it lies on (row / col: where it fell, or its home — sim Battle._layBody,
 // player report F5 after 0.1.0) in its knocked-down pose — the Spine Die clip played once and held on its last
-// frame (the collapsed / kneeling pose with closed eyes), slightly greyed — with a redeploy ring above its head:
+// frame (the collapsed / kneeling pose with closed eyes; the Front model's for one facing UP, see above), slightly
+// greyed — with a redeploy ring above its head:
 // a dark disc, a mint arc filling as the respawn timer runs and the seconds left; once the timer is done and it still
 // waits, a full amber ring with "DP" (not enough DP) or a red ring with "!" (its tile is taken). `onDeploy` (the
 // redeploy) plays the deploy clip and restores the normal look; `setDown(null)` on a dead view lets it fade out.
@@ -80,6 +83,17 @@ export function unitDir(info) {
 export function enemyModelScale(rec) {
   const k = Number(rec && rec.modelScale);
   return Number.isFinite(k) && k > 0.05 && k < 20 ? k : 1;
+}
+/**
+ * Seconds of the death clip of a manifest Spine entry (`anims.die`, else a 'Die' clip, as SpineActor.dieClip; its
+ * `animations` duration), 0 when it has none — 131 of the 135 operator Back models (GitHub issue #25).
+ */
+export function dieClipDur(entry) {
+  const durs = entry && entry.animations && typeof entry.animations === 'object' ? entry.animations : null;
+  if (!durs) return 0;
+  const name = (entry.anims && typeof entry.anims.die === 'string' && entry.anims.die) || 'Die';
+  const d = Object.hasOwn(durs, name) ? Number(durs[name]) : NaN;
+  return Number.isFinite(d) && d > 0 ? d : 0;
 }
 /** World step (x = col, y = row) of a direction. */
 export const DIR_STEP = Object.freeze({ UP: [0, 1], RIGHT: [1, 0], DOWN: [0, -1], LEFT: [-1, 0] });
@@ -325,6 +339,7 @@ export class UnitView {
     this.body.addChild(this.fallback);
     this.actor = null;
     this.spineReady = false;
+    this._modelDirty = false;            // died / stood up since the last frame: update() checks Front ⇄ Back (_syncModel)
     this._spineBusy = false;             // a Spine load of this view is in flight
     this._spineTries = 0;                // failed loads since the last model (SPINE_RETRY_MS)
     this._retryAt = 0;                   // when the next retry is due (ms, performance clock; 0 = none)
@@ -381,7 +396,8 @@ export class UnitView {
     const a = this.ctx.assets;
     if (!a || !a.spineEntry || !a.spine) return;
     const id = this.info.spine || this.info.defId;
-    // Front/Back rule (research 07 §5.5 / 09 §1.2): Front facing right/down (mirrored for left), Back facing up.
+    // Front/Back rule (research 07 §5.5 / 09 §1.2): Front facing right/down (mirrored for left), Back facing up — while
+    // standing (a knocked-out operator lies with the model that has a fall: _wantsBack).
     const back = this._wantsBack();
     const entry = id ? a.spineEntry(id, { back }) : null;
     if (!entry || this.ctx.settings?.quality === 'low' && this.isEnemy && !this.isBoss && this.ctx.crowded?.()) return;
@@ -427,8 +443,11 @@ export class UnitView {
         this._releaseEntry(entry);
         return;
       }
-      // a Front ⇄ Back swap (setDir) replaces the previous model in place: no fallback diamond in between
+      // a Front ⇄ Back swap (setDir, or knocked out / standing again: _syncModel) replaces the previous model in place:
+      // no fallback diamond in between; a deploy clip it was playing goes on on the new model (an operator facing UP
+      // redeployed: its Back model takes over from the Front model it lay down with)
       const swap = !!this.actor;
+      const deployed = swap && this.alive ? this.actor.deployElapsed() : null;
       if (swap) this._dropActor();
       this.actor = actor;
       this._actorEntry = entry;
@@ -448,6 +467,7 @@ export class UnitView {
       } else {
         if (this.flags & UF.SKILL) this.actor.setSkill(true);
         this.actor.setBase(this._baseFromAnim());
+        if (deployed != null) { this.actor.deploy(); if (deployed > 0) this.actor.update(deployed); }
       }
     }, () => {
       if (req === this._spineReq) this._spineBusy = false;
@@ -602,11 +622,27 @@ export class UnitView {
     else if (this.dir === 'LEFT') this.setDir('RIGHT');
   }
 
-  /** Whether this unit should show its Back model (facing UP and a Back model exists). */
+  /**
+   * Whether this unit should show its Back model: facing UP and a Back model exists — while it stands. A dead or
+   * knocked-out one keeps the Back model only when that skeleton has a fall of its own (4 of the 135 Back models); the
+   * others have no Die clip, so the Front model shows the fall and the held knocked-down pose (GitHub issue #25: the
+   * Back model went on with its attack loop under the redeploy ring) [ASSUMED: no source says which model the official
+   * client lies down with; a Back skeleton without a Die clip cannot show a fall].
+   */
   _wantsBack() {
     const a = this.ctx.assets;
     const id = this.info.spine || this.info.defId;
-    return !this.isEnemy && this.dir === 'UP' && !!id && !!a && typeof a.hasBack === 'function' && !!a.hasBack(id);
+    if (this.isEnemy || this.dir !== 'UP' || !id || !a || typeof a.hasBack !== 'function' || !a.hasBack(id)) return false;
+    return this.alive || dieClipDur(typeof a.spineEntry === 'function' ? a.spineEntry(id, { back: true }) : null) > 0;
+  }
+
+  /**
+   * Load the model the unit wants when it is not the one shown or loading (Front ⇄ Back: its direction, or it went down /
+   * stood up again). A swap replaces the model in place (_acquireSpine: no diamond in between; a fall or a deploy clip
+   * goes on where it is). Nothing before the first model was asked for (no manifest entry yet).
+   */
+  _syncModel() {
+    if (this.entry && this._wantsBack() !== !!this.entryBack) this._loadSpine();
   }
 
   /**
@@ -623,7 +659,7 @@ export class UnitView {
     this.facing = d === 'LEFT' ? -1 : 1;
     this.visFacing = this.facing;
     if (this.imp) this.imp.dirty = true;
-    if (this.entry && this._wantsBack() !== !!this.entryBack) this._loadSpine();
+    this._syncModel();
   }
 
   _releaseEntry(entry) {
@@ -637,6 +673,7 @@ export class UnitView {
       this.imp = null;
     }
     this._box = null;
+    this._tint = undefined;   // the next model gets the current tint on its first frame (a knocked-down one its grey)
     const old = this.actor;
     this.actor = null;
     this.spineReady = false;
@@ -705,11 +742,17 @@ export class UnitView {
   /**
    * The unit died: its Die clip plays, then it fades (unless it stays down, setDown). `instant`: it starts on the held
    * end of the clip — a unit that is already down (a field joined mid-battle, an operator entering 联防 knocked out).
+   * An operator facing UP whose Back model has no Die clip (GitHub issue #25) falls with its Front model: the swap is
+   * made by this frame's update (`_modelDirty` → _syncModel, after every event and snapshot of the frame, so a death
+   * and a redeploy in one frame — a 突袭 jump, a 不屈 revive, a backlog after a hidden tab — load nothing); meanwhile the
+   * Back model holds still (SpineActor.die), and the Front model's Die clip times the fade.
    */
   die(instant = false) {
     if (!this.alive) return;
     this.alive = false;
-    const d = this.actor ? this.actor.die() : 0;
+    this._modelDirty = true;
+    let d = this.actor ? this.actor.die() : 0;
+    if (this.actor && !d) d = this._fallDur();
     const rate = this.ctx.animRate?.() || 1;
     this.dieT = 0;
     this.dying = clamp(d / rate, 0.35, 1.6) + 0.55;
@@ -717,8 +760,17 @@ export class UnitView {
     if (instant) { this.dieT = 30; if (this.actor) this.actor.update(30); }
   }
 
+  /** Seconds of the fall of the model the unit wants now (its manifest entry's Die clip), 0 without one. */
+  _fallDur() {
+    const a = this.ctx.assets;
+    const id = this.info.spine || this.info.defId;
+    return a && typeof a.spineEntry === 'function' && id ? dieClipDur(a.spineEntry(id, { back: this._wantsBack() })) : 0;
+  }
+
+  /** Standing again (a redeploy, a revive): an operator facing UP gets its Back model back (this frame's update). */
   revive() {
     this.alive = true;
+    this._modelDirty = true;
     this.dying = 0; this.remove = false; this.alpha = 1;
     this.down = null;
     this.hp = this.maxHp; this.ghostHp = this.hp;
@@ -761,6 +813,8 @@ export class UnitView {
   update(dt, cam, t) {
     if (this.destroyed) return;
     const P = this.P;
+    // the model for the state the frame's events and snapshot left (Front ⇄ Back when it went down / stood up: die, revive)
+    if (this._modelDirty) { this._modelDirty = false; this._syncModel(); }
     // a failed / timed-out model load is tried again once its wait is over (SPINE_RETRY_MS; frames only: never hidden)
     if (this._retryAt && nowMs() >= this._retryAt) { this._retryAt = 0; if (!this.actor && !this._spineBusy) this._loadSpine(true); }
     if (this.zTarget != null && this.z !== this.zTarget) {
