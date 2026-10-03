@@ -434,12 +434,17 @@ const ATTACK_RANGE_CHANGE = /攻击(?:范围|距离)(?:与溅射范围)?(?:扩�
  * carry too (惊蛰, 幽灵鲨, 耶拉, 莫斯提马, 莱恩哈特). The record keeps the official row in `rawRule` (TAKE_DAMAGE) for
  * traceability; validateAll fails the build when an entry no longer meets a TAKE_DAMAGE row or its skill. 深巡 S1
  * 侵袭破坏应对 keeps TAKE_DAMAGE.
+ * 余 S2 厚礼上宾 joined on 2026-10-04 (the owner's decision after GitHub issue #32 item 1, DESIGN §22.10: players saw it fire
+ * from a ranged hit with nobody to pull). His attack range is his own tile (0-1), so the basic strategy would not see an
+ * enemy he could pull: his S2 takes SKILL_RANGE on its own 技能范围 (x-1) — the official strategy of a MANUAL skill with a
+ * 技能范围 when no class row applies, "仅在技能范围内存在敌人（无视其不可选中）时释放技能" — `customRangeGrid` = that range.
  */
 const TRIGGER_DEVIATIONS = Object.freeze({
   chess_char_1_04_a: { skchr_udflow_2: 'DEFAULT' },                                // 深巡 S2 行动能力剥夺
   chess_char_1_20_a: { skchr_liskam_2: 'DEFAULT' },                                // 雷蛇 S2 反击电弧
   chess_char_2_18_a: { 'skcom_atk_up[3]': 'DEFAULT', skchr_ashlok_2: 'DEFAULT' },  // 灰毫 S1 攻击力强化·γ型, S2 专注轰击
   chess_char_5_08_a: { skchr_horn_2: 'DEFAULT', skchr_horn_3: 'DEFAULT' },         // 号角 S2 暴风号令, S3 终极防线
+  chess_char_6_03_a: { skchr_yu_2: 'SKILL_RANGE' },                                // 余 S2 厚礼上宾 (its x-1)
 });
 
 /**
@@ -456,7 +461,7 @@ const TRIGGER_DEVIATIONS = Object.freeze({
  *   "不通过普通攻击/治疗触发技能，仅在技能范围内存在敌人（无视其不可选中）时释放技能", customRangeGrid = the skill range;
  * - else DEFAULT (the basic strategy: ready + about to attack / heal);
  * - last, the deliberate deviations (TRIGGER_DEVIATIONS, per chess and skill): `rule` from the table, `rawRule` the
- *   official row.
+ *   official row (a SKILL_RANGE deviation takes the skill's own range as `customRangeGrid`).
  * @param {object} skill record from buildSkill (skillId, skillType, desc, rangeGrid)
  * @param {{operator?: boolean, chessId?: string}} opts operator = a chess (the 技能范围 strategy is written for 干员;
  *   summons keep DEFAULT); chessId = the chess's NORMAL id (TRIGGER_DEVIATIONS key)
@@ -474,6 +479,10 @@ function resolveTrigger(ctx, char, charId, skillIdx, skill, { operator = false, 
   }
   const rawRule = pick ? pick.skillTriggerType : 'DEFAULT';
   const deviation = chessId ? TRIGGER_DEVIATIONS[chessId]?.[skill.skillId] : null;
+  if (deviation === 'SKILL_RANGE') {
+    if (!skill.rangeGrid) warn(`trigger deviation ${chessId} ${skill.skillId}: SKILL_RANGE without a 技能范围`);
+    return { rule: deviation, rawRule, customRangeGrid: skill.rangeGrid ? skill.rangeGrid.map((p) => p.slice()) : null };
+  }
   if (deviation) return { rule: deviation, rawRule, customRangeGrid: null };
   const rule = TRIGGER_RENAME[rawRule] || rawRule;
   let customRangeGrid = null;
@@ -3116,8 +3125,8 @@ function validateAll(f) {
     // DESIGN §22.6: only a MELEE operator is widened to every deployable tile
     if (c.placement !== undefined && (c.placement !== 'all' || c.position !== 'MELEE')) err(`chess ${c.chessId}: placement ${c.placement} on position ${c.position}`);
   }
-  // the deliberate trigger deviations (DESIGN §21.29) still override an official TAKE_DAMAGE row, on the normal chess
-  // and its elite alike
+  // the deliberate trigger deviations (DESIGN §21.29, §22.10) still override an official TAKE_DAMAGE row, on the normal
+  // chess and its elite alike
   for (const [baseId, skillsOf] of Object.entries(TRIGGER_DEVIATIONS)) {
     const recs = Object.values(chess).filter((c) => c.baseId === baseId);
     if (recs.length !== 2) err(`trigger deviation ${baseId}: expected the normal and the elite record, got ${recs.length}`);
@@ -3126,6 +3135,7 @@ function validateAll(f) {
         const s = (c.skills || []).find((x) => x.skillId === skillId);
         if (!s) err(`trigger deviation ${c.chessId}: no skill ${skillId}`);
         else if (s.trigger.rawRule !== 'TAKE_DAMAGE' || s.trigger.rule !== rule) err(`trigger deviation ${c.chessId} ${skillId}: ${s.trigger.rawRule} → ${s.trigger.rule}, expected TAKE_DAMAGE → ${rule}`);
+        else if (rule === 'SKILL_RANGE' && (!s.rangeGrid?.length || JSON.stringify(s.trigger.customRangeGrid) !== JSON.stringify(s.rangeGrid))) err(`trigger deviation ${c.chessId} ${skillId}: SKILL_RANGE needs the skill's own range as customRangeGrid`);
       }
     }
   }
