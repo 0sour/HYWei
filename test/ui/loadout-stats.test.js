@@ -284,3 +284,17 @@ test('css: the section reuses the card\'s .dstats / .drange / .rgrid, sized for 
   }
   assert.match(read('public/index.html'), /<link rel="stylesheet" href="\/css\/screens\/game-panels\.css" \/>/);
 });
+
+test('特性 follows the chosen module also when the skill or the module differs from the default (cloned record)', async () => {
+  const fs = await import('node:fs');
+  const { chessLoadout } = await import('../../public/js/ui/gameLogic.js');
+  const { traitText } = await import('../../public/js/ui/detailPanel.js');
+  const chess = JSON.parse(fs.readFileSync(new URL('../../data/chess.json', import.meta.url), 'utf8'));
+  const get = (id) => chess[id];
+  const shown = (id, lo) => traitText(get(id), true, chessLoadout(get(id), lo, get));
+  // 隐现 (MAR-X): its other skill keeps the module's line, not the class trait 优先攻击空中单位
+  assert.match(shown('chess_char_1_01_b', { chess_char_1_01_a: { skill: 0, module: null } }), /攻击空中单位时攻击力提升至/);
+  // 信仰搅拌机: SPT-Y shows its own line; 不装备 shows the class trait
+  assert.match(shown('chess_char_4_01_b', { chess_char_4_01_a: { skill: get('chess_char_4_01_b').skill.index, module: 'uniequip_003_rmixer' } }), /攻击距离\+1/);
+  assert.match(shown('chess_char_4_01_b', { chess_char_4_01_a: { skill: get('chess_char_4_01_b').skill.index, module: 'none' } }), /能够阻挡三个敌人/);
+});

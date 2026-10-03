@@ -274,7 +274,9 @@ export function BondChips({ bondIds, bonds = [], onBond = null, off = null, gran
 export function traitText(c, golden, lo) {
   const t = (lo?.record || c).trait || {};
   const base = t.descRaw || t.desc || '';
-  if (!golden || lo?.record !== c) return base;
+  if (!golden) return base;
+  // the record's own module line, also for a record cloned for another skill or module (a 不装备 record carries none) —
+  // until 0.1.2 a clone fell back to the class trait (Grok review of GitHub #64; the in-match card had it too)
   return t.moduleDescRaw || base;
 }
 
