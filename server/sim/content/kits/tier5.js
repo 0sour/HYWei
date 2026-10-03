@@ -817,11 +817,12 @@ const KITS = {
         mods: mods({ hpPct: num(bb.max_hp), atkPct: num(bb.atk) }),
         onStart({ battle, unit }) {
           // PRTS 备注 ② — the anchor's target: his own tile while he blocks an enemy (e.g. just after a 突袭 landing),
-          // else the nearest tile of the skill range (6-1: his own tile and the 6 straight ahead along his direction) with
-          // an enemy on it, else its farthest tile
+          // else the nearest tile ahead in the skill range (straight along his direction) with an enemy on it, else the
+          // farthest one. His own tile is a candidate only while he blocks ("自身所在地块（仅阻挡敌人时）"); not taken: the
+          // reading of the range's own tile (6-1 starts at [0,0]) as distance 0 for the second rule (a flyer over him)
           let stop = 0;
           if (!unit.blocking.some((e) => e.alive && e.blockedBy === unit)) {
-            for (let d = 0; d <= reach; d++) {
+            for (let d = 1; d <= reach; d++) {
               const [r, c] = frontOf(unit.tileR, unit.tileC, unit.dir, d);
               // the anchor stops at the field edge and in front of a ground obstacle (crates, roadblocks)
               if (!battle.grid.inRect(r, c) || battle.grid.isObstacle(r, c)) break;
