@@ -1700,11 +1700,11 @@ const KITS = {
         { install(battle, unit) { // 拥抱自我 (the 替身 fighting: not during a switch animation)
           const slow = num(t0.move_speed), scale = num(t0.atk_scale);
           whileOn(battle, unit, AURA_IV, () => {
-            if (!unit.trait.doll || unit.trait.dollSwitch || !slow) return;
+            if (!unit.trait.doll || unit.trait.dollSwitching || !slow) return;
             for (const e of battle.unitsInGrid(unit, aroundGrid, { side: 'enemy' })) if (!e.isFlying) battle.addBuff(e, { key: 'ghost2:embrace', duration: AURA_DUR, mods: { moveMul: Math.max(0, 1 + slow) } });
           });
           whileOn(battle, unit, 1, () => {
-            if (!unit.trait.doll || unit.trait.dollSwitch || !(scale > 0)) return;
+            if (!unit.trait.doll || unit.trait.dollSwitching || !(scale > 0)) return;
             for (const e of battle.unitsInGrid(unit, aroundGrid, { side: 'enemy' })) if (!e.isFlying) battle.dealDamage(unit, e, { amount: unit.s.atk * scale, type: 'arts', tags: ['talent', 'embrace'] });
           });
         } },

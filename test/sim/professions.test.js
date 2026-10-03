@@ -166,7 +166,7 @@ test('dollkeeper: fatal damage ⇒ a 1 s switch, 20 s as the substitute (block 0
   h.b.dealDamage(null, u, { amount: 1e5, type: 'true' });
   assert.equal(u.alive, true, 'substitute instead of death');
   assert.equal(u.s.blockCnt, 0);
-  assert.ok(u.trait.doll && u.trait.dollSwitch, 'the switch animation');
+  assert.ok(u.trait.doll && u.trait.dollSwitching, 'the switch animation');
   assert.equal(u.form, 'doll');
   approx(u.hp, 2000); // no 替身 token: its own max HP
   // the switch animation (PRTS 分支特性信息 傀儡师): 无敌, 不死 (a 流失 stops at 1 HP), 阻回, 眩晕 immunity
@@ -177,15 +177,15 @@ test('dollkeeper: fatal damage ⇒ a 1 s switch, 20 s as the substitute (block 0
   assert.ok(u.alive && u.trait.doll && u.hp >= 1, '不死');
   u.hp = 2000;
   h.run(1.05);
-  assert.ok(u.trait.doll && !u.trait.dollSwitch, 'fighting as the substitute');
+  assert.ok(u.trait.doll && !u.trait.dollSwitching, 'fighting as the substitute');
   h.run(19.9);
   assert.ok(u.trait.doll && u.s.flags.noSp, 'the 20 s form, 阻回');
   h.run(0.1);
-  assert.ok(!u.trait.doll && u.trait.dollSwitch && u.form === null, 'switching back');
+  assert.ok(!u.trait.doll && u.trait.dollSwitching && u.form === null, 'switching back');
   assert.equal(u.s.blockCnt, 2, 'blocks again from the start of the switch back');
   approx(u.hp, 2000);
   h.run(1.05);
-  assert.ok(!u.trait.dollSwitch && !u.s.flags.noSp, 'the body again, no 阻回');
+  assert.ok(!u.trait.dollSwitching && !u.s.flags.noSp, 'the body again, no 阻回');
   h.b.dealDamage(null, u, { amount: 1e5, type: 'true' });
   h.run(1.05);
   h.b.dealDamage(null, u, { amount: 1e5, type: 'true' });

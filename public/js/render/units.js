@@ -36,8 +36,9 @@
 // Enemy modes (the `form` of a sim fx — shared/protocol.js fxForm — → `setForm(form, fx)`): 掠海漂移体 dropping to 爬行模式
 // (user playtest #5 item 1) plays its skeleton's 'Change' clip once, then the crawl set (*_02); 暴鸰 flies on without its
 // bomb (*_2) after the drop (feedback D4); 转译基底's forms, the 逐火 embers, 再生's puppet, the leaders' 重生 and 守墓石像
-// likewise (user report after 0.1.0) — FORMS. A view built later (`info.form` = UnitInfo `form`, the sim's current form,
-// through render/app.js renderInfo) starts in the mode.
+// likewise (user report after 0.1.0) — FORMS; an operator's form is a 傀儡师's 替身 (GitHub issue #44). A view built later
+// (`info.form` = UnitInfo `form`, the sim's current form, through render/app.js renderInfo) starts in the mode; a dead
+// view keeps the form it died in (`_dieForm`) for a model built while it lies down.
 // Element gauges (b.snap `elem` → sample `el` / `elFill` / `elUntil` / `elDur`), the official form (PRTS 元素: "模型
 // 下部会显示对应的元素图标，并以白条显示剩余的元素值"; enemies "小尺寸图标（不显示元素图标，仅根据元素种类改变背景色）"): a row
 // right under the unit's own HP / SP bars and inside their span — the element's disc at the left (operators with its
@@ -162,8 +163,11 @@ export const EL_BAR = Object.freeze({ icon: 0.15, min: 8, max: 15, enemy: 0.8, g
  *   本体's are hidden). 归溟幽灵鲨: Start_B fades it in (the 1 s switch), Idle_B (it never attacks), Die_B breaks it
  *   apart over its last second (`end`, timed from the 'substitute' fx's `dur`), the 本体 comes back on Start_2 (`leave`:
  *   played when the form ends); knocked out as the 替身 it collapses on Die_B_2 and stays down so. 风丸: Start_B, then
- *   Idle_B / Attack_B (her 替身 attacks), Die_B; the 本体 comes back on Start. A Back skeleton (facing UP) only has
- *   Idle_B (归溟幽灵鲨 also Start_2): the switch clips it lacks are skipped.
+ *   Idle_B / Attack_B (her 替身 attacks), Die_B; the 本体 comes back on Start. Facing UP: 归溟幽灵鲨's Back skeleton has
+ *   only Idle_B and Start_2, 风丸's Start_B, Idle_B and Attack_B — the clips a Back skeleton lacks are skipped; neither has
+ *   the 替身's death clip, so a 替身 knocked out lies on the Front model like every knocked-out operator facing UP
+ *   (_wantsBack). The sim resets the form right after the 'die' event; the form it died in (`_dieForm`) gives the model
+ *   built for the knock-out — and one rebuilt while it is down — the 替身's death clip; it stands up as the 本体.
  * A kind without a clip set of this skeleton (barriers, charges, …) changes nothing. 吉兆飞鳞's 晕眩模式 is its Stun clip.
  */
 const loop = (name, via = null) => Object.freeze(via ? { begin: null, loop: name, end: null, via } : { begin: null, loop: name, end: null });
@@ -328,7 +332,8 @@ export class UnitView {
     this.shake = 0;
     this.screen = { x: 0, y: 0, s: 1, top: 0 };
     this.destroyed = false;
-    this.form = typeof info.form === 'string' ? info.form : null;   // an enemy's mode (setForm, FORMS)
+    this.form = typeof info.form === 'string' ? info.form : null;   // the unit's model form: an enemy's mode, a 傀儡师's 替身 (setForm, FORMS)
+    this._dieForm = null;         // the form it died in (die): a model built while it lies down shows that form's death
 
     // --- display objects
     this.shadow = new P.Sprite(ctx.shadowTex || shadowTexture());
@@ -473,8 +478,10 @@ export class UnitView {
       this.spineReady = true;
       this.swapT = swap ? 1 : 0;
       this.actor.spine.alpha = swap ? 1 : 0;
-      // a mode the unit is already in (a model built or rebuilt after the change): its clip set, no change clip
-      const f = this._formSpec();
+      // a mode the unit is already in (a model built or rebuilt after the change): its clip set, no change clip — a dead
+      // one lies in the form it died in (a 替身 knocked out: the sim resets the form at once, but the Front model it lies
+      // down with facing UP, §22.1, is built a frame later; a model rebuilt while it is down)
+      const f = this._formSpec() || (this.alive ? null : this._dieForm);
       if (f) this.actor.setForm(f.roles);
       // replay current state (a dead model resumes its Die clip where it would be — a knocked-down one holds its end)
       if (!this.alive) {
@@ -763,12 +770,15 @@ export class UnitView {
    * An operator facing UP whose Back model has no Die clip (GitHub issue #25) falls with its Front model: the swap is
    * made by this frame's update (`_modelDirty` → _syncModel, after every event and snapshot of the frame, so a death
    * and a redeploy in one frame — a 突袭 jump, a 不屈 revive, a backlog after a hidden tab — load nothing); meanwhile the
-   * Back model holds still (SpineActor.die), and the Front model's Die clip times the fade.
+   * Back model holds still (SpineActor.die), and the Front model's Die clip times the fade. The form it dies in
+   * (`_dieForm`: a 傀儡师's 替身, which the sim resets right after the 'die' event) gives that model — and any built while
+   * it lies down — its death clip, until it stands up again.
    */
   die(instant = false) {
     if (!this.alive) return;
     this.alive = false;
     this._modelDirty = true;
+    this._dieForm = this._formSpec();
     let d = this.actor ? this.actor.die() : 0;
     if (this.actor && !d) d = this._fallDur();
     const rate = this.ctx.animRate?.() || 1;
@@ -789,6 +799,9 @@ export class UnitView {
   revive() {
     this.alive = true;
     this._modelDirty = true;
+    // a model built while it lay in a form's death pose (_dieForm) stands up on the unit's own clips
+    if (this._dieForm && this.actor && !this._formSpec()) this.actor.setForm(null);
+    this._dieForm = null;
     this.dying = 0; this.remove = false; this.alpha = 1;
     this.down = null;
     this.hp = this.maxHp; this.ghostHp = this.hp;

@@ -2,8 +2,10 @@
 // its <替身> is in the model form 'doll' (sim professions.js: fx 'substitute' { form: 'doll', dur } … 'swap' / 'dollEnd'
 // { form: null }, UnitInfo `form`), drawn with the skeleton's *_B clips (render/units.js FORMS): 归溟幽灵鲨's Start_B fades
 // the 替身 in, Idle_B, Die_B breaks it apart over its last second, the 本体 comes back on Start_2 (the form's `leave`
-// clip); knocked out as the 替身 she collapses on Die_B_2 and stays so. 0.1.1 drew the 本体 all along. Headless fake PIXI
-// (test/render/fakepixi.js); the clip meanings are checked on the real skeleton when the assets are fetched.
+// clip); knocked out as the 替身 she collapses on Die_B_2 and stays so — facing UP too, on the Front model a knocked-out
+// operator lies with (§22.1), and on any model built while she lies down. 0.1.1 drew the 本体 all along. Headless fake
+// PIXI (test/render/fakepixi.js) on the real manifest and asset helpers; the clip meanings are checked on the real skeleton
+// when the assets are fetched.
 
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,6 +17,7 @@ import { installFakePixi, fakeViewCtx } from './fakepixi.js';
 import { presetCamera } from '../../public/js/render/projection.js';
 import { statusIconKey } from '../../public/js/render/style.js';
 import { STATUS_KEYS } from '../../public/js/render/textures.js';
+import { spineEntry, hasBackSpine } from '../../public/js/assets.js';
 import { fxForm } from '../../shared/protocol.js';
 import { makeBattle, enemyRec } from '../helpers/battleHarness.js';
 import { unitInfo } from '../../server/sim/snapshot.js';
@@ -34,19 +37,20 @@ after(() => fake.restore());
 
 const tick = () => new Promise((r) => setImmediate(r));
 const cam = () => presetCamera('normal', { width: 1280, height: 720 });
-/** Asset store with the operator's real Front / Back manifest entries and their animation names. */
-function store(id) {
-  const sp = assets.chars[id].spine;
-  return {
+/** Asset store on the real manifest (Front / Back entries, their animation names) and asset helpers; loads counted. */
+function store() {
+  const s = {
+    loads: 0,
     picture: () => null,
     image: async () => null,
-    hasBack: () => !!sp.back,
-    spineEntry: (_, o = {}) => (o.back ? sp.back : sp.front),
-    spine: { acquire: async (entry) => ({ animations: Object.keys(entry.animations || {}).map((name) => ({ name })) }), release() {} },
+    hasBack: (id) => hasBackSpine(assets, id),
+    spineEntry: (id, o) => spineEntry(assets, id, o),
+    spine: { acquire: async (entry) => { s.loads++; return { animations: Object.keys(entry.animations || {}).map((name) => ({ name })) }; }, release() {} },
   };
+  return s;
 }
 async function op(id, info = {}) {
-  const ctx = fakeViewCtx(fake.P, { assets: store(id), cam });
+  const ctx = fakeViewCtx(fake.P, { assets: store(), cam });
   const v = new UnitView(ctx, { id: 1, side: 'ally', kind: 'op', defId: id, spine: id, tier: 5, x: 5, y: 9, maxHp: 2657, dir: 'RIGHT', skillIndex: 1, ...info });
   await tick(); await tick();
   assert.ok(v.actor, 'Spine model built');
@@ -131,6 +135,99 @@ describe('归溟幽灵鲨\'s 替身 (FORMS doll)', () => {
     assert.equal(clip(v), 'Idle_B');
     v.setForm(null, { form: null, late: 2 });
     assert.equal(clip(v), 'Idle', 'no Start_2 when it would be over');
+  });
+});
+
+// Knocked out as the 替身 with the sim's order in one frame: 'die', then fx 'dollEnd' { form: null } (the form back to the
+// 本体 for the redeploy), then the frame's update. Facing UP the view lies down on the Front model (§22.1: the Back
+// skeleton has no fall), loaded after the reset: it still lies as the 替身 (the form it died in, `_dieForm`), and so does
+// any model built while she is down; the redeploy is the 本体 on the Back model.
+describe('knocked out as the 替身: facing UP, models built while down, the redeploy (§22.1 × §22.11)', () => {
+  const DOWN = [1, 70, 70, 0, 9, 5];
+  const settle = async () => { await tick(); await tick(); };
+  async function doll(id, dir) {
+    const ctx = fakeViewCtx(fake.P, { assets: store(), cam });
+    const v = new UnitView(ctx, { id: 1, side: 'ally', kind: 'op', defId: id, spine: id, tier: 5, x: 5, y: 9, maxHp: 2657, dir, skillIndex: 1 });
+    await settle();
+    v.setForm('doll', { id: 1, form: 'doll', dur: 21 });
+    secs(v, 2);
+    assert.equal(clip(v), 'Idle_B');
+    return v;
+  }
+  const knockOut = (v) => { v.die(); v.setForm(null, { id: 1, form: null }); v.setDown(DOWN, 0); };
+
+  test('归溟幽灵鲨 facing UP: the Front model shows the 替身 collapsing (Die_B_2), with the reset in the same frame or the next', async () => {
+    for (const late of [false, true]) {
+      const v = await doll(GHOST, 'UP');
+      assert.ok(v.entryBack, 'standing: the Back model');
+      v.die();
+      if (!late) v.setForm(null, { id: 1, form: null });
+      v.setDown(DOWN, 0);
+      frames(v, 1);
+      if (late) v.setForm(null, { id: 1, form: null });
+      await settle(); secs(v, 0.5);
+      assert.ok(!v.entryBack, 'down: the Front model (its Back skeleton has no fall)');
+      assert.equal(clip(v), 'Die_B_2', `the 替身 collapses (reset ${late ? 'a frame later' : 'in the same frame'})`);
+      assert.equal(v.form, null, 'the form is the 本体\'s again');
+    }
+  });
+
+  test('a model built while she lies down keeps the 替身\'s pose (facing RIGHT: dropped and loaded again)', async () => {
+    const v = await doll(GHOST, 'RIGHT');
+    knockOut(v);
+    frames(v, 1); await settle(); secs(v, 0.5);
+    assert.equal(clip(v), 'Die_B_2');
+    v._dropActor(); v.retryAssets(); await settle(); frames(v, 5);
+    assert.equal(clip(v), 'Die_B_2', 'rebuilt: still the 替身');
+  });
+
+  test('the redeploy is the 本体: facing UP back on the Back model, its deploy clip, then its idle', async () => {
+    const v = await doll(GHOST, 'UP');
+    knockOut(v);
+    frames(v, 1); await settle(); secs(v, 2);
+    v.setDown(null); v.onDeploy();
+    frames(v, 1); await settle(); frames(v, 2);
+    assert.ok(v.entryBack, 'the Back model again');
+    assert.equal(clip(v), 'Start');
+    secs(v, 1.2);
+    assert.equal(clip(v), 'Idle', 'the 本体\'s idle, not Idle_B');
+  });
+
+  test('revived in the same frame (阿戈尔: die → deploy → dollEnd): the 本体 comes back on Start_2, no model is loaded', async () => {
+    for (const dir of ['UP', 'RIGHT']) {
+      const v = await doll(GHOST, dir);
+      const loads = v.ctx.assets.loads;
+      v.die(); v.onDeploy(); v.setForm(null, { id: 1, form: null });
+      frames(v, 1); await settle(); frames(v, 2);
+      assert.equal(clip(v), 'Start_2', dir);
+      assert.equal(v.ctx.assets.loads, loads, `${dir}: no model load`);
+    }
+  });
+
+  test('风丸 facing UP: her Back skeleton\'s Start_B and Attack_B; knocked out as the 替身, the Front model\'s Die_B', async () => {
+    const ctx = fakeViewCtx(fake.P, { assets: store(), cam });
+    const v = new UnitView(ctx, { id: 1, side: 'ally', kind: 'op', defId: KAZEMA, spine: KAZEMA, tier: 2, x: 5, y: 9, maxHp: 1816, dir: 'UP', skillIndex: 0 });
+    await settle();
+    assert.ok(v.entryBack);
+    v.setForm('doll', { id: 1, form: 'doll', dur: 21 });
+    assert.equal(clip(v), 'Start_B', 'its Back skeleton has the switch clip');
+    secs(v, 1.1);
+    v.onAttack(null, 2);
+    assert.equal(clip(v), 'Attack_B', '…and the 替身\'s attack');
+    secs(v, 2);
+    knockOut(v);
+    frames(v, 1); await settle(); secs(v, 0.5);
+    assert.ok(!v.entryBack);
+    assert.equal(clip(v), 'Die_B');
+  });
+
+  test('[ASSUMED] a view built from UnitInfo while she lies down (no form: the sim reset it) shows the 本体\'s fall', async () => {
+    const ctx = fakeViewCtx(fake.P, { assets: store(), cam });
+    const v = new UnitView(ctx, { id: 1, side: 'ally', kind: 'op', defId: GHOST, spine: GHOST, tier: 5, x: 5, y: 9, maxHp: 2657, dir: 'UP', skillIndex: 1 });
+    await settle();
+    v.setDown(DOWN, 0, true);
+    frames(v, 1); await settle(); frames(v, 2);
+    assert.equal(clip(v), 'Die');
   });
 });
 

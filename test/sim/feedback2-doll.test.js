@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBattle, enemyRec, checkInvariants } from '../helpers/battleHarness.js';
 import { DOLL_SWITCH } from '../../server/sim/professions.js';
+import { holdsUndying } from '../../server/sim/content/items/battle.js';
 import { hasGeneratedData } from '../../server/sim/simdata.js';
 import { fxForm } from '../../shared/protocol.js';
 
@@ -18,11 +19,11 @@ const approx = (a, b, msg, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${m
 const dummy = () => enemyRec({ key: 'enemy_dummy', hp: 1e9, atk: 0, speed: 0 });
 
 /** 归溟幽灵鲨 on (9,5) facing right; a harmless parked enemy on (9,6) (in her range) unless `enemy` is false. */
-function setup({ id = G, skillIndex = 1, sp = 0, enemy = true, capture = false } = {}) {
+function setup({ id = G, skillIndex = 1, sp = 0, enemy = true, capture = false, items = undefined } = {}) {
   const h = makeBattle({
     seed: 4, timeLimit: 300, autoFinish: false, captureNoisy: capture,
     defs: { enemies: { enemy_dummy: dummy() } },
-    units: [{ chessId: id, row: 9, col: 5, dir: 'RIGHT', skillIndex, carryState: { sp } }],
+    units: [{ chessId: id, row: 9, col: 5, dir: 'RIGHT', skillIndex, carryState: { sp }, items }],
     enemies: enemy ? [{ key: 'enemy_dummy', pos: [9, 6] }] : [],
   });
   h.step();
@@ -46,7 +47,7 @@ test('A: a lethal hit with no skill running ⇒ the 替身 (form, full HP, block
     lethal();
     assert.ok(g.alive && g.trait.doll && g.form === 'doll', `${id}/${skillIndex}: the 替身`);
     approx(g.hp, g.s.maxHp, 'full HP');
-    approx(g.s.maxHp, full * (1 + (g.def.traitBb.max_hp || 0)), 'her own max HP (no 替身 token) [ASSUMED]');
+    approx(g.s.maxHp, full * (1 + (g.def.traitBb.max_hp || 0)), 'her own max HP (no 替身 token; trait bb max_hp the module bonus)');
     assert.equal(g.s.blockCnt, 0);
     const [sub] = fx('substitute');
     assert.ok(sub && fxForm(sub) === 'doll', 'the fx puts the model in its 替身 form');
@@ -58,7 +59,7 @@ test('A: a lethal hit with no skill running ⇒ the 替身 (form, full HP, block
     assert.ok(e.findBuff('ghost2:embrace'), '拥抱自我 slows');
     assert.ok(h.hooksOf('damaged').some((c) => c.source === g && c.target === e && (c.dmg.tags || []).includes('embrace')), '…and deals arts damage');
     h.run(1.05);
-    assert.ok(!g.trait.doll && g.form === null && g.trait.dollSwitch, 'switching back after 1 s + 20 s');
+    assert.ok(!g.trait.doll && g.form === null && g.trait.dollSwitching, 'switching back after 1 s + 20 s');
     assert.ok(fxForm(fx('swap')[0]) === null, 'the fx gives the 本体 its model back');
     assert.equal(g.s.blockCnt, 2);
     approx(g.hp, g.s.maxHp, 'full HP again');
@@ -155,6 +156,25 @@ test('S1 / S3 running at a lethal hit end with the switch (清除自身一切Buf
   const c = s2.h.b.emit('dollSwitch', { unit: s2.g, reason: 'test', done: false });
   assert.ok(c.done && s2.g.trait.doll && s2.g.form === 'doll');
   assert.equal(s2.h.b.emit('dollSwitch', { unit: s2.g, reason: 'test', done: false }).done, false, 'already the 替身');
+});
+
+test('a 本体 holding 不死 (a running 坚固维式重锤 window) does not switch: held at 1 HP (PRTS "受到足以致命的伤害且未持有不死的情况下")', { skip }, () => {
+  const { h, g, lethal } = setup({ items: ['chess_item_3_09_e_a'] });
+  lethal();
+  assert.ok(g.trait.doll && !holdsUndying(h.b, g), 'the first lethal hit: the switch, the hammer\'s lock unspent');
+  h.run(15);
+  lethal();
+  assert.ok(g.alive && g.trait.doll && holdsUndying(h.b, g), 'the 替身\'s lethal hit sets off the lock: 8 s of 不死');
+  approx(g.hp, 1, 'held at 1 HP');
+  assert.ok(h.runUntil(() => !g.trait.doll && !g.trait.dollSwitching, 10), 'switched back');
+  assert.ok(holdsUndying(h.b, g), 'the window still runs');
+  lethal();
+  assert.ok(g.alive && !g.trait.doll && g.form === null, 'no switch while it holds 不死');
+  approx(g.hp, 1, 'held at 1 HP');
+  assert.ok(h.runUntil(() => !holdsUndying(h.b, g), 10));
+  lethal();
+  assert.ok(g.alive && g.trait.doll, 'the window over: the switch');
+  checkInvariants(h.b);
 });
 
 test('风丸: her 替身 still attacks (PRTS "<替身>状态下可对空"); the same 替身 form, switch and 阻回', { skip }, () => {

@@ -260,7 +260,7 @@ test('dollkeeper without a substitute token (归溟幽灵鲨) keeps its own max 
   const full = u.s.maxHp;
   h.b.dealDamage(null, u, { amount: 1e7, type: 'true' });
   assert.ok(u.alive && u.hasBuff('trait:substitute'));
-  // PRTS 分支特性信息 傀儡师 "重设自身生命至最大值"; no 替身 of hers in character_table [ASSUMED: her own max HP]
+  // PRTS 分支特性信息 傀儡师 "重设自身生命至最大值"; the trait's 替身 HP bonus (bb max_hp) is 0 and 风丸's 纸偶 has her own HP
   approx(u.s.maxHp, full, 1e-6);
   approx(u.hp, full, 1e-6);
 });
