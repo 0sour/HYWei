@@ -730,7 +730,8 @@ function hasE2Art(ctx, charId, kind) {
  * both branches "可部署在高台和地面"). Chess records get `placement: 'all'` (server/match/board.js positionClass); the
  * position stays MELEE for the battle. Only the no-module trait counts: the Y-module 教官's "可以额外部署在远程位" is a
  * module talent (buildable_type), a 部署效果 the mode switches off in the prep placement (PRTS 卫戍协议/帮助 §战斗部署
- * "携带Y模组的教官仍无法部署至高台位"). DESIGN §22.6.
+ * "携带Y模组的教官仍无法部署至高台位"). [ASSUMED] that the branch trait still applies in this prep: the 帮助 switches off
+ * only 部署效果 and no source names the 钩索师 / 推击手 case for 卫戍协议 (DESIGN §22.6).
  */
 const PLACE_ON_RANGED_RE = /可以放置于远程位/;
 

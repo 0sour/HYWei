@@ -993,7 +993,7 @@ export function placementContext({ priv, stage, editable, field = 'normal', getC
 /**
  * Deploy position ('MELEE'|'RANGED'|'ALL') of a chess/token piece, or null for items. A MELEE operator whose branch
  * trait reads "可以放置于远程位" (钩索师, 推击手: chess.json `placement` 'all') is 'ALL': any deployable tile, the 高台
- * included (server/match/board.js positionClass; GitHub issue #32 item 4, DESIGN §22.6).
+ * included (server/match/board.js positionClass; GitHub issue #32 item 4, DESIGN §22.6 [ASSUMED]).
  */
 export function piecePosition(ctx, piece) {
   if (!isObj(piece)) return null;

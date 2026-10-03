@@ -25,7 +25,7 @@
 //
 // Chess follow their `position` (MELEE ⇒ melee tiles, RANGED ⇒ any deployable), except a MELEE operator whose branch
 // trait reads "可以放置于远程位" (钩索师, 推击手: chess.json `placement` 'all' ⇒ any deployable tile, `positionClass`;
-// GitHub issue #32 item 4, DESIGN §22.6).
+// GitHub issue #32 item 4, DESIGN §22.6 [ASSUMED]: the branch trait read as no 部署效果, which the mode would switch off).
 // Tokens follow their own `position` (ALL ⇒ any deployable tile, MELEE ⇒ melee tiles, RANGED ⇒ any deployable).
 // A token whose text reads "只能部署在召唤者攻击范围内" (tokens.json `ownerRange`: the tacticians' 援军 — 伺夜's 狼群,
 // 缪尔赛思's 流形; PRTS 狼群 特性) also needs a tile of its owner's attack range: `ownerRangeKeys` = the owner's range
