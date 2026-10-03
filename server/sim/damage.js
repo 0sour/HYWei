@@ -1,6 +1,7 @@
 // server/sim/damage.js — damage & heal pipeline, shields, dodge, element gauges (DESIGN §5.5).
 //
-// dealDamage order: (element → gauge path) | invulnerable? → 'hit' hook (mutable DamageInfo, may set cancel)
+// dealDamage order: (element → gauge path) | invulnerable? / 对地规避 (a ground enemy's damage to an airborne 起飞 ally —
+//   targeting.js evadesGround; not `ignoreSelect` damage: no selection, e.g. a debuff's tick) → 'hit' hook (mutable DamageInfo, may set cancel)
 //   → dodge (phys/arts, canDodge) → mitigation (phys: DEF, arts: RES, true: none)
 //   → × source dmgDealtMul (× phys/artsDealtMul) × target dmgTakenMul (not for 元素伤害) × type-taken mul × dmg.mul
 //   → 限伤 (leaders in boss / hidden battles: a hit of ceil(final) ≥ BOSS_HIT_LIMIT is cancelled, see leaderHitCancelled)
@@ -49,6 +50,7 @@
 
 import { MIN_DAMAGE_RATIO, ELEMENT, ELEMENT_ORDER, PALSY_MAX } from './constants.js';
 import { BOSS_HIT_LIMIT } from '../../shared/constants.js';
+import { evadesGround } from './targeting.js';
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -84,6 +86,10 @@ export function makeDamageInfo(d = {}) {
     cancel: false,
     noSp: !!d.noSp,
     ignoreSleep: !!d.ignoreSleep,
+    // no selection 无法选择 effects stop (an ability that "无视无法选择" such as PRTS 【污染秽蚀】, a direct pick, a flying
+    // unit's blast credited to a ground leader, the tick of a debuff already on the unit): reaches an airborne 起飞 ally
+    // whatever the source's 行动方式
+    ignoreSelect: !!d.ignoreSelect,
     sourceless: !!d.sourceless,
     attackId: d.attackId ?? 0,
   };
@@ -113,6 +119,19 @@ export function isHpLoss(dmg) {
 /** 沉睡 (ba.sleep "无敌且无法行动"): only attackers whose profile has `hitSleep` (or `ignoreSleep` damage) reach a sleeper. */
 function sleepBlocks(target, source, dmg) {
   return !!target.s.flags.sleep && !dmg.ignoreSleep && !(source && source.profile && source.profile.hitSleep);
+}
+
+/**
+ * 起飞 (flag `liftoff`): a ground enemy's damage never reaches the airborne ally — it cannot select it (对地规避, PRTS 作战机制
+ * "AOE的判定是对攻击范围内的每个可以被选中的敌人进行判定"), so its splash, area abilities and element fills skip it, and a shot
+ * already in flight when it took off lands on nothing [ASSUMED: PRTS 伤害流程 7 "取消掉隐匿/无敌状态下的攻击" read for
+ * 对地规避]. Checked before the `hit` hook only: 蒂比 S2 takes off inside the hook of the hit that set it off, which then
+ * resolves as usual (dodged if physical / arts — PRTS 备注). Sourceless damage and `ignoreSelect` damage still land: no
+ * selection (targeting.js evadesGround) — 无视无法选择 abilities, direct picks, flying units' blasts, and the ticks of a
+ * debuff already on it (PRTS 异常效果: 无法选择 effects "仅在选择时生效"; the debuff's mods stay too).
+ */
+function liftoffEvades(target, source, dmg) {
+  return !!target.s.flags.liftoff && !dmg.ignoreSelect && evadesGround(source, target);
 }
 
 /**
@@ -201,7 +220,7 @@ export function dealDamage(battle, source, target, dmgIn) {
   // gets the stats and the kill (PRTS 伤害分类 无来源 ③)
   const hs = dmg.sourceless ? null : source;
   let ts = target.s;
-  if (ts.flags.invulnerable || sleepBlocks(target, hs, dmg)) return 0;
+  if (ts.flags.invulnerable || sleepBlocks(target, hs, dmg) || liftoffEvades(target, hs, dmg)) return 0;
   if (battle._hooks.hit) {
     battle.emit('hit', { source: hs, target, dmg, credit: source });
     if (dmg.cancel || !target.alive || !target.deployed) return 0;
@@ -360,6 +379,7 @@ export function applyElement(battle, source, target, dmg) {
   if (!el || !(el in target.elem)) return 0;
   if (!hasHp(target)) return 0; // a killing blow's rider: the target is dead, nothing fills or bursts (header)
   if (target.s.flags.invulnerable || sleepBlocks(target, source, dmg)) return 0;
+  if (liftoffEvades(target, dmg.sourceless ? null : source, dmg)) return 0;
   if (burstLocked(target, el)) return 0;
   if (battle._hooks.elementHit) {
     battle.emit('elementHit', { source, target, dmg });

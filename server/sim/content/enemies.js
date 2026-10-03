@@ -33,7 +33,15 @@
 //   keeps its ground path, Unit.isFlying; kitSyufo / kitParrot lose it when stunned). `e.profile.canTarget(ally)` = the
 //   enemy's own target rule (只攻击地面单位 …), applied by the engine to the candidates before its priority order; a
 //   special priority (优先攻击防御力最高的… / 生命上限最高的…) sorts by its key, ties by taunt then latest deployed
-//   (targeting.js aggroCmp — PRTS 索敌: 特殊优先级 → 仇恨值).
+//   (targeting.js aggroCmp — PRTS 索敌: 特殊优先级 → 仇恨值). An airborne ally (起飞, flag `liftoff`) is no target of a
+//   ground enemy (对地规避, targeting.js evadesGround): targetsNear / allTargets skip it through canTargetAlly, the picks
+//   and one-shot areas that bypass it (周围四格 additions, chain and bounce jumps, shells, barrages, 沙狱, death blasts)
+//   filter it, and the engine refuses a ground enemy's damage and statuses on it. Not selections, so they still reach
+//   it (`ignoreSelect`): abilities PRTS marks "无视无法选择" (【污染秽蚀】, 【盲信之誓】, 萨卡兹悖谬暴虐兵长's 暴击 splash),
+//   direct picks of the attacker (碎铳之簧's counter — PRTS 异常效果 "'直接选中'的能力…不受这些仅在选择时生效的异常效果
+//   制约"), the blasts of flying units credited to a ground leader (刺胄之弹, 斩胄之剑 / 破胄之锤) and the ticks of a debuff
+//   already on it (出血, 沙狱, “庞贝”'s burning, 淤困, 【自然涌动】 — a tick selects nobody). Auras of ground enemies still
+//   apply [ASSUMED].
 //
 // Special types (factions.json):
 //   FLY        — engine (FLY motion, ranged-only targeting). Flyer kits below (御4, 护障, 寒霜, 萨科塔之翼/眼, 黑云 …).
@@ -43,8 +51,9 @@
 //                create those units (death spawns, embers, blades, 再生).
 //   ELEMENT    — element damage on hit = ATK × ep_damage_ratio into the ally's gauge. 侵蚀 (erosion) is an engine
 //                gauge whose burst is the official one (termDescription ba.dt.erosion: "永久降低100点防御力并受到800点物理伤害").
-//   DOT        — damage zones (污染秽蚀: true damage, one tick per second however many cover a unit; 毒雾, 燃烧区域),
-//                bleeding (removed by healing), pulsing auras.
+//   DOT        — damage zones (污染秽蚀: true damage, one tick per second however many cover a unit, "可对空，无视无法选择"
+//                — `ignoreSelect`, 起飞 allies included; 毒雾, 燃烧区域: a ground enemy's zone skips a 起飞 ally — PRTS
+//                集团军重型火炮 "碰撞不受迷彩制约，不可对空", no 无视无法选择), bleeding (removed by healing), pulsing auras.
 //   INVISIBLE  — permanent `stealth` flag (engine: untargetable unless blocked or revealed). An operator's radius area
 //                damage skips an unblocked one too (Battle.foesInRadius: profession splash around a struck target,
 //                skill circles — PRTS 作战机制 §AOE伤害判定 "对攻击范围内的每个可以被选中的敌人进行判定"; until 0.1.1 it
@@ -69,7 +78,7 @@
 // Custom hook: 'lpLoss' {amount, reason, source} — leader "扣除目标生命" effects; also summed into result.lpLoss.
 
 import { TICK, MOVE_SCALE, ELEMENT, ATTACK_PAUSE, PROJECTILE_SPEEDS, ALLY_COLLIDER_RADIUS } from '../constants.js';
-import { canTargetAlly, sortAllyTargets, aggroCmp } from '../targeting.js';
+import { canTargetAlly, sortAllyTargets, aggroCmp, evadesGround } from '../targeting.js';
 import { mitigate, periodicDamage } from '../damage.js';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -363,17 +372,21 @@ function onTick(b, dt) {
 // ---------------------------------------------------------------------------------------------------------------
 // helpers (exported for bosses.js)
 
-/** Element damage (erosion mapped onto the engine gauge). */
-export function elem(b, src, tgt, el, amount) {
+/** Element damage (erosion mapped onto the engine gauge); `ignoreSelect` / `tags` as hurt(). */
+export function elem(b, src, tgt, el, amount, { ignoreSelect = false, tags = [] } = {}) {
   if (!tgt || !tgt.alive || !(amount > 0)) return 0;
   const element = el === 'erosion' ? EROSION : el;
-  return b.dealDamage(src, tgt, { type: 'element', element, amount, tags: ['enemyAbility'] });
+  return b.dealDamage(src, tgt, { type: 'element', element, amount, ignoreSelect, tags: ['enemyAbility', ...tags] });
 }
 
-/** Skill / ability damage (no dodge unless asked). */
-export function hurt(b, src, tgt, amount, type = 'phys', { canDodge = false, tags = [], isSkill = true } = {}) {
+/**
+ * Skill / ability damage (no dodge unless asked). `ignoreSelect` = no selection the target's 无法选择 effects stop
+ * (abilities that "无视无法选择", direct picks, a flying unit's blast credited to a ground leader): it also reaches an
+ * airborne 起飞 ally, which a ground enemy's damage otherwise skips (damage.js, targeting.js evadesGround).
+ */
+export function hurt(b, src, tgt, amount, type = 'phys', { canDodge = false, tags = [], isSkill = true, ignoreSelect = false } = {}) {
   if (!tgt || !tgt.alive || !(amount > 0)) return 0;
-  return b.dealDamage(src, tgt, { amount, type, canDodge, isSkill, tags: ['enemyAbility', ...tags] });
+  return b.dealDamage(src, tgt, { amount, type, canDodge, isSkill, ignoreSelect, tags: ['enemyAbility', ...tags] });
 }
 
 /** Allies whose tile is within `n` of (r, c): 'plus' = Manhattan (周围四格), 'box' = Chebyshev (周围8格). */
@@ -960,7 +973,10 @@ function statue(ab) {
   };
 }
 
-/** Bleeding on hit (逐腐兽): arts damage per second, removed by healing. */
+/**
+ * Bleeding on hit (逐腐兽): arts damage per second, removed by healing. A tick selects nobody (`ignoreSelect`): it keeps
+ * hurting an ally that took off (起飞) after the bleed landed; so do the other enemy debuff DoTs (沙狱, burnDot, 淤困).
+ */
 function bleed(ab) {
   const dmg = T(ab, 'Bleeding.attack@bleeding_damage') ?? 0, dur = T(ab, 'Bleeding.attack@duration') ?? 0;
   return {
@@ -968,7 +984,7 @@ function bleed(ab) {
       if (!(dmg > 0 && dur > 0)) return;
       b.addBuff(c.target, {
         key: 'ab:bleed', duration: dur, refresh: 'replace', interval: 1, visible: true,
-        onTick: ({ battle, unit }) => battle.dealDamage(e, unit, { amount: dmg, type: 'arts', canDodge: false, tags: ['enemyAbility', 'bleed'] }),
+        onTick: ({ battle, unit }) => battle.dealDamage(e, unit, { amount: dmg, type: 'arts', canDodge: false, ignoreSelect: true, tags: ['enemyAbility', 'bleed'] }),
       });
     },
   };
@@ -977,8 +993,8 @@ function bleed(ab) {
 /**
  * 【污染秽蚀】 zone (PRTS 萨卡兹枯朽战士 / 萨卡兹枯朽战车: "范围内位于低地/高地的我方干员和召唤物每秒受到50/25点真实普通伤害
  * （可对空，无视无法选择、迷彩；同名效果不叠加）"): `low` true damage per second on low ground, `high` on high ground, to every
- * ally inside (flyers, stealthed and untargetable ones included); a unit inside several zones takes one tick per second
- * (`mem.pollutedAt`: the last tick it took).
+ * ally inside (flyers, stealthed, untargetable and airborne 起飞 ones included — `ignoreSelect`; an airborne 蒂比 stands on
+ * her low tile: `low`); a unit inside several zones takes one tick per second (`mem.pollutedAt`: the last tick it took).
  */
 function pollution(b, src, x, y, r, life, low, high) {
   zone(b, { x, y, r, life, iv: POLLUTION_INTERVAL, kind: 'pollution', tick(units) {
@@ -986,15 +1002,22 @@ function pollution(b, src, x, y, r, life, low, high) {
       const v = u.ground ? low : high;
       if (!(v > 0) || b.time - (u.mem.pollutedAt ?? -Infinity) < POLLUTION_INTERVAL - 1e-6) continue;
       u.mem.pollutedAt = b.time;
-      hurt(b, src, u, v, 'true', { tags: ['pollution'] });
+      hurt(b, src, u, v, 'true', { tags: ['pollution'], ignoreSelect: true });
     }
   } });
 }
 
-/** Damage zone (arts per tick). */
+/**
+ * Damage zone (`amount` per tick, tagged `kind`) on every ally inside. Unlike 【污染秽蚀】 it does not ignore 无法选择:
+ * a ground enemy's zone skips an airborne 起飞 ally (the damage pipeline; PRTS 集团军重型火炮 【燃烧区域】 "碰撞不受迷彩
+ * 制约，不可对空" — 迷彩 only). A sourceless zone (假想敌：蚀裂's 毒雾) reaches everyone inside.
+ */
 function dmgZone(b, src, x, y, r, life, iv, amount, type = 'arts', kind = 'zone', el = null, elAmount = 0) {
   zone(b, { x, y, r, life, iv, kind, tick(units) {
-    for (const u of units) { hurt(b, src, u, amount, type); if (el && elAmount > 0) elem(b, src, u, el, elAmount); }
+    for (const u of units) {
+      hurt(b, src, u, amount, type, { tags: [kind] });
+      if (el && elAmount > 0) elem(b, src, u, el, elAmount, { tags: [kind] });
+    }
   } });
 }
 
@@ -1149,7 +1172,7 @@ function kitTidmag(ab) {
       const t0 = c.targets[0];
       if (!t0) return;
       const l = c.targets.slice();
-      for (const u of alliesInTiles(b, t0.tileR, t0.tileC, 'plus', 1)) if (!l.includes(u)) l.push(u);
+      for (const u of alliesInTiles(b, t0.tileR, t0.tileC, 'plus', 1)) if (!l.includes(u) && !evadesGround(e, u)) l.push(u);
       c.targets = l;
     },
   }];
@@ -1395,6 +1418,11 @@ function kitRush(ab) {
   }];
 }
 
+/**
+ * 萨卡兹悖谬暴虐兵长: blocked only by a blocker with ≥ 3 free block; its first hit also strikes the units around its target
+ * (PRTS 技能0 暴击 "对目标和周围4格的我方单位造成攻击力150%的物理普通伤害（无视无法选择，无视迷彩）※此技能仅能触发一次"):
+ * the splash ignores 无法选择, so it reaches an airborne 起飞 ally too (`ignoreSelect`).
+ */
 function kitFirstAoe(ab) {
   const scale = T(ab, 'AOEAttack.atk_scale') ?? 0;
   return [blockWeight(3), {
@@ -1402,7 +1430,9 @@ function kitFirstAoe(ab) {
       if (a.done) return;
       a.done = true;
       b.fx('explode', { x: c.target.x, y: c.target.y, r: 1, kind: 'aoeAttack' });
-      for (const u of b.alliesInRadius(c.target.x, c.target.y, 1)) if (u !== c.target) hurt(b, e, u, e.s.atk * scale, 'phys');
+      for (const u of b.alliesInRadius(c.target.x, c.target.y, 1)) {
+        if (u !== c.target) hurt(b, e, u, e.s.atk * scale, 'phys', { ignoreSelect: true, tags: ['aoeAttack'] });
+      }
     },
   }];
 }
@@ -1456,7 +1486,7 @@ function kitParasite(ab) {
       b.addBuff(host, {
         // "受到的元素损伤提高至130%": a 元素损伤 multiplier on the element hit (ensureParasiteHook), not 元素伤害
         key: 'ab:parasite', visible: true, interval: 1, data: { src: e, spread: PARASITE_SPREAD, epMul: elMul },
-        onTick: ({ battle, unit }) => { if (e.alive) battle.dealDamage(e, unit, { amount: e.s.atk * scale, type: 'arts', canDodge: false, tags: ['enemyAbility', 'parasite'] }); },
+        onTick: ({ battle, unit }) => { if (e.alive) battle.dealDamage(e, unit, { amount: e.s.atk * scale, type: 'arts', canDodge: false, ignoreSelect: true, tags: ['enemyAbility', 'parasite'] }); },
       });
     },
     death(c, b, e, a) { if (a.host) b.removeBuff(a.host, 'ab:parasite'); },
@@ -1719,12 +1749,14 @@ function kitTeapot(ab) {
       if (c.reason !== 'killed') return;
       const aspd = T(ab, 'DeadBoom.attack_speed') ?? 0, dur = T(ab, 'DeadBoom.duration') ?? 0, iv = T(ab, 'DeadBoom.interval') ?? 1;
       const r = e.base.rangeRadius || 2, atk = e.s.atk, x = e.x, y = e.y;
+      // a selection (PRTS 烹泉 "死亡爆炸（…无视迷彩，不可对空）", no 无视无法选择): an airborne 起飞 ally is skipped
+      const hit = (units) => units.filter((u) => !evadesGround(e, u));
       // 被击倒后爆炸造成范围法术伤害 (one blast of ATK ×1 [ASSUMED scale]) …
       b.fx('explode', { x, y, r, kind: 'teaBoom', id: e.id });
-      for (const u of b.alliesInRadius(x, y, r)) hurt(b, null, u, atk, 'arts');
+      for (const u of hit(b.alliesInRadius(x, y, r))) hurt(b, null, u, atk, 'arts', { tags: ['teaBoom'] });
       // … 使我方攻击速度大幅降低（可被抵抗）: the steam lingers `duration` s; allies inside keep the ASPD cut (re-applied
       // every `interval` s)
-      const slow = (units) => { for (const u of units) b.addBuff(u, { key: 'ab:teaBoom', duration: iv + 0.1, refresh: 'extend', mods: { aspd }, visible: true }); };
+      const slow = (units) => { for (const u of hit(units)) b.addBuff(u, { key: 'ab:teaBoom', duration: iv + 0.1, refresh: 'extend', mods: { aspd }, visible: true }); };
       slow(b.alliesInRadius(x, y, r));
       if (dur > 0) zone(b, { x, y, r, life: dur, iv, kind: 'teaSteam', tick: slow });
     },
@@ -1747,7 +1779,7 @@ function kitLeaderMisc(key, ab, e) {
         dealt(c, b, e2) {
           if (!(dot.dur > 0)) return;
           b.addBuff(c.target, { key: 'ab:burnDot', duration: dot.dur, refresh: 'replace', interval: dot.iv, visible: true,
-            onTick: ({ battle, unit }) => battle.dealDamage(e2, unit, { amount: dot.dmg, type: 'arts', canDodge: false, tags: ['enemyAbility'] }) });
+            onTick: ({ battle, unit }) => battle.dealDamage(e2, unit, { amount: dot.dmg, type: 'arts', canDodge: false, ignoreSelect: true, tags: ['enemyAbility'] }) });
         },
       }, {
         iv: T(ab, 'rangedamage.interval') ?? 10,
@@ -1802,9 +1834,11 @@ function kitLeaderMisc(key, ab, e) {
           if (!t) return;
           const dur = ss.bb.duration ?? 0, x = t.x, y = t.y;
           b.fx('zone', { x, y, r: SANDSTORM_RADIUS, dur, kind: 'sandStorm', id: e2.id });
+          // the 沙狱弹道 "击中…范围内的所有我方单位（弹道可对空）" selects: an airborne 起飞 ally is skipped (no 无视无法选择)
           for (const u of b.alliesInRadius(x, y, SANDSTORM_RADIUS)) {
+            if (evadesGround(e2, u)) continue;
             b.addBuff(u, { key: 'ab:sandStorm', duration: dur, refresh: 'replace', interval: 1, visible: true, mods: { atkPct: ss.bb.atk ?? 0 },
-              onTick: ({ battle, unit }) => battle.dealDamage(e2, unit, { amount: ss.bb.damage ?? 0, type: 'arts', canDodge: false, tags: ['enemyAbility', 'sandStorm'] }) });
+              onTick: ({ battle, unit }) => battle.dealDamage(e2, unit, { amount: ss.bb.damage ?? 0, type: 'arts', canDodge: false, ignoreSelect: true, tags: ['enemyAbility', 'sandStorm'] }) });
           }
         }, { cond: (b, e2) => allTargets(b, e2).length > 0 }),
       ];
@@ -1822,7 +1856,7 @@ function kitLeaderMisc(key, ab, e) {
     case 'enemy_1513_dekght': {
       // 攻击时使目标与周围四格的单位受到物理伤害; 【蓄力攻击】 charge `duration` s, then ATK×atk_scale on the target's cross
       const s = ab.sk.ChargeAttack;
-      return [kitDekght(ab), { before(c, b, e2) { const t = c.targets[0]; if (t) for (const u of alliesInTiles(b, t.tileR, t.tileC, 'plus', 1)) if (!c.targets.includes(u)) c.targets.push(u); } },
+      return [kitDekght(ab), { before(c, b, e2) { const t = c.targets[0]; if (t) for (const u of alliesInTiles(b, t.tileR, t.tileC, 'plus', 1)) if (!c.targets.includes(u) && !evadesGround(e2, u)) c.targets.push(u); } },
         skill(s, (b, e2) => {
           const t = e2.blockedBy;
           const dur = s.bb.duration ?? 0, r = t.tileR, cc = t.tileC;
@@ -1938,7 +1972,7 @@ function kitLeaderMisc(key, ab, e) {
           let prev = c.target;
           const hit = new Set([prev]);
           for (let k = 1; k < n; k++) {
-            const nx = b.alliesInRadius(prev.x, prev.y, jr).find((u) => !hit.has(u));
+            const nx = b.alliesInRadius(prev.x, prev.y, jr).find((u) => !hit.has(u) && !evadesGround(e2, u));
             if (!nx) break;
             hit.add(nx);
             hurt(b, e2, nx, e2.s.atk * Math.pow(fall, k), 'arts');
@@ -2586,7 +2620,8 @@ export const KITS = Object.freeze({
           if (!lock) return;
           b.fx('telegraph', { x: lock.x, y: lock.y, r: 1, kind: 'barrage', id: e.id });
           for (let i = 0; i < n; i++) {
-            const t = alliesInTiles(b, lock.tileR, lock.tileC, 'box', 1).sort((p, q) => q.hp - p.hp)[0];
+            // "对碰撞范围内的1名当前生命值最高的我方单位" — a selection: never an airborne 起飞 ally (PRTS “帝国的甲胄”)
+            const t = alliesInTiles(b, lock.tileR, lock.tileC, 'box', 1).filter((u) => !evadesGround(e, u)).sort((p, q) => q.hp - p.hp)[0];
             if (t) hurt(b, e, t, e.s.atk, 'phys');
           }
         }, { owner: e });

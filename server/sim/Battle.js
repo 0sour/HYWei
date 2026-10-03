@@ -28,7 +28,7 @@ import { Grid } from './grid.js';
 import { Unit } from './units.js';
 import { makeBuff, STATUS, RESIST_STATUSES } from './buffs.js';
 import { dealDamage as pipeDamage, heal as pipeHeal, applyHpLoss, makeDamageInfo, reduceElement, palsyBuff, elementView, leaderHitCancelled } from './damage.js';
-import { absoluteRangeKeys, canTargetEnemy, extendedGrid } from './targeting.js';
+import { absoluteRangeKeys, canTargetEnemy, extendedGrid, evadesGround } from './targeting.js';
 import { bodyKeys, bodyInKeys, bodyInRadius } from './body.js';
 import { normDir, mirrorDir, localOrder, localBefore } from './dir.js';
 import { ProjectileSystem } from './projectiles.js';
@@ -1127,12 +1127,15 @@ export class Battle {
    * 阻挡'则无法阻挡敌人". The gate reads the tile's ground passability; on the stages the fenced tiles are the only low
    * tiles ground units cannot pass. Air blocking (blockFly against flyers) stays [ASSUMED: PRTS restricts the rule to
    * 地面阻挡]. Nothing walks onto such a tile, so it matters for an enemy pushed or pulled against the fence
-   * (Battle.displace stops it at the tile edge, 0.5 from the fenced unit — inside the ground block radius).
+   * (Battle.displace stops it at the tile edge, 0.5 from the fenced unit — inside the ground block radius). An airborne
+   * unit (起飞, flag `liftoff`: "不阻挡地面敌人…可以阻挡飞行敌人") blocks flyers only.
    */
   _blockerFor(u, e, w) {
     if (!u.alive || !u.deployed || u.hidden || u.s.flags.noBlock || u.s.flags.sleep) return false;
     if (e.isFlying && !(u.s.flags.blockFly || (u.profile && u.profile.blockFly))) return false;
-    if (!e.isFlying && (!u.ground || this.grid.tile(u.tileR, u.tileC).pass !== 'ALL')) return false;
+    // ground enemies: only a ground unit that has not taken off (起飞 "不阻挡地面敌人": flag `liftoff`), standing on a tile
+    // ground units can pass (not a fenced 围墙 / 围栏 tile)
+    if (!e.isFlying && (!u.ground || u.s.flags.liftoff || this.grid.tile(u.tileR, u.tileC).pass !== 'ALL')) return false;
     const cap = u.s.blockCnt;
     if (cap <= 0) return false;
     let used = 0;
@@ -1291,12 +1294,14 @@ export class Battle {
    * `statusApplied` reports the final duration and `entered` (the target did not carry the status before).
    * A unit that is 无敌 and 无法选中 at once (a 重生 in progress, a hovering or 永久无敌 leader part) takes no status from
    * the other side, `force` included — PRTS 无敌 "无法被不同阵营选中": so a status carried by the very hit that knocked an
-   * enemy out does not land after its 重生's cleanse (DESIGN §21.4).
+   * enemy out does not land after its 重生's cleanse (DESIGN §21.4). A ground enemy's status never lands on an airborne
+   * 起飞 ally (对地规避: targeting.js evadesGround) unless `opts.ignoreSelect`.
    */
   applyStatus(target, key, opts = {}) {
     if (!target || !target.alive) return false;
     const src = opts.source;
     if (src && src.side && src.side !== target.side && target.s.flags.invulnerable && target.s.flags.untargetable) return false;
+    if (!opts.ignoreSelect && target.s.flags.liftoff && evadesGround(src, target)) return false;
     const tpl = STATUS[key] || { flags: { [key]: true } };
     let duration = opts.duration == null ? Infinity : Number(opts.duration);
     let value = opts.value;

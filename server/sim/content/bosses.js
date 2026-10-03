@@ -53,12 +53,16 @@
 // The huge leaders (SELF_BOUND: 胄 ×2, 管 ×2, 昆图斯, 阿利斯泰尔, 萨米的意志 — the 巨型单位 with a data `hitArea`) are
 // 自缚 + 无法被阻挡 (PRTS 天赋): a persistent noMove + unblockable buff from spawn, so they never walk their route.
 // Every leader (tag boss) ignores 侵蚀 gauge damage ("最终攻势中，敌方领袖不会受到侵蚀损伤").
+// An airborne (起飞) operator is no selection of a ground leader or part (对地规避: canTargetAlly, the damage pipeline,
+// the 碎铳之簧 bounce); still reach it (`ignoreSelect`): the 刺胄之弹 / 剑 / 锤 blasts (flying units, 无来源 DoT; 掷剑 /
+// 掷锤 pick their operator "（无视无法选择）"), the 盲信之誓 chains ("无视无法选择"), the 法术护盾 counter on its attacker
+// (a direct pick) and the ticks of a debuff already on it (【自然涌动】: a tick selects nobody).
 // LP effects ('lpLoss' hook + result.lpLoss) must be applied by the match (see the report of this module's owner).
 // fx kinds: 'beam' 'shell' 'explode' 'telegraph' 'charge' 'link' 'dash' 'column' 'tide' 'rockfall' 'tentacle' 'equip'
 //   'sword' 'vest' 'blink' 'summon' 'grow' 'phase' 'lpLoss' (x, y + extra {id, r, tiles, kind, tx, ty …}).
 
 import { MOVE_SCALE } from '../constants.js';
-import { canTargetAlly, aggroCmp } from '../targeting.js';
+import { canTargetAlly, aggroCmp, evadesGround } from '../targeting.js';
 import { compileRoute } from '../ai.js';
 import { normalizeRoute } from '../simdata.js';
 import {
@@ -320,13 +324,17 @@ export function fairOrder(b, e, list, P) {
   return out.concat(rest);
 }
 
-/** Stun + phys DoT on the 3×3 around (r, c). */
+/**
+ * Stun + phys DoT on the 3×3 around (r, c), credited to `src` (胄). The blast is a flying unit's — 刺胄之弹 / 斩胄之剑 /
+ * 破胄之锤 (PRTS 行动方式 飞行) — and its damage 无来源, so 对地规避 does not stop it: `ignoreSelect` (an airborne 起飞 ally in
+ * the 3×3 is stunned and hurt like the others, although the credited 胄 walks).
+ */
 function stunBlast(b, src, r, c, stun, dot, dur, kind) {
   b.fx('explode', { x: c, y: r, r: 1.5, kind, tiles: 'box' });
   for (const u of alliesInTiles(b, r, c, 'box', 1)) {
-    if (stun > 0) b.applyStatus(u, 'stun', { duration: stun, source: src });
+    if (stun > 0) b.applyStatus(u, 'stun', { duration: stun, source: src, ignoreSelect: true });
     if (dot > 0 && dur > 0) b.addBuff(u, { key: `boss:${kind}Dot`, duration: dur, refresh: 'replace', interval: 1, visible: true,
-      onTick: ({ battle, unit }) => battle.dealDamage(src, unit, { amount: dot, type: 'phys', canDodge: false, tags: ['enemyAbility', kind] }) });
+      onTick: ({ battle, unit }) => battle.dealDamage(src, unit, { amount: dot, type: 'phys', canDodge: false, ignoreSelect: true, tags: ['enemyAbility', kind] }) });
   }
 }
 /** Distance from point p to segment a–b. */
@@ -587,11 +595,11 @@ function kitGun(ab, e, b) {
     });
     if (s3) list.push({
       iv: s3.bb.interval ?? 1,
-      tick(b2, e2) { // 【盲信之誓】 links: phys per second on operators standing on a line
+      tick(b2, e2) { // 【盲信之誓】 links: phys per second on operators standing on a line ("无视无法选择、迷彩": 起飞 too)
         for (const sp of b2.enemies) {
           if (!sp.alive || !isSpring(sp)) continue;
           b2.fx('link', { x: e2.x, y: e2.y, from: e2.id, to: sp.id, kind: 'faithLink', dur: s3.bb.interval ?? 1 });
-          for (const u of b2.allies()) if (segDist(u.x, u.y, e2.x, e2.y, sp.x, sp.y) <= LINK_WIDTH) hurt(b2, e2, u, s3.bb.value ?? 0, 'phys');
+          for (const u of b2.allies()) if (segDist(u.x, u.y, e2.x, e2.y, sp.x, sp.y) <= LINK_WIDTH) hurt(b2, e2, u, s3.bb.value ?? 0, 'phys', { ignoreSelect: true, tags: ['faithLink'] });
         }
       },
     });
@@ -636,8 +644,10 @@ function kitSpring(ab, e) {
             if (P.barrier <= 1e-6) { P.barrier = 0; drop(b); }
           } else if (ty === 'phys') {
             c.dmg.mul *= scale;
-            const s = c.source;
-            if (s && s.side === 'ally' && s.alive) { hurt(b, e2, s, e2.s.atk * (T(ab, '1.atk_scale') ?? 0), 'phys'); elem(b, e2, s, 'erosion', e2.s.atk * (T(ab, '1.ep_damage_ratio') ?? 0)); }
+            // the counter "对来源造成…无来源物理附加伤害" picks its attacker directly — no selection, so an airborne 起飞
+            // attacker takes it too (PRTS 异常效果 无法选择: "'直接选中'的能力…不受这些仅在选择时生效的异常效果制约")
+            const s = c.source, o = { ignoreSelect: true, tags: ['springCounter'] };
+            if (s && s.side === 'ally' && s.alive) { hurt(b, e2, s, e2.s.atk * (T(ab, '1.atk_scale') ?? 0), 'phys', o); elem(b, e2, s, 'erosion', e2.s.atk * (T(ab, '1.ep_damage_ratio') ?? 0), o); }
           }
         } else if (kind === 'element') {                 // 元素护盾: phys/arts heavily reduced
           if (ty === 'phys' || ty === 'arts') c.dmg.mul *= scale;
@@ -687,7 +697,7 @@ function kitSpring(ab, e) {
             b.fx('beam', { x: e2.x, y: e2.y, from: e2.id, to: t.id, kind: 'springBullet' });
             elem(b, e2, t, 'erosion', e2.s.atk * ratio * Math.pow(SPRING_BOUNCE_FALLOFF, k));
             const prev = t;
-            t = b.alliesInRadius(prev.x, prev.y, SPRING_BOUNCE_RANGE).filter((u) => !hit.has(u)).sort((p, q) => Math.hypot(p.x - prev.x, p.y - prev.y) - Math.hypot(q.x - prev.x, q.y - prev.y) || aggroCmp(p, q))[0];
+            t = b.alliesInRadius(prev.x, prev.y, SPRING_BOUNCE_RANGE).filter((u) => !hit.has(u) && !evadesGround(e2, u)).sort((p, q) => Math.hypot(p.x - prev.x, p.y - prev.y) - Math.hypot(q.x - prev.x, q.y - prev.y) || aggroCmp(p, q))[0];
           }
         } else { // 十连击
           b.fx('beam', { x: e2.x, y: e2.y, from: e2.id, to: t0.id, kind: 'springCombo' });
@@ -1066,7 +1076,7 @@ function kitDeer(ab, e) {
           b.fx('beam', { x: e2.x, y: e2.y, from: e2.id, to: t.id, kind: 'naturalSurge', dur });
           b.applyStatus(t, 'stun', { duration: dur, source: e2 });
           b.addBuff(t, { key: 'boss:surge', duration: dur, interval: 1, visible: true,
-            onTick: ({ battle, unit }) => battle.dealDamage(e2, unit, { amount: e2.s.atk * (lasso.bb.atk_scale ?? 0), type: 'arts', canDodge: false, tags: ['enemyAbility'] }) });
+            onTick: ({ battle, unit }) => battle.dealDamage(e2, unit, { amount: e2.s.atk * (lasso.bb.atk_scale ?? 0), type: 'arts', canDodge: false, ignoreSelect: true, tags: ['enemyAbility'] }) });
         }
       },
     },

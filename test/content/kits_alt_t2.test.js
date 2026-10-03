@@ -362,7 +362,8 @@ test('2_13 蒂比 S1 专业喷绘技巧: DEFAULT trigger, takes off (skill range
     const range0 = u.baseRangeKeys.length;
     h.runUntil(() => u.skill.active, 3);
     assert.equal(started(h, u)[0].reason, 'DEFAULT');
-    assert.equal(u.ground, false, 'airborne');
+    assert.equal(u.s.flags.liftoff, true, 'airborne (起飞)');
+    assert.equal(u.ground, true, 'still a ground unit on her low tile');
     approx(u.s.atk, u.base.atk * (1 + bb.atk));
     assert.ok(u.rangeKeys.length > range0, 'skill range');
     const fl = h.spawn('f', { pos: [9, 5] });
@@ -374,7 +375,7 @@ test('2_13 蒂比 S1 专业喷绘技巧: DEFAULT trigger, takes off (skill range
     assert.equal(hits.length, atk.reduce((n, c) => n + c.targets.length, 0), 'one shot per target (no 3 连射)');
     h.runUntil(() => !u.skill.active, 40);
     h.step();
-    assert.equal(u.ground, true, 'landed');
+    assert.ok(!u.s.flags.liftoff, 'landed');
     done(h);
     // an enemy attack from outside her range never sets S1 off (S2's 受到攻击后触发 is not hers)
     const h2 = run({ defs: { enemies: { r: dummy('r', { atk: 300, bat: 1, range: 3.2 }) } }, units: [U(id, 9, 5, { carryState: READY })], enemies: [{ key: 'r', pos: [9, 8] }] });

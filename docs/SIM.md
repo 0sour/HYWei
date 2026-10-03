@@ -185,7 +185,8 @@ to a new pick. A `wait` leg keeps counting; when the fear ends the route re-plan
 **Blocking** (`Battle._checkBlock`, official contact rule — PRTS 游戏数据基础 §阻挡半径, 作战机制 "中点判定 … 案例: 阻挡";
 user playtest #5 item 4): an unblocked, blockable enemy is blocked by an ally (or device) whose centre is within its
 block radius of the enemy's position — `constants.js BLOCK_RADIUS`: ground 0.7071 (compared as d² < 0.49999037, the
-tile's circumscribed circle), air 0.8944 (blockFly units against flyers), devices 0.4472 — while that blocker has free
+tile's circumscribed circle), air 0.8944 (blockFly units against flyers; an airborne 起飞 unit — flag `liftoff` — blocks
+flyers only, PRTS 术语释义 起飞 "阻挡模式变为空中阻挡"), devices 0.4472 — while that blocker has free
 capacity for the enemy's `blockWeight` (data `blockCnt`). A unit standing on a tile ground units cannot pass — the
 fenced 围墙 / 围栏 tiles (`b`: low, deployable, flyers only; the only low tiles of that kind on the stages) — blocks no
 ground enemy (PRTS 围墙 / 围栏 地形机制 "部署在其中的单位，若当前阻挡类型为'地面阻挡'则无法阻挡敌人";
@@ -228,6 +229,15 @@ its blocker → highest taunt level → latest deployed (`aggroSeq` = the deploy
 latest). `enemy.profile.canTarget(ally)` (content: 萨卡兹枯朽战车 "只攻击位于低地的我方单位，且不会攻击飞行单位", 掠海漂移体 / “萨科塔之眼” 不会攻击飞行单位 …) filters the candidates before the order;
 a special priority (假想敌：铳 / 昆图斯 highest DEF, 假想敌：胄 highest / lowest ATK, “自在” nearest …) sorts by its key and
 breaks ties by taunt, then latest deployed (`aggroCmp`); `untargetable` / sleeping allies and devices are never targets;
+an airborne ally (起飞, flag `liftoff`: 蒂比's skills) never for a ground enemy (对地规避 — `targeting.js evadesGround`,
+PRTS 术语释义 起飞 "无法被不同阵营行动方式为地面的单位选中"; flyers, 近地悬浮 and 浮空 enemies still pick it; content picks
+and one-shot areas that bypass `canTargetAlly` — 控潮术师 / 腐败骑士's 周围四格, 陷落雪祀's chain, the 碎铳之簧 bounce, the
+自行炮 shells, “帝国的甲胄”'s barrage, 鼠王's 沙狱, 烹泉's death blast and steam — filter it too; not selections, so they
+still reach it (`ignoreSelect`): abilities PRTS marks "无视无法选择" (【污染秽蚀】, 假想敌：铳's 【盲信之誓】, 萨卡兹悖谬
+暴虐兵长's 暴击 splash), direct picks (碎铳之簧's 法术护盾 counter on its attacker — PRTS 异常效果 "'直接选中'的能力…不受这些
+仅在选择时生效的异常效果制约"), the blasts of flying units credited to the ground 胄 (刺胄之弹, 斩胄之剑 / 破胄之锤 — whose
+掷剑 / 掷锤 pick "（无视无法选择）") and the ticks of a debuff a ground enemy put on it before it took off (出血, 沙狱,
+burning DoTs, 淤困, 【自然涌动】 — a tick selects nobody); auras of ground enemies still apply [ASSUMED]);
 a stealthed ally (隐匿, 排气格栅) only for the enemy it blocks — our operators keep 隐匿 while blocking (PRTS 作战机制
 §隐匿; 索敌的概念: a blocked enemy "强行无视对方可选性" attacks its blocker); a camouflaged one (迷彩, flag `camou`: ba.camou
 "不阻挡时不成为敌方普通攻击的目标") likewise (PRTS 异常效果: neither anomaly is "阻挡时解除") [ASSUMED: enemy skills and
@@ -257,7 +267,10 @@ tick, damage-taken modifiers scale it and it counts for 受击回复 SP and TAKE
 excepted). 【污染秽蚀】 (萨卡兹枯朽战车's 秽蚀轰击,
 萨卡兹枯朽战士's death) is **true** damage, 50 / 25 per second on low / high ground (PRTS "每秒受到50/25点真实普通伤害 …
 同名效果不叠加", user playtest #6): a unit covered by several zones takes one tick per second (`unit.mem.pollutedAt`), so
-a crowd of dying 萨卡兹枯朽战士 totals 50 / s, not 50 × n. An activated 孽罪奇美拉's aura (`kitChimera`, PRTS "自身半径1.2
+a crowd of dying 萨卡兹枯朽战士 totals 50 / s, not 50 × n. It is "可对空，无视无法选择": it also burns an airborne 起飞 ally
+(`ignoreSelect`), at the low-ground rate on a low tile. The other zones are no exception to 对地规避: a ground enemy's
+燃烧区域 (集团军重型火炮, PRTS "碰撞不受迷彩制约，不可对空" — 迷彩 only) skips an airborne 起飞 ally; the sourceless 毒雾 of
+假想敌：蚀裂 reaches everyone inside. An activated 孽罪奇美拉's aura (`kitChimera`, PRTS "自身半径1.2
 范围内的所有单位持续视为受到源石污染区影响，技力自然回复速度倍率-80%，每0.5秒受到50真实持续伤害（同类效果取最高）") is the same
 kind of damage — 无来源 true (like the terrain it stands for [ASSUMED]), the chimera credited — not a 流失 (player report
 D1 audit): radius 1.2, a tick every 0.5 s, one tick per unit per 0.5 s however many chimeras reach it (`mem.chimeraAt`).
@@ -447,8 +460,14 @@ A `rangeExtend` on a `persist` never-expiring buff is **permanent**: it also wid
 a running skill's range too, unless that skill's range ignores 攻击距离 (`targeting.noRangeExtend`; PRTS 数值范围 "根据配置
 不同，任何范围都可以受/不受该属性影响" — 信仰搅拌机 S3 "此技能的攻击范围不受“攻击距离”属性影响").
 **Flags:** `stun freeze sleep silence disarm stealth invulnerable unblockable levitate fear cold reveal bind noHeal
-untargetable blockFly noMove noSp burstLock hidden attract float noDisplace isolated camou` (`float` = 近地悬浮 (an air
-unit, `Unit.isFlying`), `noDisplace` = 失衡免疫 (`displace()` moves nothing), `isolated` = 孤立 ("无法被同阵营选中": no ally
+untargetable blockFly noMove noSp burstLock hidden attract float noDisplace isolated camou liftoff` (`float` = 近地悬浮 (an air
+unit, `Unit.isFlying`), `liftoff` = an ally's 起飞 (蒂比's skills; gamedata_const ba.liftoff "不阻挡地面敌人且不会被地面敌人攻击，
+可以阻挡飞行敌人"): it blocks no ground enemy (`Battle._blockerFor`) and has 对地规避 — no ground enemy (not `isFlying`)
+selects it, so no selected damage or status of one lands on it (`targeting.js evadesGround`), while what selects nobody
+still does (`ignoreSelect` / 无来源: 无视无法选择 abilities, direct picks, flying units' blasts, a debuff's ticks); flyers,
+近地悬浮 and 浮空 enemies still select it,
+with no 对空 check, since it stays a ground unit on its tile (`unit.ground` unchanged; PRTS 行动方式 "起飞的干员仍然是地面单位"),
+`noDisplace` = 失衡免疫 (`displace()` moves nothing), `isolated` = 孤立 ("无法被同阵营选中": no ally
 ability selects it — no heal, buff, aura or talent pick from another ally (`battle.allySelectable` / `alliesFor`,
 `alliesInGrid`; PRTS 选择器 可选判定), enemies still target it; a summon's tokens.json `abnormal` 'isolated' also sets
 `noHeal`, 'healFree' (禁疗) sets `noHeal` — Battle._setupUnit, DATA.md tokens.json; 禁疗 keeps heals off only — an HP-regen
@@ -458,7 +477,8 @@ as +1 taunt level (DESIGN §5.3).
 **Statuses** — `battle.applyStatus(target, key, { duration, source, value, force, refresh, point })` (returns true if
 applied); a unit that is 无敌 and 无法选中 at once (flags `invulnerable` + `untargetable`: a 重生 in progress, a hovering or
 永久无敌 leader part) takes no status from the other side, `force` included (PRTS 无敌 "无法被不同阵营选中" — so the status
-a knocking-out hit carries, 妮芙 S2's fear say, does not land after the 重生's cleanse; since 0.1.1's QA); honours
+a knocking-out hit carries, 妮芙 S2's fear say, does not land after the 重生's cleanse; since 0.1.1's QA); refused when
+`source` is a ground enemy and the target an airborne 起飞 ally (对地规避, unless `ignoreSelect`); honours
 enemy/op immunities (`stun`, `silence`, `sleep`, `frozen`, `levitate`, `feared`) unless `force`; fires
 `beforeStatus` (cancellable; handlers may also change `ctx.duration` / `ctx.value`), then applies 抵抗 (`resist`, below)
 and the 浮空 weight rule, then `statusApplied { source, target, status, duration (final), value, entered }` — `entered`
@@ -560,15 +580,23 @@ HP left is refused (damage.js `hasHp`: a lethal hit's `damaged` hook runs before
 
 `battle.dealDamage(source, target, dmg)` → HP removed. `DamageInfo = { amount, type:'phys'|'arts'|'true'|'elemental'|'element',
 element?, defIgnoreFlat, defIgnorePct, resIgnoreFlat, resIgnorePct, mul=1, canDodge (phys/arts), isSkill, isSplash,
-isAttack, attackId, ignoreSleep, sourceless, tags[], cancel }` (`sourceless`: 无来源 damage — the source's stats add
-nothing and the hooks get `source: null` plus `credit` = the source, which keeps the stats and the kill; a `loseHp` whose
-`from` is 无来源 is 无来源 too; element bursts, leader-part transfers and 坚守 thorns use it — content damage that has a
+isAttack, attackId, ignoreSleep, ignoreSelect, sourceless, tags[], cancel }` (`ignoreSelect`: no selection 无法选择
+effects stop — an ability "无视无法选择", a direct pick such as a counter on the attacker, a flying unit's blast credited to
+a ground leader, the tick of a debuff already on the unit — it reaches an airborne 起飞 ally whatever its source;
+`sourceless`: 无来源 damage — the source's stats add nothing and the hooks get `source: null` plus `credit` = the source,
+which keeps the stats and the kill; a `loseHp` whose `from` is 无来源 is 无来源 too; element bursts, leader-part transfers and 坚守 thorns use it — content damage that has a
 responsible unit should pass it as `source` with `sourceless: true` rather than `source: null`, which credits nobody)
 (`battle.makeDamage(d)` normalises). `attackId` is the same for every
 damage instance of one normal attack (all targets, splash, chain, projectile impacts; 0 for non-attack damage) — use it
 for "本次攻击" procs that must roll once per attack. **Dodge** from several buffs rolls independently: the unit's
 `s.dodgePhys` = 1 − Π(1 − pᵢ) (a single source keeps its exact value).
-Order: invulnerable / asleep? → **`hit`** (mutate `dmg`, set `dmg.cancel`) → dodge (`rng()`) → mitigation (phys
+Order: invulnerable / asleep / 对地规避? (a ground enemy's damage or element fill on an airborne 起飞 ally — flag `liftoff`,
+`targeting.js evadesGround` — is refused unless `ignoreSelect` or 无来源: it cannot select her, so its splash and area
+abilities skip her and a shot in flight when she took off lands on nothing [ASSUMED: PRTS 伤害流程 7 "取消掉隐匿/无敌状态
+下的攻击" read for 对地规避]; the ticks of a debuff already on her select nobody and land (content passes `ignoreSelect`;
+PRTS 异常效果: 无法选择 effects "仅在选择时生效"); checked before `hit` only — 蒂比 S2 takes off inside the
+`hit` of the attack that set it off, which resolves as usual) → **`hit`** (mutate `dmg`, set `dmg.cancel`) → dodge
+(`rng()`) → mitigation (phys
 `max(A − max(0, D×(1−defIgnorePct) − defIgnoreFlat), 5 %A)`, arts `max(A×(1 − R′/100), 5 %A)`, elemental
 `max(A×(1 − 元素抗性/100), 5 %A)`, true = A; source ignore mods are added) → × source `dmgDealtMul` (× phys/artsDealtMul)
 × target `dmgTakenMul` (not for elemental) × type-taken mul × `dmg.mul` (a `sourceless` hit skips every source term) →
@@ -1045,7 +1073,7 @@ table: `hitSleep` (targets and damages sleeping enemies — "可以攻击沉睡�
 | dollkeeper | fatal damage ⇒ substitute for 20 s (bb duration): block 0, doll HP (its own substitute token's stats, else 50 % max HP: 归溟幽灵鲨); swaps back at full HP; dies if the doll dies |
 | geek | loses 1–3 % max HP per second (bb hp_ratio), never lethal on its own |
 | merchant | −3 DP every 3 s (bb cost/interval); retreats when DP runs out |
-| skywalker | can block FLY enemies |
+| skywalker | can block FLY enemies (蒂比's kit: only while airborne — 起飞, flag `liftoff`, which also releases the ground enemies she blocked) |
 | stalker | hits every enemy in range; 50 % dodge (bb prob), taunt −1 |
 | traper | ranged, ground only |
 

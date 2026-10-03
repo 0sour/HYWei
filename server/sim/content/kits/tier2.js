@@ -35,17 +35,21 @@ function onDefaultSkill(chess) {
   return !d || !chess?.skill || d.skillId === chess.skill.skillId;
 }
 
-/** 蒂比 take-off (起飞): airborne — blocks flyers only (flags.blockFly of the skill), releases ground enemies. */
+/**
+ * 起飞 of 蒂比's skills (gamedata_const ba.liftoff "不阻挡地面敌人且不会被地面敌人攻击，可以阻挡飞行敌人"): the skill's flags
+ * `liftoff` (no ground enemy blocked — Battle._blockerFor; 对地规避 — targeting.js evadesGround: no ground enemy selects
+ * her, while what selects nobody still lands — 无视无法选择 abilities, direct picks, flying units' blasts, 无来源 damage, the
+ * ticks of a debuff already on her) and `blockFly` (blocks flyers at the air radius). She stays a ground unit on her tile (PRTS 行动方式 "起飞的
+ * 干员仍然是地面单位": `unit.ground` unchanged — 隐德来希's 血镰, 地面干员 bonds / items still count her).
+ */
+const LIFTOFF_FLAGS = Object.freeze({ blockFly: true, liftoff: true });
+/** 蒂比 take-off: the ground enemies she blocked walk on. */
 function tippiTakeOff({ battle, unit }) {
-  unit.mem.tippiGround = unit.ground;
-  unit.ground = false;
   battle.releaseBlocked(unit);
   battle.fx('takeoff', { x: unit.x, y: unit.y, id: unit.id });
 }
-/** 蒂比 landing when the airborne skill ends. */
+/** 蒂比 landing when the airborne skill ends: the flyers she held are released. */
 function tippiLand({ battle, unit }) {
-  if (unit.mem.tippiGround != null) unit.ground = unit.mem.tippiGround;
-  unit.mem.tippiGround = null;
   battle.releaseBlocked(unit);
 }
 
@@ -601,6 +605,8 @@ export default {
   // every damage instance restarts that timer (dodged or not; a 流失 does not — PRTS 备注).
   // S1 专业喷绘技巧 (alt, DEFAULT trigger from data): takes off at once for its duration — skill range, ATK +atk, blocks
   // flyers only; no triple shot, and incoming attacks never set it off.
+  // Both take off as 起飞 (LIFTOFF_FLAGS): she blocks no ground enemy and none selects her (对地规避), so a ground enemy's
+  // selected damage refused on the way never reaches her `hit` and neither sets off S2 nor restarts 片场工作指南.
   chess_char_2_13_a: (bb, chess, def) => {
     const t = talentBb(chess, 0);
     const s2 = onDefaultSkill(chess);
@@ -608,7 +614,7 @@ export default {
       trait: { blockFly: false },
       skill: {
         kind: 'duration', trigger: { rule: 'CUSTOM_RANGE', grid: [] }, // never by the engine: the hit handler below
-        mods: { atkPct: num(bb.atk) }, flags: { blockFly: true },
+        mods: { atkPct: num(bb.atk) }, flags: LIFTOFF_FLAGS,
         targeting: { rangeGrid: def?.skill?.rangeGrid ?? null },
         attack: { hits: 3 },
         onStart: tippiTakeOff,
@@ -616,7 +622,7 @@ export default {
       },
       skills: {
         skchr_tippi_1: {
-          kind: 'duration', mods: { atkPct: num(bb.atk) }, flags: { blockFly: true },
+          kind: 'duration', mods: { atkPct: num(bb.atk) }, flags: LIFTOFF_FLAGS,
           targeting: { rangeGrid: def?.skill?.rangeGrid ?? null },
           onStart: tippiTakeOff,
           onEnd: tippiLand,
