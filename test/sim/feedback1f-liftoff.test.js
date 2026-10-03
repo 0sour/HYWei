@@ -271,18 +271,14 @@ test('F3 review: the 刺胄之弹 and 斩胄之剑 blasts (flying units — 对�
     h.spawn(LAZERD, { pos: [3, 8.2], routeIndex: 0, mods: { speedMul: 0, hpMul: 1e4, atkMul: 0 } });
     h.spawn(HELM, { pos: [3, 9], routeIndex: 0, mods: { speedMul: 0 }, tag: 'boss' }).profile.noAttack = true;
     const u = h.unit(TIPPI[0]);
-    let stunAir = false, dotAir = 0;
-    for (let i = 0; i < 31 * 30; i++) {
-      h.step();
-      if (!u.s.flags.liftoff) continue;
-      if (u.s.flags.stun) stunAir = true;
-      dotAir = h.hooksOf('damaged').filter((c) => c.target === u && (c.dmg?.tags || []).includes('helmShell')).length;
-    }
-    assert.ok(u.s.flags.liftoff, 'still airborne');
+    // the shell lands at ≈ 29 s, S1 ends at ≈ 32 s
+    const [up, down] = airborne(h, u, 40);
     const st = h.hooksOf('statusApplied').filter((c) => c.status === 'stun');
     assert.ok(st.some((c) => c.target === h.unit(BAIT)), 'the shell went to 角峰');
-    assert.ok(stunAir, 'she is stunned while airborne');
-    assert.ok(dotAir >= 2, `the DoT ticks on her: ${dotAir}`);
+    assert.ok(st.some((c) => c.target === u && tAt(c) > up && tAt(c) < down), 'she is stunned while airborne');
+    // (片场工作指南 may dodge one physical tick: her talent's dodge after a quiet spell)
+    const dot = h.hooksOf('damaged').filter((c) => c.target === u && (c.dmg?.tags || []).includes('helmShell') && tAt(c) > up && tAt(c) < down);
+    assert.ok(dot.length >= 1, `the DoT ticks on her while airborne: ${dot.length}`);
     done(h);
   }
   // 斩胄之剑 掷剑 "选择…攻击力最低的1名我方单位（无视无法选择）": it dives at her while she is airborne, 胄 on the field
@@ -300,16 +296,10 @@ test('F3 review: the 刺胄之弹 and 斩胄之剑 blasts (flying units — 对�
     h.spawn(HELM, { pos: [2, 9], routeIndex: 0, mods: { speedMul: 0 }, tag: 'boss' }).profile.noAttack = true;
     h.spawn(BLADE, { pos: origin.start, routeIndex: 0, tag: 'part' });
     const u = h.unit(TIPPI[0]);
-    let stunAir = false, dotAir = false;
-    for (let i = 0; i < 31 * 30; i++) {
-      h.step();
-      if (!u.s.flags.liftoff) continue;
-      if (u.s.flags.stun) stunAir = true;
-      if (h.hooksOf('damaged').some((c) => c.target === u && (c.dmg?.tags || []).includes('bladeDive'))) dotAir = true;
-    }
-    assert.ok(u.s.flags.liftoff, 'still airborne');
-    assert.ok(stunAir, 'the dive stuns her while airborne');
-    assert.ok(dotAir, 'its DoT hurts her while airborne');
+    const [up, down] = airborne(h, u, 40);                                // the dive lands at ≈ 29 s, S1 ends at ≈ 32 s
+    assert.ok(h.hooksOf('statusApplied').some((c) => c.status === 'stun' && c.target === u && tAt(c) > up && tAt(c) < down), 'the dive stuns her while airborne');
+    const dot = h.hooksOf('damaged').filter((c) => c.target === u && (c.dmg?.tags || []).includes('bladeDive') && tAt(c) > up && tAt(c) < down);
+    assert.ok(dot.length >= 1, `its DoT hurts her while airborne: ${dot.length}`);
     done(h);
   }
 });
