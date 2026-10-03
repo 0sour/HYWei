@@ -90,9 +90,11 @@ export function canTargetAlly(e, a, ranged) {
  * pipeline and Battle.applyStatus (a ground enemy's area damage, statuses and hits under way skip it — PRTS 作战机制 "AOE
  * 的判定是对攻击范围内的每个可以被选中的敌人进行判定"), and the content picks and one-shot areas that bypass canTargetAlly
  * (chain / bounce jumps, 周围四格 additions, shells, barrages, 沙狱, death blasts). Not selections, so they still reach it:
- * sourceless damage and DamageInfo / applyStatus `ignoreSelect` — abilities that "无视无法选择" (【污染秽蚀】, 【盲信之誓】),
- * direct picks (碎铳之簧's counter on its attacker: PRTS 异常效果 "'直接选中'的能力…不受这些仅在选择时生效的异常效果制约")
- * and the blasts of flying units credited to a ground leader (刺胄之弹, 斩胄之剑 / 破胄之锤).
+ * sourceless damage and DamageInfo / applyStatus `ignoreSelect` — abilities that "无视无法选择" (【污染秽蚀】, 【盲信之誓】,
+ * 萨卡兹悖谬暴虐兵长's 暴击 splash), direct picks (碎铳之簧's counter on its attacker: PRTS 异常效果 "'直接选中'的能力…不受这些
+ * 仅在选择时生效的异常效果制约"), the blasts of flying units credited to a ground leader (刺胄之弹, 斩胄之剑 / 破胄之锤) and
+ * the ticks of a debuff a ground enemy put on it before it took off (出血, 沙狱, burning DoTs, 【自然涌动】: a tick selects
+ * nobody). A shot already in flight is refused [ASSUMED] (damage.js).
  */
 export function evadesGround(src, a) {
   return !!(a && a.s && a.s.flags.liftoff && src && src.side === 'enemy' && !src.isFlying);

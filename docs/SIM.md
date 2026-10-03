@@ -209,10 +209,11 @@ an airborne ally (起飞, flag `liftoff`: 蒂比's skills) never for a ground en
 PRTS 术语释义 起飞 "无法被不同阵营行动方式为地面的单位选中"; flyers, 近地悬浮 and 浮空 enemies still pick it; content picks
 and one-shot areas that bypass `canTargetAlly` — 控潮术师 / 腐败骑士's 周围四格, 陷落雪祀's chain, the 碎铳之簧 bounce, the
 自行炮 shells, “帝国的甲胄”'s barrage, 鼠王's 沙狱, 烹泉's death blast and steam — filter it too; not selections, so they
-still reach it (`ignoreSelect`): abilities PRTS marks "无视无法选择" (【污染秽蚀】, 假想敌：铳's 【盲信之誓】), direct picks
-(碎铳之簧's 法术护盾 counter on its attacker — PRTS 异常效果 "'直接选中'的能力…不受这些仅在选择时生效的异常效果制约") and
-the blasts of flying units credited to the ground 胄 (刺胄之弹, 斩胄之剑 / 破胄之锤 — whose 掷剑 / 掷锤 pick "（无视无法选择）");
-auras of ground enemies still apply [ASSUMED]);
+still reach it (`ignoreSelect`): abilities PRTS marks "无视无法选择" (【污染秽蚀】, 假想敌：铳's 【盲信之誓】, 萨卡兹悖谬
+暴虐兵长's 暴击 splash), direct picks (碎铳之簧's 法术护盾 counter on its attacker — PRTS 异常效果 "'直接选中'的能力…不受这些
+仅在选择时生效的异常效果制约"), the blasts of flying units credited to the ground 胄 (刺胄之弹, 斩胄之剑 / 破胄之锤 — whose
+掷剑 / 掷锤 pick "（无视无法选择）") and the ticks of a debuff a ground enemy put on it before it took off (出血, 沙狱,
+burning DoTs, 淤困, 【自然涌动】 — a tick selects nobody); auras of ground enemies still apply [ASSUMED]);
 a stealthed ally (隐匿, 排气格栅) only for the enemy it blocks — our operators keep 隐匿 while blocking (PRTS 作战机制
 §隐匿; 索敌的概念: a blocked enemy "强行无视对方可选性" attacks its blocker); a camouflaged one (迷彩, flag `camou`: ba.camou
 "不阻挡时不成为敌方普通攻击的目标") likewise (PRTS 异常效果: neither anomaly is "阻挡时解除") [ASSUMED: enemy skills and
@@ -384,7 +385,9 @@ A `rangeExtend` on a `persist` never-expiring buff is **permanent**: it also wid
 untargetable blockFly noMove noSp burstLock hidden attract float noDisplace isolated camou liftoff` (`float` = 近地悬浮 (an air
 unit, `Unit.isFlying`), `liftoff` = an ally's 起飞 (蒂比's skills; gamedata_const ba.liftoff "不阻挡地面敌人且不会被地面敌人攻击，
 可以阻挡飞行敌人"): it blocks no ground enemy (`Battle._blockerFor`) and has 对地规避 — no ground enemy (not `isFlying`)
-selects it, damages it or puts a status on it (`targeting.js evadesGround`); flyers, 近地悬浮 and 浮空 enemies still do,
+selects it, so no selected damage or status of one lands on it (`targeting.js evadesGround`), while what selects nobody
+still does (`ignoreSelect` / 无来源: 无视无法选择 abilities, direct picks, flying units' blasts, a debuff's ticks); flyers,
+近地悬浮 and 浮空 enemies still select it,
 with no 对空 check, since it stays a ground unit on its tile (`unit.ground` unchanged; PRTS 行动方式 "起飞的干员仍然是地面单位"),
 `noDisplace` = 失衡免疫 (`displace()` moves nothing), `isolated` = 孤立 ("无法被同阵营选中": no ally
 ability selects it — no heal, buff, aura or talent pick from another ally (`battle.allySelectable` / `alliesFor`,
@@ -490,7 +493,7 @@ HP left is refused (damage.js `hasHp`: a lethal hit's `damaged` hook runs before
 element?, defIgnoreFlat, defIgnorePct, resIgnoreFlat, resIgnorePct, mul=1, canDodge (phys/arts), isSkill, isSplash,
 isAttack, attackId, ignoreSleep, ignoreSelect, sourceless, tags[], cancel }` (`ignoreSelect`: no selection 无法选择
 effects stop — an ability "无视无法选择", a direct pick such as a counter on the attacker, a flying unit's blast credited to
-a ground leader — it reaches an airborne 起飞 ally whatever its source; `sourceless`: 无来源 damage — the source's stats add
+a ground leader, the tick of a debuff already on the unit — it reaches an airborne 起飞 ally whatever its source; `sourceless`: 无来源 damage — the source's stats add
 nothing and the hooks get `source: null` plus `credit` = the source, which keeps the stats and the kill; a `loseHp` whose
 `from` is 无来源 is 无来源 too; element bursts, leader-part transfers and 坚守 thorns use it — content damage that has a
 responsible unit should pass it as `source` with `sourceless: true` rather than `source: null`, which credits nobody)
@@ -500,8 +503,9 @@ for "本次攻击" procs that must roll once per attack. **Dodge** from several 
 `s.dodgePhys` = 1 − Π(1 − pᵢ) (a single source keeps its exact value).
 Order: invulnerable / asleep / 对地规避? (a ground enemy's damage or element fill on an airborne 起飞 ally — flag `liftoff`,
 `targeting.js evadesGround` — is refused unless `ignoreSelect` or 无来源: it cannot select her, so its splash and area
-abilities skip her and a shot in flight or a DoT ticking when she took off lands on nothing [ASSUMED for the last two:
-PRTS 伤害流程 7 "取消掉隐匿/无敌状态下的攻击" read for 对地规避]; checked before `hit` only — 蒂比 S2 takes off inside the
+abilities skip her and a shot in flight when she took off lands on nothing [ASSUMED: PRTS 伤害流程 7 "取消掉隐匿/无敌状态
+下的攻击" read for 对地规避]; the ticks of a debuff already on her select nobody and land (content passes `ignoreSelect`;
+PRTS 异常效果: 无法选择 effects "仅在选择时生效"); checked before `hit` only — 蒂比 S2 takes off inside the
 `hit` of the attack that set it off, which resolves as usual) → **`hit`** (mutate `dmg`, set `dmg.cancel`) → dodge
 (`rng()`) → mitigation (phys
 `max(A − max(0, D×(1−defIgnorePct) − defIgnoreFlat), 5 %A)`, arts `max(A×(1 − R′/100), 5 %A)`, elemental

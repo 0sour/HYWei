@@ -55,8 +55,8 @@
 // Every leader (tag boss) ignores 侵蚀 gauge damage ("最终攻势中，敌方领袖不会受到侵蚀损伤").
 // An airborne (起飞) operator is no selection of a ground leader or part (对地规避: canTargetAlly, the damage pipeline,
 // the 碎铳之簧 bounce); still reach it (`ignoreSelect`): the 刺胄之弹 / 剑 / 锤 blasts (flying units, 无来源 DoT; 掷剑 /
-// 掷锤 pick their operator "（无视无法选择）"), the 盲信之誓 chains ("无视无法选择") and the 法术护盾 counter on its attacker
-// (a direct pick).
+// 掷锤 pick their operator "（无视无法选择）"), the 盲信之誓 chains ("无视无法选择"), the 法术护盾 counter on its attacker
+// (a direct pick) and the ticks of a debuff already on it (【自然涌动】: a tick selects nobody).
 // LP effects ('lpLoss' hook + result.lpLoss) must be applied by the match (see the report of this module's owner).
 // fx kinds: 'beam' 'shell' 'explode' 'telegraph' 'charge' 'link' 'dash' 'column' 'tide' 'rockfall' 'tentacle' 'equip'
 //   'sword' 'vest' 'blink' 'summon' 'grow' 'phase' 'lpLoss' (x, y + extra {id, r, tiles, kind, tx, ty …}).
@@ -1076,7 +1076,7 @@ function kitDeer(ab, e) {
           b.fx('beam', { x: e2.x, y: e2.y, from: e2.id, to: t.id, kind: 'naturalSurge', dur });
           b.applyStatus(t, 'stun', { duration: dur, source: e2 });
           b.addBuff(t, { key: 'boss:surge', duration: dur, interval: 1, visible: true,
-            onTick: ({ battle, unit }) => battle.dealDamage(e2, unit, { amount: e2.s.atk * (lasso.bb.atk_scale ?? 0), type: 'arts', canDodge: false, tags: ['enemyAbility'] }) });
+            onTick: ({ battle, unit }) => battle.dealDamage(e2, unit, { amount: e2.s.atk * (lasso.bb.atk_scale ?? 0), type: 'arts', canDodge: false, ignoreSelect: true, tags: ['enemyAbility'] }) });
         }
       },
     },

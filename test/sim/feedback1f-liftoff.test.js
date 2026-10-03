@@ -9,14 +9,15 @@
 //     the targets its abilities add (控潮术师's 周围四格, chain / bounce jumps) and its area damage and statuses skip her;
 //   - flyers, 近地悬浮 and 浮空 enemies still select her (she stays a ground unit: no 对空 check);
 //   - what is no selection still reaches her: sourceless damage, abilities that "无视无法选择" (【污染秽蚀】 at the
-//     low-ground rate — she is still on her low tile; 【盲信之誓】), direct picks (碎铳之簧's counter on its attacker —
-//     PRTS 异常效果 "'直接选中'的能力…不受这些仅在选择时生效的异常效果制约") and flying units' blasts (刺胄之弹, 斩胄之剑);
+//     low-ground rate — she is still on her low tile; 【盲信之誓】; 萨卡兹悖谬暴虐兵长's 暴击 splash), direct picks
+//     (碎铳之簧's counter on its attacker — PRTS 异常效果 "'直接选中'的能力…不受这些仅在选择时生效的异常效果制约"), flying
+//     units' blasts (刺胄之弹, 斩胄之剑) and the ticks of a debuff put on her before she took off (出血, 沙狱, burning);
 //     a ground enemy's zone does not (集团军重型火炮 【燃烧区域】 "碰撞不受迷彩制约，不可对空": 迷彩 only);
 //   - she stays a 地面单位 for ally rules (隐德来希 S2 puts a 血镰 on her; PRTS 备注 "被添加血镰的单位处于起飞时，血镰可对空").
 // Cause: 起飞 was `unit.ground = false` (an operator on a high tile): melee enemies could not reach her (she released them),
 // but every ranged ground enemy kept shooting her and the AoE / skills of ground enemies hit her.
-// [ASSUMED] a ground enemy's damage already under way (a shot in flight, a DoT ticking) is cancelled too (PRTS 作战机制 伤害
-// 流程 7 "取消掉隐匿/无敌状态下的攻击", read for 对地规避); auras of ground enemies (光环, field-wide debuffs) still apply.
+// [ASSUMED] a ground enemy's shot already in flight is cancelled too (PRTS 作战机制 伤害流程 7 "取消掉隐匿/无敌状态下的攻击",
+// read for 对地规避); auras of ground enemies (光环, field-wide debuffs) still apply.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -355,6 +356,68 @@ test('F3 review: one-shot area abilities of ground enemies skip an airborne 蒂�
     const shots = (t) => h.hooksOf('damaged').filter((c) => c.target === t && c.source === e && !c.dmg.isAttack).length;
     assert.equal(shots(u), 0, 'no shot on her');
     assert.equal(shots(bait), ds.rawEnemy(VTSK).skills.find((s) => s.prefabKey === 'Appear').bb.times, 'every shot hits 角峰 instead of being wasted on her');
+    done(h);
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Second review round: 萨卡兹悖谬暴虐兵长's 暴击 splash ("无视无法选择") and the ticks of debuffs already on her.
+
+const WDRRL = 'enemy_1320_wdrrl_2';      // 萨卡兹悖谬暴虐兵长 (ground, block ≥ 3): 暴击 "对目标和周围4格…（无视无法选择，无视迷彩）"
+const NHSTLK = 'enemy_1270_nhstlk';      // 逐腐兽 (ground melee): 出血 on hit — arts per second
+const LSLIME = 'enemy_1050_lslime';      // “庞贝” (ground): its hits leave a burning DoT
+
+test('F3 review 2: 萨卡兹悖谬暴虐兵长\'s 暴击 splash ("无视无法选择") reaches an airborne 蒂比 next to its blocker', REAL, () => {
+  const h = makeBattle({
+    stageId: 'act2autochess_m02', seed: 3, autoFinish: false, timeLimit: 400, hooks: ['damaged'], captureNoisy: true,
+    units: [{ chessId: TIPPI[0], row: 9, col: 5, carryState: { sp: 999 }, skillIndex: skillIndex(TIPPI[0], S1) }, { chessId: BAIT, row: 9, col: 4 }],
+    enemies: [{ key: WDRRL, route: { motion: 'WALK', start: [9, 8], end: [9, 1], checkpoints: [] }, mods: { hpMul: 1e3, atkMul: 0.3 } }],
+  });
+  const u = h.unit(TIPPI[0]), bait = h.unit(BAIT);
+  let e = null, airAtBlock = null;
+  for (let i = 0; i < 14 * 30; i++) {                                     // it reaches 角峰 at ≈ 9 s, S1 lasts 32 s
+    h.step();
+    e ??= h.b.enemies.find((x) => x.defId === WDRRL) ?? null;
+    if (e && airAtBlock == null && e.blockedBy) airAtBlock = !!u.s.flags.liftoff;
+  }
+  assert.ok(e && e.blockedBy === bait, '角峰 (block 3) blocks it; she cannot (block < 3)');
+  assert.equal(airAtBlock, true, 'she is airborne when it reaches 角峰');
+  const splash = h.hooksOf('damaged').filter((c) => c.target === u && c.source === e);
+  assert.equal(splash.length, 1, `its one-off splash lands on her: ${splash.map((c) => Math.round(c.amount))}`);
+  assert.ok(splash[0].amount > 0 && !splash[0].dmg.isAttack && splash[0].dmg.ignoreSelect);
+  assert.ok(u.s.flags.liftoff, 'while airborne');
+  assert.ok(h.hooksOf('damaged').some((c) => c.target === bait && c.source === e && c.dmg.isAttack), 'its attack itself is on 角峰');
+  done(h);
+});
+
+test('F3 review 2: a debuff a ground enemy put on 蒂比 before she took off keeps ticking (no selection); its new attacks still skip her', REAL, () => {
+  // 鼠王 【沙狱】 (centred near 角峰 and her), 逐腐兽's 出血, “庞贝”'s burning DoT: attached on the ground, then S1
+  const cases = [
+    { key: MOUSEK, pos: [9, 8], buff: 'ab:sandStorm', bait: true, fire: (h, m) => { m.mem.ab.list.find((a) => a && a.cd === m.mem.ab.sk.SandStorm.cd && a.fire).left = 0.05; } },
+    { key: NHSTLK, pos: [9, 5.3], buff: 'ab:bleed' },
+    { key: LSLIME, pos: [9, 7], buff: 'ab:burnDot' },
+  ];
+  for (const k of cases) {
+    const units = [{ chessId: TIPPI[0], row: 9, col: 5, carryState: { sp: 0 }, skillIndex: skillIndex(TIPPI[0], S1) }];
+    if (k.bait) units.push({ chessId: BAIT, row: 10, col: 5 });
+    const h = makeBattle({
+      stageId: 'act2autochess_m02', seed: 3, autoFinish: false, timeLimit: 400, hooks: ['damaged'], captureNoisy: true, units,
+      enemies: [{ key: k.key, pos: k.pos, mods: { hpMul: 1e4, speedMul: 0, atkMul: k.bait ? 0.01 : 0.05 } }, { key: LAZERD, pos: [9, 7.2], mods: { hpMul: 1e4, speedMul: 0, atkMul: 0 } }],
+    });
+    const u = h.unit(TIPPI[0]);
+    h.step();
+    const e = h.b.enemies.find((x) => x.defId === k.key);
+    k.fire?.(h, e);
+    assert.ok(h.runUntil(() => u.findBuff(k.buff), 10), `${k.key}: ${k.buff} on her`);
+    assert.ok(!u.s.flags.liftoff, `${k.key}: before she takes off`);
+    u.skill.gainSp(999, 'init');
+    assert.ok(h.runUntil(() => u.s.flags.liftoff, 3), `${k.key}: takes off`);
+    const up = h.b.time;
+    h.run(4);
+    assert.ok(u.s.flags.liftoff && u.findBuff(k.buff), `${k.key}: still airborne with the debuff`);
+    const air = h.hooksOf('damaged').filter((c) => c.target === u && c.source === e && tAt(c) > up + 1e-6);
+    assert.ok(air.filter((c) => !c.dmg.isAttack).length >= 3, `${k.key}: its ticks land while airborne: ${air.length}`);
+    assert.deepEqual(air.filter((c) => c.dmg.isAttack).map((c) => Math.round(c.amount)), [], `${k.key}: no new attack on her`);
     done(h);
   }
 });

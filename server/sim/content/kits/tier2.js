@@ -37,8 +37,9 @@ function onDefaultSkill(chess) {
 
 /**
  * 起飞 of 蒂比's skills (gamedata_const ba.liftoff "不阻挡地面敌人且不会被地面敌人攻击，可以阻挡飞行敌人"): the skill's flags
- * `liftoff` (no ground enemy blocked — Battle._blockerFor; 对地规避 — targeting.js evadesGround: no ground enemy selects or
- * damages her) and `blockFly` (blocks flyers at the air radius). She stays a ground unit on her tile (PRTS 行动方式 "起飞的
+ * `liftoff` (no ground enemy blocked — Battle._blockerFor; 对地规避 — targeting.js evadesGround: no ground enemy selects
+ * her, while what selects nobody still lands — 无视无法选择 abilities, direct picks, flying units' blasts, 无来源 damage, the
+ * ticks of a debuff already on her) and `blockFly` (blocks flyers at the air radius). She stays a ground unit on her tile (PRTS 行动方式 "起飞的
  * 干员仍然是地面单位": `unit.ground` unchanged — 隐德来希's 血镰, 地面干员 bonds / items still count her).
  */
 const LIFTOFF_FLAGS = Object.freeze({ blockFly: true, liftoff: true });
@@ -597,7 +598,7 @@ export default {
   // ---------------------------------------------------------------------------------------------------------------
   // 2_13 蒂比 紧急赶场通知 (AUTO): "受到攻击后触发" — any incoming enemy attack sets it off (the kit is the only
   // trigger: the engine rule is disabled so non-attack damage never fires it) and a physical/arts one is dodged; takes
-  // off for the duration (起飞, LIFTOFF_FLAGS: she blocks no ground enemy and none attacks or damages her): skill range,
+  // off for the duration (起飞, LIFTOFF_FLAGS: she blocks no ground enemy and none selects her — 对地规避): skill range,
   // ATK +atk, attacks become 3 shots, blocks flying (not ground) enemies. Trait "起飞后能够阻挡2个飞行敌人": flying enemies
   // are blocked only while airborne. 片场工作指南: if not attacked for stack_time s, the next physical/arts attack is
   // dodged (prob); every attack restarts that timer.

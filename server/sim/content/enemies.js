@@ -32,9 +32,11 @@
 //   ground enemy (对地规避, targeting.js evadesGround): targetsNear / allTargets skip it through canTargetAlly, the picks
 //   and one-shot areas that bypass it (周围四格 additions, chain and bounce jumps, shells, barrages, 沙狱, death blasts)
 //   filter it, and the engine refuses a ground enemy's damage and statuses on it. Not selections, so they still reach
-//   it (`ignoreSelect`): abilities PRTS marks "无视无法选择" (【污染秽蚀】, 【盲信之誓】), direct picks of the attacker
-//   (碎铳之簧's counter — PRTS 异常效果 "'直接选中'的能力…不受这些仅在选择时生效的异常效果制约") and the blasts of flying
-//   units credited to a ground leader (刺胄之弹, 斩胄之剑 / 破胄之锤). Auras of ground enemies still apply [ASSUMED].
+//   it (`ignoreSelect`): abilities PRTS marks "无视无法选择" (【污染秽蚀】, 【盲信之誓】, 萨卡兹悖谬暴虐兵长's 暴击 splash),
+//   direct picks of the attacker (碎铳之簧's counter — PRTS 异常效果 "'直接选中'的能力…不受这些仅在选择时生效的异常效果
+//   制约"), the blasts of flying units credited to a ground leader (刺胄之弹, 斩胄之剑 / 破胄之锤) and the ticks of a debuff
+//   already on it (出血, 沙狱, “庞贝”'s burning, 淤困, 【自然涌动】 — a tick selects nobody). Auras of ground enemies still
+//   apply [ASSUMED].
 //
 // Special types (factions.json):
 //   FLY        — engine (FLY motion, ranged-only targeting). Flyer kits below (御4, 护障, 寒霜, 萨科塔之翼/眼, 黑云 …).
@@ -889,7 +891,10 @@ function statue(ab) {
   };
 }
 
-/** Bleeding on hit (逐腐兽): arts damage per second, removed by healing. */
+/**
+ * Bleeding on hit (逐腐兽): arts damage per second, removed by healing. A tick selects nobody (`ignoreSelect`): it keeps
+ * hurting an ally that took off (起飞) after the bleed landed; so do the other enemy debuff DoTs (沙狱, burnDot, 淤困).
+ */
 function bleed(ab) {
   const dmg = T(ab, 'Bleeding.attack@bleeding_damage') ?? 0, dur = T(ab, 'Bleeding.attack@duration') ?? 0;
   return {
@@ -897,7 +902,7 @@ function bleed(ab) {
       if (!(dmg > 0 && dur > 0)) return;
       b.addBuff(c.target, {
         key: 'ab:bleed', duration: dur, refresh: 'replace', interval: 1, visible: true,
-        onTick: ({ battle, unit }) => battle.dealDamage(e, unit, { amount: dmg, type: 'arts', canDodge: false, tags: ['enemyAbility', 'bleed'] }),
+        onTick: ({ battle, unit }) => battle.dealDamage(e, unit, { amount: dmg, type: 'arts', canDodge: false, ignoreSelect: true, tags: ['enemyAbility', 'bleed'] }),
       });
     },
   };
@@ -1321,6 +1326,11 @@ function kitRush(ab) {
   }];
 }
 
+/**
+ * 萨卡兹悖谬暴虐兵长: blocked only by a blocker with ≥ 3 free block; its first hit also strikes the units around its target
+ * (PRTS 技能0 暴击 "对目标和周围4格的我方单位造成攻击力150%的物理普通伤害（无视无法选择，无视迷彩）※此技能仅能触发一次"):
+ * the splash ignores 无法选择, so it reaches an airborne 起飞 ally too (`ignoreSelect`).
+ */
 function kitFirstAoe(ab) {
   const scale = T(ab, 'AOEAttack.atk_scale') ?? 0;
   return [blockWeight(3), {
@@ -1328,7 +1338,9 @@ function kitFirstAoe(ab) {
       if (a.done) return;
       a.done = true;
       b.fx('explode', { x: c.target.x, y: c.target.y, r: 1, kind: 'aoeAttack' });
-      for (const u of b.alliesInRadius(c.target.x, c.target.y, 1)) if (u !== c.target) hurt(b, e, u, e.s.atk * scale, 'phys');
+      for (const u of b.alliesInRadius(c.target.x, c.target.y, 1)) {
+        if (u !== c.target) hurt(b, e, u, e.s.atk * scale, 'phys', { ignoreSelect: true, tags: ['aoeAttack'] });
+      }
     },
   }];
 }
@@ -1382,7 +1394,7 @@ function kitParasite(ab) {
       b.addBuff(host, {
         // "受到的元素损伤提高至130%": a 元素损伤 multiplier on the element hit (ensureParasiteHook), not 元素伤害
         key: 'ab:parasite', visible: true, interval: 1, data: { src: e, spread: PARASITE_SPREAD, epMul: elMul },
-        onTick: ({ battle, unit }) => { if (e.alive) battle.dealDamage(e, unit, { amount: e.s.atk * scale, type: 'arts', canDodge: false, tags: ['enemyAbility', 'parasite'] }); },
+        onTick: ({ battle, unit }) => { if (e.alive) battle.dealDamage(e, unit, { amount: e.s.atk * scale, type: 'arts', canDodge: false, ignoreSelect: true, tags: ['enemyAbility', 'parasite'] }); },
       });
     },
     death(c, b, e, a) { if (a.host) b.removeBuff(a.host, 'ab:parasite'); },
@@ -1618,7 +1630,7 @@ function kitLeaderMisc(key, ab, e) {
         dealt(c, b, e2) {
           if (!(dot.dur > 0)) return;
           b.addBuff(c.target, { key: 'ab:burnDot', duration: dot.dur, refresh: 'replace', interval: dot.iv, visible: true,
-            onTick: ({ battle, unit }) => battle.dealDamage(e2, unit, { amount: dot.dmg, type: 'arts', canDodge: false, tags: ['enemyAbility'] }) });
+            onTick: ({ battle, unit }) => battle.dealDamage(e2, unit, { amount: dot.dmg, type: 'arts', canDodge: false, ignoreSelect: true, tags: ['enemyAbility'] }) });
         },
       }, {
         iv: T(ab, 'rangedamage.interval') ?? 10,
@@ -1677,7 +1689,7 @@ function kitLeaderMisc(key, ab, e) {
           for (const u of b.alliesInRadius(x, y, SANDSTORM_RADIUS)) {
             if (evadesGround(e2, u)) continue;
             b.addBuff(u, { key: 'ab:sandStorm', duration: dur, refresh: 'replace', interval: 1, visible: true, mods: { atkPct: ss.bb.atk ?? 0 },
-              onTick: ({ battle, unit }) => battle.dealDamage(e2, unit, { amount: ss.bb.damage ?? 0, type: 'arts', canDodge: false, tags: ['enemyAbility', 'sandStorm'] }) });
+              onTick: ({ battle, unit }) => battle.dealDamage(e2, unit, { amount: ss.bb.damage ?? 0, type: 'arts', canDodge: false, ignoreSelect: true, tags: ['enemyAbility', 'sandStorm'] }) });
           }
         }, { cond: (b, e2) => allTargets(b, e2).length > 0 }),
       ];
