@@ -332,6 +332,10 @@ Dispatch order per player: `global` → `band` → `bond` (data order) → garri
 → equipped items → EffectRefs (insertion order). `onPrice` runs the priced chess's own 特质 first (购买价格为N sets the
 price that 远见's discount and the strategies' caps then act on). Every call is isolated with try/catch (the error is
 logged once and counted in `match.dispatcher.errors`); nested dispatches are capped at depth 6.
+The equipped-items step walks a snapshot (the owned chess and each holder's items as they stand when it begins) and
+runs an item only if, when its turn comes, it is still equipped on that holder and the holder is still owned: handlers
+move and destroy pieces mid-walk (突变细胞 transforms its holder, normal 博士投影 destroys itself), so an item a handler
+took off is skipped and the item after it still runs; a piece gained or equipped meanwhile waits for the next dispatch.
 
 ### 2.3 Garrisons (特质)
 The dispatcher calls `handler[hook] ?? handler.run` only on the hook of the garrison's `eventType` (a handler may widen

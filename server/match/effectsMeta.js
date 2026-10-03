@@ -22,7 +22,12 @@
 // 投资人 (investShip) active ⇒ SERVER_GAIN garrisons run ×2 (×3 at ≥ 100 layers) — owned by the dispatcher.
 // ctx.triggerGarrisons(uid, eventType) re-runs another piece's garrisons (铃兰, "触发…的获得时效果", 特质相同).
 // Items: onEquip / onArt / onDestroy go to the item's own handler only; every other hook runs for items equipped on
-// owned chess (ev.source.holder). Dispatch order per player: global → band → bonds → garrisons (board reading order,
+// owned chess (ev.source.holder). That step walks a snapshot — the owned chess and each holder's items as they stand
+// when it begins — and runs an item only if, when its turn comes, it is still equipped on that holder and the holder
+// is still owned: handlers move and destroy pieces mid-walk (突变细胞 transforms its holder and returns the equipment
+// to the hand; normal 博士投影 destroys itself, which splices holder.items), and a live walk skipped the next item or
+// ran it with a holder that was gone. Pieces gained or equipped during the walk wait for the next dispatch.
+// Dispatch order per player: global → band → bonds → garrisons (board reading order,
 // then hand) → equipped items → effects (insertion order); onPrice runs the priced chess's own 特质 first (购买价格为N
 // sets the price the discounts and caps of bonds / strategies then act on — user playtest #5). Every call is
 // try/catch-guarded; nested dispatch depth is capped (MAX_DEPTH) so content can never loop the server.
@@ -207,13 +212,14 @@ export class EffectDispatcher {
       }
       // 4. garrisons (onPrice: already run as step 0)
       if (hook !== 'onPrice') this._garrisons(ps, hook, ev);
-      // 5. equipped items (not for the item-specific hooks)
+      // 5. equipped items (not for the item-specific hooks): a snapshot of the owned chess and of each holder's items,
+      // each run only while still equipped on its still-owned holder — handlers move / destroy pieces (header)
       if (hook !== 'onEquip' && hook !== 'onArt' && hook !== 'onDestroy') {
         for (const holder of ownedChess(ps)) {
-          for (const it of holder.items || []) {
+          for (const it of (holder.items || []).slice()) {
             const key = `item:${itemKey(it.id)}`;
             const h = reg.get(key);
-            if (h) this._call(ps, key, h, hook, { kind: 'item', key, piece: it, holder, item: this.m.gd.item(it.id) }, ev);
+            if (h && stillEquipped(ps, holder, it)) this._call(ps, key, h, hook, { kind: 'item', key, piece: it, holder, item: this.m.gd.item(it.id) }, ev);
           }
         }
       }
@@ -344,6 +350,13 @@ function ownedChess(ps) {
   for (const p of ps.hand) if (p && p.kind === 'chess') out.push(p);
   for (const p of ps.temp) if (p && p.kind === 'chess') out.push(p);
   return out;
+}
+
+/** Dispatch step 5: is `it` still equipped on `holder`, and `holder` still an owned chess of `ps`? */
+function stillEquipped(ps, holder, it) {
+  if (!Array.isArray(holder.items) || !holder.items.includes(it)) return false;
+  const loc = ps.find(holder.uid);
+  return !!loc && loc.piece === holder;
 }
 
 // =====================================================================================================
