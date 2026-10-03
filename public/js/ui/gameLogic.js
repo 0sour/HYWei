@@ -92,6 +92,37 @@ export function prepCamera(pub, myId) {
 }
 
 /**
+ * The own prep board's camera request with the shop bar's state (public issue #5 "准备阶段，收起商店界面时，界面并不会进行
+ * 缩放"): `prepCamera` plus `shop: !folded` — a folded shop (收起) takes the official shop-collapsed camera
+ * (configBlackBoard left_prepare_camera_param / *_boss_prepare_*, render/projection.js presetCamera `shop: false`) and
+ * the folded shop's HUD band (ui/fieldHost.js hudBands), an open one the shop camera. `folded` = the shop bar is shown
+ * and folded (an eliminated player's board, which shows no bar, keeps the shop camera).
+ * @returns {{ kind: 'prep'|'bossPrep', opts: { rect?: object, side: 'L'|'R', shop: boolean } }}
+ */
+export function prepCameraFor(pub, myId, folded = false) {
+  const c = prepCamera(pub, myId);
+  return { kind: c.kind, opts: { ...c.opts, shop: !folded } };
+}
+
+/**
+ * The camera request a fold / unfold of the shop bar needs right now (public issue #5), or null: only while the own prep
+ * board is on screen (`ownPrep`: prep, not a teammate's scouted board, not a battle), never over the enemy pen (`pen`: it
+ * folds the shop itself and returns to the camera it left), deferred while a piece is dragged or its direction is chosen
+ * (`busy`: the drop target and the wheel sit on tiles of the camera in use — the caller asks again once that ends), and
+ * nothing when the current request (`current` { kind, opts }) already has that shop state.
+ * @param {{ pub: any, myId: string|null, ownPrep: boolean, folded: boolean, pen?: boolean, busy?: boolean,
+ *   current?: { kind: string, opts?: { shop?: boolean } }|null }} s
+ * @returns {{ kind: 'prep'|'bossPrep', opts: object }|null}
+ */
+export function foldCamera(s) {
+  if (!s || !s.ownPrep || s.pen || s.busy) return null;
+  const want = prepCameraFor(s.pub, s.myId, !!s.folded);
+  const cur = s.current;
+  if (cur && cur.kind === want.kind && (cur.opts?.shop !== false) === want.opts.shop) return null;
+  return want;
+}
+
+/**
  * The field the own pieces are deployed on (server/match/Match.js deployFieldOf): 'bossL' / 'bossR' in the prep of a
  * boss round (the same pairing as `prepCamera`), else 'normal'. Placement legality (`placementContext` → `deployMap`
  * with `field`) reads that field's tiles.

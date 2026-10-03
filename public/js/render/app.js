@@ -3,11 +3,14 @@
 //
 //   const view = await createFieldView(host, { data, assets, audio, settings, padding, hud })
 //   view.setStage(stage)                        procedural tiles + devices (data/stages.json entry)
-//   view.setCamera(kind, { rect, side, padding, instant })   'prep'|'normal'|'unite'|'boss'('hidden'); animated
+//   view.setCamera(kind, { rect, side, padding, instant, shop })   'prep'|'normal'|'unite'|'boss'('hidden'); animated
 //                                               — the prep cameras (own board / Final Assault half) keep the bench
-//                                               and the field clear of `hud(kind, size)` = { top, bottom } px of
-//                                               DOM HUD along the top / bottom edge (projection.js clearHud; user
-//                                               playtest #5 item 9: the shop bar covered the bench on phones)
+//                                               and the field clear of `hud(kind, size, { shop })` = { top, bottom } px
+//                                               of DOM HUD along the top / bottom edge (projection.js clearHud; user
+//                                               playtest #5 item 9: the shop bar covered the bench on phones); `shop:
+//                                               false` = the folded shop: the official shop-collapsed prep camera
+//                                               (left_prepare / *_boss_prepare) clear of the folded shop's band (public
+//                                               issue #5: folding the shop did not grow the board)
 //   view.setPrep(privateState, { editable, canPlace })       hand/temp/board pieces; editable enables drag & drop; a
 //                                               new board piece flashes (fx.deploy); a merge's elite — on the tile of
 //                                               the deployed copy it replaced, or on its bench slot — gets the
@@ -374,7 +377,7 @@ export function releaseGl(renderer) {
  * @param {HTMLElement} host
  * @param {{ data?: any, assets?: any, audio?: any, settings?: { damageNumbers?: boolean, quality?: string },
  *           padding?: object|((kind:string, size:{width:number,height:number}) => object),
- *           hud?: {top:number,bottom:number}|((kind:'prep'|'bossPrep', size:{width:number,height:number}) => {top:number,bottom:number}|null) }} [opts]
+ *           hud?: {top:number,bottom:number}|((kind:'prep'|'bossPrep', size:{width:number,height:number}, o:{shop:boolean}) => {top:number,bottom:number}|null) }} [opts]
  */
 export async function createFieldView(host, options = {}) {
   if (!host || typeof host.appendChild !== 'function') throw new TypeError('createFieldView: host element required');
@@ -650,10 +653,11 @@ export async function createFieldView(host, options = {}) {
   }
 
   // the HUD bands the prep cameras keep the bench / field clear of (projection.js clearHud; user playtest #5 item 9):
-  // `opts.hud` = (kind, size) => { top, bottom } | null, or a fixed object; none → the plain official framing
-  function hudBands(kind, sz) {
+  // `opts.hud` = (kind, size, { shop }) => { top, bottom } | null, or a fixed object; none → the plain official framing.
+  // `shop: false` asks for the folded shop's band (the camera request's `shop: false`, public issue #5)
+  function hudBands(kind, sz, o) {
     if (kind !== 'prep' && kind !== 'bossPrep') return null;
-    if (typeof opts.hud === 'function') { try { return opts.hud(kind, sz) || null; } catch { return null; } }
+    if (typeof opts.hud === 'function') { try { return opts.hud(kind, sz, o) || null; } catch { return null; } }
     return opts.hud && typeof opts.hud === 'object' ? opts.hud : null;
   }
 
@@ -673,10 +677,12 @@ export async function createFieldView(host, options = {}) {
     if (k === 'prep') rect = rect ? { ...rect, r0: Math.min(rect.r0, GEO.HAND_ROW) } : null;
     // official configBlackBoard framing (render/projection.js presetCamera); the padding only matters for the
     // fitted fallback (custom rects, portrait viewports); a prep camera keeps the bench and the field clear of the HUD
+    // — `shop: false` (the folded shop, public issue #5) = the official shop-collapsed camera, clear of the folded
+    // shop's HUD band (re-evaluated on resize: camOpts keep the flag)
     const vk = viewKind(kind, o); // (a 'prep' camera on the boss rows = the Final Assault prep)
     return presetCamera(k, { width: sz.width, height: sz.height, padding: o.padding || defaultPadding(k, sz) }, {
       rect, side: o.side, half: !!o.half, shop: o.shop, fit: !!o.fit, config: stageRec?.config || null,
-      hud: hudBands(vk, sz),
+      hud: hudBands(vk, sz, { shop: o.shop !== false }),
     });
   }
 
