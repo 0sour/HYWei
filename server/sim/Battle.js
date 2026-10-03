@@ -815,7 +815,8 @@ export class Battle {
     e.deploySeq = ++this._deploySeq;
     e.deployedAt = this.time;
     e.atkCd = 0;
-    e.pauseUntil = -Infinity;
+    e.pauseUntil = -Infinity;      // content holds (暴鸰's drop)
+    e.atkStandUntil = -Infinity;   // standing for its attack clip (ai.js attackStand)
     // every enemy profile starts with the same fields (stable object shapes keep the hot loop's property reads fast);
     // `dmgType` null = the data's (content may arm a data-unarmed enemy: ai.js enemyAttack)
     e.profile = { noAttack: def.dmgType === 'none', maxTargets: 1, atkScale: 1, dmgType: null };

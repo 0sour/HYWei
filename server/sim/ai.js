@@ -16,10 +16,11 @@
 // always target the enemies it blocks, in range or not, whatever its facing, and targets them first (acquireTargets,
 // Battle.blockedTargets; user playtest #6: "阻挡了就一定要能打到"); a heal attack keeps selecting injured allies while
 // its unit blocks (PRTS 卫戍协议/帮助 "对于医疗干员（咒愈师分支除外），攻击目标为需要治疗的单位").
-// Unblocked ranged enemies attack allies within their radius and pause ATTACK_PAUSE seconds after each attack; the
-// candidates pass the enemy's own rule (`e.profile.canTarget`) and are ordered blocker → taunt → latest deployed
-// (targeting.js sortAllyTargets). An enemy's damage type is its data's unless content arms it (`e.profile.dmgType`:
-// 转译基底's forms, whose data never attacks). Reaching the final leg's end = leak. A `fear` (恐惧) status suspends the route: the
+// Unblocked ranged enemies attack allies within their radius and stand for each attack's clip — through its wind-up
+// and until the clip ends — then walk on (attackStand, GitHub #58; ATTACK_PAUSE after the strike when no clip is known;
+// 「不停止移动」 attackers never stop); the candidates pass the enemy's own rule (`e.profile.canTarget`) and are ordered
+// blocker → taunt → latest deployed (targeting.js sortAllyTargets). An enemy's damage type is its data's unless content
+// arms it (`e.profile.dmgType`: 转译基底's forms, whose data never attacks). Reaching the final leg's end = leak. A `fear` (恐惧) status suspends the route: the
 // enemy runs between random checkpoints away from the fear's source (fear.js moveFeared; a self-inflicted fear
 // flutters inside its own tile); an `attract` (诱导) status walks it to the status point instead (moveAttracted);
 // both re-plan the route when released (恐惧 outranks 诱导).
@@ -449,9 +450,11 @@ export function updateEnemy(b, e, dt) {
   // hidden (teleporting) enemies only advance wait legs
   const stunned = e.s.flags.stun;
   if (e.atkCd > 0 && !stunned && !e.hidden) e.atkCd = Math.max(0, e.atkCd - dt);
-  if (!e.hidden && !stunned) enemyAttack(b, e);
+  // true: an unblocked ranged enemy in the wind-up of its next attack with a target in range (it stands)
+  const winding = !e.hidden && !stunned && enemyAttack(b, e);
   if (!e.alive) return;
-  if (stunned && !e.hidden) return;
+  // a stun / freeze / sleep cuts the attack clip short: no stand left once it ends [ASSUMED]
+  if (stunned && !e.hidden) { e.atkStandUntil = -Infinity; return; }
   if (e.blockedBy) {
     const bl = e.blockedBy;
     // (unblockable/levitate/fear may also arrive through a plain addBuff, which does not unblock by itself; a
@@ -462,6 +465,9 @@ export function updateEnemy(b, e, dt) {
   }
   if (!e.hidden && b._checkBlock(e)) return;
   if (b.time < e.pauseUntil) return;
+  // standing for an attack clip (attackStand, GitHub #58): drawn idle — the client plays the clip, then Move again; a
+  // 恐惧 runs at once (it cannot attack)
+  if (winding || (b.time < e.atkStandUntil && !e.s.flags.fear)) { e.moving = false; return; }
   if (e.s.flags.noMove) { e.moving = false; return; }   // standing (a 重生, a form change): drawn idle, not walking
   // 恐惧 (ba.fear "无法被阻挡并四散逃跑"; PRTS 诱发移动: 恐惧 outranks 诱导): runs to random tiles of the fan away from
   // its source — a self-inflicted fear flutters inside its own tile (fear.js); the route re-plans once it ends
@@ -573,15 +579,45 @@ function advanceRoute(b, e, dt, R) {
   }
 }
 
+/**
+ * How long an unblocked ranged enemy stands for one attack (GitHub #58 — the owner's decision of 2026-10-04 from
+ * first-hand memory of the official game: a ranged enemy stops for each attack's animation and walks on between
+ * attacks; the handbook names attacking on the move as a special ability, “十字路口”量产型's 「不停止移动的四向攻击」).
+ * [ASSUMED] the stand lasts exactly its attack clip — data/enemies.json `attackAnim` { dur, hit }: the clip the client
+ * plays for its attacks and its strike frame (tools/build-data.mjs, from the asset manifest) —, `hit` of it before
+ * the strike (the wind-up, while a target is in range) and the rest after it, both shortened when the attacks come
+ * quicker than the clip (it then plays faster: render/spine.js, the same rule) — no source gives a length. An enemy in
+ * another form (掠海漂移体's crawl, 转译基底's forms, 杰斯顿's second form) stands for its base clip [ASSUMED].
+ * Returns the wind-up and rest (s) into `out`: an enemy with no attack clip known stands ATTACK_PAUSE after the strike
+ * (the old rule), a 「不停止移动」 one (`attackMoves`: data or content) never stops.
+ */
+export function attackStand(e, out = { wind: 0, rest: 0 }) {
+  out.wind = 0; out.rest = 0;
+  if (e.profile?.attackMoves ?? e.def?.attackMoves) return out;
+  const a = e.def?.attackAnim;
+  if (!a || !(a.dur > 0)) { out.rest = ATTACK_PAUSE; return out; }
+  const iv = e.s.interval;
+  const speed = iv > 0 && iv < a.dur ? a.dur / iv : 1;
+  const hit = Number.isFinite(a.hit) ? Math.min(a.dur, Math.max(0, a.hit)) : a.dur / 2;
+  out.wind = hit / speed;
+  out.rest = (a.dur - hit) / speed;
+  return out;
+}
+const STAND = { wind: 0, rest: 0 };
+
+/**
+ * One tick of an enemy's attack: attacks when its cooldown is over and a target is in reach. Returns true while an
+ * unblocked ranged enemy is in the wind-up of its next attack (cooldown ≤ its clip's wind-up, attackStand) with a
+ * target in range: it stands (updateEnemy).
+ */
 function enemyAttack(b, e) {
   const def = e.def;
-  if (e.profile && e.profile.noAttack) return;
+  if (e.profile && e.profile.noAttack) return false;
   const dmgType = (e.profile && e.profile.dmgType) || def.dmgType;
-  if (dmgType === 'none' || e.s.atk <= 0) return;
-  if (e.s.flags.fear || e.s.flags.disarm) return;
-  if (e.s.flags.tremble && e.blockedBy) return; // 战栗: 被阻挡后无法进行普通攻击
-  if (e.atkCd > 0) return;
-  if (dmgType === 'heal') { enemyHeal(b, e, e.base.rangeRadius); return; }
+  if (dmgType === 'none' || e.s.atk <= 0) return false;
+  if (e.s.flags.fear || e.s.flags.disarm) return false;
+  if (e.s.flags.tremble && e.blockedBy) return false; // 战栗: 被阻挡后无法进行普通攻击
+  if (dmgType === 'heal') { if (e.atkCd <= 0) enemyHeal(b, e, e.base.rangeRadius); return false; }
   // applyWay MELEE enemies only ever hit their blocker, even when their data carries a rangeRadius (粉碎攻坚手 2.5,
   // 宿主士兵 2.5, 深池伙友卫队 1.4 … — that radius belongs to their abilities/splash, handled by content).
   // Content may flip it with `e.profile.melee = false`.
@@ -592,6 +628,11 @@ function enemyAttack(b, e) {
   // `e.profile.canTarget(ally)`: the enemy's own target rule (只攻击地面单位, 不会攻击飞行单位 …; content/enemies.js),
   // applied to the candidates before the priority sort and the target count
   const own = e.profile && typeof e.profile.canTarget === 'function' ? e.profile.canTarget : null;
+  if (e.atkCd > 0) {
+    // the wind-up of the next attack (GitHub #58): an unblocked ranged enemy stands once a target is in range
+    if (e.blockedBy || radius <= 0 || !(e.atkCd <= attackStand(e, STAND).wind + 1e-9)) return false;
+    return b.alliesInRadius(e.x, e.y, reach, null).some((a) => canTargetAlly(e, a, true) && (!own || own(a)));
+  }
   let targets = [];
   if (e.blockedBy) {
     const bl = e.blockedBy;
@@ -604,15 +645,16 @@ function enemyAttack(b, e) {
   }
   if (own && targets.length) targets = targets.filter((a) => own(a));
   if (targets.length > 1) sortAllyTargets(e, targets);
-  if (!targets.length) return;
+  if (!targets.length) return false;
   // 麻痹 (ba.palsy): each stack interrupts one normal attack
   const palsy = e.buffs.length ? e.findBuff('palsy') : null;
   if (palsy) {
     if (--palsy.stacks <= 0) b.removeBuff(e, palsy); else e.markDirty();
     e.atkCd = e.s.interval;
-    if (!e.blockedBy && radius > 0) e.pauseUntil = b.time + ATTACK_PAUSE;
+    // the interrupted attack ends its clip: the old short stand after it (PRTS 异常效果 麻痹: 0.5 s 麻痹震颤 — not modelled)
+    if (!e.blockedBy && radius > 0 && !(e.profile?.attackMoves ?? def.attackMoves)) e.atkStandUntil = b.time + ATTACK_PAUSE;
     b.fx('palsy', { x: e.x, y: e.y, id: e.id });
-    return;
+    return false;
   }
   const n = Math.max(1, Math.floor(e.profile?.maxTargets ?? 1) + Math.floor(e.s.maxTargets));
   if (targets.length > n) targets = targets.slice(0, n);
@@ -620,7 +662,7 @@ function enemyAttack(b, e) {
     const ctx = { attacker: e, targets, isSkill: false, profile: e.profile };
     b.emit('beforeAttack', ctx);
     targets = (ctx.targets || []).filter((t) => t && t.alive);
-    if (!targets.length || !e.alive) return;
+    if (!targets.length || !e.alive) return false;
   }
   e.lastAttackAt = b.time;
   e.stats.attacks++;
@@ -644,7 +686,9 @@ function enemyAttack(b, e) {
   }
   if (b._hooks.attack) b.emit('attack', { attacker: e, targets, isSkill: false });
   e.atkCd = e.s.interval;
-  if (!e.blockedBy && radius > 0) e.pauseUntil = b.time + ATTACK_PAUSE;
+  // stands for the rest of its attack clip (attackStand; the wind-up was stood before the strike)
+  if (!e.blockedBy && radius > 0) e.atkStandUntil = b.time + attackStand(e, STAND).rest;
+  return false;
 }
 
 /** Enemy healers (dmgType 'heal'): heal the lowest-HP% other enemy within their radius. */

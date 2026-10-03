@@ -13,7 +13,11 @@ export const COLS = GEO.COLS;
 
 /** tilesPerSecond = moveSpeed × MOVE_SCALE (DESIGN §3). */
 export const MOVE_SCALE = 0.5;
-/** Ranged enemies stop moving this long after each attack (DESIGN §5.5). */
+/**
+ * An unblocked ranged enemy stands for each attack's clip (ai.js attackStand, GitHub #58); one whose model has no attack
+ * clip known (no `attackAnim` in data/enemies.json) stands this long after each attack instead, as do all after an
+ * attack 麻痹 interrupts (DESIGN §5.5).
+ */
 export const ATTACK_PAUSE = 0.35;
 /**
  * Collider radius of an allied unit (PRTS 作战机制 §碰撞体积与位置识别: "我方干员碰撞体积基本均为以0.25格为半径的圆形" —
