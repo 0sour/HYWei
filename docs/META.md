@@ -128,9 +128,11 @@ among them, so a group is picked by the matches it came in [ASSUMED: something o
 difficulty — decides, open]; **R11** (绝境 / 终极 co-op: 悬赏决策 14, 机密商店 4, 战术决策 4, never 道具补给, weights =
 those counts; solo the same [ASSUMED]) a list of 7 "下场战斗" cards — one 特异III giant, one card per faction series —
 of which the draft leaves out one (matches 1 / 6 / 21 / 22 leave out four different cards of one list); one of the 7
-lists seen, uniform (taken as the events bounty_hunter_1..7, one block of the data; 15 equally likely events would
-rarely show only 7 lists in 14 drafts) [ASSUMED], the 4 lists seen with 6 cards completed by that shape — so the R11
-cards no draft showed (12_8 / 16_2 / 16_6) come in about 1 draft in 15 [ASSUMED]. 险境 R6 drafts like R3
+lists seen, uniform, so no list is invented [ASSUMED] (the data does not say which of the 15 events bounty_hunter_*
+R11 fires: by its blocks it would be the 8 events 8..15, beside the 绝境 / 终极-only hardbuff_select; 7, 8 or 9 events
+fit 14 drafts showing 7 lists about equally, 15 do not — with 8, an unseen list would come in about 1 R11 bounty draft
+in 8, open), the 4 lists seen with 6 cards completed by that shape — so the R11 cards no draft showed (12_8 / 16_2 /
+16_6) come in about 1 draft in 15 [ASSUMED]. 险境 R6 drafts like R3
 [ASSUMED]. A card's enemy is fixed by its effect (`enemy_id`): the title only names category and tier (悬赏·损伤I =
 底海滑动者 or 临时收音师). The players pick in turn from one shared draft (a taken card stays greyed with the taker's
 avatar, as in the official matches 17 and 21).

@@ -7,8 +7,8 @@
 //   R9  a group of up to 9 boss bounties / 源石虫·特训: 6 groups (9, 9, 9, 9, 8, 6 cards) for the 6 events, the 鼠王
 //       group in 14 of 22 matches;
 //   R11 悬赏决策 14 / 机密商店 4 / 战术决策 4 / 道具补给 0; its bounty: a list of 7 "下场战斗" cards (one 特异III giant),
-//       one per faction series — 7 lists seen, three of them whole (each draft leaves out one card), taken as the 7
-//       events bounty_hunter_1..7 and picked uniformly (no list built from nothing);
+//       one per faction series — 7 lists seen, three of them whole (each draft leaves out one card), picked uniformly
+//       (no list built from nothing; which of the 15 bounty_hunter events R11 fires is open);
 //   no draft shows a multi-round card, a pre-series card (enemyeffect_3_*), 战术特训 or the 鸭爵 set; no card twice.
 // Each card's enemy is fixed by its effect; the title only names category and tier (悬赏·损伤I = 底海滑动者 in
 // enemyeffect_12_4, 临时收音师 in enemyeffect_18_1). Real data, real draft code, the real match path for the players' case.
@@ -262,19 +262,22 @@ test('#2 R11 (22 matches: 悬赏决策 14, 机密商店 4, 战术决策 4, 道�
     assert.equal(sch.bountyDraft, 'hunter');
     assert.equal(sch.assumed, true);
   }
-  // the list is one of the 7 seen, uniform (taken as the events bounty_hunter_1..7) — no list built from nothing: 15
-  // equally likely events would show 7 lists or fewer in 14 drafts about 6 % of the time (7 events: all 7 about 37 %)
+  // the list is one of the 7 seen, uniform — no list built from nothing [ASSUMED]: 15 equally likely events would show 7
+  // lists or fewer in 14 drafts about 6 % of the time; 7, 8 or 9 events show exactly 7 about equally often (37 / 45 / 39 %)
   assert.equal(H.events.length, 15, 'bounty_hunter_1..15 in the data');
   assert.equal(H.slots, H.groups.length);
   assert.equal(H.slots, 7);
   assert.equal(H.pick, 'slot');
-  // the data's block: bounty_hunter_1..7 together; 8..15 later, beside artifact_paid_4 / 5 and hardbuff_select
+  // the data's block order, which does NOT settle which events R11 fires: bounty_hunter_1..7 after bossInitial_1..6;
+  // 8..15 after artifact_paid_4 / 5 and right before the 绝境 / 终极-only hardbuff_select (read by blocks, R11 = 8..15)
   const p = new URL('../../.cache/gamedata/excel/activity_table.json', import.meta.url);
   if (existsSync(p)) {
     const keys = Object.keys(JSON.parse(readFileSync(p, 'utf8')).activity.AUTOCHESS_SEASON.act2autochess.effectChoiceInfoDict);
     const at = (k) => keys.indexOf(k);
+    assert.equal(at('bounty_hunter_1'), at('bossInitial_6') + 1, 'bounty_hunter_1..7 right after the R9 events');
     for (let i = 2; i <= 7; i++) assert.equal(at(`bounty_hunter_${i}`), at('bounty_hunter_1') + i - 1);
-    assert.ok(at('bounty_hunter_8') > at('artifact_paid_5') && at('artifact_paid_5') > at('bounty_hunter_7') + 1, 'bounty_hunter_8..15 after artifact_paid_4 / 5');
+    assert.ok(at('artifact_paid_5') > at('bounty_hunter_7') + 1, 'bounty_hunter_8..15 not with 1..7');
+    for (let i = 8; i <= 15; i++) assert.equal(at(`bounty_hunter_${i}`), at('artifact_paid_5') + i - 7, 'bounty_hunter_8..15 right after artifact_paid_4 / 5');
     assert.equal(at('hardbuff_select_1'), at('bounty_hunter_15') + 1);
   }
   // generated: six different cards, one per faction series, at most one giant, at most the `open` card outside one seen

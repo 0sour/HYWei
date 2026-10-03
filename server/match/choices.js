@@ -13,8 +13,9 @@
 //                               six) — 9 seen, the 10th built by `rule` (I I I II II III) [ASSUMED];
 //                       boss (R9): one of the 6 groups (9, 9, 9, 9, 8 and 6 cards) of boss bounties / 源石虫·特训,
 //                               picked by the matches it came in [ASSUMED];
-//                       hunter (R11): one of the 7 seen lists of 7 "下场战斗" cards, uniform (taken as the 7 events
-//                               bounty_hunter_1..7) [ASSUMED]; a list seen with 6 cards gets its 7th (`open`) by `rule`
+//                       hunter (R11): one of the 7 seen lists of 7 "下场战斗" cards, uniform, so no list is invented
+//                               [ASSUMED: which of the 15 bounty_hunter events R11 fires is open — by the data's blocks
+//                               8..15]; a list seen with 6 cards gets its 7th (`open`) by `rule`
 //                               (one 特异III giant, else a tier I / II card of a free faction series) [ASSUMED];
 //                     only `draft` cards of that `draftPool` (never 战术特训 — 法术教鞭 only —, the 鸭爵 set, the 7
 //                     multi-round cards or the pre-series cards: no official draft shows them); positions shuffled; the

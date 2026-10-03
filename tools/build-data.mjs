@@ -2373,14 +2373,18 @@ function bountyDraftExclusion(e, main) {
  *   hunter   R11 (R11 is a 悬赏决策 in 14 of the 22 matches): six "下场战斗" cards, the faction _7 / _8 cards and series 16
  *            (16_1..8 the 特异III giants), at most one per faction series 10–15 (14 of 14). 7 groups seen
  *            (BOUNTY_HUNTER_GROUPS): three complete (7 cards), four with 6 cards seen and a 7th drawn by the rule (`open`;
- *            the group of match 15 shows no giant, so its 7th is one). The list is one of these 7, uniform [ASSUMED]:
- *            the 7 seen lists are taken as the 7 events bounty_hunter_1..7 — one block of effectChoiceInfoDict (act1 and
- *            act2), while bounty_hunter_8..15 sit later, beside artifact_paid_4 / 5 and hardbuff_select. With 15 equally
- *            likely events, 14 drafts would show 7 lists or fewer about 6 % of the time (with 7: all 7 about 37 %), and
- *            the counts 4 / 2 / 3 / 1 / 2 / 1 / 1 fit a uniform pick (χ² = 4, 6 df). No list is built from nothing: the
- *            R11 cards no draft showed (12_8 异光体孽生者, 16_2 “越长尘”, 16_6 高准度伦蒂尼姆城防自行炮) come only as an
- *            `open` card (BOUNTY_HUNTER_RULE: one giant for a list without one, else tier I / II cards of the free
- *            faction series, at most two of 16_9..12), in about 1 R11 bounty draft in 15.
+ *            the group of match 15 shows no giant, so its 7th is one). The list is one of these 7, uniform [ASSUMED],
+ *            because that invents no list. The data does not say which of the 15 events bounty_hunter_1..15 R11 fires:
+ *            in effectChoiceInfoDict bounty_hunter_1..7 sit after bossInitial_1..6, and bounty_hunter_8..15 sit after
+ *            artifact_paid_4 / 5 and right before hardbuff_select (the tactic event only 绝境 / 终极 have, the modes
+ *            with an R11) — read by blocks, as SHOP_DRAFT reads the shop events, R11 would be the 8 events 8..15. The
+ *            sample fits 7, 8 or 9 events about equally (14 drafts showing exactly 7 lists: 7 events 37 %, 8 events
+ *            45 %, 9 events 39 %) but not 15 (7 lists or fewer 6 %); the counts 4 / 2 / 3 / 1 / 2 / 1 / 1 fit a uniform
+ *            pick (χ² = 4, 6 df). With 8 events, a list nobody has seen would come in about 1 R11 bounty draft in 8 —
+ *            open. No list is built from nothing: the R11 cards no draft showed (12_8 异光体孽生者, 16_2 “越长尘”, 16_6
+ *            高准度伦蒂尼姆城防自行炮) come only as an `open` card (BOUNTY_HUNTER_RULE: one giant for a list without one,
+ *            else tier I / II cards of the free faction series, at most two of 16_9..12), in about 1 R11 bounty draft in
+ *            15.
  * In none of the 59 bounty drafts: the 7 multi-round cards (山海众头目·多轮悬赏, 多轮悬赏·假想敌 ×6), the pre-series cards
  * enemyeffect_3_* (法术大师A2·悬赏 …), 战术特训 (法术教鞭 only) and the 鸭爵 set; no card twice in one draft.
  */
@@ -2445,7 +2449,8 @@ const BOUNTY_HUNTER_RULE = { size: 7, onePerSeries: [10, 11, 12, 13, 14, 15], ma
  * official 机密商店 cards it showed on (`seen`: 变形同构体 on 4 of the 8 tier-VI cards) [ASSUMED]. Solo shows 3 of the 6
  * [ASSUMED]. Only at R11 (`rounds`; R11 is 绝境 / 终极 only, the rounds of the screenshots): the 机密商店 of 标准 R3 / R9
  * and 险境 R3 / R6 / R9 has no screenshot, and the data's shop events sit in three blocks (artifact_paid_1 by the R3
- * events, _2 / _3 by bossInitial / bounty_hunter_1..7, _4 / _5 by hardbuff_select), so those keep the previous draw —
+ * events, _2 / _3 by bossInitial / bounty_hunter_1..7, _4 / _5 by bounty_hunter_8..15 and hardbuff_select — the same
+ * block reading leaves open which hunter events R11 fires, see `hunter` above), so those keep the previous draw —
  * any normal shop item of tiers I–VI per card, with replacement (the same item can come twice there too) [ASSUMED].
  */
 const SHOP_DRAFT = {
@@ -2638,11 +2643,11 @@ function buildChoices(ctx, effects, items, chess) {
       },
       hunter: {
         events: eventsOf('bounty', (e) => bountyEventRe.hunter.test(e.id) && !e.solo), slots: BOUNTY_HUNTER_GROUPS.length,
-        // the 7 seen lists = the 7 events bounty_hunter_1..7 (one block of effectChoiceInfoDict) [ASSUMED]: `slots` 7, so
-        // no list is built from nothing; `rule` builds the `open` cards only
+        // one of the 7 seen lists, uniform [ASSUMED]: `slots` 7, so no list is built from nothing (which of the 15 events
+        // R11 fires is open — by the data's blocks it would be 8..15); `rule` builds the `open` cards only
         pick: 'slot', groups: BOUNTY_HUNTER_GROUPS.map(withWeights),
         rule: { ...BOUNTY_HUNTER_RULE, giants: hunterTier(3), cards: [...hunterTier(2), ...hunterTier(1)] }, count: 6,
-        assumed: ['the 7 seen lists are the R11 events (bounty_hunter_1..7), picked uniformly', 'card weights 1 + hits', 'the `open` cards built by `rule`'],
+        assumed: ['one of the 7 seen lists, picked uniformly (which of the 15 events R11 fires is open)', 'card weights 1 + hits', 'the `open` cards built by `rule`'],
       },
     },
     // the official 机密商店 (SHOP_DRAFT) at `rounds`: `slots` tier → weight (`coin` = 盟约之币), each drawn on its own;
