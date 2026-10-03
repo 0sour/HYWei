@@ -623,12 +623,16 @@ test('player feedback after 0.1.0 (DESIGN §21, v0.1.1): every report mapped, th
   const sec = (n) => DESIGN.slice(DESIGN.indexOf(`## ${n}.`), DESIGN.indexOf(`## ${n + 1}.`) > 0 ? DESIGN.indexOf(`## ${n + 1}.`) : undefined);
   const S21 = sec(21);
   assert.match(DESIGN, /## 21\. Player feedback after 0\.1\.0 \(v0\.1\.1\)/);
-  for (let i = 1; i <= 25; i++) assert.match(S21, new RegExp(`### 21\\.${i} `), `§21.${i}`);
+  for (let i = 1; i <= 29; i++) assert.match(S21, new RegExp(`### 21\\.${i} `), `§21.${i}`);
+  // every subsection number is used once (three closing branches had each added a "§21.26")
+  const nums = [...S21.matchAll(/^### 21\.(\d+) /gm)].map((m) => +m[1]);
+  assert.deepEqual(nums, Array.from({ length: nums.length }, (_, i) => i + 1), 'consecutive §21 subsections');
   const intro = S21.slice(0, S21.indexOf('### 21.1 '));
   for (let i = 1; i <= 10; i++) assert.match(intro, new RegExp(`#${i} `), `the intro maps report #${i}`);
   for (const r of ['B1', 'B2', 'B3', 'B4', 'B5', 'C1', 'C2', 'D1', 'D2', 'D3', 'D4', 'D5', 'E1', 'E2', 'E3', 'F1', 'F2', 'F3', 'F4', 'F5']) assert.match(intro, new RegExp(`${r} `), `the intro maps report ${r}`);
   assert.match(intro, /Thirty-two reports/);
-  assert.match(intro, /\(PR #2, PR #7\) → §21\.25/);
+  assert.match(intro, /\(PR #2, PR #7, PR #10, PR #14\) → §21\.25/);
+  assert.match(intro, /issues #1 \/ #8 → §21\.26; the client fixes for issue #5 \(the folded shop's camera\) and #8 item 5 \(operators left as placeholders\) → §21\.27; the strategy draft's match info \(#8 item 1\) → §21\.28; six 重装 skills cast with an enemy in range, the owner's deliberate deviation \(issue #4, PR #12\) → §21\.29/);
   const sub = (n) => { const a = S21.indexOf(`### 21.${n} `); const b = S21.indexOf('\n### 21.', a + 5); return S21.slice(a, b > 0 ? b : undefined); };
   // settled: the tactician re-orientation (user-confirmed) and the screenshot-based bounty structures
   const s2120 = sub(20);
