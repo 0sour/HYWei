@@ -251,7 +251,7 @@ export function revivedInPlace(u) { if (u && u.mem) u.mem.revives = (u.mem.reviv
  * source] — and ends with the deployment. 信仰搅拌机 S2 steps aside while it holds (kits/tier4.js).
  */
 export function holdsUndying(battle, u) {
-  return !!u && u.mem.undyingAt === deploymentOf(u) && battle.time < (u.mem.undyingUntil ?? -Infinity);
+  return !!u && u.mem.undyingAt != null && battle.time < u.mem.undyingUntil && u.mem.undyingAt === deploymentOf(u);
 }
 /** Effective multiplier of a hammer type on `u` and its params (null when the type does not apply). */
 function hammerMul(battle, rt, u, hs, type) {
