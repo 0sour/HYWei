@@ -427,8 +427,9 @@ export function allTargets(b, e) {
 /**
  * The allies an AREA effect of enemy `src` selects within `r` of (x, y) — splash, blast, area skill / status, pulse, zone
  * tick, chain or bounce jump (targeting.js areaSelectable: no unblocking 隐匿, untargetable or sleeping ally, no 起飞 one
- * for a ground `src`; 迷彩 is hit). `src` = the enemy whose effect it is (null: none — 隐匿 still applies). Abilities PRTS
- * marks "无视无法选择 / 无视可选性" use b.alliesInRadius with `ignoreSelect` instead.
+ * for a ground `src`; 迷彩 is not checked). `src` = the enemy whose effect it is (null: none — 隐匿 still applies). A
+ * locked target goes first through targetAndArea. Abilities PRTS marks "无视无法选择 / 无视可选性" use b.alliesInRadius with
+ * `ignoreSelect` instead.
  */
 export function areaAllies(b, src, x, y, r) {
   return b.alliesInRadius(x, y, r).filter((a) => areaSelectable(src, a));
