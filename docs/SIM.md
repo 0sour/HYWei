@@ -1149,8 +1149,8 @@ Unknown subprofessions fall back to the profession default (test `professions.te
 - `snapshot()` → `{ fieldId, t, units: [[id, x, y, hp, maxHp, sp, spMax, flags, anim]], dp, killed, total, dps?, boss?, down?, elem? }`.
   `sp/spMax` show remaining duration/ammo as a draining bar while a timed skill is active. Units in DIE state stay 0.8 s.
   `down: [[id, respawnAt, respawnTime, state, row, col]]` (only when non-empty) = operators lying down waiting to redeploy
-  (`Battle.isDown(u)`: any removal reason but the 突袭 `'raid'` — `'killed'`, `FORCED_EXIT` (§1.1 carryState `down`), a forced
-  exit `'retreat'` / `'merchant'` (GitHub #60) —, not removed for good, deployed at least once, a finite
+  (`Battle.isDown(u)`: reason `'killed'` or `FORCED_EXIT` (§1.1 carryState `down`), or a forced exit `'retreat'` /
+  `'merchant'` (GitHub #60) — every removal but the 突袭 `'raid'` —, not removed for good, deployed at least once, a finite
   respawn timer; `state` = constants.js
   `DOWN_STATE`: 0 counting, 1 timer done / DP short, 2 timer done / its tile taken — a safeguard: no ally deploys on a
   knocked-out operator's tile, §1; `row, col` = the tile it lies on and comes back on, `unit.body`); `elem: [[id, element, fill,
