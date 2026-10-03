@@ -115,6 +115,21 @@ describe('an operator facing UP knocked out (Back model without a Die clip)', ()
     assert.deepEqual(held(s), [], 'every acquire paired with a release');
   });
 
+  test('every operator of the report (跃跃, 拉普兰德, 异德 = 缄默德克萨斯, 斯卡蒂, 德克萨斯) lies down with its Front model\'s Die', async () => {
+    for (const id of [CAPER, 'char_140_whitew', 'char_1028_texas2', 'char_263_skadi', 'char_102_texas']) {
+      assert.equal(dieClipDur(back(id)), 0, `${id}: no Die clip in its Back skeleton`);
+      const v = await op(id, 'UP');
+      v.onAttack(null, 1, 'none');
+      v.setDown(DOWN(), 1);
+      frames(v, 1);
+      await settle();
+      frames(v, 120);
+      assert.equal(v.actor.entry, front(id), id);
+      assert.equal(v.actor.current, front(id).anims.die, id);
+      v.destroy();
+    }
+  });
+
   test('facing RIGHT it falls with its Front model as before (one model, no swap)', async () => {
     const s = store();
     const v = await op(CAPER, 'RIGHT', s);
