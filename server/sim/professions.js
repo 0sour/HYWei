@@ -93,10 +93,12 @@ const installCharger = (battle, unit) => {
 
 /**
  * 傀儡师 (dollkeeper) trait "受到致命伤时不撤退，切换成<替身>作战（替身阻挡数为0），持续20秒后自身再次替换<替身>" with the
- * branch rules of PRTS 分支特性信息 傀儡师: a lethal hit on the <本体> (one it survives with 不死 does not count) starts a
- * switch animation, after which the operator fights as its <替身> for the trait's 20 s (bb duration) holding 阻回; then
- * it switches back the same way. A switch animation clears the operator's Buffs and resets its HP to the max of the form
- * it switches to; during one the operator holds 不死, 无敌, 阻回, 禁疗, 孤立, 强制缴械 and is immune to 眩晕 / 冻结 / 睡眠.
+ * branch rules of PRTS 分支特性信息 傀儡师: a lethal hit on the <本体> (one it survives with 不死 does not count: "受到足以致命的
+ * 伤害且未持有不死的情况下" — a skill's / talent's own 不死 runs earlier, a running 坚固维式重锤 window just before this hook,
+ * items/battle.js PRIO_UNDYING_HELD −99) starts a switch animation, after which the operator fights as its <替身> for the
+ * trait's 20 s (bb duration) holding 阻回; then it switches back the same way. A switch animation clears the operator's
+ * Buffs and resets its HP to the max of the form it switches to; during one the operator holds 不死, 无敌, 阻回, 禁疗, 孤立,
+ * 强制缴械 and is immune to 眩晕 / 冻结 / 睡眠.
  * The 替身 blocks nothing from the start of the switch to it until the switch back starts; a lethal hit on it knocks the
  * operator out. Content may switch the operator at once (hook `dollSwitch` { unit, reason, done }: 归溟幽灵鲨 S2 "技能结束
  * 后立刻切换为<替身>"). A kit's `dollNoAttack` profile flag (归溟幽灵鲨, PRTS 特性备注 "<替身>不进行普通攻击") disarms the 替身
@@ -104,10 +106,14 @@ const installCharger = (battle, unit) => {
  * 技能范围 — likewise); 风丸's 替身 attacks (PRTS: "<替身>状态下可对空").
  * The form is the unit's model state (`unit.form` 'doll', snapshot.js unitInfo; fx 'substitute' / 'swap' / 'dollEnd' with
  * `form`, shared/protocol.js fxForm): the client draws the 替身 on the skeleton's *_B clips (render/units.js FORMS).
+ * The 替身's max HP is the operator's own (PRTS: HP "重设…至最大值"; the trait blackboard's 替身 HP bonus `max_hp` is 0 for
+ * both 傀儡师 — the elite PUM-Y module's +20 % aside — and 风丸's 纸偶 token has her max HP at every level), or its 替身
+ * token's (风丸).
  * [ASSUMED]: a switch animation lasts DOLL_SWITCH (the skeletons' 1 s Start_B — the 替身 appearing — and Start_2 — the
- * 本体 back); "清除自身一切Buff" ends the running skill and removes the statuses (buffs with a catalogue `status`) — the
- * remake's bond / item / talent effects are buffs too and stay; a dollkeeper without a 替身 token of its own (归溟幽灵鲨) keeps
- * its own max HP (PRTS: HP "重设…至最大值"; character_table has no 替身 of hers, and 风丸's 纸偶 token has her HP).
+ * 本体 back), also on a direct switch (`dollSwitch`); "清除自身一切Buff" ends the running skill and removes the statuses
+ * (buffs with a catalogue `status`) — every other buff stays, the remake's bond / item / talent effects (buffs too)
+ * and other units' timed buffs and shields alike; 无敌 is damage immunity only (as for every ally 无敌 here — PRTS's
+ * "无法被不同阵营选中" is not modelled for it).
  */
 export const DOLL_SWITCH = 1;
 const DOLL_SWITCH_IMMUNE = new Set(['stun', 'freeze', 'sleep']);
@@ -127,10 +133,10 @@ const installDollkeeper = (battle, unit) => {
     const sk = unit.skill;
     if (sk && sk.active && sk.kind !== 'passive') sk.end('substitute');
     for (const b of unit.buffs.slice()) if (b.status) battle.removeBuff(unit, b);
-    unit.trait.dollSwitch = true;
-    const done = () => { unit.trait.dollSwitch = false; };
+    unit.trait.dollSwitching = true;
+    const done = () => { unit.trait.dollSwitching = false; };
     battle.addBuff(unit, {
-      key: 'trait:dollSwitch', duration: DOLL_SWITCH, onExpire: done, onRemove: done,
+      key: 'trait:dollSwitching', duration: DOLL_SWITCH, onExpire: done, onRemove: done,
       flags: { invulnerable: true, noSp: true, noHeal: true, isolated: true, disarm: true },
     });
   };
@@ -166,18 +172,18 @@ const installDollkeeper = (battle, unit) => {
   };
   battle.on('fatal', (ctx) => {
     if (ctx.unit !== unit || ctx.prevented) return;
-    if (unit.trait.dollSwitch) { ctx.prevented = true; return; } // 不死 while switching (a 流失 ignores 无敌)
+    if (unit.trait.dollSwitching) { ctx.prevented = true; return; } // 不死 while switching (a 流失 ignores 无敌)
     if (unit.trait.doll) return;                                   // the 替身 is knocked out
     ctx.prevented = enter();
   }, { owner: unit, priority: -100 });
   battle.on('dollSwitch', (ctx) => { if (ctx.unit === unit && !ctx.done) ctx.done = enter(); }, { owner: unit });
   battle.on('beforeStatus', (ctx) => {
-    if (ctx.target === unit && unit.trait.dollSwitch && DOLL_SWITCH_IMMUNE.has(ctx.status)) ctx.cancel = true;
+    if (ctx.target === unit && unit.trait.dollSwitching && DOLL_SWITCH_IMMUNE.has(ctx.status)) ctx.cancel = true;
   }, { owner: unit });
   battle.on('death', (ctx) => {
     if (ctx.unit !== unit) return;
     unit.trait.doll = false;
-    unit.trait.dollSwitch = false;
+    unit.trait.dollSwitching = false;
     // knocked out as the 替身: its death clip has played (the 'die' event came first); the redeploy is the 本体 again
     if (unit.form) { unit.form = null; battle.fx('dollEnd', at({ form: null })); }
   }, { owner: unit });
