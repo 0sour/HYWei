@@ -14,7 +14,7 @@
 //   deploy()                              'Start' once, then base
 //   die()                                 die clip once (callers fade out afterwards)
 //   stunned (setBase('stun'))             stun clip, or the current track frozen at timeScale 0
-//   setForm(roles, change, end)           another clip set of the skeleton (an enemy's mode), after a change clip
+//   setForm(roles, change, end)           another clip set of the skeleton (an enemy's mode, a 傀儡师's 替身), after a change clip
 //                                         (no attack cuts the change clip short); `end` = { clip, in, roles? }: a
 //                                         closing clip timed to end `in` s from now (a 重生's last clip ends with the
 //                                         重生), landing in `roles`
@@ -121,18 +121,22 @@ export class SpineActor {
   setSkillIndex(index) {
     const anims = this.entry?.anims || {};
     const clip = Number.isInteger(index) && anims.skills ? anims.skills[String(index)] : null;
-    this.roles = clip ? { ...anims, skill: clip } : anims;
+    this.roles = this.baseRoles = clip ? { ...anims, skill: clip } : anims;
   }
+
+  /** The unit's own roles: the manifest's with its equipped skill's clip (setSkillIndex) — what a form ends in. */
+  _baseRoles() { return this.baseRoles || this.entry?.anims || {}; }
 
   /**
    * Another clip set of the same skeleton — an enemy's mode (render/units.js FORMS: 掠海漂移体's 爬行模式 plays its *_02
-   * clips): `roles` override the manifest roles (null = back to them); `change` = a transition clip played once first
-   * (also while stunned: the pose it ends in is the one a stun then holds). `end` = { clip, in, roles? } (game s): a
-   * closing clip played the same way so that it ends `in` s from now, landing in `roles` — a leader's 重生 ends on its
-   * last clip while the sim still holds it, and the next form starts on its own clips.
+   * clips), a 傀儡师's 替身: `roles` override the unit's own roles (null = back to them — the equipped skill's clip
+   * included); `change` = a transition clip played once first (also while stunned: the pose it ends in is the one a stun
+   * then holds). `end` = { clip, in, roles? } (game s): a closing clip played the same way so that it ends `in` s from
+   * now, landing in `roles` — a leader's 重生 ends on its last clip while the sim still holds it, and the next form
+   * starts on its own clips.
    */
   setForm(roles, change = null, end = null) {
-    const anims = this.entry?.anims || {};
+    const anims = this._baseRoles();
     this.roles = roles ? { ...anims, ...roles } : anims;
     this.endClip = null;
     if (this.dead) return;
@@ -369,7 +373,7 @@ export class SpineActor {
     if (this.endClip && this.clock >= this.endAt) {
       const clip = this.endClip;
       this.endClip = null;
-      if (this.endRoles) this.roles = { ...(this.entry?.anims || {}), ...this.endRoles };
+      if (this.endRoles) this.roles = { ...this._baseRoles(), ...this.endRoles };
       if (!this.dead) this._change(clip);
     }
     if (this.windUntil != null && this.clock >= this.windUntil) {

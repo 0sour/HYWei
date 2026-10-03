@@ -835,7 +835,7 @@ export function fxAtlas() {
   return _fx;
 }
 
-export const STATUS_KEYS = ['stun', 'freeze', 'cold', 'stealth', 'shield', 'fragile', 'sleep', 'invuln', 'silence', 'slow', 'bind', 'fear', 'weaken', 'levitate', 'taunt', 'burn', 'neural', 'necrosis', 'blocked', 'skill'];
+export const STATUS_KEYS = ['stun', 'freeze', 'cold', 'stealth', 'shield', 'fragile', 'sleep', 'invuln', 'silence', 'slow', 'bind', 'fear', 'weaken', 'levitate', 'taunt', 'burn', 'neural', 'necrosis', 'blocked', 'skill', 'doll'];
 
 function drawStatusIcon(c, key, x, y, s) {
   const cx = x + s / 2, cy = y + s / 2;
@@ -928,6 +928,17 @@ function drawStatusIcon(c, key, x, y, s) {
     case 'skill': {
       disc('rgba(60,40,5,0.92)', '#ffe066');
       c.fillStyle = '#ffe066'; star(c, cx, cy, 10, 4.5);
+      break;
+    }
+    case 'doll': {
+      // a 傀儡师's <替身>: a puppet hanging from two strings
+      disc('rgba(40,25,55,0.92)', '#d8b0ff');
+      c.strokeStyle = '#f0dcff'; c.lineWidth = 1.2;
+      c.beginPath(); c.moveTo(cx - 6, cy - 12); c.lineTo(cx - 6, cy - 1); c.moveTo(cx + 6, cy - 12); c.lineTo(cx + 6, cy - 1); c.stroke();
+      c.fillStyle = '#f0dcff';
+      c.beginPath(); c.arc(cx, cy - 5, 3.2, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.moveTo(cx - 6, cy - 1); c.lineTo(cx + 6, cy - 1); c.lineTo(cx + 3, cy + 5); c.lineTo(cx + 5, cy + 11); c.lineTo(cx + 1.5, cy + 11);
+      c.lineTo(cx, cy + 6); c.lineTo(cx - 1.5, cy + 11); c.lineTo(cx - 5, cy + 11); c.lineTo(cx - 3, cy + 5); c.closePath(); c.fill();
       break;
     }
     default: disc('rgba(30,30,30,0.9)', '#ccc');
