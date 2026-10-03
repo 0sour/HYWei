@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import {
   ROOT, MIN_NODE, IS_WIN, IS_MAC, c, mark, capture, padDisplay, displayWidth,
   checkNode, checkDeps, checkVendor, checkData, checkAssets, checkLocal, findClient, findPython,
+  LOCAL_ART_FALLBACK, LOCAL_ART_COPY_HINT,
 } from './setup.mjs';
 
 // ---------------------------------------------------------------------------------------------------
@@ -192,7 +193,7 @@ async function main() {
   const client = findClient(null);
   row(local.manifest ? 'ok' : 'skip', '本地客户端美术（可选）', local.manifest
     ? `${local.count} 项${local.board3d ? '，3D 棋盘可用' : '，无棋盘贴图（2D 棋盘）'}${local.board3d && !local.tiles ? '；缺 tiles.json → node tools/setup.mjs' : ''}`
-    : client ? `检测到 ${client.kind} 客户端 → node tools/setup.mjs --local` : '未提取（不影响游戏）');
+    : client ? `检测到 ${client.kind} 客户端 → node tools/setup.mjs --local` : `未提取：${LOCAL_ART_FALLBACK}（${LOCAL_ART_COPY_HINT}）`);
   if (client || local.manifest) {
     const py = findPython();
     row(py ? 'ok' : 'skip', 'Python（仅提取用）', py ? `${py.cmd} ${py.version}` : '未找到 Python 3.8+');
