@@ -112,7 +112,15 @@ text "无需消耗资金") and follow the 4 official 机密商店 (choices.json 
 an item within its tier weighted by the official cards it showed on — so the same item can be offered twice (official:
 盟约之币 ×2, 变形同构体 ×2; the slot split and the weights [ASSUMED]) — at R11 (绝境 / 终极), the round of the
 screenshots; the earlier 机密商店 of 标准 / 险境 (no screenshot) keep the previous draw, any tier I–VI per card with
-replacement [ASSUMED]; two identical cards are two cards (picks go by index). 悬赏决策 offers only choices.json cards with `draft: true` (`choices.js draftBounty`): never 战术特训 (PRTS
+replacement [ASSUMED]; two identical cards are two cards (picks go by index). 战术决策 follows the 4 official 战术决策
+(choices.json `tacticDraft`, build-data `TACTIC_DRAFT`, `choices.js tacticDraftCards`; the user: "战术决策也按官方改成可以
+重复吧"): each card drawn on its own, with replacement, so the same card can be offered twice (official match 7 R11:
+补给 ×2) — at R11 (绝境 / 终极) only the ally cards (the 24 official cards hold no 排斥 / 责罚 / 裁决 and no terrain card),
+each weighted 1 + the official cards it showed on (列装 / 财富 / 补给 / 整备 / 升华 made half of them) [ASSUMED: the
+weights]; the earlier 战术决策 of 标准 / 险境 (no screenshot) keep every card, uniform, terrain cards only for the match
+stage, with replacement too [ASSUMED]. Identical tactic cards are separate cards as well: each pick applies its own card
+once, and two picks of one team card stack (both reach every teammate). The header reads the official
+"进行协同调整，做好迎战准备。". 悬赏决策 offers only choices.json cards with `draft: true` (`choices.js draftBounty`): never 战术特训 (PRTS
 "※以下悬赏任务仅由法术教鞭生成") nor the 鸭爵 / 高普尼克 / 流泪小子 / 圆仔 cards (user playtest #6 item 4). **Each draft is
 built like the official one of its round** (`choices.js bountyDraftCards`, choices.json `bountyDrafts` / schedule
 `bountyDraft`; player feedback after 0.1.0, report #2 — late bounty enemies in the early drafts — settled by 66
