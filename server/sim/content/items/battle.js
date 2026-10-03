@@ -20,7 +20,7 @@
 // either quality satisfies them; lent items count as carried. Both are evaluated live, at the moment of use.
 //
 // Hook priorities (non-default): 'fatal' — consumable death savers run LAST, so a skill's / talent's own undying (kits
-// use 10 … −60) never wastes a charge: 坚固维式重锤's first-lethal-hit lock (异常效果 不死) at PRIO_REVIVE −100, then the
+// use 10 … −60) never wastes a charge: 坚固维式重锤's lock (异常效果 不死, once per deployment) at PRIO_REVIVE −100, then the
 // M3茧甲 revive at PRIO_RESPAWN −101 — PRTS 卫戍协议：盟约 下半/PRTS盟约记录 备注 "“复活”的实现方式为：受益者因移动之外的
 // 原因退场时下次部署的再部署时间和费用归零": a revive acts on a knock-out, which a 不死 prevents, so the lock always comes
 // first whatever the equip order (player report F1 after 0.1.0: with the 茧甲 equipped first the revive ran first and
@@ -272,11 +272,17 @@ function hammerAcquire(battle, rt, u) {
       if (t && t.side === 'enemy' && t.alive && chance(battle, pr)) battle.applyStatus(t, 'tremble', { duration: num(p.disarmed_duration, 2), source: u });
     }
   });
-  // 坚固: first lethal hit per battle ⇒ HP never below 1 for undeadable_duration × m s. Per battle [ASSUMED]: the text
-  // only says 首次 (M3茧甲 says 一场战斗, 拉特兰桥夹 每次部署); the hammer state lives on the unit, which a redeploy
-  // reuses, so a carrier knocked out after its lock comes back without one. Per deployment would reset
-  // undyingUsed / undyingUntil on the carrier's own non-initial 'deploy'. Any lethal HP loss sets it off, an ally's (the
-  // 阿戈尔 battle-start devour, "造成5000点物理伤害") or the carrier's own (源石溶剂) included.
+  // 坚固: first lethal hit of each deployment ⇒ HP never below 1 for undeadable_duration × m s. Once per DEPLOYMENT (the
+  // user's first-hand memory of the official mode, 2026-10-03: "每次部署一次"; the text only says 首次): the carrier's own
+  // non-initial 'deploy' — the redeploy after a knock-out, a 突袭 jump (retreat + redeploy) — re-arms the lock and ends a
+  // window still running (the retreat ends the unit's states). Any lethal HP loss sets it off, an ally's (the 阿戈尔
+  // battle-start devour, "造成5000点物理伤害") or the carrier's own (源石溶剂) included.
+  S.on('deploy', (c) => {
+    if (c.unit !== u || c.initial) return;
+    hs.undyingUsed = false;
+    hs.undyingUntil = -Infinity;
+    if (u.mem.undyingUntil != null) u.mem.undyingUntil = -Infinity;
+  }, 100);
   S.on('fatal', (c) => {
     if (c.unit !== u || c.prevented) return;
     if (battle.time < hs.undyingUntil) { c.prevented = true; return; }

@@ -5,8 +5,9 @@
 // ordering fault is fixed: with M3茧甲 equipped before the hammer, its revive ran first at the same priority and the first
 // lethal hit showed no lock. PRTS (same page, M3茧甲 / 埃芒加德 / 阿戈尔 备注): "“复活”的实现方式为：受益者因移动之外的原因退场时
 // 下次部署的再部署时间和费用归零" — a revive acts on a knock-out (退场), which a 不死 prevents, so the lock always comes first
-// (items/battle.js PRIO_RESPAWN). Pinned too, as the ways a lock can look missing: one lock per battle [ASSUMED] (a
-// redeployed carrier has none) and the 阿戈尔 battle-start devour spending it.
+// (items/battle.js PRIO_RESPAWN). The scope is one lock per DEPLOYMENT (the user's decision, 2026-10-03: "每次部署一次"):
+// until then a redeployed carrier had none, the likeliest reading of the report. Pinned too: the 阿戈尔 battle-start
+// devour spends the lock of the first deployment.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBattle, chessRec, enemyRec } from '../helpers/battleHarness.js';
@@ -83,12 +84,13 @@ test('F1 坚固维式重锤: the carrier\'s own 源石溶剂 drain cannot finish
   assert.equal(c.u.alive, false, 'the first tick after the 8 s knocks it out');
 });
 
-// [ASSUMED] scope, an open question for the user: the official text says only 首次 (no 一场战斗 / 每次部署), and a
-// carrier knocked out after its lock comes back without one — the likeliest reading of "锁血没生效" (forced-hammer bot
-// matches, 3 绝境 + 4 困难: 27 of 382 carrier knock-outs came in a later deployment with the lock spent). Per deployment
-// would flip the third assertion below.
-test('F1 坚固维式重锤: one lock per battle (a redeploy does not re-arm it [ASSUMED]); a new battle re-arms it', () => {
+// Scope: once per deployment (the user's first-hand memory of the official mode, 2026-10-03: "每次部署一次"; the text
+// says only 首次). Before, a carrier knocked out after its lock came back without one — the likeliest reading of
+// "锁血没生效" (forced-hammer bot matches, 3 绝境 + 4 困难: 27 of 382 carrier knock-outs came in a later deployment with
+// the lock spent).
+test('F1 坚固维式重锤: one lock per deployment — the redeploy after a knock-out re-arms it; a new battle too', () => {
   const c = carrier([HAMMER]);
+  const log = fxLog(c.h, c.u);
   const hit = () => c.h.b.dealDamage(c.e, c.u, { amount: 1e7, type: 'true', canDodge: false });
   hit();
   assert.ok(c.u.alive);
@@ -98,16 +100,40 @@ test('F1 坚固维式重锤: one lock per battle (a redeploy does not re-arm it 
   c.h.runUntil(() => c.u.alive, 60);
   assert.ok(c.u.alive, 'redeployed');
   hit();
-  assert.equal(c.u.alive, false, 'the second deployment of the battle has no lock left');
+  assert.ok(c.u.alive && c.u.hp >= 1 && c.u.hp < 2, 'the second deployment locks again');
+  assert.equal(log.filter((x) => x[0] === 'undying').length, 2, 'two locks, one per deployment');
+  c.h.run(7.8);
+  hit();
+  assert.ok(c.u.alive, 'held for the whole 8 s of the second lock');
+  c.h.run(0.4);
+  hit();
+  assert.equal(c.u.alive, false, 'and only once in that deployment');
   const next = carrier([HAMMER]);
   next.h.b.dealDamage(next.e, next.u, { amount: 1e7, type: 'true', canDodge: false });
   assert.ok(next.u.alive && next.u.hp >= 1, 'the next battle locks again');
 });
 
+test('F1 坚固维式重锤: a retreat + redeploy (a 突袭 jump) is a new deployment — fresh lock, the old window ends', () => {
+  const c = carrier([HAMMER]);
+  const hit = () => c.h.b.dealDamage(c.e, c.u, { amount: 1e7, type: 'true', canDodge: false });
+  hit();
+  assert.ok(c.u.alive && c.u.mem.undyingUntil > c.h.b.time, 'lock running');
+  c.h.run(2);
+  c.h.b.retreat(c.u, { reason: 'raid' });
+  assert.ok(c.h.b.redeploy(c.u, { free: true, tile: [10, 5], keepSp: true }), 'redeployed one tile on');
+  assert.ok(!(c.u.mem.undyingUntil > c.h.b.time), 'the first deployment\'s window ended with it');
+  c.h.run(1);
+  hit();
+  assert.ok(c.u.alive && c.u.hp >= 1 && c.u.hp < 2, 'the new deployment has its own lock');
+  c.h.run(8.2);
+  hit();
+  assert.equal(c.u.alive, false, 'used up for this deployment');
+});
+
 // The other way a lock is gone before the enemies hit: the 阿戈尔 battle-start devour ("吞噬身前一格干员对其造成5000点物理
-// 伤害") is a lethal hit on the fodder, so a hammer carrier in front of an 阿戈尔 survives it at 1 HP and spends its one
-// lock at t = 0 (in forced-hammer 绝境 bot matches 10 of 179 locks went this way). Kept: the text calls it damage and
-// 异常效果 不死 holds any HP reset at 1 [ASSUMED that the official engine does the same].
+// 伤害") is a lethal hit on the fodder, so a hammer carrier in front of an 阿戈尔 survives it at 1 HP and spends the lock
+// of its first deployment at t = 0 (in forced-hammer 绝境 bot matches 10 of 179 locks went this way). Kept: the text calls
+// it damage and 异常效果 不死 holds any HP reset at 1 [ASSUMED that the official engine does the same].
 test('F1 坚固维式重锤 in front of an 阿戈尔: the battle-start devour spends the lock (fodder kept at 1 HP for 8 s)', () => {
   const g = (id) => chessRec({ id, bonds: ['egirShip'], profession: 'WARRIOR', skill: null, stats: { atk: 1000, maxHp: 10000, def: 0, blockCnt: 2 } });
   const h = makeBattle({
@@ -124,7 +150,7 @@ test('F1 坚固维式重锤 in front of an 阿戈尔: the battle-start devour sp
   const e = h.b.enemies.find((x) => x.alive);
   h.run(8.2);
   h.b.dealDamage(e, u, { amount: 1e7, type: 'true', canDodge: false });
-  assert.equal(u.alive, false, 'the first enemy kill after the window finds no lock left');
+  assert.equal(u.alive, false, 'the first enemy kill after the window finds no lock left in that deployment');
 });
 
 test('F1 坚固维式重锤 + M3茧甲: the lock comes before the revive whatever the equip order (PRTS: a revive acts on 退场)', () => {
