@@ -17,7 +17,8 @@
 // playtest6b follow-up (DESIGN §20.10–§20.13): leader HP and 直接乘算, the elite on the consumed copy's tile, the official
 // 999 layer cap (one implementation) and 限伤 300000, the 假想敌：胄 kit — and the normative lines they rewrote; player
 // feedback after 0.1.0 (DESIGN §21, v0.1.1) including batch 6 (§21.21–§21.25: 坚固维式重锤 once per deployment, 起飞,
-// fenced tiles, knocked-out bodies, the dispatcher snapshot and the manifest shrink guard credited to PR #2 / PR #7).
+// fenced tiles, knocked-out bodies, the dispatcher snapshot and the manifest shrink guard credited to PR #2 / PR #7) and
+// the 突变细胞 bench rule (§21.1: the carrier destroyed, its new operator gained into the 整备区 — official footage, PR #2).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -719,4 +720,29 @@ test('batch 6 after 0.1.0 (DESIGN §21.21–§21.25): the hammer per deployment,
   assert.match(log, /共 32 条，其中 4 条核实后不是问题/);
   assert.match(log, /PR #2 指出/);
   assert.match(log, /PR #7 指出/);
+});
+
+test('突变细胞 after the WA merge (DESIGN §21.1): the carrier is destroyed, its new operator is gained into the 整备区 — code and every doc agree', async () => {
+  const S21 = DESIGN.slice(DESIGN.indexOf('## 21.'));
+  const s211 = S21.slice(S21.indexOf('### 21.1 '), S21.indexOf('\n### 21.2 '));
+  // the evidence: the two official videos, PRTS, the pull request
+  for (const re of [/BV1vzyVBuEN9 \(上半, ≈ 8:24\)/, /BV1Qkw1zMEoR \(下半, ≈ 7:25\)/, /"原干员销毁，获得一名…"/, /被发送至手牌区的物资优先从右到左填充空位/, /PR #2/]) assert.match(s211, re);
+  // the WA wording (the new operator on the carrier's tile, the tile counting for a merge) is gone everywhere
+  assert.ok(!/one tier higher \(max 6; an elite carrier too\) on its tile when legal/.test(DESIGN), 'DESIGN §21.1: the keep-the-tile rule is gone');
+  assert.ok(!/counts as deployed with its own tile \[ASSUMED\]/.test(DESIGN), 'DESIGN §20.11: the transformed tile no longer counts');
+  assert.ok(!/a transformed carrier's tile and the elite's fresh summon stack/.test(DESIGN), 'DESIGN §20.9: no longer [ASSUMED]');
+  assert.ok(!/whose 突变细胞 rule is superseded by §21\.1/.test(DESIGN), 'DESIGN §21.25: PR #2 credited, not superseded');
+  assert.match(META, /never onto the carrier's tile/);
+  assert.ok(!/one tier higher, max 6, on the carrier's tile/.test(META), 'META: the built-in line follows the rule');
+  assert.ok(!/counts with its own tile/.test(META), 'META: the merge line follows the rule');
+  assert.match(PLAYING, /原来的格子空出来，剩余可放置角色加 1/);
+  assert.match(DATA.items.chess_item_5_08_e_a.note, /进入整备区，需要重新部署/);
+  // the code: a destroy, then a gain through acquireChess; _mergeChess has no carrier-tile option left
+  const PS = doc('server/match/PlayerState.js');
+  const { PlayerState } = await import('../server/match/PlayerState.js');
+  assert.equal(PlayerState.prototype.transformChess.length, 2, 'transformChess(piece, newId)');
+  assert.equal(PlayerState.prototype._mergeChess.length, 2, '_mergeChess(baseId, incoming)');
+  assert.ok(!/fromKey|returnItems/.test(PS), 'no fromKey / returnItems left in PlayerState');
+  assert.match(PS, /const np = this\.acquireChess\(newId, \{ source: 'transform' \}\);/);
+  assert.ok(!/fromKey/.test(doc('server/match/audit.js')), 'audit.js: no exception for a transformed carrier\'s tile');
 });

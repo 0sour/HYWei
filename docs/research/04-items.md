@@ -252,6 +252,7 @@ Param names below are the keys of `items[].normal.params` / `items[].golden.para
   params: `count=8.0/7.0`; buff keys: `sell_char_count_gain_equip_owner_bond`
 - **突变细胞** (`chess_item_5_08_e_a`, TV, 2) - After the battle ends: replace the carrier with a random operator one tier higher (max tier 6); item consumed [ASSUMED]. Keeps elite status? [ASSUMED: result is NORMAL quality; other equipped item returns to hand]. Never merges.  
   **Addendum (player feedback after 0.1.0):** the cell is **not consumed**. PRTS 卫戍协议：盟约 下半/PRTS盟约记录 备注: "生效时，原干员销毁，获得一名高一阶的随机初始干员（最高六阶）" (normal result confirmed); PRTS 卫戍协议/帮助: "佩戴的装备无法手动卸除，在失去该干员（干员出售、销毁、合并等）或装备合并为进阶品质时自动卸除" (a destroyed operator's equipment comes off); the official text never says 销毁 for the cell (every consumable's does); players re-inject it every round (bilibili cv47000418 "之后就是一直打针，扎到核心卡或者叠层手干员就换人扎"; cg.163.com guide 2025-11-15 "这个道具可以无限使用"; bilibili cv48003106 "扎了好几次") — the destroyed operator's equipment, the cell included, returns to the hand.  
+  **Addendum 2 (where the new operator goes):** it is **gained into the 整备区**, not left on the carrier's tile. Official gameplay footage — bilibili BV1vzyVBuEN9 (上半, ≈ 8:24) and BV1Qkw1zMEoR (下半, ≈ 7:25) — shows the next prep with the carrier's tile empty, the remaining-deploy counter (剩余可放置角色) one higher and the bench holding the returned equipment and the new tier+1 operator, which the player then deploys by hand. This is the 备注 read as written (a destroy, then a gain) and PRTS 卫戍协议/帮助's rule that everything recruited or gained is sent to the 手牌区 ("被发送至手牌区的物资优先从右到左填充空位"); an outside contributor's playtest (the closed PR #2) said the same. A merge the new operator completes is an ordinary gained copy's merge: the carrier is gone first, so its tile is no copy's (DESIGN §21.1).  
   params: `-`; buff keys: `char_chess_transformation_equip`
 - **人事部文档** (`chess_item_6_08_e_a`, TVI, 4) - On equip: destroy item; player's max deployable operator count becomes `count` (9) (base maxBattleChessCnt = 8). Never merges; a second copy has no further effect [ASSUMED].  
   params: `count=9.0`; buff keys: `equip_destory_deployment_cnt_change`
@@ -442,7 +443,7 @@ Pools referenced but NOT defined in client data (server-side) - proposed content
 3. Whether equipped copies count toward the 2-copy merge (assumed yes).
 4. Exact contents of server pools (`pool_equip_*`) and of `hunter_band_1` bounty choices.
 5. 道具补给 / 机密商店 offer size and tier (3-pick-1 assumed); round schedule taken from a community post.
-6. M3茧甲 revive HP (full assumed); 突变细胞 result quality and equipment — resolved after 0.1.0: a normal operator (PRTS 备注 "随机初始干员"), the equipment and the cell return to the hand (addendum above).
+6. M3茧甲 revive HP (full assumed); 突变细胞 result quality, equipment and placement — resolved after 0.1.0: a normal operator (PRTS 备注 "随机初始干员"), the equipment and the cell return to the hand, and the new operator is gained into the 整备区 with the carrier's tile left empty (addenda above; official footage).
 7. 天马之枪 "30% true damage": `atk_scale=0.3` suggests 30% of ATK per damage instance; alternative reading 30% of damage dealt. We use 30% ATK.
 8. 蒸汽之心 doubling for 战栗锤: prob or duration? (we double prob 10%->20%).
 
