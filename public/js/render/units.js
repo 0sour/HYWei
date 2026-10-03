@@ -26,7 +26,7 @@
 // Knocked-out operators (user playtest #4 item 9, b.snap `down`): `setDown([id, respawnAt, respawnTime, state, row,
 // col])` keeps a dead operator on the tile it lies on (row / col: where it fell, or its home — sim Battle._layBody,
 // player report F5 after 0.1.0) in its knocked-down pose — the Spine Die clip played once and held on its last
-// frame (the collapsed / kneeling pose with closed eyes; the Front model's for one facing UP, see above), slightly
+// frame (the collapsed / kneeling pose with closed eyes; the Front model's for one facing UP unless its Back skeleton has its own Die clip, see above), slightly
 // greyed — with a redeploy ring above its head:
 // a dark disc, a mint arc filling as the respawn timer runs and the seconds left; once the timer is done and it still
 // waits, a full amber ring with "DP" (not enough DP) or a red ring with "!" (its tile is taken). `onDeploy` (the

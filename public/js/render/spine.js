@@ -361,7 +361,7 @@ export class SpineActor {
   /**
    * Play the death clip; returns its duration (0 when there is none). A skeleton without one (131 of the 135 Back
    * models, GitHub issue #25; a few idle-only summons and enemies) stops whatever looped — an attack, a skill or the idle —
-   * and holds the first frame of its idle clip (frozen when it has none either): a dead unit never goes on attacking. A
+   * and holds the first frame of its idle clip (frozen when it has none either) [ASSUMED look]: a dead unit never goes on attacking. A
    * knocked-out operator shows its fall with the Front model instead (render/units.js _wantsBack).
    */
   die() {
