@@ -11,7 +11,8 @@
 // (3) higher enemy taunt, (4) least remaining path distance to the goal, (5) earliest spawned. Air units
 // (Unit.isFlying: FLY, 近地悬浮, 浮空) need a profile that can hit them (`canHitFly`, never `groundOnly`). Enemy
 // priority: sortAllyTargets. 起飞 (an ally's flag `liftoff`) = 对地规避: no ground enemy selects it (evadesGround).
-// An enemy's area effects select allies with areaSelectable (no unblocking 隐匿 ally; 迷彩 is hit — DESIGN §22.12).
+// An enemy's area effects select allies with areaSelectable, its buff auras with auraSelectable (no unblocking 隐匿
+// ally; 迷彩 is not checked — DESIGN §22.12).
 
 import { COLS, ROWS } from './constants.js';
 import { normDir, rotateOffset } from './dir.js';
@@ -74,8 +75,9 @@ export function canTargetEnemy(attacker, e, profile) {
  * "隐匿与'阻挡时解除'没有直接关系"). Devices are never targets (阻隔工事: obstacles nobody can select; “双眼皮”: 迷彩 and
  * off the enemy paths — PRTS). 迷彩 (flag `camou`, term ba.camou "不阻挡时不成为敌方普通攻击的目标") works the same way:
  * PRTS 异常效果 gives both anomalies the note "与'阻挡时解除'没有直接关系" — for this target selection (an attack, a skill
- * pick, a cast condition: PRTS 选择器 "所有触发选择器通常不无视迷彩"); an area effect selects with areaSelectable, where
- * 迷彩 no longer protects. An airborne ally (起飞, flag `liftoff`) is never a target of a ground enemy (evadesGround).
+ * pick, a cast condition, a normal attack on every ally in range: PRTS 选择器 "所有触发选择器通常不无视迷彩"); an area
+ * effect selects with areaSelectable / auraSelectable, which do not check 迷彩. An airborne ally (起飞, flag `liftoff`) is
+ * never a target of a ground enemy (evadesGround).
  */
 export function canTargetAlly(e, a, ranged) {
   if (!a.alive || !a.deployed || a.hidden || a.kind === 'device') return false;
@@ -90,26 +92,40 @@ export function canTargetAlly(e, a, ranged) {
  * May an AREA effect of enemy-side `src` select ally `a` — a splash, a blast, an area skill or status, a pulse, a zone it
  * leaves, a chain / bounce jump, a 周围四格 addition (content/enemies.js areaAllies / areaAlliesInTiles / fieldAllies)?
  * PRTS 作战机制 §AOE伤害判定 "AOE的判定是对攻击范围内的每个可以被选中的敌人进行判定"; §隐匿 "隐匿效果使得获得该效果的单位无法被
- * 任何敌方的能力索敌选中"; PRTS 选择器 (可选判定): a selector checks 无法选择 by default — "站内所记载的大部分“无视可选性”指
- * 的正是不进行这次可选判定"; PRTS 异常效果 §无法选择 = 隐匿, 不可选中, 无敌 (沉睡 is 无敌), 对地规避. So not:
+ * 任何敌方的能力索敌选中"; PRTS 异常效果 §无法选择: with 隐匿, 不可选中, 无敌, 塔不可选中 or 对地规避 "常见的、来自不同阵营的
+ * “选择”行为将无视这些单位进行（如同范围内不存在这个单位）", and the abilities PRTS marks "无视可选性" are those that skip
+ * that check. So not:
  *   - a 隐匿 ally (flag `stealth`: 伪装服, 叙拉古 6, 伊内丝 S2, the 排气格栅 tile) unless it blocks `src` — a blocked enemy
  *     attacks its blocker whatever its selectability (PRTS 作战机制 "因为“阻挡优先级最高”的效果，敌人会无视一切可选性对该干员
  *     进行攻击"; read for its area abilities too [ASSUMED]); a dead `src` (death blasts) blocks nobody;
- *   - an untargetable (不可选中) or sleeping (沉睡: 无敌) ally;
+ *   - an untargetable (不可选中) or sleeping (沉睡 = 无敌 + 无法行动) ally;
  *   - an airborne 起飞 ally when `src` walks (evadesGround — the same refusal the damage pipeline makes).
- * 迷彩 (flag `camou`) does not protect: gamedata_const ba.camou "（无法躲避溅射类攻击）"; PRTS 异常效果 迷彩 "所有光环类能力、以及
- * 涉及中点判定/格子判定的效果均不受迷彩制约"; PRTS 选择器 "非弹道类型的溅射攻击会自动无视迷彩". `src` null (an effect
- * with no selecting enemy): 隐匿 still applies, 对地规避 not. Abilities PRTS marks "无视无法选择 / 无视(目标)可选性" never
- * call this (【污染秽蚀】, 【盲信之誓】, 萨卡兹悖谬暴虐兵长's 暴击, 假想敌：淤困's burst spread, 远眺's 暴露 — DamageInfo
- * `ignoreSelect`); neither do map / terrain effects nor the buff auras kept as they were (DESIGN §22.12).
+ * An invulnerable (`invulnerable`, 无敌) ally is still selected, as by canTargetAlly — a known deviation from 无法选择
+ * [ASSUMED, DESIGN §21.22] (its damage is 0 anyway). 迷彩 (flag `camou`) is not checked: the area effects that call this
+ * are splash-type, 中点判定 / 格子判定, auras or carry a PRTS "无视迷彩" note (gamedata_const ba.camou "（无法躲避溅射类
+ * 攻击）"; PRTS 异常效果 迷彩 "所有光环类能力、以及涉及中点判定/格子判定的效果均不受迷彩制约"; PRTS 选择器 "非弹道类型的溅射
+ * 攻击会自动无视迷彩") — the few without any of these are listed [ASSUMED] in DESIGN §22.12. `src` null (an effect with no
+ * selecting enemy): 隐匿 still applies, 对地规避 not. Abilities PRTS marks "无视无法选择 / 无视(目标)可选性" never call
+ * this (【污染秽蚀】, 【盲信之誓】, 萨卡兹悖谬暴虐兵长's 暴击, 假想敌：淤困's burst spread, 远眺's 暴露 — DamageInfo
+ * `ignoreSelect`); neither do map / terrain effects nor 寒霜's aura. Enemy buff auras use auraSelectable.
  */
 export function areaSelectable(src, a) {
+  return auraSelectable(src, a) && !(a.s.flags.liftoff && evadesGround(src, a));
+}
+
+/**
+ * May a BUFF AURA of enemy-side `src` (a 光环 refreshed on whoever stands in it — 深池伙友卫队's force field, 扎罗's
+ * 远古威慑; content/enemies.js auraAllies) take ally `a`? PRTS 作战机制 §隐匿与Buff的关系 "隐匿状态下的单位一般无法被敌方的
+ * 索敌机制和Buff选择器选中为目标", "目前明日方舟中使用能选中隐匿状态单位的Buff效果一定是无视隐匿状态起作用的" (its example:
+ * 寒霜's 攻速下降 Debuff — content/enemies.js allyAura keeps that one on every ally): no 隐匿 ally unless it blocks `src`,
+ * no untargetable or sleeping one; 迷彩 does not protect ("所有光环类能力…均不受迷彩制约"). Unlike areaSelectable it does not
+ * apply 对地规避: a ground enemy's aura still reaches an airborne 起飞 ally [ASSUMED, DESIGN §21.20 / §21.22].
+ */
+export function auraSelectable(src, a) {
   if (!a || !a.alive || !a.deployed || a.hidden || a.kind === 'device') return false;
   const f = a.s.flags;
   if (f.untargetable || f.sleep) return false;
-  if (f.stealth && !(src && src.alive && src.blockedBy === a)) return false;
-  if (f.liftoff && evadesGround(src, a)) return false;
-  return true;
+  return !(f.stealth && !(src && src.alive && src.blockedBy === a));
 }
 
 /**

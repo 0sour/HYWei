@@ -37,17 +37,21 @@
 //   pulses, the zones an enemy leaves, chain / bounce jumps, 周围四格 additions, whole-column / whole-field skills —
 //   select with areaAllies / areaAlliesInTiles / fieldAllies (targeting.js areaSelectable; PRTS 作战机制 §AOE伤害判定
 //   "AOE的判定是对攻击范围内的每个可以被选中的敌人进行判定"): no 隐匿 ally that does not block the enemy, no untargetable
-//   or sleeping one, no airborne 起飞 one for a ground enemy — 迷彩 does not protect from them (ba.camou "无法躲避溅射类
-//   攻击"). Until 0.1.2 they took every ally in the area (GitHub issue #32 item 6; DESIGN §22.12). An airborne ally
+//   or sleeping one, no airborne 起飞 one for a ground enemy; 迷彩 is not checked (splash-type, 中点判定 / 格子判定 and
+//   aura effects ignore it — ba.camou "无法躲避溅射类攻击", PRTS 异常效果 迷彩; the sites with no such reading are
+//   [ASSUMED] in DESIGN §22.12). Buff auras select with auraAllies (auraSelectable: 隐匿 kept out, 起飞 not). A locked
+//   target (an attack's, a channel's, a C4's) is hit as a direct pick, only the others around it as an area
+//   (targetAndArea). Until 0.1.2 they took every ally in the area (GitHub issue #32 item 6; DESIGN §22.12). An airborne ally
 //   (起飞, flag `liftoff`) is no target of a ground enemy (对地规避, targeting.js evadesGround): targetsNear / allTargets
 //   skip it through canTargetAlly, the area selectors through areaSelectable, and the engine refuses a ground enemy's
 //   damage and statuses on it. Not selections, so they still reach it (`ignoreSelect`): abilities PRTS marks "无视无法
 //   选择 / 无视(目标)可选性" (【污染秽蚀】, 【盲信之誓】, 萨卡兹悖谬暴虐兵长's 暴击 splash, 假想敌：淤困's burst spread),
 //   direct picks of the attacker (碎铳之簧's counter — PRTS 异常效果 "'直接选中'的能力…不受这些仅在选择时生效的异常效果
 //   制约"), the blasts of flying units credited to a ground leader (刺胄之弹, 斩胄之剑 / 破胄之锤) and the ticks of a debuff
-//   already on it (出血, 沙狱, “庞贝”'s burning, 淤困, 【自然涌动】 — a tick selects nobody). The buff auras of enemies
-//   (寒霜 — PRTS: its debuff ignores 隐匿 —, 深池伙友卫队, 扎罗's 远古威慑), map / tile effects (“墓碑”, 【国度】, the
-//   chimera's 源石污染区) and the sourceless 毒雾 of 假想敌：蚀裂 still reach every ally [ASSUMED for all but 寒霜 and “墓碑”].
+//   already on it (出血, 沙狱, “庞贝”'s burning, 淤困, 【自然涌动】 — a tick selects nobody). Ground enemies' buff auras
+//   (深池伙友卫队, 扎罗's 远古威慑) and the sourceless 毒雾 of 假想敌：蚀裂 still reach it [ASSUMED, §21.22] while keeping
+//   a 隐匿 ally out; 寒霜's aura (PRTS: its debuff "无视隐匿状态起作用") and map / tile effects (“墓碑” — PRTS: a map effect —,
+//   【国度】, the chimera's 源石污染区 [ASSUMED]) reach every ally.
 //
 // Special types (factions.json):
 //   FLY        — engine (FLY motion, ranged-only targeting). Flyer kits below (御4, 护障, 寒霜, 萨科塔之翼/眼, 黑云 …).
@@ -60,8 +64,8 @@
 //   DOT        — damage zones (污染秽蚀: true damage, one tick per second however many cover a unit, "可对空，无视无法选择"
 //                — `ignoreSelect`, 起飞 / 隐匿 allies included; 燃烧区域: the enemy's area selection — PRTS 集团军重型火炮
 //                "碰撞不受迷彩制约，不可对空", no 无视无法选择 —, so no 起飞 or unblocking 隐匿 ally; 假想敌：蚀裂's sourceless
-//                毒雾 reaches everyone inside), bleeding (removed by healing), pulsing damage around an enemy (area
-//                selection).
+//                毒雾 skips a 隐匿 ally, not a 起飞 one), bleeding (removed by healing), pulsing damage around an enemy
+//                (area selection).
 //   INVISIBLE  — permanent `stealth` flag (engine: untargetable unless blocked or revealed). An operator's radius area
 //                damage skips an unblocked one too (Battle.foesInRadius: profession splash around a struck target,
 //                skill circles — PRTS 作战机制 §AOE伤害判定 "对攻击范围内的每个可以被选中的敌人进行判定"; until 0.1.1 it
@@ -87,7 +91,7 @@
 // Custom hook: 'lpLoss' {amount, reason, source} — leader "扣除目标生命" effects; also summed into result.lpLoss.
 
 import { TICK, MOVE_SCALE, ELEMENT, ATTACK_PAUSE, PROJECTILE_SPEEDS, ALLY_COLLIDER_RADIUS } from '../constants.js';
-import { canTargetAlly, sortAllyTargets, aggroCmp, areaSelectable } from '../targeting.js';
+import { canTargetAlly, sortAllyTargets, aggroCmp, areaSelectable, auraSelectable } from '../targeting.js';
 import { mitigate, periodicDamage } from '../damage.js';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -440,13 +444,31 @@ export function fieldAllies(b, src) {
   return b.allies().filter((a) => areaSelectable(src, a));
 }
 
+/**
+ * The allies within `r` of (x, y) a buff aura of enemy `src` takes (targeting.js auraSelectable: no unblocking 隐匿,
+ * untargetable or sleeping ally — PRTS "隐匿状态下的单位一般无法被敌方的…Buff选择器选中"; an airborne 起飞 ally is still
+ * taken [ASSUMED, §21.22]). 寒霜's aura, which PRTS says ignores 隐匿, keeps b.alliesInRadius (allyAura).
+ */
+export function auraAllies(b, src, x, y, r) {
+  return b.alliesInRadius(x, y, r).filter((a) => auraSelectable(src, a));
+}
+
+/**
+ * A locked target `t` and the allies an area takes around it: the target was picked directly when the ability started
+ * (an attack's target, a channel's or a C4's lock), so a 隐匿 it gains meanwhile does not save it — PRTS 异常效果 "'直接选中'
+ * 的能力不会进行具体的目标选择，故同样不受这些仅在选择时生效的异常效果制约"; only the others are an area selection (`area`).
+ */
+export function targetAndArea(t, area) {
+  return t && t.alive && t.deployed ? [t, ...area.filter((u) => u !== t)] : area;
+}
+
 /** Engine priority (blocker → taunt → latest deployed) on a copy. */
 export function byPriority(e, list) { return sortAllyTargets(e, list.slice()); }
 
 /**
  * An HP-loss / damage zone. `tick(units)` runs every `iv` s for `life` s on the allies inside: `pick(x, y, r)` chooses
- * them — by default every ally in the circle (【污染秽蚀】 "无视无法选择", a sourceless 毒雾); a zone an enemy's ability
- * leaves passes its area selection (areaAllies).
+ * them — by default every ally in the circle (【污染秽蚀】 "无视无法选择"); the other zones (dmgZone, 烹泉's steam) pass
+ * their area selection (areaAllies).
  */
 export function zone(b, { x, y, r, life, iv = 1, kind = 'zone', tick, pick = null }) {
   b.fx('zone', { x, y, r, dur: life, kind });
@@ -1052,14 +1074,14 @@ function pollution(b, src, x, y, r, life, low, high) {
 }
 
 /**
- * Damage zone (`amount` per tick, tagged `kind`). Unlike 【污染秽蚀】 it does not ignore 无法选择: an enemy's zone ticks on
- * the allies its area selection takes (areaAllies: no unblocking 隐匿 ally, no airborne 起飞 one for a ground enemy —
- * PRTS 集团军重型火炮 【燃烧区域】 "碰撞不受迷彩制约，不可对空": 迷彩 only). A sourceless zone (`src` null: 假想敌：蚀裂's
- * 毒雾) reaches everyone inside [ASSUMED: PRTS 作战机制 "可以受到无来源的毒雾伤害" names the stage hazard; PRTS 假想敌：蚀裂
- * gives its cloud no 无视可选性 either].
+ * Damage zone (`amount` per tick, tagged `kind`). Unlike 【污染秽蚀】 it does not ignore 无法选择: it ticks on the allies
+ * its area selection takes (areaAllies: no unblocking 隐匿, untargetable or sleeping ally; no airborne 起飞 one for a ground
+ * enemy — PRTS 集团军重型火炮 【燃烧区域】 "碰撞不受迷彩制约，不可对空": 迷彩 only). A sourceless zone (`src` null: 假想敌：蚀裂's
+ * 毒雾, an enemy's 死亡爆炸 with no 无视可选性 note on PRTS) selects as an effect with no selecting enemy: 隐匿 kept out, an
+ * airborne 起飞 ally reached (§21.22; until 0.1.2 it took everyone inside).
  */
 function dmgZone(b, src, x, y, r, life, iv, amount, type = 'arts', kind = 'zone', el = null, elAmount = 0) {
-  zone(b, { x, y, r, life, iv, kind, pick: src ? (zx, zy, zr) => areaAllies(b, src, zx, zy, zr) : null, tick(units) {
+  zone(b, { x, y, r, life, iv, kind, pick: (zx, zy, zr) => areaAllies(b, src, zx, zy, zr), tick(units) {
     for (const u of units) {
       hurt(b, src, u, amount, type, { tags: [kind] });
       if (el && elAmount > 0) elem(b, src, u, el, elAmount, { tags: [kind] });
@@ -1348,7 +1370,8 @@ function kitDeathEye(ab, e) {
       if (++n >= dur) {
         h.cancel();
         b.fx('explode', { x: t.x, y: t.y, r: 1, kind: 'apoptosis' });
-        for (const u of areaAllies(b, e2, t.x, t.y, 1)) elem(b, e2, u, 'apoptosis', e2.s.atk * (s.bb.ep_damage_ratio ?? 0));
+        // "对目标及其周围4格的我方单位": the locked target (a 隐匿 it gained mid-channel does not save it) + an area around it
+        for (const u of targetAndArea(t, areaAllies(b, e2, t.x, t.y, 1))) elem(b, e2, u, 'apoptosis', e2.s.atk * (s.bb.ep_damage_ratio ?? 0));
       }
     }, { owner: e2 });
   }, { sil: true, cond: (b, e2) => targetsNear(b, e2, r).length > 0 })];
@@ -1442,9 +1465,9 @@ function kitHolyGuard(ab) {
     tick(b, e) {
       const on = b.enemiesInRadius(e.x, e.y, r).some((o) => /enemy_1175_dushdo/.test(o.defId));
       if (!on) return;
-      // a buff aura: every ally in it, 隐匿 / airborne ones included [ASSUMED — PRTS 作战机制 says a Buff selector skips
-      // 隐匿 unless it ignores it; kept as §21.22 kept ground-enemy auras for 起飞, DESIGN §22.12]
-      for (const u of b.alliesInRadius(e.x, e.y, r)) auraBuff(b, u, 'ab:forceField', 0.5, { aspd }, null, true);
+      // a buff aura (auraAllies): no 隐匿 operator that does not block it (PRTS 作战机制 §隐匿与Buff的关系 — no 无视 note on
+      // its page), but an airborne 起飞 one still [ASSUMED, as §21.22's ground-enemy auras]
+      for (const u of auraAllies(b, e, e.x, e.y, r)) auraBuff(b, u, 'ab:forceField', 0.5, { aspd }, null, true);
     },
   }];
 }
@@ -1774,7 +1797,7 @@ function kitFlameVine(ab) {
         // ends and later attacks add 20 %
         a.first = false;
         b.fx('explode', { x: t.x, y: t.y, r: 1.5, kind: 'flameVine' });
-        for (const u of areaAlliesInTiles(b, e, t.tileR, t.tileC, 'box', 1)) { if (u !== t) hurt(b, e, u, e.s.atk, 'arts'); elem(b, e, u, 'burn', e.s.atk * first); }
+        for (const u of targetAndArea(t, areaAlliesInTiles(b, e, t.tileR, t.tileC, 'box', 1))) { if (u !== t) hurt(b, e, u, e.s.atk, 'arts'); elem(b, e, u, 'burn', e.s.atk * first); }
         b.removeBuff(e, 'ab:pow');
       } else elem(b, e, t, 'burn', e.s.atk * normal);
     },
@@ -1854,7 +1877,7 @@ function kitLeaderMisc(key, ab, e) {
         dealt(c, b, e2) {
           if (e2.blockedBy) return; // 未被阻挡时会发射榴弹
           // the grenade's splash: an area selection — a 隐匿 ally next to the target is spared (GitHub issue #32 item 6)
-          for (const u of areaAllies(b, e2, c.target.x, c.target.y, 1)) {
+          for (const u of targetAndArea(c.target, areaAllies(b, e2, c.target.x, c.target.y, 1))) {
             if (u !== c.target) hurt(b, e2, u, e2.s.atk, 'phys');
             b.applyStatus(u, 'defDown', { duration: SKULSR_DEFDOWN_DUR, source: e2, value: -(T(ab, 'defdown.def') ?? 0) });
           }
@@ -1872,7 +1895,8 @@ function kitLeaderMisc(key, ab, e) {
         for (const t of l.slice(0, n)) {
           const x = t.x, y = t.y;
           b.fx('telegraph', { x, y, r: C4_RADIUS, dur: C4_FUSE, kind: 'c4' });
-          b.after(C4_FUSE, () => { b.fx('explode', { x, y, r: C4_RADIUS, kind: 'c4' }); for (const u of areaAllies(b, e2, x, y, C4_RADIUS)) hurt(b, e2, u, e2.s.atk * (s.bb.atk_scale ?? 1), 'phys'); });
+          // the C4 sits on its target (PRTS "在…1个非飞行的我方单位身上安装C4"): it is hit; the blast around it is an area
+          b.after(C4_FUSE, () => { b.fx('explode', { x, y, r: C4_RADIUS, kind: 'c4' }); for (const u of targetAndArea(t, areaAllies(b, e2, x, y, C4_RADIUS))) hurt(b, e2, u, e2.s.atk * (s.bb.atk_scale ?? 1), 'phys'); });
         }
       }, { cond: (b, e2) => targetsNear(b, e2, s.bb.range_radius ?? e2.base.rangeRadius).length > 0 })];
     }
@@ -1943,7 +1967,8 @@ function kitLeaderMisc(key, ab, e) {
           b.after(delay, () => {
             if (!e2.alive) return;
             b.fx('explode', { x: cc, y: r, r: 1, kind: 'blastArrow', tiles: 'plus' });
-            for (const u of areaAlliesInTiles(b, e2, r, cc, 'plus', 1)) hurt(b, e2, u, e2.s.atk * scale, 'arts');
+            // "对主目标造成法术普通伤害，对溅射目标造成法术溅射伤害": the arrow's target + the 周围四格 (an area)
+            for (const u of targetAndArea(t, areaAlliesInTiles(b, e2, r, cc, 'plus', 1))) hurt(b, e2, u, e2.s.atk * scale, 'arts');
           }, { owner: e2 });
         }
       }, { cond: (b, e2) => cands(b, e2).length > 0 })];
@@ -2306,8 +2331,8 @@ function kitWolfLord(ab) {
     during(b, e, a, t) {                                         // 【远古威慑】: nearby operators slowed; its HP refills slowly
       const dur = T(ab, 'Reborn.duration') ?? 1;
       e.hp = Math.max(1, e.s.maxHp * Math.min(1, t / Math.max(TICK, dur)));
-      // a buff aura: every ally in it, 隐匿 / airborne ones included [ASSUMED, as 深池伙友卫队's — DESIGN §22.12]
-      for (const u of b.alliesInRadius(e.x, e.y, WOLF_AWE_RADIUS)) auraBuff(b, u, 'ab:ancientAwe', 0.2, { aspd: WOLF_AWE_ASPD }, null, true);
+      // a buff aura (auraAllies): no 隐匿 operator that does not block it, an airborne 起飞 one still — as 深池伙友卫队's
+      for (const u of auraAllies(b, e, e.x, e.y, WOLF_AWE_RADIUS)) auraBuff(b, u, 'ab:ancientAwe', 0.2, { aspd: WOLF_AWE_ASPD }, null, true);
     },
     onReborn(b, e) {
       P.form2 = true;
@@ -2520,6 +2545,8 @@ export const KITS = Object.freeze({
       if (c.reason !== 'killed') return;
       const k = c.killer && c.killer.side === 'ally' && c.killer.alive ? c.killer : null;
       const atk = e.s.atk;
+      // a sourceless zone (`src` null): its ticks skip a 隐匿 / untargetable / sleeping operator (PRTS 假想敌：蚀裂: no 无视
+      // 可选性 note — PRTS 作战机制's "无来源的毒雾" that reaches 隐匿 units is the stage hazard), not an airborne 起飞 one
       const cloud = (x, y) => dmgZone(b, null, x, y, T(ab, '1.projectile_range') ?? 0.8, T(ab, '1.projectile_life_time') ?? 0, T(ab, '1.interval') ?? 1, atk * (T(ab, '1.damage_atk_scale') ?? 0), 'arts', 'poison');
       if (k) b.addProjectile({ from: e, target: k, speed: 8, visual: 'lob', source: null, hitDead: true, onHit: (h) => cloud(h.x ?? k.x, h.y ?? k.y) });
       else cloud(e.x, e.y);
