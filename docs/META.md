@@ -238,7 +238,9 @@ gets a hand slot made for it, `makeHandRoom` — on a bot's own seat by destroyi
 chess can be sold, never a human's item under AI 托管 — on such a seat any item left in temp with a full hand gets a
 hand slot the same way, a bench operator sold for it; only a hand of nothing but items still drops it, as the temp
 deadline would; the operator a transformation gains waits on the bench and the next prep's lineup step deploys it
-like any owned unit — AI 托管 too), 身份牌 / 通讯机 / 寻呼模块 on a focus member; 画卷 copies the most
+like any owned unit — AI 托管 too; the buy loop's bench shed, which sells by piece value while the bench is crowded,
+never sells a piece gained since the bot's last prep ended, `rememberOwned`), 身份牌 / 通讯机 / 寻呼模块 on a focus
+member; 画卷 copies the most
 valuable deployed operator; 教鞭 / “神秘顾客” are used after a perfect battle and otherwise kept in the hand — a bot drops
 a kept one only when it needs the hand slot (“神秘顾客” then pays its fund), a human's seat under AI 托管 never. 机变: a
 bounty card is scored by its expected payout minus its expected leaks × the value of an LP (2 + 20 / LP), the kill

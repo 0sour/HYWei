@@ -520,6 +520,43 @@ test('#4 bots and AI 托管 deploy the gained operator in their normal placement
   m.dispose();
 });
 
+test('#4 a bot on 昆图斯 lets the placement step judge each gained operator: the bench shed never sells one in its first prep, and no deployment stays free while one waits on the bench', () => {
+  // a real solo 绝境 bot match on strategy 昆图斯 (the only band on offer, as tools/botbench.mjs --band) through R8: the
+  // buy loop's pre-emptive bench shed sells by piece value while the bench is crowded — before rememberOwned it sold this
+  // seed's R7 operator in the R8 prep (20 such matches: 44 of 222 gained operators, before any placement step saw them)
+  const seats = [{ seat: 0, playerId: 'ai_0', name: 'AI', isBot: true, connected: true }];
+  const h = makeMatch({ mode: 'solo', difficulty: 'HARD', seats, seed: 9, registry: REG });
+  const m = h.m;
+  m.gd.bandIds = () => ['band_quintus'];
+  const ps = h.ps('ai_0');
+  const gained = new Map(); // uid → round of the SETTLE that gained it
+  const shed = [];
+  const waiting = [];
+  const transform = ps.transformChess.bind(ps);
+  ps.transformChess = (...a) => { const np = transform(...a); if (np) gained.set(np.uid, m.round); return np; };
+  const sell = ps.sell.bind(ps);
+  ps.sell = (uid) => {
+    if (gained.get(uid) === m.round - 1 && /buyLoopSteps/.test(new Error().stack)) shed.push(`R${m.round} ${ps.find(uid)?.piece.id}`);
+    return sell(uid);
+  };
+  const setReady = ps.setReady.bind(ps);
+  ps.setReady = (on) => {
+    for (const [uid, r] of gained) {
+      const loc = r === m.round - 1 ? ps.find(uid) : null;
+      if (on && loc && loc.area !== 'board' && ps.deployCount < ps.deployCap) waiting.push(`R${m.round} ${loc.piece.id} ${ps.deployCount}/${ps.deployCap}`);
+    }
+    return setReady(on);
+  };
+  h.start();
+  h.run(() => h.ended != null || (m.phase === 'PREP' && m.round === 9));
+  assert.equal(ps.bandId, 'band_quintus');
+  assert.ok(gained.size >= 5, `the cell transformed after every battle from R3 (${gained.size})`);
+  assert.deepEqual(shed, [], 'no operator sold by the bench shed in the prep after its gain');
+  assert.deepEqual(waiting, [], 'a gained operator off the board only when the board is full');
+  checkInvariants(m);
+  m.dispose();
+});
+
 test('#10 AI 托管 never destroys a human\'s item to clear temp: a bench operator is sold for its slot instead', () => {
   const s = setup({ seed: 34 });
   const { m, ps } = s;
