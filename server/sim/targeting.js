@@ -55,12 +55,29 @@ export function tileKeyOf(u) {
   return r * COLS + c;
 }
 
+/** Key of the buff that keeps an enemy's 隐匿 source `sourceKey` switched off after a block (Battle._stealthSwitch). */
+export const stealthOffKey = (sourceKey) => `stealthOff:${sourceKey}`;
+
+/**
+ * Is enemy `e`'s 隐匿 in effect — no ally selection picks it, operator splash skips it (Battle.foesInRadius), the b.snap
+ * stealth bit is set? Not while it is revealed (反隐, flag `reveal`), not while blocked, and not while every 隐匿 source
+ * it holds is still switched off after its last block (flag `stealthOff`: PRTS 作战机制 §隐匿 "在被我方单位阻挡后会解除隐匿，
+ * 不被阻挡的3秒后重新进入隐匿" — constants.js STEALTH_RESTORE, or the source's own "（解除阻挡N秒后恢复）").
+ */
+export function enemyStealthed(e) {
+  const f = e.s.flags;
+  if (!f.stealth || f.reveal || e.blockedBy) return false;
+  if (!f.stealthOff) return true;
+  for (const b of e.buffs) if (b.flags && b.flags.stealth && !e.findBuff(stealthOffKey(b.key))) return true;
+  return false;
+}
+
 /** Can `attacker` (ally) target enemy `e` at all (ignoring range)? */
 export function canTargetEnemy(attacker, e, profile) {
   if (!e.alive || e.hidden || !e.deployed) return false;
   const f = e.s.flags;
   if (f.untargetable || (f.sleep && !(profile && profile.hitSleep))) return false;
-  if (f.stealth && !f.reveal && !e.blockedBy) return false;
+  if (f.stealth && enemyStealthed(e)) return false;
   if (e.isFlying && !(profile && profile.canHitFly)) return false;
   if (profile && profile.groundOnly && e.isFlying) return false;
   return true;

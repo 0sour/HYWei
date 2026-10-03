@@ -24,14 +24,14 @@
 // Robustness: every content callback and every step phase is wrapped; errors are logged once per key and the
 // battle continues. After MAX_INTERNAL_ERRORS the battle force-ends as a timeout.
 
-import { TICK, ROWS, COLS, BLOCK_RADIUS_SQ, DP_DEFAULTS, DOWN_STATE, FORCED_EXIT, MAX_BATTLE_TIME, MAX_INTERNAL_ERRORS, COLD_FREEZE_DURATION, OBSTACLE_DEVICES, EVENT_BUFFER_CAP, BOSS_ROW_OFFSET, MAX_HOOK_DEPTH, MAX_ALIVE_ENEMIES, LEVITATE_HALF_WEIGHT, RESIST_DEFAULT, RESIST_PALSY_DECAY, PUSH_TILES, PUSH_TILES_EFFECT, PULL_WEAK_SHARE, PULL_CRAWL, PULL_ORIGIN, PULL_STOP_RADIUS, PUSH_DIRECTIONAL_MIN_DIST, AUTO_OP_COOLDOWN } from './constants.js';
+import { TICK, ROWS, COLS, BLOCK_RADIUS_SQ, DP_DEFAULTS, DOWN_STATE, FORCED_EXIT, MAX_BATTLE_TIME, MAX_INTERNAL_ERRORS, COLD_FREEZE_DURATION, OBSTACLE_DEVICES, EVENT_BUFFER_CAP, BOSS_ROW_OFFSET, MAX_HOOK_DEPTH, MAX_ALIVE_ENEMIES, LEVITATE_HALF_WEIGHT, RESIST_DEFAULT, RESIST_PALSY_DECAY, PUSH_TILES, PUSH_TILES_EFFECT, PULL_WEAK_SHARE, PULL_CRAWL, PULL_ORIGIN, PULL_STOP_RADIUS, PUSH_DIRECTIONAL_MIN_DIST, AUTO_OP_COOLDOWN, STEALTH_RESTORE } from './constants.js';
 import { GEO, layerGainRoom } from '../../shared/constants.js';
 import { createRng } from './rng.js';
 import { Grid } from './grid.js';
 import { Unit } from './units.js';
 import { makeBuff, STATUS, RESIST_STATUSES } from './buffs.js';
 import { dealDamage as pipeDamage, heal as pipeHeal, applyHpLoss, makeDamageInfo, reduceElement, palsyBuff, elementView, leaderHitCancelled } from './damage.js';
-import { absoluteRangeKeys, canTargetEnemy, extendedGrid, evadesGround } from './targeting.js';
+import { absoluteRangeKeys, canTargetEnemy, extendedGrid, evadesGround, enemyStealthed, stealthOffKey } from './targeting.js';
 import { bodyKeys, bodyInKeys, bodyInRadius } from './body.js';
 import { normDir, mirrorDir, localOrder, localBefore } from './dir.js';
 import { ProjectileSystem } from './projectiles.js';
@@ -1169,13 +1169,33 @@ export class Battle {
     const i = bl.blocking.indexOf(e);
     if (i >= 0) bl.blocking.splice(i, 1);
     e.blockedBy = null;
+    this._stealthSwitch(e);
   }
 
   /** Release every enemy blocked by ally `u` (death, retreat, block count drop, substitution…). */
   releaseBlocked(u) {
     if (!u || !u.blocking || !u.blocking.length) return;
-    for (const e of u.blocking) if (e.blockedBy === u) e.blockedBy = null;
+    const was = u.blocking;
     u.blocking = [];
+    for (const e of was) if (e.blockedBy === u) { e.blockedBy = null; this._stealthSwitch(e); }
+  }
+
+  /**
+   * A block on enemy `e` just ended (every release goes through here: `_unblock`, `releaseBlocked`, ai.js
+   * enforceBlockCapacity). Each 隐匿 source it holds stays switched off for its restore time — PRTS 作战机制 §隐匿 "对于
+   * 绝大部分可隐匿的敌人而言，在被我方单位阻挡后会解除隐匿，不被阻挡的3秒后重新进入隐匿" (STEALTH_RESTORE), or the source's
+   * own "（解除阻挡N秒后恢复）" (buff `data.stealthRestore`, content/enemies.js: 0 s / 1 s on some enemy pages) — as a
+   * `stealthOff` buff per source; meanwhile it is targetable, operator splash reaches it and it is drawn solid
+   * (targeting.js enemyStealthed). A new block inside the window lifts it again and its end restarts the window. Our
+   * operators' 隐匿 / 迷彩 are never lifted by blocking (only enemies get here).
+   */
+  _stealthSwitch(e) {
+    if (!e || e.side !== 'enemy' || !e.alive || !e.s.flags.stealth) return;
+    for (const b of e.buffs.slice()) {
+      if (!b.flags || !b.flags.stealth) continue;
+      const t = Number.isFinite(b.data?.stealthRestore) ? b.data.stealthRestore : STEALTH_RESTORE;
+      if (t > 0) this.addBuff(e, { key: stealthOffKey(b.key), duration: t, flags: { stealthOff: true } });
+    }
   }
 
   // =============================================================================================================
@@ -1609,17 +1629,18 @@ export class Battle {
   /**
    * The enemies within `r` (as enemiesInRadius) an ally-side area effect can select — PRTS 作战机制 §AOE伤害判定 "AOE的判定是
    * 对攻击范围内的每个可以被选中的敌人进行判定", 隐匿 "隐匿状态下的单位一般无法被敌方的索敌机制和Buff选择器选中为目标": no
-   * untargetable enemy and no 隐匿 one unless revealed or blocked (tile selectors — enemiesInKeys / canTargetEnemy — already
-   * skip them). Flying and asleep enemies stay the caller's choice. Enemy-side effects on other enemies (auras, heals) and
-   * physical collisions keep enemiesInRadius. Player report #8 after 0.1.0 (the 逐火 余烬): until 0.1.1 profession splash
-   * and skill circles still reached an unblocked 隐匿 enemy.
+   * untargetable enemy and no 隐匿 one unless revealed, blocked or not hidden again yet after a block (targeting.js
+   * enemyStealthed; tile selectors — enemiesInKeys / canTargetEnemy — already skip them). Flying and asleep enemies stay
+   * the caller's choice. Enemy-side effects on other enemies (auras, heals) and physical collisions keep enemiesInRadius.
+   * Player report #8 after 0.1.0 (the 逐火 余烬): until 0.1.1 profession splash and skill circles still reached an
+   * unblocked 隐匿 enemy.
    */
   foesInRadius(x, y, r, centre = false) {
     const out = this.enemiesInRadius(x, y, r, centre);
     let n = 0;
     for (const e of out) {
       const f = e.s.flags;
-      if (f.untargetable || (f.stealth && !f.reveal && !e.blockedBy)) continue;
+      if (f.untargetable || (f.stealth && enemyStealthed(e))) continue;
       out[n++] = e;
     }
     out.length = n;
