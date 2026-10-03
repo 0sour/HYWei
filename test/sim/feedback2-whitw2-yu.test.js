@@ -252,21 +252,51 @@ test('荒芜拉普兰德 S3 facing UP / LEFT / DOWN plays like facing RIGHT (ene
 // =====================================================================================================================
 // item 1 — 余 S2 厚礼上宾
 
-/** 余 on (10,5) with S2 (`sp` carried in); parked enemies (`[key, row, col, tag?]`). */
-function yuS2(chessId, foes, sp = 999) {
-  const hold = (r, c) => ({ motion: 'WALK', start: [r, c], end: [9, 2], checkpoints: [{ type: 'WAIT', time: 99 }] });
+/** 余 on (10,5) with S2 (`sp` carried in); parked enemies (`[key, row, col, tag?, motion?]`). */
+function yuS2(chessId, foes, sp = 999, defs = undefined) {
+  const hold = (r, c, motion = 'WALK') => ({ motion, start: [r, c], end: [9, 2], checkpoints: [{ type: 'WAIT', time: 99 }] });
   const h = makeBattle({
-    seed: 5, timeLimit: 120, autoFinish: false,
+    seed: 5, timeLimit: 120, autoFinish: false, defs,
     units: [{ chessId, row: 10, col: 5, dir: 'RIGHT', skillIndex: 1, carryState: { sp } }],
-    enemies: foes.map(([key, r, c, tag]) => ({ key, route: hold(r, c), time: 0, tag })),
+    enemies: foes.map(([key, r, c, tag, motion]) => ({ key, route: hold(r, c, motion), time: 0, tag })),
   });
   h.step(1);
   return h;
 }
+const castOf = (h, u) => h.hooksOf('skillStart').find((c) => c.unit === u);
+
+test('余 S2 (deliberate deviation, DESIGN §22.10): it fires with a ground enemy two tiles away and nobody hitting him — SKILL_RANGE on x-1 — and the enemy lands on his tile', () => {
+  for (const id of ['chess_char_6_03_a', 'chess_char_6_03_b']) {
+    const h = yuS2(id, [['e', 10, 7]], 999, { enemies: { e: enemyRec({ key: 'e', hp: 1e6, speed: 0, atk: 0 }) } });
+    const yu = h.unit(id);
+    assert.equal(yu.skill.rule, 'SKILL_RANGE', 'the data rule (rawRule TAKE_DAMAGE)');
+    const e = h.b.enemies[0];
+    assert.ok(yu.skill.active, 'cast in the first tick');
+    assert.equal(castOf(h, yu).reason, 'SKILL_RANGE');
+    assert.equal(yu.stats.taken, 0, 'nothing hit him');
+    assert.deepEqual([e.y, e.x], [yu.tileR, yu.tileC], 'pulled onto his tile');
+    h.step(1);
+    assert.equal(e.blockedBy, yu, 'and blocked there');
+    done(h);
+  }
+});
+
+test('余 S2: a ranged enemy hitting him from outside x-1 no longer casts it (it was the official TAKE_DAMAGE); it fires once someone stands on x-1', () => {
+  // 深池暗影术师 (range 2.5) on (9,7): outside x-1 (|Δrow| + |Δcol| = 3) but in reach of him
+  const h = yuS2('chess_char_6_03_a', [['enemy_1168_dumage', 9, 7]]);
+  const yu = h.unit('chess_char_6_03_a');
+  assert.ok(h.runUntil(() => yu.stats.taken > 0, 10), 'it hits him');
+  h.run(3);
+  assert.equal(yu.skill.activations, 0, 'no cast from the hit');
+  h.spawn('enemy_1422_lrsldr', { pos: [10, 6] });
+  h.step(2);
+  assert.equal(yu.skill.activations, 1, 'an enemy steps onto x-1: cast');
+  done(h);
+});
 
 test('余 S2: a leader inside x-1 is teleported onto his tile like any ground enemy (PRTS 卢西恩 / 假想敌：铳 传送抗性 无); a 自缚 leader stays', () => {
   for (const id of ['chess_char_6_03_a', 'chess_char_6_03_b']) {
-    // (S2 kept empty until the test's own hit: “萨米的意志”'s 冰凌 strikes 余 at once)
+    // (S2 empty at first: it casts the tick its SP is filled, the three leaders already on x-1)
     const h = yuS2(id, [['enemy_2016_csphtm', 10, 7, 'boss'], ['enemy_9017_achunt', 11, 6, 'boss'], ['enemy_9033_acdeer', 9, 4, 'boss']], 0);
     const yu = h.unit(id);
     assert.ok(!yu.skill.active && !yu.skill.ready);
@@ -276,8 +306,8 @@ test('余 S2: a leader inside x-1 is teleported onto his tile like any ground en
     const samiAt = [sami.x, sami.y];
     const fx0 = h.eventsOf('fx').length;
     yu.skill.gainSp(yu.skill.spCost, 'init', true);
-    h.b.dealDamage(gun, yu, { amount: 10, type: 'phys', isAttack: true });
-    assert.ok(yu.skill.active && yu.skill.id === 'skchr_yu_2', 'S2 cast on the hit (TAKE_DAMAGE)');
+    h.step(1);
+    assert.ok(yu.skill.active && yu.skill.id === 'skchr_yu_2' && castOf(h, yu).reason === 'SKILL_RANGE', 'S2 cast (SKILL_RANGE)');
     for (const e of [lucien, gun]) assert.deepEqual([e.y, e.x], [yu.tileR, yu.tileC], `${e.name} teleported onto 余`);
     assert.deepEqual([sami.x, sami.y], samiAt, '自缚: not a reachable target (PRTS 余 S2 备注)');
     const fx = h.eventsOf('fx').slice(fx0);
@@ -290,15 +320,15 @@ test('余 S2: a leader inside x-1 is teleported onto his tile like any ground en
   }
 });
 
-test('余 S2 with nobody to pull (the usual first hit: a ranged enemy outside x-1): damage-free cast, no teleport and no pull fx', () => {
-  // 深池暗影术师 (range 2.5) on (9,7) and a 萨卡兹枯朽前锋 on (10,8): both outside x-1 (|Δrow| + |Δcol| = 3)
-  const h = yuS2('chess_char_6_03_a', [['enemy_1168_dumage', 9, 7], ['enemy_1422_lrsldr', 10, 8]]);
+test('余 S2 with nobody to pull (a flyer on x-1 sets it off): the burst hits it, no teleport and no pull fx', () => {
+  const h = yuS2('chess_char_6_03_a', [['fly', 10, 6, null, 'FLY']], 999, { enemies: { fly: enemyRec({ key: 'fly', hp: 1e6, speed: 0, motion: 'FLY' }) } });
   const yu = h.unit('chess_char_6_03_a');
-  const fx0 = h.eventsOf('fx').length;
-  assert.ok(h.runUntil(() => yu.skill.active, 10), 'the 深池暗影术师 hits him from outside x-1: S2 (TAKE_DAMAGE)');
-  const fx = h.eventsOf('fx').slice(fx0).filter((e) => e[1] === 'teleport' || e[1] === 'pull');
-  assert.deepEqual(fx, [], 'nobody inside x-1: no teleport, no pull fx');
-  for (const e of h.b.enemies) assert.ok(!(Math.round(e.y) === yu.tileR && Math.round(e.x) === yu.tileC), `${e.name} stays`);
+  const fly = h.b.enemies[0];
+  assert.ok(fly.isFlying && yu.skill.active, 'cast: SKILL_RANGE counts any enemy on x-1');
+  assert.ok(fly.hp < fly.s.maxHp, 'the burst hits air units [ASSUMED]');
+  const fx = h.eventsOf('fx').filter((e) => e[1] === 'teleport' || e[1] === 'pull');
+  assert.deepEqual(fx, [], 'a flyer is no 地面可达目标: no teleport, no pull fx');
+  assert.ok(!(Math.round(fly.y) === yu.tileR && Math.round(fly.x) === yu.tileC), 'it stays');
   done(h);
 });
 
@@ -313,16 +343,18 @@ test('余 S2 on the real leader rounds: 假想敌：铳 teleported onto 余 walk
     h.step(1);
     const yu = h.unit('chess_char_6_03_a');
     const L = () => h.b.enemies.find((e) => e.defId === key && e.alive);
-    const inX1 = (e) => X1.some(([dr, dc]) => Math.round(e.y) === yu.tileR + dr && Math.round(e.x) === yu.tileC + dc);
-    h.b.on('tick', () => { if (!yu.skill.active && !L()?.mem.yuTest) yu.skill.sp = 0; }); // keep S2 for the test's hit
-    assert.ok(h.runUntil(() => L() && inX1(L()), 90), `${key} walks into x-1`);
+    const inX1At = (y, x) => X1.some(([dr, dc]) => Math.round(y) === yu.tileR + dr && Math.round(x) === yu.tileC + dc);
+    // well inside x-1 (0.1 tiles of margin: the next tick's step cannot take it out before the cast)
+    const deep = (e) => [[0, 0], [0.1, 0], [-0.1, 0], [0, 0.1], [0, -0.1]].every(([a, b]) => inX1At(e.y + a, e.x + b));
+    h.b.on('tick', () => { if (!yu.skill.active && !L()?.mem.yuTest) yu.skill.sp = 0; }); // keep S2 for the leader
+    assert.ok(h.runUntil(() => L() && deep(L()), 90), `${key} walks into x-1`);
     const e = L();
     assert.ok(e.isBoss && !e.s.flags.selfBound && e.route.legs.length > 1, 'a patrolling leader');
     e.mem.yuTest = true;
     const leg0 = e.route.legIdx;
     yu.skill.gainSp(yu.skill.spCost, 'init', true);
-    h.b.dealDamage(e, yu, { amount: 10, type: 'phys', isAttack: true });
-    assert.ok(yu.skill.active, 'S2');
+    h.step(1);
+    assert.ok(yu.skill.active, 'S2 (SKILL_RANGE)');
     assert.deepEqual([e.y, e.x], [yu.tileR, yu.tileC], 'teleported onto 余');
     assert.equal(e.route.pts, null, 'its path is re-planned from there');
     if (key === 'enemy_9017_achunt') {

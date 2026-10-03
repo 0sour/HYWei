@@ -818,11 +818,12 @@ function yu(bb, chess, def) {
     // S1 今日做东 (TAKE_DAMAGE, hurt SP): passive taunt +taunt_level; active: HP / DEF +, every attack taken ⇒
     // ep_damage_ratio × ATK 灼燃损伤 on the attacker (install below)
     skchr_yu_1: { kind: 'duration', mods: { hpPct: num(bb.max_hp), defPct: num(bb.def) } },
-    // S2 厚礼上宾: atk_scale × ATK arts on every enemy of the skill range + the ground-reachable ones teleported onto his
-    // tile (leaders too, unless 自缚: teleportEnemy); block +block_cnt, HP / ATK +, normal attacks deal arts damage. The
-    // burst hits air units too [ASSUMED: no 对空 note on PRTS]; the teleport takes ground units only ("地面可达目标"). The
-    // 'pull' fx only when someone was teleported (each one also gets its own 'teleport' fx). PRTS's 0.13 s between the
-    // damage and the teleport is not modelled (same tick).
+    // S2 厚礼上宾 (cast with an enemy on its x-1: the data's SKILL_RANGE, a deliberate deviation from the 重装 TAKE_DAMAGE
+    // row — tools/build-data.mjs TRIGGER_DEVIATIONS, DESIGN §22.10): atk_scale × ATK arts on every enemy of the skill range
+    // + the ground-reachable ones teleported onto his tile (leaders too, unless 自缚: teleportEnemy); block +block_cnt, HP /
+    // ATK +, normal attacks deal arts damage. The burst hits air units too [ASSUMED: no 对空 note on PRTS]; the teleport
+    // takes ground units only ("地面可达目标"). The 'pull' fx only when someone was teleported (each one also gets its own
+    // 'teleport' fx). PRTS's 0.13 s between the damage and the teleport is not modelled (same tick).
     skchr_yu_2: {
       kind: 'duration',
       mods: { hpPct: num(bb.max_hp), atkPct: num(bb.atk), blockCnt: num(bb.block_cnt) },
