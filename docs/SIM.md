@@ -86,8 +86,11 @@ timer done, tile free, DP ≥ cost), 不屈's, 阿戈尔's — comes back there 
 killed) lies on its own home instead when that is free (else it stays [ASSUMED: one attempt]); x / y / tileR / tileC keep
 where it fell for the `kill` / `death` handlers. "倒地干员所在地块视为可部署，但所有我方单位在此处的部署
 行为将被阻止": `downOn(r, c)` — `_deploy` (redeploys, the 突袭 landing, summons), `spawnDevice` and `relocate` refuse that
-tile and `isReservedTile` reports it, so every automatic picker skips it. A withdrawn operator that is not down (a
-retreat) comes back on its home tile.
+tile and `isReservedTile` reports it, so every automatic picker skips it. The rule covers every 退场 (GitHub #60): an
+operator forced out by its own effects (`retreat` reason `'retreat'`: 史尔特尔's 余烬, 耀骑士临光 S2, 骑士戒律 + 竞技旗,
+伊内丝 S3; `'merchant'`: a 商人 that cannot pay) lies down and comes back the same way — still no kill (its death reason is
+not `'killed'`: no 被击倒 effects, 不屈, 阿戈尔 or knock-down count); only the 突袭 retreat (`'raid'`, redeployed at once on
+its landing tile) and permanent removals leave nothing.
 
 ### 1.1 Coordinates (PlayerBattleInput units)
 
@@ -273,7 +276,11 @@ not [ASSUMED, §21.22]. Until 0.1.2 they took every ally in the area (GitHub iss
 every ally there: the "无视无法选择 / 无视可选性" abilities above (and 远眺's death 暴露, 圆仔's facing count), 寒霜's aura
 (PRTS names its 攻速下降 Debuff among the effects that "无视隐匿状态起作用") and map / tile / terrain effects (“墓碑”'s
 halving — PRTS: a map effect —, 【国度】, a chimera's 源石污染区 aura [ASSUMED for the last two])
-and pause `ATTACK_PAUSE` (0.35 s) after each unblocked attack; `fear`/`disarm` stop attacks; `dmgType 'none'` enemies
+and, unblocked, stand for each attack's clip — `attackStand`: data/enemies.json `attackAnim`, through its wind-up
+(cooldown ≤ the strike frame, a target in range) and the rest of the clip after the strike, shortened when the attacks
+come quicker than the clip; `ATTACK_PAUSE` (0.35 s) after the strike when no clip is known; an `attackMoves`
+(「不停止移动」) enemy never stops; a stun ends the stand; only the walking waits — a route WAIT keeps running and
+DISAPPEAR / APPEAR legs still happen, hiding ends the stand; GitHub #58 — then walk on; `fear`/`disarm` stop attacks; `dmgType 'none'` enemies
 never attack — unless content arms them through `enemy.profile` (`noAttack: false`, `melee`, `dmgType`, `maxTargets`:
 转译基底·α's 寻仇者 / 特战术师 forms, which then attack like any enemy); `dmgType 'heal'` enemies heal the lowest-HP% enemy in their radius instead. A `noMove` enemy stands (not `moving`, drawn idle). Content can take over an
 enemy's attack: `enemy.profile.deferHit` = the engine makes the attack (target, timing, the `'atk'` event) but deals no
@@ -743,7 +750,7 @@ or guard with a per-unit flag while dealing it. When the guard trips, the logged
 | `spawnEnemy(enemyKey, { routeIndex, route, pos, mods, tag, sourcePlayerId, ownerPlayerId, bounty, countInTotal, def })` | returns the enemy, or null past `MAX_ALIVE_ENEMIES`; `def` = inline record (enemies.json shape or normalised) for keys missing from data |
 | `spawnDevice(key, row, col, { hp, obstacle, blockCnt, name, def, res, atk, bat, aspd })`, `setObstacle(r, c, on)` | obstacles re-path enemies; spawnDevice returns null outside the rect, on a living unit or on a knocked-out operator's tile |
 | `isReservedTile(r, c)` | true when a living unit stands there or it is the rest tile (`restTile`) of an ally piece that has not deployed yet / waits to redeploy — the tile a knocked-out operator lies on, else the home tile — every automatic picker (the 突袭 landing tile, tactical points, summon / device tiles) must skip these (`findTacticalPoint` does) |
-| `downOn(r, c, except?)`, `restTile(u)` | the knocked-out operator lying on a tile (no ally deploys / moves there: `_deploy`, `spawnDevice`, `relocate`); the tile a withdrawn ally comes back on — its `body` tile when knocked out, else its home (§1) |
+| `downOn(r, c, except?)`, `restTile(u)` | the down operator (`isDown`: knocked out or forced out) lying on a tile (no ally deploys / moves there: `_deploy`, `spawnDevice`, `relocate`); the tile a withdrawn ally comes back on — its `body` tile when down, else its home (§1) |
 | `addProjectile({ from, target | to:{x,y}, speed, onHit(ctx), visual, source, hitDead })` | homing; fizzles if the target dies unless `hitDead` |
 | `allySelectable(ally, by)`, `alliesFor(by, ownerId?)` | may an ability of ally `by` select `ally` — never a 孤立 unit (炎佑, 从不混淆的方向) but `by` itself (PRTS 选择器: "若掩码中孤立为1，且选择器的阵营与目标为友好关系，则不可选中"); `allies()` without the 孤立 ones — content picks ally targets (buffs, auras, 全场 talents, heal picks) through these, `alliesInGrid` too |
 | `unitsInGrid(unit, grid, {side, extend})`, `alliesInGrid(unit)`, `enemiesInRadius(x, y, r, centre?)`, `foesInRadius(x, y, r, centre?)`, `alliesInRadius(x, y, r, ownerId?)` | grid offsets are relative to facing RIGHT, rotated by `unit.dir`; enemies by their body (§2 hit areas: a huge enemy on every tile it occupies / within `r` of its rectangle; `centre` = splash around a target, a 中点判定 by position; `foesInRadius` = the enemies an operator's area effect can select — no untargetable enemy, none whose 隐匿 is on (`targeting.js enemyStealthed`: not blocked, not revealed, not within 3 s of its last block), PRTS 作战机制 §AOE伤害判定 — while enemy-side auras / heals and collisions keep `enemiesInRadius`) |
@@ -1141,8 +1148,9 @@ Unknown subprofessions fall back to the profession default (test `professions.te
 
 - `snapshot()` → `{ fieldId, t, units: [[id, x, y, hp, maxHp, sp, spMax, flags, anim]], dp, killed, total, dps?, boss?, down?, elem? }`.
   `sp/spMax` show remaining duration/ammo as a draining bar while a timed skill is active. Units in DIE state stay 0.8 s.
-  `down: [[id, respawnAt, respawnTime, state, row, col]]` (only when non-empty) = knocked-out operators waiting to redeploy
-  (`Battle.isDown(u)`: reason `'killed'` or `FORCED_EXIT` (§1.1 carryState `down`), deployed at least once, a finite
+  `down: [[id, respawnAt, respawnTime, state, row, col]]` (only when non-empty) = operators lying down waiting to redeploy
+  (`Battle.isDown(u)`: any removal reason but the 突袭 `'raid'` — `'killed'`, `FORCED_EXIT` (§1.1 carryState `down`), a forced
+  exit `'retreat'` / `'merchant'` (GitHub #60) —, not removed for good, deployed at least once, a finite
   respawn timer; `state` = constants.js
   `DOWN_STATE`: 0 counting, 1 timer done / DP short, 2 timer done / its tile taken — a safeguard: no ally deploys on a
   knocked-out operator's tile, §1; `row, col` = the tile it lies on and comes back on, `unit.body`); `elem: [[id, element, fill,

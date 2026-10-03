@@ -337,7 +337,18 @@ async function loadContext() {
   return {
     act, ac, charTable, skillTable, rangeTable, uniequip, battleEquip, handbook, enemyDb,
     levels, templateIds: [...templateIds].sort(naturalCmp), stageIds, enemyDataLevelId, research,
+    manifest: await loadManifest(),
   };
+}
+
+/**
+ * The committed asset manifest data/assets.json (tools/fetch-assets.mjs; docs/ASSETS.md) — the enemies' attack clip
+ * lengths (enemyAttackAnim); null when absent or unreadable (no `attackAnim` then, with a warning).
+ */
+async function loadManifest() {
+  const abs = join(ROOT, 'data', 'assets.json');
+  if (!existsSync(abs)) { warn('data/assets.json not found; enemies get no attackAnim'); return null; }
+  try { return JSON.parse(await readFile(abs, 'utf8')); } catch (e) { warn(`data/assets.json unreadable: ${e.message}`); return null; }
 }
 
 // ===== shared game-object helpers ===============================================================
@@ -1778,6 +1789,28 @@ const MODEL_SCALE_BY_PREFAB = new Map();
 for (const [v, list] of MODEL_SCALES) for (const k of list) MODEL_SCALE_BY_PREFAB.set(`enemy_${k}`, Math.round((v / MODEL_SCALE_STANDARD) * 1e4) / 1e4);
 
 /**
+ * An enemy's attack clip → enemies.json `attackAnim` { clip, dur, hit } (GitHub #58: an unblocked ranged enemy stands for
+ * its attack clip, server/sim/ai.js attackStand): the clip the client plays for its attacks (the asset manifest's
+ * `anims.attack.loop` of the enemy's model — not an Idle stand-in, `via: 'idle'`), its length and its first strike
+ * frame (`hits`: the clip's OnAttack event; absent when it has none — the sim then takes half the clip). Read from the
+ * committed data/assets.json (written by tools/fetch-assets.mjs from the Spine skeletons; docs/ASSETS.md), so the sim
+ * never reads client files; an enemy whose model the manifest lacks gets none (the sim falls back to ATTACK_PAUSE).
+ */
+function enemyAttackAnim(manifest, spineId) {
+  const sp = manifest?.enemies?.[spineId]?.spine;
+  const a = sp?.anims?.attack;
+  if (!a || typeof a.loop !== 'string' || a.via === 'idle') return null;
+  const dur = sp.animations?.[a.loop];
+  if (!(typeof dur === 'number' && dur > 0)) return null;
+  const h = sp.hits?.[a.loop];
+  const hit = Array.isArray(h) && Number.isFinite(h[0]) ? Math.min(dur, Math.max(0, h[0])) : null;
+  return hit != null ? { clip: a.loop, dur, hit } : { clip: a.loop, dur };
+}
+
+/** The handbook's 「不停止移动」 attack (“十字路口”量产型's 四向攻击) → enemies.json `attackMoves`: it never stops to attack. */
+const attacksOnTheMove = (abilities) => abilities.some((a) => a.text.includes('不停止移动'));
+
+/**
  * The 鸭爵 strategy's swapped-in enemies (`round_start_all_player_change_enemy_2` enemylist — the act2 versions, *_2)
  * cost BAND_SWAP_LPR at the protection point, not the database's lifePointReduce 0 (the roguelike 宝藏 rule): PRTS
  * 卫戍协议：盟约 下半/PRTS盟约记录 §策略 鸭爵 备注 "…但进入保护目标点将减少1点目标生命值，且在最终回合和隐秘核心回合中仍然生效"
@@ -1867,6 +1900,7 @@ function buildEnemies(ctx) {
     const descRaw = mv(data.description);
     const hitArea = HIT_AREAS[mv(data.prefabKey) || key] || null;
     const modelScale = MODEL_SCALE_BY_PREFAB.get(mv(data.prefabKey) || key) ?? null;
+    const attackAnim = enemyAttackAnim(ctx.manifest, mv(data.prefabKey) || key);
     out[key] = {
       key, name, level: wantLevel, rank: mv(data.levelType, 'NORMAL'), handbookIndex: hb?.enemyIndex || null,
       desc: stripRich(descRaw), descRaw: richRaw(descRaw),
@@ -1889,6 +1923,8 @@ function buildEnemies(ctx) {
       ...(hitArea ? { hitArea: { ...hitArea } } : {}),
       ...(STATIC_BODIES.has(key) ? { staticBody: true } : {}),
       ...(modelScale != null && modelScale !== 1 ? { modelScale } : {}),
+      ...(attackAnim ? { attackAnim } : {}),
+      ...(attacksOnTheMove(abilities) ? { attackMoves: true } : {}),
     };
   }
   for (const k of STATIC_BODIES) if (!out[k]) warn(`STATIC_BODIES: ${k} is not an enemy of the mode`);

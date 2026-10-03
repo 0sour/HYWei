@@ -9,7 +9,10 @@
 //   attack(interval, once)                one attack happened now (b.ev 'atk'): plays begin→loop, re-phases the loop
 //                                         so its OnAttack frame lands now, timeScale = loopDuration / interval;
 //                                         `once` (a one-off cast, style.js PROJ[kind].once — 暴鸰's bomb drop): the
-//                                         clip plays once at its own speed, then base
+//                                         clip plays once at its own speed, then base; `clipPerAttack` (enemies,
+//                                         GitHub #58): every attack plays the clip once — at its own speed, faster
+//                                         only when the attacks come quicker than the clip —, then base (Move while
+//                                         the sim walks it: it stands for that clip, server/sim/ai.js attackStand)
 //   setSkill(on)                          skill begin→loop while active (skill idle replaces idle), end on stop
 //   deploy()                              'Start' once, then base
 //   die()                                 die clip once (callers fade out afterwards); a skeleton without one holds its
@@ -20,8 +23,8 @@
 //                                         closing clip timed to end `in` s from now (a 重生's last clip ends with the
 //                                         重生), landing in `roles`
 //   update(dt)                            advances the skeleton (autoUpdate is off: one clock for everything)
-// Attack mode lasts until ~1.4 attack intervals without a new attack (a `once` cast: to the end of its clip), then the
-// end clip (if any) and base.
+// Attack mode lasts until ~1.4 attack intervals without a new attack (a `once` cast and every attack of a
+// `clipPerAttack` actor: to the end of its clip), then the end clip (if any) and base.
 
 const clampN = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
@@ -98,6 +101,13 @@ export class SpineActor {
     this.frozen = false;
     this.dead = false;
     this.interval = 1;
+    /**
+     * Enemies (render/units.js, GitHub #58): each attack plays the attack clip once — at its own speed, faster only when
+     * the attacks come quicker than the clip — and then the resting state; the sim stands the enemy for exactly that
+     * clip (server/sim/ai.js attackStand). Off (operators): the clip loops over the attack rhythm.
+     */
+    this.clipPerAttack = false;
+    this.wound = false;           // clipPerAttack: wound up for the coming attack (windUp → attack)
     this._play(this._idleName(), true);
   }
 
@@ -241,19 +251,23 @@ export class SpineActor {
     if (this.dead || this.mode === 'stun' || this.mode === 'die' || this.mode === 'change' || !(lead >= 0)) return false;
     const clip = this._attackClip();
     if (!clip) return false;
-    if (this.mode === 'attack' && this.current === clip.loop) return false; // in rhythm: attack() re-phases
+    const single = once || this.clipPerAttack;
+    // in rhythm: attack() re-phases; a clip-per-attack actor starts each attack's clip anew unless already wound up for it
+    if (this.mode === 'attack' && this.current === clip.loop && (!this.clipPerAttack || once || this.wound)) return false;
     const loopDur = this.dur(clip.loop);
     // a one-off cast plays at the clip's own speed (one loop per clip length), whatever the attack rhythm
     const iv = once ? loopDur : clampN(Number.isFinite(interval) && interval > 0 ? interval : this.interval, 0.08, 8);
     const hit = this._hitTime(clip.loop, loopDur);
-    const plan = windUpPlan(loopDur, hit, iv, lead);
+    // clip per attack: its own speed, sped up only when the attacks come quicker than the clip
+    const plan = windUpPlan(loopDur, hit, this.clipPerAttack && !once ? Math.min(iv, loopDur) : iv, lead);
     if (!(hit > 0) || lead * plan.ts > hit + 1e-6) return false;
     if (!once) this.interval = iv;
     this.mode = 'attack';
-    this.attackUntil = this.clock + lead + (once ? Math.max(0, loopDur - hit) / plan.ts : Math.max(0.45, iv * 1.4));
-    this._play(clip.loop, !once, { timeScale: plan.tsWind, start: plan.start, mix: 0.06 });
+    this.attackUntil = this.clock + lead + (single ? Math.max(0, loopDur - hit) / plan.ts : Math.max(0.45, iv * 1.4));
+    this._play(clip.loop, !single, { timeScale: plan.tsWind, start: plan.start, mix: 0.06 });
     this.windTs = plan.ts;
     this.windUntil = this.clock + lead;
+    this.wound = true;
     return true;
   }
 
@@ -267,17 +281,22 @@ export class SpineActor {
     const clip = this._attackClip();
     if (!clip) return;
     const loopDur = this.dur(clip.loop);
-    const ts = once ? 1 : clampN(loopDur / this.interval, 0.35, 4);
+    const per = this.clipPerAttack && !once;
+    const single = once || per;
+    // clip per attack: its own speed (ts 1), faster only when the attacks come quicker than the clip
+    const ts = once ? 1 : per ? clampN(loopDur / Math.min(this.interval, loopDur), 1, 4) : clampN(loopDur / this.interval, 0.35, 4);
     const hit = this._hitTime(clip.loop, loopDur);
-    const wasAttacking = this.mode === 'attack' && this.current === clip.loop;
+    // (a clip-per-attack actor still playing the previous attack's clip was not wound up for this one)
+    const wasAttacking = this.mode === 'attack' && this.current === clip.loop && (!per || this.wound);
     this.mode = 'attack';
-    this.attackUntil = this.clock + (once ? Math.max(0, loopDur - hit) / ts : Math.max(0.45, this.interval * 1.4));
+    this.attackUntil = this.clock + (single ? Math.max(0, loopDur - hit) / ts : Math.max(0.45, this.interval * 1.4));
     this.windUntil = null;
+    this.wound = false;
     if (!wasAttacking) {
       // not wound up (no look-ahead, e.g. a batch that arrived late): the sim already resolved the hit, so show
       // the strike frame now
-      this._play(clip.loop, !once, { timeScale: ts, start: hit, mix: 0.06 });
-    } else if (once) {
+      this._play(clip.loop, !single, { timeScale: ts, start: hit, mix: 0.06 });
+    } else if (single) {
       const e = this.spine.state.tracks[0];
       if (e) e.timeScale = ts;
     } else {
@@ -408,6 +427,7 @@ export class SpineActor {
       case 'attack':
         if (this.clock > this.attackUntil) {
           this.mode = 'base';
+          this.wound = false;
           const clip = this._attackClip() || this.roles.attack;
           if (clip && this.has(clip.end)) { this._play(clip.end, false); this._queue(this._baseName(), true); }
           else this._play(this._baseName(), true, { mix: 0.15 });
