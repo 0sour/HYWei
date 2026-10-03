@@ -364,7 +364,7 @@ test('史尔特尔 S3 黄昏: full heal, max HP +5000, ATK +210 %, range +2, 3 t
 });
 
 // ------------------------------------------------------------------------------------------------------------------
-test('号角 S3: ATK +25 %, BAT −1.2 s, then overload ATK +50 % with HP loss; T1 Defenders ATK +20 %; T2 血战', () => {
+test('号角 S3: cast with an enemy in range (DEFAULT, DESIGN §21.29); ATK +25 %, BAT −1.2 s, then overload ATK +50 % with HP loss; T1 Defenders ATK +20 %; T2 血战', () => {
   const h = makeBattle({
     defs: { enemies: { enemy_dummy: dummy() }, chess: { t_tank: ally('t_tank', { profession: 'TANK', stats: { atk: 100 } }) } },
     units: [{ chessId: 'chess_char_5_08_a', row: 9, col: 3 }, { chessId: 't_tank', row: 12, col: 3 }],
@@ -376,10 +376,12 @@ test('号角 S3: ATK +25 %, BAT −1.2 s, then overload ATK +50 % with HP loss; 
   approx(h.unit('t_tank').s.atk, 100 * (1 + t0.atk), 1e-6, '军事要塞 on another Defender');
   approx(u.s.atk, u.base.atk * (1 + t0.atk), 1e-6, '… and on herself');
   u.skill.gainSp(1000);
-  h.run(1);
-  assert.equal(u.skill.activations, 0, '重装 TAKE_DAMAGE: not before a hit');
-  h.b.dealDamage(h.enemies()[0], u, { amount: 10, type: 'phys' });
+  // cast at her next attack with the enemy in range, no hit needed: DEFAULT — the owner's deliberate deviation from the
+  // 重装 TAKE_DAMAGE row (DESIGN §21.29)
+  assert.equal(u.skill.rule, 'DEFAULT');
   assert.ok(h.runUntil(() => u.skill.active, 5));
+  assert.equal(h.hooksOf('skillStart').find((c) => c.unit === u).reason, 'DEFAULT');
+  assert.equal(u.stats.taken, 0, 'nothing hit her');
   const start = h.b.time;
   const total = u.def.skill.duration, ov = bb['horn_s_3[overload_start].damage_duration'];
   approx(u.s.atk, u.base.atk * (1 + t0.atk + bb.atk));

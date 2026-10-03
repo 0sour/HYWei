@@ -789,7 +789,8 @@ export default {
   },
 
   // ---------------------------------------------------------------------------------------------------------------
-  // 2_18 灰毫 攻击力强化·γ型 (TAKE_DAMAGE): ATK +atk. 炮术研习: ATK +atk, or +ashlok_t_1.atk when the `cnt` orthogonal
+  // 2_18 灰毫 攻击力强化·γ型 (DEFAULT, like S2: the owner's deliberate deviation from the 重装 TAKE_DAMAGE row, data
+  // TRIGGER_DEVIATIONS, DESIGN §21.29): ATK +atk. 炮术研习: ATK +atk, or +ashlok_t_1.atk when the `cnt` orthogonal
   // tiles around her are all ground (LOW). Elite module (FOR-X, trait atk_scale): vs blocked enemies ATK ×atk_scale.
   // S2 专注轰击 (alt): block count 0 (noBlock: releases what she holds), only ranged (splash) attacks, base attack time
   // +base_attack_time s (−0.4 / −0.5 on 2.8), ATK +atk.

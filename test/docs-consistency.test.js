@@ -18,7 +18,9 @@
 // 999 layer cap (one implementation) and 限伤 300000, the 假想敌：胄 kit — and the normative lines they rewrote; player
 // feedback after 0.1.0 (DESIGN §21, v0.1.1) including batch 6 (§21.21–§21.25: 坚固维式重锤 once per deployment, 起飞,
 // fenced tiles, knocked-out bodies, the dispatcher snapshot and the manifest shrink guard credited to PR #2 / PR #7) and
-// the 突变细胞 bench rule (§21.1: the carrier destroyed, its new operator gained into the 整备区 — official footage, PR #2).
+// the 突变细胞 bench rule (§21.1: the carrier destroyed, its new operator gained into the 整备区 — official footage, PR #2),
+// the closing additions §21.26–§21.28 (GitHub issues #1 / #5 / #8) and the owner's deliberate trigger deviation for six
+// 重装 skills (§21.29, GitHub issue #4 / PR #12).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -790,4 +792,36 @@ test('突变细胞 after the WA merge (DESIGN §21.1): the carrier is destroyed,
   assert.ok(!/fromKey|returnItems/.test(PS), 'no fromKey / returnItems left in PlayerState');
   assert.match(PS, /const np = this\.acquireChess\(newId, \{ source: 'transform' \}\);/);
   assert.ok(!/fromKey/.test(doc('server/match/audit.js')), 'audit.js: no exception for a transformed carrier\'s tile');
+});
+
+test('the deliberate trigger deviation (DESIGN §21.29): six 重装 skills DEFAULT in the builder, the data and every doc; research 03 keeps the history, not the wiki.gg summary', () => {
+  const sub = DESIGN.slice(DESIGN.indexOf('### 21.29 '));
+  for (const re of [/深巡 S2 行动能力剥夺, 雷蛇 S2 反击电弧, 号角 S2 暴风号令 and S3 终极防线, 灰毫 S1 攻击力强化·γ型 and S2 专注轰击/, /反馈的人太多了/, /public issue #4/, /PR #12/, /never by the skill id alone/, /`rawRule` keeps the official row/]) assert.match(sub, re);
+  // the normative lines and the settled decision
+  assert.match(DESIGN, /every MANUAL 重装 skill, §21\.12 — but the six of the deliberate deviation, §21\.29/);
+  assert.match(DESIGN, /\*\*partly reverted by §21\.29\*\*/);
+  assert.match(DESIGN, /\| Six 重装 skills' trigger \(§21\.29\) \|/);
+  // the builder's table is per chess (灰毫 S1 is the generic skcom_atk_up[3]) and the data follows it
+  const bd = doc('tools/build-data.mjs');
+  assert.match(bd, /const TRIGGER_DEVIATIONS = Object\.freeze\(\{/);
+  for (const k of ["chess_char_1_04_a: { skchr_udflow_2: 'DEFAULT' }", "chess_char_1_20_a: { skchr_liskam_2: 'DEFAULT' }", "chess_char_2_18_a: { 'skcom_atk_up[3]': 'DEFAULT', skchr_ashlok_2: 'DEFAULT' }", "chess_char_5_08_a: { skchr_horn_2: 'DEFAULT', skchr_horn_3: 'DEFAULT' }"]) assert.ok(bd.includes(k), k);
+  for (const id of ['chess_char_1_04_b', 'chess_char_2_18_b', 'chess_char_5_08_b']) {
+    for (const s of DATA.chess[id].skills.filter((x) => x.trigger.rawRule === 'TAKE_DAMAGE' && x.trigger.rule === 'DEFAULT')) assert.ok(bd.includes(s.skillId), `${id} ${s.skillId}`);
+  }
+  // research 03 §1.4: the community summary is gone (promised on PR #12); the activity_table history and the deviation stay
+  const r03 = doc('docs/research/03-operators.md');
+  assert.ok(!/arknights\.wiki\.gg/.test(r03), 'research 03: no wiki.gg summary');
+  assert.ok(!/Offensive skills activate when an enemy/.test(r03));
+  assert.match(r03, /上半 \(act1autochess, 2025-11\) shipped no TANK row/);
+  assert.match(r03, /下半 \(act2autochess, 2026-03-14\) added `TANK \| \| \| 0 \| TAKE_DAMAGE` for every skill index/);
+  assert.match(r03, /\*\*Deliberate deviation\*\* \(the owner, 2026-10-03/);
+  // PR #12's kit lines stay; their comments give this reason, not the community summary
+  const t1 = doc('server/sim/content/kits/tier1.js');
+  assert.equal((t1.match(/trigger: 'DEFAULT',/g) || []).length, 2, "PR #12's two kit lines");
+  assert.ok(!/offensive skills activate when an enemy is in their skill range/.test(t1));
+  assert.ok(!/documented for skillIndex 0/.test(t1));
+  assert.match(DATA_MD, /a deliberate deviation, `tools\/build-data\.mjs TRIGGER_DEVIATIONS`, DESIGN §21\.29/);
+  assert.match(SIM, /the six of DESIGN §21\.29/);
+  assert.match(PLAYING, /深巡、雷蛇的二技能，号角的二、三技能，灰毫的一、二技能按玩家反馈改为攻击范围内有敌人时就释放/);
+  assert.match(doc('CHANGELOG.md'), /深巡、雷蛇的二技能，号角的二、三技能，灰毫的一、二技能改为攻击范围内有敌人时就释放/);
 });
