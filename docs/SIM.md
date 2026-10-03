@@ -493,9 +493,9 @@ HP left is refused (damage.js `hasHp`: a lethal hit's `damaged` hook runs before
 element?, defIgnoreFlat, defIgnorePct, resIgnoreFlat, resIgnorePct, mul=1, canDodge (phys/arts), isSkill, isSplash,
 isAttack, attackId, ignoreSleep, ignoreSelect, sourceless, tags[], cancel }` (`ignoreSelect`: no selection 无法选择
 effects stop — an ability "无视无法选择", a direct pick such as a counter on the attacker, a flying unit's blast credited to
-a ground leader, the tick of a debuff already on the unit — it reaches an airborne 起飞 ally whatever its source; `sourceless`: 无来源 damage — the source's stats add
-nothing and the hooks get `source: null` plus `credit` = the source, which keeps the stats and the kill; a `loseHp` whose
-`from` is 无来源 is 无来源 too; element bursts, leader-part transfers and 坚守 thorns use it — content damage that has a
+a ground leader, the tick of a debuff already on the unit — it reaches an airborne 起飞 ally whatever its source;
+`sourceless`: 无来源 damage — the source's stats add nothing and the hooks get `source: null` plus `credit` = the source,
+which keeps the stats and the kill; a `loseHp` whose `from` is 无来源 is 无来源 too; element bursts, leader-part transfers and 坚守 thorns use it — content damage that has a
 responsible unit should pass it as `source` with `sourceless: true` rather than `source: null`, which credits nobody)
 (`battle.makeDamage(d)` normalises). `attackId` is the same for every
 damage instance of one normal attack (all targets, splash, chain, projectile impacts; 0 for non-attack damage) — use it
