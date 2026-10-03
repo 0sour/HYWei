@@ -555,7 +555,9 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   `layerGainRoom` — `PlayerState.addLayers` (all prep-side gains: 特质, items, bands, 机变 cards, bonds; `ctx.addLayers`),
   the SETTLE of the in-battle gains and the battle's own live copy (`Battle.addLayers`, SIM.md §6); a gain at the cap
   adds 0 and dispatches no onLayers. The client-result check bounds a reported gain by the room left from the bond's
-  starting layers (`fields.js validateClientResult`, 'layer bound'); `invariants.js` flags a bond above the cap. The
+  starting layers and by 60 + 4·round plus what the player's IN_BATTLE layer 特质 can add to that bond (their per-battle
+  caps; an uncapped trait leaves only the room — `fields.js layerAllowanceOf`, DESIGN §21.26) (`validateClientResult`,
+  'layer bound'); `invariants.js` flags a bond above the cap. The
   bond strip, its popup, the effect text and the detail card show the server's capped count. The dev tools' direct
   writes (`tools/matchrun.mjs --layers N`, `tools/balance.mjs applyBoard`) stop at the cap too.
 * **Waves**: waves.js header (stage/factions/boss per match, faction replacement per round with `k` copies, scaling by

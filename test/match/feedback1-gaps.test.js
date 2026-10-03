@@ -14,6 +14,7 @@ import { GameData } from '../../server/match/gamedata.js';
 import { computeBonds, bondList, bondSnapshot, bondsWithGains, HARMONY_BOND } from '../../server/match/bondsMeta.js';
 import { botPickBand } from '../../server/match/bot.js';
 import { tileKey } from '../../server/match/board.js';
+import { validateClientResult } from '../../server/match/fields.js';
 import { DATA, makeMatch, give, legalTileFor, checkInvariants } from './harness.js';
 
 const MLYSS = 'chess_char_6_11_a'; // 缪尔赛思 (调和)
@@ -203,6 +204,47 @@ describe('§21.26 3 — strategies tied to a bond the mode switches off', () => 
     // one free band left: always it, whatever the draw (also at the top of the range)
     const one = new GameData({ ...data, bands: { ...data.bands, band_amiya: DATA.bands.band_amiya } }, 'mode_single_funny');
     for (const r of [0, 0.5, 0.9999999]) assert.equal(botPickBand(fake(one, r), null), 'band_amiya');
+  });
+});
+
+describe('§21.26 found on the way — the client-result layer bound reads the lineup\'s layer 特质', () => {
+  // coop/FUNNY/107 (4 humans on AI 托管: their band picks changed with the bot's) reached a 6-谢拉格 freeze board at R12 —
+  // 初雪 + 银灰 (garrison_28: 50 % +1 per freeze in range, no per-battle cap) and 凛御银灰's handed-out 60 % +2 — whose honest
+  // +112 谢拉格 layers passed the flat 60 + 4·12 = 108: the server rejected the client and re-simulated (SP_VERIFY=all
+  // agrees with the client on all 57 battles of that match)
+  const gd = new GameData(DATA, 'mode_multi_funny');
+  const spec = (round, units, bonds = {}) => ({
+    kind: 'normal', round, timeLimit: 60, spawns: [], flags: { layerGainsEnabled: true },
+    players: [{ playerId: 'p_0', units: units.map((chessId, i) => ({ uid: i + 1, kind: 'chess', chessId, row: 9 + (i % 4), col: 2 + (i >> 2) })), bonds }],
+  });
+  const res = (gains) => ({ reason: 'cleared', time: 10, perPlayer: { p_0: { killed: 0, total: 0, leaked: [], perfect: true, layerGains: gains, coins: 0, unitsEnd: [], unitStats: [] } } });
+  const check = (s, gains, opts = { gd }) => { const v = validateClientResult(s, res(gains), opts); return v.ok ? 'ok' : v.reason; };
+  const SEED_107_R12 = ['chess_char_1_06_b', 'chess_char_4_14_a', 'chess_char_4_13_a', 'chess_char_3_14_a', 'chess_char_3_11_a', 'chess_char_4_22_a', 'chess_char_3_20_a', 'chess_char_5_14_b'];
+
+  test('an uncapped freeze trait leaves 谢拉格 bounded only by 999: the honest +112 passes; a bond without such a trait keeps 60 + 4·round', () => {
+    const s = spec(12, SEED_107_R12, { kjeragShip: { count: 6, active: true, tier: 2, layers: 39 }, swiftShip: { count: 2, active: true, tier: 1, layers: 0 } });
+    assert.equal(check(s, { kjeragShip: 112 }), 'ok', 'the board of coop/FUNNY/107 R12');
+    assert.equal(check(s, { kjeragShip: 960 }), 'ok', '999 − 39');
+    assert.equal(check(s, { kjeragShip: 961 }), 'layer bound', 'never past 999');
+    assert.equal(check(s, { swiftShip: 108 }), 'ok');
+    assert.equal(check(s, { swiftShip: 109 }), 'layer bound', 'no layer trait names 迅捷: the flat bound');
+    assert.equal(check(s, { kjeragShip: 112 }, {}), 'layer bound', 'without game data: the flat bound as before');
+  });
+
+  test('capped traits add their per-battle caps (handed-out ones once per operator); 魔王\'s +extra lifts the bonds traits raise', () => {
+    // 史尔特尔 (精锐): <部署时> 突袭 +16, at most 100 a battle → 60 + 4·3 + 100
+    const surtr = spec(3, ['chess_char_5_07_b']);
+    assert.equal(check(surtr, { raidShip: 172 }), 'ok');
+    assert.equal(check(surtr, { raidShip: 173 }), 'layer bound');
+    assert.equal(check(surtr, { arcaneShip: 73 }), 'layer bound', 'its other bond: no trait, the flat bound');
+    // 荒芜拉普兰德 (精锐) hands every 叙拉古 operator garrison_117_b (+2 per kill, at most 200): × the 2 operators
+    const lap = spec(3, ['chess_char_6_18_b', 'chess_char_1_03_a']);
+    assert.equal(check(lap, { siracusaShip: 72 + 400 }), 'ok');
+    assert.equal(check(lap, { siracusaShip: 72 + 401 }), 'layer bound');
+    // 魔王 in the lineup: every bond a trait raises is bounded by 999 only; the others keep the flat bound
+    const demon = spec(3, ['chess_char_5_07_b', 'chess_char_4_25_a']);
+    assert.equal(check(demon, { raidShip: 999 }), 'ok');
+    assert.equal(check(demon, { arcaneShip: 73 }), 'layer bound');
   });
 });
 
