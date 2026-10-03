@@ -274,9 +274,9 @@ function hammerAcquire(battle, rt, u) {
   });
   // 坚固: first lethal hit of each deployment ⇒ HP never below 1 for undeadable_duration × m s. Once per DEPLOYMENT (the
   // user's first-hand memory of the official mode, 2026-10-03: "每次部署一次"; the text only says 首次): the carrier's own
-  // non-initial 'deploy' — the redeploy after a knock-out, a 突袭 jump (retreat + redeploy) — re-arms the lock and ends a
-  // window still running (the retreat ends the unit's states). Any lethal HP loss sets it off, an ally's (the 阿戈尔
-  // battle-start devour, "造成5000点物理伤害") or the carrier's own (源石溶剂) included.
+  // non-initial 'deploy' — the redeploy after a knock-out, a 突袭 jump (retreat + redeploy; [ASSUMED] a deployment too)
+  // — re-arms the lock and ends a window still running (the retreat ends the unit's states). Any lethal HP loss sets
+  // it off, an ally's (the 阿戈尔 battle-start devour, "造成5000点物理伤害") or the carrier's own (源石溶剂) included.
   S.on('deploy', (c) => {
     if (c.unit !== u || c.initial) return;
     hs.undyingUsed = false;
