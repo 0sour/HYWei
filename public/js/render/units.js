@@ -527,11 +527,12 @@ export class UnitView {
       const dx = target.x - this.x;
       if (Math.abs(dx) > 0.1) this.visFacing = dx < 0 ? -1 : 1;
     }
-    if (target) {
+    if (this.isEnemy && target) {
+      // enemies pounce on their target; operators stay planted — their Spine attack clip carries the whole motion
       const dx = target.x - this.x, dy = target.y - this.y, len = Math.hypot(dx, dy) || 1;
       this.lungeDir.x = dx / len; this.lungeDir.y = dy / len;
+      this.lunge = 1;
     }
-    this.lunge = 1;
     if (this.actor) this.actor.attack(this.atkInterval); // game seconds: the actor's clock runs in game time
     if (this.imp) this.imp.dirty = true;
   }

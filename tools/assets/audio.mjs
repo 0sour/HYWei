@@ -216,6 +216,9 @@ export const BATTLE_SFX = Object.freeze({
   win: { path: 'battle/b_ui/b_ui_win.mp3' },
   lose: { path: 'battle/b_ui/b_ui_lose.mp3' },
   killCoin: { bank: 'battle.ON_CUSTOM_TRIGGER.autochess_kill_gain_coin' },
+  // an enemy reaching the protection objective: the core engine's official battle.ON_ENEMY_REACHED_EXIT bank
+  // (b_ui_alarmenter — "alarm, enter"); posted for every mode, the autochess client included
+  leak: { path: 'battle/b_ui/b_ui_alarmenter.mp3' },
 });
 
 /**

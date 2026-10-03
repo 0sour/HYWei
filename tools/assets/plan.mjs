@@ -268,7 +268,9 @@ export function buildPlan({ assets07, ops03, enemies05, maps05, audio, modelsDat
     }
     const primarySkill = skillSfx[String(idx[0])];
     if (primarySkill) u.skill = primarySkill;
-    if (Object.keys(skillSfx).length > 1) u.skills = skillSfx;
+    // official semantics: every equipped skill plays its own ON_SKILL_START bank or silence — so the per-index map
+    // must list every index that has a bank, even the only one (audio.js then never plays another index's sound)
+    if (Object.keys(skillSfx).length) u.skills = skillSfx;
     if (Object.keys(u).length) unitsSfx[id] = u;
   }
 

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bgmKeyFor, resolveBgm, SfxLimiter, AudioManager, normalAttackSfx } from '../../public/js/audio.js';
+import { bgmKeyFor, resolveBgm, SfxLimiter, AudioManager, normalAttackSfx, leakSfxUrl } from '../../public/js/audio.js';
 import { PHASE } from '../../shared/constants.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -258,5 +258,73 @@ describe('impact sounds (user playtest #4 item 6)', () => {
       await settle();
       assert.ok(!urls.includes(manifest.audio.sfx.units[charId].hit), '4 s later: not that attack\'s impact');
     } finally { globalThis.performance = perf; restore(); }
+  });
+});
+
+// A 'leak' plays the official ON_ENEMY_REACHED_EXIT alarm once per burst; a skill plays the equipped skill's own
+// ON_SKILL_START sound or silence — never another skill index's sound (the official client has no generic cast cue).
+describe('leak alarm and per-skill cast sounds', () => {
+  async function rig2(units, mfst = manifest) {
+    const fw = fakeWindow();
+    const urls = [];
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (u) => { urls.push(u); return { ok: true, arrayBuffer: async () => new ArrayBuffer(8) }; };
+    const a = new AudioManager({ win: fw.win, getManifest: () => mfst });
+    a.install();
+    fw.fire('pointerdown');
+    a.setFieldUnits(units);
+    const settle = () => new Promise((r) => setTimeout(r, 5));
+    return { a, urls, settle, restore: () => { globalThis.fetch = origFetch; } };
+  }
+
+  test('leakSfxUrl resolves battle.leak (b_ui_alarmenter), ui.danger on older manifests', () => {
+    const leak = leakSfxUrl(manifest);
+    assert.ok(leak && /b_ui_alarmenter\.mp3$/.test(leak), `manifest battle.leak → ${leak}`);
+    assert.equal(leakSfxUrl({ audio: { sfx: { ui: { danger: '/x/danger.mp3' } } } }), '/x/danger.mp3', 'older manifest');
+    assert.equal(leakSfxUrl(null), null);
+  });
+
+  test('a burst of leaks rings the alarm once', async () => {
+    const leak = leakSfxUrl(manifest);
+    assert.ok(leak, 'manifest has the alarm');
+    const { a, urls, settle, restore } = await rig2([]);
+    try {
+      a.handleBattleEvents([['leak', 3], ['leak', 4], ['leak', 5], ['leak', 6]]);
+      await settle();
+      assert.equal(urls.filter((x) => x === leak).length, 1, 'one alarm per burst');
+    } finally { restore(); }
+  });
+
+  test('a skill plays its own index sound or silence — never another index\'s sound', async () => {
+    // synthetic manifest: index 1 has an official bank, index 0 does not; `skill` is the pool default's (index 1) sound
+    const m = { audio: { sfx: { battle: {}, units: { char_x: { skill: '/s/primary.mp3', skills: { 1: '/s/one.mp3' } } } } } };
+    const { a, urls, settle, restore } = await rig2([{ id: 1, side: 'ally', kind: 'chess', spine: 'char_x', skillIndex: 1 }], m);
+    try {
+      a.handleBattleEvents([['skill', 1, 1]]);
+      await settle();
+      assert.ok(urls.includes('/s/one.mp3'), 'equipped index 1: its own bank');
+      // a differently-equipped copy (index 0, no official bank) stays silent — it must not borrow index 1's sound
+      a.limiter.lastByUnit.clear(); a.limiter.lastByUrl.clear();
+      a.setFieldUnits([{ id: 2, side: 'ally', kind: 'chess', spine: 'char_x', skillIndex: 0 }]);
+      a.handleBattleEvents([['skill', 2, 1]]);
+      await settle();
+      assert.ok(!urls.includes('/s/one.mp3') || urls.filter((x) => x === '/s/one.mp3').length === 1, 'no second play');
+      assert.ok(!urls.includes('/s/primary.mp3'), 'index 0 without a bank is silent (official semantics)');
+      // no skill index at all (unknown unit): the pool default's sound stands in
+      a.setFieldUnits([{ id: 3, side: 'ally', kind: 'chess', spine: 'char_x' }]);
+      a.handleBattleEvents([['skill', 3, 1]]);
+      await settle();
+      assert.ok(urls.includes('/s/primary.mp3'), 'no index: primary sound');
+    } finally { restore(); }
+  });
+
+  test('an old manifest without per-index maps falls back to its `skill` entry', async () => {
+    const m = { audio: { sfx: { battle: {}, units: { char_y: { skill: '/s/old.mp3' } } } } };
+    const { a, urls, settle, restore } = await rig2([{ id: 1, side: 'ally', kind: 'chess', spine: 'char_y', skillIndex: 2 }], m);
+    try {
+      a.handleBattleEvents([['skill', 1, 1]]);
+      await settle();
+      assert.ok(urls.includes('/s/old.mp3'), 'legacy fallback keeps old deployments audible');
+    } finally { restore(); }
   });
 });

@@ -25,6 +25,9 @@
 // - Deaths/deployments follow the official per-class defaults (unitSoundClass): only operators play the
 //   operator-knocked-down sound; summons use the token sounds; a summon used up by its own effect (fx `consumed`,
 //   香槟炸弹) plays its impact sound instead of a death sound.
+// - A 'leak' (an enemy reached the objective) plays the official battle.ON_ENEMY_REACHED_EXIT alarm
+//   (b_ui_alarmenter, `sfx.battle.leak`) once per burst; skill casts play the equipped skill's own
+//   ON_SKILL_START bank or nothing — the official client posts no generic cast sound.
 // - Buffers are fetched once and cached (LRU); failed fetch/decode ⇒ silent (logged once as a warning).
 //
 // `bgmKeyFor(route, pub)` picks the track for the current screen/phase (main.js calls `audio.install()`,
@@ -149,6 +152,19 @@ export function deploySfxUrl(manifest, info) {
   if (cls === 'device') return null;
   const url = cls === 'token' ? (b.tokenDeploy ?? b.deploy) : b.deploy;
   return typeof url === 'string' ? url : null;
+}
+
+/**
+ * Leak alarm of a 'leak' event (an enemy reached the protection objective): sfx.battle.leak — the official
+ * battle.ON_ENEMY_REACHED_EXIT bank (b_ui_alarmenter); older manifests fall back to ui.danger (a different file,
+ * which the official client never posts for this moment).
+ * @param {any} manifest data/assets.json
+ * @returns {string|null} sound URL
+ */
+export function leakSfxUrl(manifest) {
+  const s = manifest?.audio?.sfx;
+  if (typeof s?.battle?.leak === 'string') return s.battle.leak;
+  return typeof s?.ui?.danger === 'string' ? s.ui.danger : null;
 }
 
 /**
@@ -543,9 +559,17 @@ export class AudioManager {
   unit(defId, kind, unitId, skillIndex) {
     try {
       const u = this.getManifest()?.audio?.sfx?.units?.[defId];
-      // DESIGN §16: the equipped skill's own ON_SKILL_START sound (`skills[index]`) when the manifest has it
-      const own = kind === 'skill' && Number.isInteger(skillIndex) && u?.skills ? u.skills[skillIndex] : null;
-      const url = typeof own === 'string' ? own : u?.[kind];
+      let url;
+      if (kind === 'skill') {
+        // official semantics (the core engine posts battle.ON_SKILL_START.<skillId> of the equipped skill only):
+        // with a skill index, play strictly that index's bank or nothing; u.skill (the pool default's sound)
+        // stands in only when the manifest predates per-index maps or the battle gave no index at all
+        url = Number.isInteger(skillIndex)
+          ? (u?.skills ? u.skills[skillIndex] : u?.skill)
+          : u?.skill;
+      } else {
+        url = u?.[kind];
+      }
       if (typeof url !== 'string') return false;
       if ((kind === 'attack' || kind === 'hit') && !normalAttackSfx(defId, url)) return false;
       this._play(url, { volume: kind === 'attack' || kind === 'hit' ? 0.55 : 0.8, limited: true, unitKey: `${unitId}:${kind}` });
@@ -605,6 +629,7 @@ export class AudioManager {
         } else if (kind === 'heal') {
           this.battle('heal', { unitKey: `heal:${e[1]}`, volume: 0.35 });
         } else if (kind === 'skill' && e[2]) {
+          // the equipped skill's own ON_SKILL_START sound, or silence — the official client posts no generic cast cue
           const u = this.units.get(e[1]);
           if (u) this.unit(u.def, 'skill', e[1], u.skillIndex ?? undefined);
         } else if (kind === 'die') {
@@ -635,6 +660,10 @@ export class AudioManager {
           this.unit(u.def, 'hit', `${ex.id}:boom`);
         } else if (kind === 'bounty') {
           this.battle('killCoin', { unitKey: 'coin' });
+        } else if (kind === 'leak') {
+          // an enemy reached the objective — the official ENTER_DANGER alarm; the one global unit key collapses a
+          // burst of simultaneous leaks into a single ring
+          this._playUnitUrl(leakSfxUrl(this.getManifest()), 'leak', 0.5);
         }
       }
     } catch (err) { this._warn('events', err); }
