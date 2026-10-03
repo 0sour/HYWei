@@ -90,7 +90,7 @@ band draft / 机变 / PREP deadline, and BATTLE_CHECK / ROUND_START / SETTLE run
 ### 1.1 Band draft
 Co-op: random order (all seats, bots included), one pick per turn, ONE countdown: `BAND_TURN_SECONDS` 30 s per turn,
 published as `m.public.deadline` (= `draft.turnDeadline`; `draft.turnSeconds` its length) — no step cap; AI seats pick
-at once (`bot.js botPickBand`, §1.5). A turn that runs out takes the strategy the player highlights in the draft screen (`g.bandFocus {bandId?}`,
+at once. A turn that runs out takes the strategy the player highlights in the draft screen (`g.bandFocus {bandId?}`,
 `Match.timeoutBand`) while it is allowed and no teammate holds it, else `bandDraft.timeoutBandId` 华法琳, else the first
 free strategy by sortId (`defaultBand`; a departing seat gets `defaultBand` too). One skip per player (`g.bandSkip`: the
 player moves to the end of the order; refused when nobody is left to pass to); a strategy a teammate already took is
@@ -539,7 +539,8 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   next round start (`grantTokensFor`), so no out-of-range placement reaches the battle. The client lights and accepts
   the same tiles (`ui/gameLogic.js summonRange`), the bot plans inside them. Battle side: SIM.md §1.1 token pieces.
 * **Bonds**: bondsMeta.js (BOARD distinct, BOARD_AND_DECK, 绝技 elites, 调和 +1 — the state and the views mark it
-  `harmony: 1`, DESIGN §21.26 —, 独行 downward, 助力 upper tiers, 变形同构体 grants). Σ activated layers for the hidden core = Σ layers of active bonds at the boss round's prep end.
+  `harmony: 1`, DESIGN §21.26 —, 独行 downward, 助力 upper tiers, 变形同构体 grants). Σ activated layers for the hidden
+  core = Σ layers of active bonds at the boss round's prep end.
   **变形同构体** (变形者集群 "与特定装备一同装备时装备者将视为特定盟约成员", 缪尔赛思's 特质 hands it out): its wearer
   with a bond item (`giveBondId`, the 14 pairings of the item's official talent) is a member of that bond — counted like
   any member (on the board only: the 14 bonds are BOARD; one member per operator, normal and elite copies alike), and
