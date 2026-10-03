@@ -13,8 +13,9 @@
 //              are ×100 ASPD), move speed × (1 + moveMulPerStack × stacks); cleared on leaving (allies and ground enemies)
 //   烟雾 g      operators on it cannot be targeted by enemy ranged attacks (stealth flag: blocked enemies still hit them)
 //   深水 d      ground enemies on it: sea_drown[enemy].damage true dmg/s, ASPD attack_speed (×100), move × move_speed
-//   活性源石 i  units on it (allies and ground enemies): damage true dmg/s, ATK + atk, ASPD + attack_speed, for
-//              `duration` s of battle time
+//   活性源石 i  a unit on it (allies and ground enemies) gets a timed effect: damage true dmg/s, ATK + atk, ASPD +
+//              attack_speed for `duration` s from its last contact — an enemy keeps it after walking off; one effect
+//              per unit, its time starts again while the unit is on the tile; the tiles never switch off
 //   “双眼皮”   turrets (`trap_1104_aclasert`, band 机械援助 / `deviceOverrides` alias on): ranged arts shooter on its data
 //              range; ASPD + attack_speed_per_stack × L (≤ max_attack_speed), hits apply fragile 1 + damage_scale_per_stack
 //              × L (≤ max_damage_scale) for the text's duration; L = the owner's highest bond layers (live)
@@ -300,13 +301,15 @@ function buildTerrain(battle, st) {
     aspd: aspdOf(num(ds['sea_drown[enemy].attack_speed'], RESEARCH.deepsea.attack_speed)),
     moveMul: num(ds['sea_drown[enemy].move_speed'], RESEARCH.deepsea.move_speed),
   };
-  // active originium
+  // active originium: `duration` is how long the effect lasts on a unit (PRTS tile template "部署于其上的我军和经过的
+  // 敌军在{duration}s内…"), not a lifetime of the tiles
   const inf = sp.infection?.bb || {};
+  const infDur = num(inf.duration, RESEARCH.infection.duration);
   st.infection = {
     damage: num(inf.damage, RESEARCH.infection.damage),
     atk: num(inf.atk, RESEARCH.infection.atk),
     aspd: aspdOf(num(inf.attack_speed, RESEARCH.infection.attack_speed)),
-    until: num(inf.duration, RESEARCH.infection.duration),
+    duration: infDur > 0 ? infDur : RESEARCH.infection.duration,
   };
   // blowers
   for (const d of battle.stage?.devices || []) {
@@ -332,7 +335,8 @@ const terrainDamage = (battle, amount) => (ctx) => {
 function enterTerrain(battle, st, u, code) {
   const m = u.mem;
   if (m.terrain === code) return;
-  if (m.terrain) battle.removeBuff(u, BUFF[m.terrain]);
+  // leaving a tile ends its effect — except 活性源石's, which runs out on its own (touchInfection)
+  if (m.terrain && m.terrain !== TERRAIN.infection) battle.removeBuff(u, BUFF[m.terrain]);
   m.terrain = code;
   m.terrainSince = battle.time;
   m.mireStacks = 0;
@@ -341,11 +345,27 @@ function enterTerrain(battle, st, u, code) {
   else if (code === TERRAIN.deepsea) {
     const D = st.deepsea;
     battle.addBuff(u, { key: BUFF[code], mods: { aspd: D.aspd, moveMul: D.moveMul }, interval: 1, onTick: terrainDamage(battle, D.damage) });
-  } else if (code === TERRAIN.infection) {
-    const I = st.infection;
-    battle.addBuff(u, { key: BUFF[code], mods: { atkPct: I.atk, aspd: I.aspd }, interval: 1, onTick: terrainDamage(battle, I.damage) });
   }
-  // mire stacks are applied by tickMire
+  // mire stacks are applied by tickMire, 活性源石 by touchInfection (every tick on the tile)
+}
+
+/**
+ * 活性源石 contact (every tick on the tile). The tile gives a timed effect — damage true dmg/s, ATK + atk, ASPD +
+ * attack_speed for `duration` s (PRTS 特殊地形 tile template: "部署于其上的我军和经过的敌军在{duration}s内每秒受到{damage}
+ * 真实伤害，攻击力提升…，攻击速度增加…") — that stays on an enemy after it walks off: PRTS 危机合约 tag
+ * global_tile_infection_1 「目标：可控感染」 "踏过活性源石地块的敌人不再持续损失生命值" switches the lasting HP loss off,
+ * so without it the loss continues. One effect per unit (PRTS 作战机制: "同名buff的默认叠加策略buff只能表现出一个"): a
+ * unit that already carries it gets its full `duration` back and keeps its per-second rhythm — no second effect, no
+ * extra tick [ASSUMED: the time counts from the last contact]. An operator deployed on it is always in contact and
+ * keeps draining, as officially. The tick (terrainDamage) is true damage no unit deals (无来源), tagged 'terrain' =
+ * 环境伤害 (PRTS 自然环境 lists 活性源石), not 'dot' [ASSUMED: PRTS 伤害分类's list of BUFF damage does not name it].
+ */
+function touchInfection(battle, st, u) {
+  const I = st.infection;
+  const key = BUFF[TERRAIN.infection];
+  const b = u.findBuff(key);
+  if (b) { if (b.timeLeft < I.duration) b.timeLeft = I.duration; return; }
+  battle.addBuff(u, { key, duration: I.duration, mods: { atkPct: I.atk, aspd: I.aspd }, interval: 1, onTick: terrainDamage(battle, I.damage) });
 }
 
 function tickMire(battle, st, u) {
@@ -372,7 +392,6 @@ function terrainFor(battle, st, u) {
   let code = st.terrain[k];
   if (code === TERRAIN.smog && u.side !== 'ally') code = 0;
   if (code === TERRAIN.deepsea && u.side === 'ally') code = 0;
-  if (code === TERRAIN.infection && battle.time >= st.infection.until) code = 0;
   return code;
 }
 
@@ -420,6 +439,7 @@ function refreshUnit(battle, st, u) {
   if (st.hasTerrain) {
     enterTerrain(battle, st, u, terrainFor(battle, st, u));
     if (u.mem.terrain === TERRAIN.mire) tickMire(battle, st, u);
+    else if (u.mem.terrain === TERRAIN.infection) touchInfection(battle, st, u);
   }
   if (st.flow.size) { if (u.side === 'ally') tickAirflowAlly(battle, st, u); else tickAirflowEnemy(battle, st, u); }
 }

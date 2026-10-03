@@ -76,7 +76,7 @@ Boss board:
 | `m` | mire | LOW | ALL | yes | +1 stack every 3 s: atk-speed −5, move −5 %; max 10; cleared on leaving |
 | `g` | smog | LOW | ALL | yes | an operator here cannot be targeted by enemy **ranged** attacks |
 | `d` | deepsea | LOW | ALL | yes | enemies take 40 dmg/s, atk-speed −60, move ×0.6 |
-| `i` | infection | LOW | ALL | yes | 70 true dmg/s to allies on it and enemies crossing it; +20 % ATK, +20 ASPD; 300 s |
+| `i` | infection | LOW | ALL | yes | allies on it and enemies crossing it get 70 true dmg/s, +20 % ATK, +20 ASPD for 300 s from their last contact (an enemy keeps it after leaving the tile; the tiles never switch off) |
 
 ### 2.4 Stage pool (`stageDatasDict`)
 

@@ -674,6 +674,75 @@ test('活性源石 (act1 m04): units on it take damage/s and gain ATK/ASPD (alli
   checkInvariants(h.b);
 });
 
+// GitHub #33 item 6: the effect is timed (PRTS tile template "经过的敌军在{duration}s内…"), not tied to standing on the tile
+test('活性源石: an enemy keeps the effect after leaving the tile — damage/s, ATK and ASPD go on for `duration` s', REAL, () => {
+  const bb = ds.getStage('act1autochess_m04').special.infection.bb;
+  // a harmless walker crosses (11,6) going left, then waits on (11,4), off the tile
+  const route = { motion: 'WALK', start: [11, 8], end: [9, 2], checkpoints: [{ type: 'MOVE', pos: [11, 4] }, { type: 'WAIT', time: 99 }] };
+  const h = makeBattle({ stageId: 'act1autochess_m04', defs: { enemies: { enemy_walker: walker({ atk: 500 }) } }, enemies: [{ key: 'enemy_walker', route }], autoFinish: false, timeLimit: 120 });
+  h.step();
+  const e = h.enemy('enemy_walker');
+  const onTile = () => Math.round(e.y) === 11 && Math.round(e.x) === 6;
+  assert.ok(h.runUntil(onTile, 10), 'steps on (11,6)');
+  assert.ok(h.runUntil(() => !onTile(), 10), 'walks off');
+  assert.ok(e.findBuff('terrain:infection'), 'still carries the effect after leaving');
+  const hp0 = e.hp;
+  h.run(20);
+  assert.deepEqual([Math.round(e.y), Math.round(e.x)], [11, 4], 'waits off the tile');
+  const loss = hp0 - e.hp;
+  assert.ok(Math.abs(loss - 20 * bb.damage) <= bb.damage + 1e-6, `20 s after leaving: lost ${loss}, ≈ 20 × ${bb.damage}`);
+  approx(e.s.atk, 500 * (1 + bb.atk), 1e-9);
+  approx(e.s.aspd, 100 + bb.attack_speed, 1e-9);
+  const b = e.findBuff('terrain:infection');
+  assert.ok(Math.abs(b.timeLeft - (bb.duration - 20)) <= 3 * h.TICK, `${b.timeLeft} s left of ${bb.duration}`);
+  checkInvariants(h.b);
+});
+
+test('活性源石: one effect per unit — contact restarts its duration, it ends `duration` s after the last contact; the tiles never switch off', REAL, () => {
+  const stage = structuredClone(ds.getStage('act1autochess_m04'));
+  const bb = stage.special.infection.bb;
+  bb.duration = 10; // short, so that the end is inside the test
+  // the walker crosses (11,6) to (11,4), walks straight back over it to (11,8) and waits there
+  const route = { motion: 'WALK', start: [11, 8], end: [9, 2], checkpoints: [{ type: 'MOVE', pos: [11, 4] }, { type: 'MOVE', pos: [11, 8] }, { type: 'WAIT', time: 99 }] };
+  const h = makeBattle({ stage, defs: { enemies: { enemy_walker: walker({ atk: 500 }) } }, enemies: [{ key: 'enemy_walker', route }], autoFinish: false, timeLimit: 120 });
+  h.step();
+  const e = h.enemy('enemy_walker');
+  const onTile = () => Math.round(e.y) === 11 && Math.round(e.x) === 6;
+  const hp0 = e.hp;
+  let first = null, lastOn = null, end = null, contacts = 0, was = false, most = 0, atkMax = 0;
+  while (h.b.time < 40 && end == null) {
+    h.step();
+    const on = onTile();
+    if (on && !was) contacts++;
+    was = on;
+    const n = e.buffs.filter((x) => x.key === 'terrain:infection').length;
+    most = Math.max(most, n);
+    atkMax = Math.max(atkMax, e.s.atk);
+    if (on) { lastOn = h.b.time; first ??= h.b.time; }
+    if (first != null && n === 0) end = h.b.time;
+  }
+  assert.equal(contacts, 2, 'walked over the tile twice');
+  assert.equal(most, 1, 'never a second effect');
+  approx(atkMax, 500 * (1 + bb.atk), 1e-9, 'ATK + atk once');
+  assert.ok(end != null && end > first + bb.duration, `outlived its first ${bb.duration} s: the second contact restarted it (${first} → ${end})`);
+  assert.ok(Math.abs(end - (lastOn + bb.duration)) <= 2 * h.TICK, `ends ${bb.duration} s after the last contact (${lastOn} → ${end})`);
+  const loss = hp0 - e.hp;
+  assert.ok(Math.abs(loss - bb.damage * (end - first)) <= bb.damage + 1e-6, `${bb.damage}/s while it lasted: lost ${loss} in ${end - first} s`);
+  h.run(3);
+  assert.equal(e.hp, hp0 - loss, 'nothing after the end');
+  approx(e.s.atk, 500, 1e-9);
+  // an operator deployed on it is always in contact: it keeps draining past `duration` (no lifetime of the tiles)
+  const g = guard({ stats: { atk: 1000, maxHp: 1e5 } });
+  const h2 = makeBattle({ stage, defs: { chess: { test_guard: g } }, units: [{ chessId: 'test_guard', row: 11, col: 6 }], autoFinish: false, timeLimit: 60 });
+  h2.step();
+  h2.run(2 * bb.duration);
+  const u = h2.unit('test_guard');
+  approx(u.stats.taken, 2 * bb.duration * bb.damage, 1e-9, 'ally damage');
+  approx(u.s.atk, 1000 * (1 + bb.atk), 1e-9);
+  checkInvariants(h.b);
+  checkInvariants(h2.b);
+});
+
 test('盟约寒风: every interval all enemies turn cold; a gust on cold enemies freezes them; kjeragColdWind uses live layers', REAL, () => {
   const h = makeBattle({ defs: { enemies: { enemy_dummy: dummy() } }, enemies: [{ key: 'enemy_dummy', pos: [10, 6] }, { key: 'enemy_dummy', pos: [11, 8] }], autoFinish: false, timeLimit: 60 });
   h.step();
