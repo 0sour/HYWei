@@ -12,7 +12,8 @@
 //                                         clip plays once at its own speed, then base
 //   setSkill(on)                          skill begin→loop while active (skill idle replaces idle), end on stop
 //   deploy()                              'Start' once, then base
-//   die()                                 die clip once (callers fade out afterwards)
+//   die()                                 die clip once (callers fade out afterwards); a skeleton without one holds its
+//                                         idle clip's first frame (GitHub issue #25: the attack loop went on)
 //   stunned (setBase('stun'))             stun clip, or the current track frozen at timeScale 0
 //   setForm(roles, change, end)           another clip set of the skeleton (an enemy's mode), after a change clip
 //                                         (no attack cuts the change clip short); `end` = { clip, in, roles? }: a
@@ -341,24 +342,45 @@ export class SpineActor {
     if (this.has(d) && d !== this.roles.idle) {
       this.mode = 'deploy';
       this._play(d, false, { mix: 0 });
+      this.deployAt = this.clock;
       this.deployUntil = this.clock + this.dur(d);
     }
   }
 
-  /** Play the death clip; returns its duration (0 when there is none). */
+  /** Seconds into the deploy clip while it plays, else null (a model swapped mid-deploy carries it over: units.js). */
+  deployElapsed() {
+    return this.mode === 'deploy' ? Math.max(0, this.clock - (this.deployAt || 0)) : null;
+  }
+
+  /** The skeleton's death clip, or null. */
+  dieClip() {
+    const d = this.roles.die || (this.has('Die') ? 'Die' : null);
+    return d && this.has(d) ? d : null;
+  }
+
+  /**
+   * Play the death clip; returns its duration (0 when there is none). A skeleton without one (131 of the 135 Back
+   * models, GitHub issue #25; a few idle-only summons and enemies) stops whatever looped — an attack, a skill or the idle —
+   * and holds the first frame of its idle clip (frozen when it has none either): a dead unit never goes on attacking. A
+   * knocked-out operator shows its fall with the Front model instead (render/units.js _wantsBack).
+   */
   die() {
     if (this.dead) return 0;
     this.dead = true;
     this.frozen = false;
     this.mode = 'die';
-    const d = this.roles.die || (this.has('Die') ? 'Die' : null);
-    if (d && this.has(d)) { this._play(d, false, { mix: 0.05 }); return this.dur(d); }
+    const d = this.dieClip();
+    if (d) { this._play(d, false, { mix: 0.05 }); return this.dur(d); }
+    const idle = this.has(this.roles.idle) ? this.roles.idle : this.has('Idle') ? 'Idle' : null;
+    if (idle) this._play(idle, false, { mix: 0.1, timeScale: 0 });
+    else this.frozen = true;
     return 0;
   }
 
   /** Revive (redeploy after death). */
   revive() {
     this.dead = false;
+    this.frozen = false;
     this.mode = 'base';
     this.skillOn = false;
     this._play(this._baseName(), true);
