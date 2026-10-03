@@ -79,8 +79,9 @@ function runOne(cfg, seed) {
     roomCode: 'BENCH', mode: cfg.mode, difficulty: cfg.difficulty, seats, seed, data, log, scheduler: sched, botRehearsal: rehearsal,
     send: () => true, broadcast: () => {}, onEnd: (s) => { summary = s; },
   });
-  // --band: the only strategy on offer (botPickBand draws from gd.bandIds())
-  if (opt.band && cfg.mode === 'solo') m.gd.bandIds = () => [String(opt.band)];
+  // --band: the only strategy on offer (botPickBand draws from gd.bandIds()) — also one built around a bond the mode
+  // switches off, which botPickBand would otherwise skip for the default band (DESIGN §21.26)
+  if (opt.band && cfg.mode === 'solo') { m.gd.bandIds = () => [String(opt.band)]; m.gd.bandBondIds = () => []; }
   const rec = { config: cfg.name, seed, stageId: m.stageId, bossId: m.bossId, preps: [], picks: [], rounds: [], bounties: [] };
   // rehearsal stepping time (Battle.step of the rehearsal fields)
   let rehMs = 0;
