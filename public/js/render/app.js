@@ -3,11 +3,14 @@
 //
 //   const view = await createFieldView(host, { data, assets, audio, settings, padding, hud })
 //   view.setStage(stage)                        procedural tiles + devices (data/stages.json entry)
-//   view.setCamera(kind, { rect, side, padding, instant })   'prep'|'normal'|'unite'|'boss'('hidden'); animated
+//   view.setCamera(kind, { rect, side, padding, instant, shop })   'prep'|'normal'|'unite'|'boss'('hidden'); animated
 //                                               — the prep cameras (own board / Final Assault half) keep the bench
-//                                               and the field clear of `hud(kind, size)` = { top, bottom } px of
-//                                               DOM HUD along the top / bottom edge (projection.js clearHud; user
-//                                               playtest #5 item 9: the shop bar covered the bench on phones)
+//                                               and the field clear of `hud(kind, size, { shop })` = { top, bottom } px
+//                                               of DOM HUD along the top / bottom edge (projection.js clearHud; user
+//                                               playtest #5 item 9: the shop bar covered the bench on phones); `shop:
+//                                               false` = the folded shop: the official shop-collapsed prep camera
+//                                               (left_prepare / *_boss_prepare) clear of the folded shop's band (public
+//                                               issue #5: folding the shop did not grow the board)
 //   view.setPrep(privateState, { editable, canPlace })       hand/temp/board pieces; editable enables drag & drop; a
 //                                               new board piece flashes (fx.deploy); a merge's elite — on the tile of
 //                                               the deployed copy it replaced, or on its bench slot — gets the
@@ -80,9 +83,12 @@
 // context fall back to the 2D atlas board. `opts.board`: 'auto' (default) | '3d' | '2d'; `?board=2d|3d` in the URL
 // overrides (dev; '3d' also accepts a slow / software GPU). stats().board3d → { on, calls, triangles, cpuMs }.
 // three.js is only downloaded when the local-art manifest lists the board atlas. That manifest is awaited with the asset
-// manifest (≤ 4 s), so an enemy whose model only the local client has draws it (assets.js spineEntry). The built 3D
-// area, the drawn 2D rows and the lit rect follow `viewKind` (a 'prep' camera on the boss rows = the Final Assault
-// prep = the boss field).
+// manifest (≤ 4 s; the game seeds the store with its own copies, ui/fieldHost.js seedAssets), so an enemy whose model
+// only the local client has draws it (assets.js spineEntry). A manifest that arrives later (assets.js onChange) makes
+// every view re-resolve its picture and model (UnitView.retryAssets), and so does showing the tab again; battle mode
+// holds the Spine cache so a battle begun in a hidden tab keeps its models (holdScene; public issue #8 item 5). The
+// built 3D area, the drawn 2D rows and the lit rect follow `viewKind` (a 'prep' camera on the boss rows = the Final
+// Assault prep = the boss field).
 // Battle device boxes (`ctx.createBox`) follow the board layer (switchableBox), so a 3D ⇄ 2D switch keeps crates.
 // Crowds and clipped Spine skeletons render through the shared impostor atlas (render/impostor.js), flushed once per
 // frame before the main pass.
@@ -374,7 +380,7 @@ export function releaseGl(renderer) {
  * @param {HTMLElement} host
  * @param {{ data?: any, assets?: any, audio?: any, settings?: { damageNumbers?: boolean, quality?: string },
  *           padding?: object|((kind:string, size:{width:number,height:number}) => object),
- *           hud?: {top:number,bottom:number}|((kind:'prep'|'bossPrep', size:{width:number,height:number}) => {top:number,bottom:number}|null) }} [opts]
+ *           hud?: {top:number,bottom:number}|((kind:'prep'|'bossPrep', size:{width:number,height:number}, o:{shop:boolean}) => {top:number,bottom:number}|null) }} [opts]
  */
 export async function createFieldView(host, options = {}) {
   if (!host || typeof host.appendChild !== 'function') throw new TypeError('createFieldView: host element required');
@@ -443,13 +449,18 @@ export async function createFieldView(host, options = {}) {
   bgMountains2.alpha = 1;
   const bgVignette = new P.Sprite(bg.vignette);
   backdrop.addChild(bgGrad, bgMountains, bgMountains2, bgGrid, bgVignette);
-  const mountainUrl = assets.ui ? assets.ui('entry/bg_mountains_tiled') : null;
-  if (mountainUrl && assets.image) {
+  let mountainsAsked = false;
+  /** The backdrop's mountain silhouette (optional art; asked again when the manifest arrives late). */
+  function loadMountains() {
+    const mountainUrl = !mountainsAsked && assets.ui ? assets.ui('entry/bg_mountains_tiled') : null;
+    if (!mountainUrl || !assets.image) return;
+    mountainsAsked = true;
     assets.image(mountainUrl).then((img) => {
       if (!img || destroyed) return;
       try { const mt = silhouetteTexture(img); bgMountains.texture = mt; bgMountains2.texture = mt; } catch { /* optional art */ }
     }, () => {});
   }
+  loadMountains();
 
   // ---- state ----------------------------------------------------------------------------------------------
   const listeners = new Map();
@@ -472,6 +483,7 @@ export async function createFieldView(host, options = {}) {
   let promoBase = [];
   const promotions = [];      // the last merges cued by setPrep (fx.promote): { uid, id, area, row, col, idx, copies } — dev / tests
   let battleMeta = null;
+  let sceneHold = null;       // release function of the Spine cache hold of battle mode (holdScene)
   const infos = new Map();    // battle unit id → UnitInfo
   // battle ids whose view finished its death / leak fade: a snapshot may still list them for a moment (the sim keeps
   // dead units for DIE_ANIM_TIME), which must not bring the view back; a spawn / deploy / live sample clears it
@@ -625,15 +637,25 @@ export async function createFieldView(host, options = {}) {
     const ready = Promise.all([threePromise, packPromise]).then(([THREE, pack]) => (THREE && pack ? enable3d(THREE, pack) : false), () => false);
     await withTimeout(ready, 6000);
   }
-  // the official soft shadow sprite replaces the procedural one once loaded (may already be cached)
-  const shadowUrl = assets.ui ? assets.ui('battle/sprite_shadow') : null;
-  if (shadowUrl) {
+  // the official soft shadow sprite replaces the procedural one once loaded (may already be cached; asked again when the
+  // manifest arrives late)
+  let shadowAsked = false;
+  function loadShadow() {
+    const shadowUrl = !shadowAsked && assets.ui ? assets.ui('battle/sprite_shadow') : null;
+    if (!shadowUrl) return;
+    shadowAsked = true;
     try {
       const t = P.Texture.from(shadowUrl);
-      const use = () => { if (destroyed) return; ctx.shadowTex = t; for (const v of views.values()) if (v.shadow && !v.destroyed) v.shadow.texture = t; };
+      const use = () => {
+        if (destroyed) return;
+        ctx.shadowTex = t;
+        for (const v of views.values()) if (v.shadow && !v.destroyed) v.shadow.texture = t;
+        for (const v of penViews.values()) if (v.shadow && !v.destroyed) v.shadow.texture = t;
+      };
       if (t.baseTexture.valid) use(); else t.baseTexture.once('loaded', use);
     } catch { /* optional */ }
   }
+  loadShadow();
   ensureDamageFonts();
   // web fonts may land after the first chips were drawn
   if (document.fonts?.ready) document.fonts.ready.then(() => { if (!destroyed) refreshTierChips(); }).catch(() => {});
@@ -650,10 +672,11 @@ export async function createFieldView(host, options = {}) {
   }
 
   // the HUD bands the prep cameras keep the bench / field clear of (projection.js clearHud; user playtest #5 item 9):
-  // `opts.hud` = (kind, size) => { top, bottom } | null, or a fixed object; none → the plain official framing
-  function hudBands(kind, sz) {
+  // `opts.hud` = (kind, size, { shop }) => { top, bottom } | null, or a fixed object; none → the plain official framing.
+  // `shop: false` asks for the folded shop's band (the camera request's `shop: false`, public issue #5)
+  function hudBands(kind, sz, o) {
     if (kind !== 'prep' && kind !== 'bossPrep') return null;
-    if (typeof opts.hud === 'function') { try { return opts.hud(kind, sz) || null; } catch { return null; } }
+    if (typeof opts.hud === 'function') { try { return opts.hud(kind, sz, o) || null; } catch { return null; } }
     return opts.hud && typeof opts.hud === 'object' ? opts.hud : null;
   }
 
@@ -673,10 +696,12 @@ export async function createFieldView(host, options = {}) {
     if (k === 'prep') rect = rect ? { ...rect, r0: Math.min(rect.r0, GEO.HAND_ROW) } : null;
     // official configBlackBoard framing (render/projection.js presetCamera); the padding only matters for the
     // fitted fallback (custom rects, portrait viewports); a prep camera keeps the bench and the field clear of the HUD
+    // — `shop: false` (the folded shop, public issue #5) = the official shop-collapsed camera, clear of the folded
+    // shop's HUD band (re-evaluated on resize: camOpts keep the flag)
     const vk = viewKind(kind, o); // (a 'prep' camera on the boss rows = the Final Assault prep)
     return presetCamera(k, { width: sz.width, height: sz.height, padding: o.padding || defaultPadding(k, sz) }, {
       rect, side: o.side, half: !!o.half, shop: o.shop, fit: !!o.fit, config: stageRec?.config || null,
-      hud: hudBands(vk, sz),
+      hud: hudBands(vk, sz, { shop: o.shop !== false }),
     });
   }
 
@@ -944,6 +969,7 @@ export async function createFieldView(host, options = {}) {
       }
       v._home = w;
       v.dimmed = false;
+      if (info.kind === 'item' && v.setIcon) v.setIcon(info.icon); // an icon the manifest named late (onAssets)
       if (v.setCount) v.setCount(e.piece.kind === 'token' ? e.piece.count : 0);
       if (v.setItems) v.setItems(Array.isArray(e.piece.items) ? e.piece.items.map((it) => { const r = data.item(it?.id); return assets.itemIcon ? assets.itemIcon(r ? { trapId: r.trapId, iconId: r.iconId } : it?.id) : null; }) : []);
       v._showFacing = e.area === 'board';
@@ -953,6 +979,7 @@ export async function createFieldView(host, options = {}) {
     for (const k of [...views.keys()]) if (String(k).startsWith('p:') && !seen.has(Number(String(k).slice(2)))) dropView(k);
     prepPieces = list.filter((e) => e.key && views.has(e.key));
     if (dragState && !views.has(dragState.key)) { drag.reset(); endDragVisual(false); }
+    holdScene(false); // the prep pieces reference their models now (a battle's hold ends here)
     return true;
   }
 
@@ -1285,8 +1312,23 @@ export async function createFieldView(host, options = {}) {
 
   // ---- battle ---------------------------------------------------------------------------------------------
 
+  /**
+   * Battle mode holds the Spine cache (assets.js `spine.hold()`, its memory policy): the battle's views are built in
+   * animation frames, which a hidden tab does not run — a battle that began in a background tab referenced no skeleton, and
+   * the quiet budget emptied the cache ≈ 18 s later, so back in the tab every unit was an avatar diamond until its model
+   * downloaded again (public issue #8 item 5). Released once the prep pieces reference their models (setPrep) and on
+   * destroy; the idle budget still applies meanwhile.
+   */
+  function holdScene(on) {
+    if (on) { if (!sceneHold && typeof assets.spine?.hold === 'function') sceneHold = assets.spine.hold(); return; }
+    const release = sceneHold;
+    sceneHold = null;
+    if (release) { try { release(); } catch { /* ignore */ } }
+  }
+
   function enterBattle(meta) {
     if (destroyed || !meta || typeof meta !== 'object') return false;
+    holdScene(true); // before the prep views go: the cache is never "quiet" across the switch
     drag.reset();
     endDragVisual(false);
     clearViews();
@@ -1695,6 +1737,28 @@ export async function createFieldView(host, options = {}) {
   let lastDpr = globalThis.devicePixelRatio || 1;
   layoutBackdrop();
 
+  // ---- late assets, hidden tabs (public issue #8 item 5: operators drawn as image-less placeholders) ----------------------
+  // The asset manifest (or the local-client one) arrived after views were built — a reload whose manifest fetch was slow or
+  // failed (assets.js onChange): every view re-resolves what it could not draw (UnitView.retryAssets) and the prep pieces
+  // re-read their item icons. The tab shown again: a manifest still missing is asked for again and views without a model
+  // load it again at once (their bounded retries never run while hidden: no frames).
+  function onAssets() {
+    if (destroyed) return;
+    loadShadow();
+    loadMountains();
+    if (mode === 'prep' && lastPrep) setPrep(lastPrep.ps, lastPrep.o);
+    for (const v of views.values()) v.retryAssets?.();
+    for (const v of penViews.values()) v.retryAssets?.();
+  }
+  const offAssets = typeof assets.onChange === 'function' ? assets.onChange(onAssets) : null;
+  const onVisible = () => {
+    if (destroyed || globalThis.document?.visibilityState !== 'visible') return;
+    if (assets.loaded === false && typeof assets.ready === 'function') assets.ready();
+    for (const v of views.values()) v.retryAssets?.();
+    for (const v of penViews.values()) v.retryAssets?.();
+  };
+  globalThis.document?.addEventListener?.('visibilitychange', onVisible);
+
   // ---- public API ---------------------------------------------------------------------------------------------
 
   const view = {
@@ -1810,6 +1874,8 @@ export async function createFieldView(host, options = {}) {
       if (destroyed) return;
       destroyed = true;
       try { ro?.disconnect(); } catch { /* ignore */ }
+      try { offAssets?.(); } catch { /* ignore */ }
+      globalThis.document?.removeEventListener?.('visibilitychange', onVisible);
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerup', onPointerUp);
@@ -1824,6 +1890,7 @@ export async function createFieldView(host, options = {}) {
       drag.reset();
       for (const k of [...views.keys()]) dropView(k);
       clearPen();
+      holdScene(false); // no scene any more: the quiet budget may free the skeletons (lobby / room / result)
       try { fx.destroy(); } catch { /* ignore */ }
       try { tiles.destroy(); } catch { /* ignore */ }
       try { impostors.destroy(); } catch { /* ignore */ }

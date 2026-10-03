@@ -29,7 +29,10 @@
 // comes back as it was. Tapping an enemy in the pen (view pieceClick with `enemyKey` / a `preview` enemy unit) opens its
 // detail card; the old enemy list lives on as the 敌方情报 tab of the 本局信息 dialog (left 🔍).
 // Every camera request of this screen goes through setCam (it remembers the camera the pen returns to);
-// `.gm[data-camera]` mirrors the current camera kind (E2E / styling).
+// `.gm[data-camera]` mirrors the current camera kind (E2E / styling). Folding the shop bar (收起) on the own prep board
+// flies the camera to the official shop-collapsed framing and unfolding back to the shop camera (public issue #5:
+// gameLogic prepCameraFor / foldCamera — never over the pen, a teammate's board or a battle; deferred while a piece is
+// dragged or its direction is chosen).
 // Equipment dropped on an operator whose two slots are used opens the equip-replace dialog (ui/equipReplace.js): the
 // player picks the equipped item to destroy → g.equip {itemUid, targetUid, replaceUid}; 取消 sends nothing. 销毁 is only
 // offered for loose items (equipped ones are locked, ui/facing.js itemDestroyable).
@@ -88,7 +91,8 @@ import {
   phaseMode, phaseBanner, isCombatPhase, showDeadPill, isBossPhase, placementContext, canPlace, boardTargets, dropIntent,
   snapHud, activeBubbles, shortcutFor, shortcutBlocked, closesOnFieldPress, phaseTotalSeconds, homeFieldId, ownFieldId, normalizeSp, sortedPlayers,
   countdownState, shopBlockReason, stageOverrides, effectiveStage, watchTarget, dropFailureReason,
-  previewEnemyKey, prepCamera, deployFieldOf, panelSide, panelSlots, bondPopupPlace, chessLoadout, unitLoadout, mergeTarget, modeOffBonds,
+  previewEnemyKey, prepCamera, prepCameraFor, foldCamera, deployFieldOf, panelSide, panelSlots, bondPopupPlace, chessLoadout, unitLoadout,
+  mergeTarget, modeOffBonds,
 } from '../ui/gameLogic.js';
 import { toast } from '../ui/toasts.js';
 import { BriefingScreen } from './briefing.js';
@@ -225,6 +229,7 @@ function MatchScreen() {
   const home = homeFieldId(pub, myId);
   const watchingOther = !!watching && watching !== home && watching !== ownFieldId(myId);
   const editable = phase === PHASE.PREP && !!priv && alive && !priv.ready && !watchingOther;
+  const showShop = !!priv && alive && (phase === PHASE.PREP || phase === PHASE.SP_DRAFT || phase === PHASE.ROUND_START) && !watchingOther;
   const layersDisabled = phase === PHASE.UNITE || isBossPhase(phase);
   const sp = phase === PHASE.SP_DRAFT ? normalizeSp(pub?.sp, players) : null;
   const total = phaseTotalSeconds(pub, gd.config, myId);
@@ -274,6 +279,9 @@ function MatchScreen() {
   const prepCamSeen = useRef(prepCamKey);                // the prep camera last requested
   const camRef = useRef({ kind: 'prep', opts: { rect: { ...GEO.NORMAL_RECT }, side: 'L' } });
   const penRef = useRef({ on: false, collapsed: false });
+  // the shop bar is shown folded (收起; the pen folds it for itself: the player's own state is the one it returns to) —
+  // the own prep board then takes the official shop-collapsed camera (public issue #5, gameLogic prepCameraFor)
+  const shopFolded = showShop && (pen ? penRef.current.collapsed : collapsed);
   const cancelFacingRef = useRef(() => {});
   const setCam = useCallback((kind, opts) => {
     camRef.current = { kind, opts: opts || {} };
@@ -360,7 +368,8 @@ function MatchScreen() {
         // the battle we just left (or whatever was stored before mount) must not be re-entered next combat;
         // an m.field that arrives during prep (the upcoming battle) is a new object and will be entered
         staleFieldRef.current = field;
-        setCam(prepCam.kind, prepCam.opts);
+        const pc = prepCameraFor(pub, myId, shopFolded);
+        setCam(pc.kind, pc.opts);
         prepCamSeen.current = prepCamKey;
         viewModeRef.current = 'prep';
         lastFieldRef.current = null;
@@ -483,8 +492,22 @@ function MatchScreen() {
     if (!view || viewModeRef.current !== 'prep' || !showPrep) return;
     if (live.current.facing) cancelFacingRef.current();
     setSel(null);
-    setCam(prepCam.kind, prepCam.opts);
+    const pc = prepCameraFor(pub, myId, shopFolded);
+    setCam(pc.kind, pc.opts);
   }, [view, prepCamKey, showPrep]);
+
+  // the shop bar folded (收起) or unfolded on the own prep board (public issue #5: the board did not grow, while the
+  // battle and scouting views had no bar to make room for): the official shop-collapsed camera or the shop camera
+  // again, flown like any camera change. Never over the pen or a teammate's board or in battle; deferred while a piece
+  // is dragged or its direction is chosen (the drop target and the wheel sit on tiles of the camera in use) — this
+  // effect runs again when that ends (gameLogic foldCamera). Picking reads the camera of every frame (render/pick.js).
+  useEffect(() => {
+    const next = foldCamera({
+      pub, myId, folded: shopFolded, ownPrep: !!view && viewModeRef.current === 'prep' && showPrep,
+      pen, busy: !!drag || !!facing, current: camRef.current,
+    });
+    if (next) setCam(next.kind, next.opts);
+  }, [view, shopFolded, showPrep, pen, !!drag, !!facing, prepCamKey]);
 
   // 联防 / 最终攻势: the ‹ › pill moves the camera between the field's halves and 全景 (research 09 §3.1)
   useEffect(() => {
@@ -1050,7 +1073,6 @@ function MatchScreen() {
   // ---- render ---------------------------------------------------------------------------------------------------
   const readyCount = players.filter((p) => p.ready || p.status === 'ready').length;
   const aliveCount = players.filter((p) => p.alive !== false && p.status !== 'left').length;
-  const showShop = !!priv && alive && (phase === PHASE.PREP || phase === PHASE.SP_DRAFT || phase === PHASE.ROUND_START) && !watchingOther;
   // the own battle is over: the server says so (status done) or — client-side combat — the local simulation just ended
   const localDone = cc && !!battleState && battleState.own && !battleState.watch && battleState.done && battleState.fieldId === ownFieldId(myId);
   // (client-side combat: only in 各自行动 — 联防 observers just watch the 联防 field, research 09 §3.1)
