@@ -369,7 +369,7 @@ const LSLIME = 'enemy_1050_lslime';      // “庞贝” (ground): its hits leav
 
 test('F3 review 2: 萨卡兹悖谬暴虐兵长\'s 暴击 splash ("无视无法选择") reaches an airborne 蒂比 next to its blocker', REAL, () => {
   const h = makeBattle({
-    stageId: 'act2autochess_m02', seed: 3, autoFinish: false, timeLimit: 400, hooks: ['damaged'], captureNoisy: true,
+    stageId: 'act2autochess_m02', seed: 3, autoFinish: false, timeLimit: 400, hooks: ['hit', 'damaged'], captureNoisy: true,
     units: [{ chessId: TIPPI[0], row: 9, col: 5, carryState: { sp: 999 }, skillIndex: skillIndex(TIPPI[0], S1) }, { chessId: BAIT, row: 9, col: 4 }],
     enemies: [{ key: WDRRL, route: { motion: 'WALK', start: [9, 8], end: [9, 1], checkpoints: [] }, mods: { hpMul: 1e3, atkMul: 0.3 } }],
   });
@@ -382,9 +382,13 @@ test('F3 review 2: 萨卡兹悖谬暴虐兵长\'s 暴击 splash ("无视无法�
   }
   assert.ok(e && e.blockedBy === bait, '角峰 (block 3) blocks it; she cannot (block < 3)');
   assert.equal(airAtBlock, true, 'she is airborne when it reaches 角峰');
-  const splash = h.hooksOf('damaged').filter((c) => c.target === u && c.source === e);
-  assert.equal(splash.length, 1, `its one-off splash lands on her: ${splash.map((c) => Math.round(c.amount))}`);
-  assert.ok(splash[0].amount > 0 && !splash[0].dmg.isAttack && splash[0].dmg.ignoreSelect);
+  // the splash gets past 对地规避 to her `hit` (where her 片场工作指南 may dodge it: no damage for stack_time s), once
+  const reach = h.hooksOf('hit').filter((c) => c.target === u && c.source === e);
+  assert.equal(reach.length, 1, 'its one-off splash reaches her');
+  assert.ok(!reach[0].dmg.isAttack && reach[0].dmg.ignoreSelect && reach[0].dmg.tags.includes('aoeAttack'));
+  const landed = h.hooksOf('damaged').filter((c) => c.target === u && c.source === e);
+  assert.equal(landed.length, reach[0].dmg.cancel ? 0 : 1, 'it hurts her unless her talent dodged it');
+  assert.ok(landed.every((c) => c.amount > 0));
   assert.ok(u.s.flags.liftoff, 'while airborne');
   assert.ok(h.hooksOf('damaged').some((c) => c.target === bait && c.source === e && c.dmg.isAttack), 'its attack itself is on 角峰');
   done(h);
