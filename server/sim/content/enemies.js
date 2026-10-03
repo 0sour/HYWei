@@ -749,9 +749,12 @@ function freeAllPrisoners(b) {
  * buff an operator / summon / device put on it and every source-less catalogue status (晕眩, 减速, 恐惧, 脆弱, 诱导 … —
  * buffs.js STATUS). Kept [ASSUMED: the whitelist]: its talents and traits (`persist` buffs, and what it or another enemy
  * gave it — 锏's 抵抗 is a self-applied status, enemy auras refresh every few tenths of a second anyway) and the field's
- * state buffs without a source (terrain, airflow — re-applied by position — and element burst locks). Without it a 逐火
- * knocked out while feared (叙拉古 / 妮芙: 恐惧 makes it unblockable) stayed unblockable — so, 隐匿, untargetable — as an
- * ember until the fear ran out.
+ * state buffs without a source (on-tile terrain, airflow — re-applied by position — and element burst locks). Without it
+ * a 逐火 knocked out while feared (叙拉古 / 妮芙: 恐惧 makes it unblockable) stayed unblockable — so, 隐匿, untargetable —
+ * as an ember until the fear ran out. 活性源石's lasting effect (devices.js touchInfection) is no field state but a timed
+ * buff that outlives the tile, so it is cleared like any buff (PRTS 特殊机制 非首次标记: "如无特殊说明，也默认同常规Buff一样
+ * 可被重生清除"); contact gives it again while the enemy stands on the tile. Kept, its 1 s ticks — each a hit of a husk's
+ * 特殊生命值 — killed a 逐火 ember that had crossed the tile long before it could stand up (review of GitHub #33 item 6).
  */
 /**
  * The end of a 重生 (PRTS 特殊机制 §重生 "重生结束时，重置自身的通用技能与当前形态的技能冷却为初始冷却"): every ability with a
@@ -761,10 +764,13 @@ function rebirthCooldowns(e) {
   for (const s of (e.mem.ab && e.mem.ab.list) || []) if (s.cd != null) s.left = num(s.icd, 0);
 }
 
+/** devices.js' lasting 活性源石 effect: a timed buff, not field state — cleared at a 重生 (rebirthCleanse). */
+const INFECTION_BUFF = 'terrain:infection';
+
 function rebirthCleanse(b, e) {
   for (const x of e.buffs.slice()) {
     if (x.persist || (x.source && x.source.side === 'enemy')) continue;
-    if (x.source || x.status) b.removeBuff(e, x);
+    if (x.source || x.status || x.key === INFECTION_BUFF) b.removeBuff(e, x);
   }
 }
 
@@ -1116,7 +1122,8 @@ function kitDeepsea(ab, { swim = false, drown = false }) {
       if (drown && wet) { const v = T(ab, 'Drown.damage') ?? 0; if (v > 0) b.dealDamage(null, e, { ...periodicDamage(v * dt), tags: ['dot', 'periodic', 'drown'] }); }
       a.wet = wet;
     },
-    hitIn(c, b, e, a) { if (swim && a.wet && c.dmg.tags && c.dmg.tags.some((t) => t === 'terrain' || t === 'deepsea' || t === 'drown')) c.dmg.cancel = true; },
+    // 免疫水蚀: the deep-water tick (devices.js, tag 'deepsea') and drowning — not 环境伤害 ('terrain', e.g. 活性源石)
+    hitIn(c, b, e, a) { if (swim && a.wet && c.dmg.tags && c.dmg.tags.some((t) => t === 'deepsea' || t === 'drown')) c.dmg.cancel = true; },
   }];
 }
 

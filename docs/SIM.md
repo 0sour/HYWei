@@ -296,9 +296,12 @@ operators put on the enemy — the buffs with an ally source and source-less cat
 "清空自身身上除白名单外所有Buff"; `rebirthCleanse`), restarts its skills from their initial cooldown when the 重生 ends
 ("重生结束时，重置自身的通用技能与当前形态的技能冷却为初始冷却"; `rebirthCooldowns`, since 0.1.1) — and keeps [ASSUMED: the
 whitelist] its `persist` talents, what it or
-another enemy gave it (锏's self-applied 抵抗, enemy auras) and source-less field state (terrain, airflow, element burst
-locks): a 逐火 knocked out while feared is no unblockable ember — nor one feared by the knocking-out hit itself (the
-重生's 无敌 + 无法选中 refuses it, `Battle.applyStatus`). 重生 / form changes: `reborn()` (first knock-out → second
+another enemy gave it (锏's self-applied 抵抗, enemy auras) and source-less field state (on-tile terrain, airflow, element
+burst locks). 活性源石's lasting effect (`terrain:infection`, a timed buff that outlives the tile) is no field state: the
+重生 clears it (PRTS 特殊机制 非首次标记 "如无特殊说明，也默认同常规Buff一样可被重生清除"), and contact gives it again on the
+tile [ASSUMED] — kept, its ticks broke a 逐火 ember's hits (DESIGN §22.4). A 逐火 knocked out while feared is no
+unblockable ember — nor one feared by the knocking-out hit itself (the 重生's 无敌 + 无法选中 refuses it,
+`Battle.applyStatus`). 重生 / form changes: `reborn()` (first knock-out → second
 form; fx forms 'reborn' → 'form2'), `statue()` (守墓石像: melee only while blocked; first knock-out → 10 s unblockable,
 immobile statue → a flyer with ranged arts attacks that skip flyers; forms 'stone' → 'fly'), `husk()` (talent
 Revive[Trigger], every knock-out: 1 s 重生 — 无敌, 无法阻挡, immobile — then a hit-count husk that
@@ -640,7 +643,10 @@ and 扎罗's 溶血骇惧; "受到N真实伤害" over time is damage (PRTS 伤�
 `periodic_damage` template (源石溶剂: PRTS 盟约记录 修正 "并非流失", "造成无来源真实持续环境伤害"; 狂暴宿主 "自身每秒受到N无来源
 真实伤害"), 码头水手's drowning ("每秒受到1000点无来源真实伤害"), 弧光锋卫's 失衡 bleed (修正 "失衡移动时持续受到真实伤害") and
 孽罪奇美拉's aura are `dealDamage(credit, target, damage.js periodicDamage(n))`: 无来源 true, `canDodge: false`, tags
-`'dot'` / `'periodic'` (player report D1). The 源石溶剂 drain also ticks on every 敌人类我方单位 of the field (炎佑, a
+`'dot'` / `'periodic'` (player report D1). Terrain ticks (`content/devices.js`): 深水区's 【水蚀】 is the same kind (PRTS 涨潮控制
+深水 "无来源真实持续伤害（不属于环境伤害，不会触发受击回复）": `noSp`, tags `'dot'` / `'periodic'` / `'deepsea'`); 活性源石's is
+无来源 true damage tagged `'terrain'` — 环境伤害 (PRTS 自然环境), what "受到来自自然环境的伤害" content (纠缠藤蔓) reads — and
+not `'dot'` [ASSUMED] (DESIGN §22.4). The 源石溶剂 drain also ticks on every 敌人类我方单位 of the field (炎佑, a
 partner's too: PRTS 备注 "全场范围内的所有敌人类我方单位也会获得此装备的…效果…无视目标可选性"), credited to nobody, once per
 second however many carriers (PRTS 作战机制 "同名buff的默认叠加策略buff只能表现出一个"), while a carrier is on the field
 [ASSUMED]. 奥术法阵 has the same 备注 for its rider: while a carrier is on the field, every damage instance of such a unit
