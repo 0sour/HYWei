@@ -6,12 +6,14 @@
 // lethal hit showed no lock. PRTS (same page, M3茧甲 / 埃芒加德 / 阿戈尔 备注): "“复活”的实现方式为：受益者因移动之外的原因退场时
 // 下次部署的再部署时间和费用归零" — a revive acts on a knock-out (退场), which a 不死 prevents, so the lock always comes first
 // (items/battle.js PRIO_RESPAWN). The scope is one lock per DEPLOYMENT (the user's decision, 2026-10-03: "每次部署一次"):
-// until then a redeployed carrier had none, the likeliest reading of the report. Pinned too: the 阿戈尔 battle-start
-// devour spends the lock of the first deployment.
+// until then a redeployed carrier had none, the likeliest reading of the report. The lock belongs to the deployment,
+// not to the grant (QA after the integration: a hammer lent by 萨尔贡 × 娜仁图亚 came back spent, and its window ended
+// with the lend), and an in-place 复活 (M3茧甲, 埃芒加德) is a new deployment — PRTS's 复活 is a 0-time / 0-cost
+// redeploy [ASSUMED]. Pinned too: the 阿戈尔 battle-start devour spends the lock of the first deployment.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBattle, chessRec, enemyRec } from '../helpers/battleHarness.js';
-import { PRIO_REVIVE, PRIO_RESPAWN } from '../../server/sim/content/items/battle.js';
+import { PRIO_REVIVE, PRIO_RESPAWN, holdsUndying, lendItemEffects, itemGrants } from '../../server/sim/content/items/battle.js';
 import { PRIO_BAND_REVIVE } from '../../server/sim/content/bands/battle.js';
 
 const HAMMER = 'chess_item_3_09_e_a';
@@ -117,11 +119,11 @@ test('F1 坚固维式重锤: a retreat + redeploy (a 突袭 jump) is a new deplo
   const c = carrier([HAMMER]);
   const hit = () => c.h.b.dealDamage(c.e, c.u, { amount: 1e7, type: 'true', canDodge: false });
   hit();
-  assert.ok(c.u.alive && c.u.mem.undyingUntil > c.h.b.time, 'lock running');
+  assert.ok(c.u.alive && holdsUndying(c.h.b, c.u), 'lock running');
   c.h.run(2);
   c.h.b.retreat(c.u, { reason: 'raid' });
   assert.ok(c.h.b.redeploy(c.u, { free: true, tile: [10, 5], keepSp: true }), 'redeployed one tile on');
-  assert.ok(!(c.u.mem.undyingUntil > c.h.b.time), 'the first deployment\'s window ended with it');
+  assert.ok(!holdsUndying(c.h.b, c.u), 'the first deployment\'s window ended with it');
   c.h.run(1);
   hit();
   assert.ok(c.u.alive && c.u.hp >= 1 && c.u.hp < 2, 'the new deployment has its own lock');
@@ -167,8 +169,102 @@ test('F1 坚固维式重锤 + M3茧甲: the lock comes before the revive whateve
     assert.ok(c.u.alive, `${items}: after the 8 s the 茧甲 revives`);
     assert.equal(Math.round(c.u.hp), 2000, 'full HP');
     assert.deepEqual(log.map((x) => x[0]), ['undying', 'revive']);
+    // the revive stands for PRTS's 0-time / 0-cost redeploy: a new deployment, so the lock is armed again
     hit();
-    assert.equal(c.u.alive, false, `${items}: nothing left`);
+    assert.ok(c.u.alive && c.u.hp < 2, `${items}: the revived carrier locks again`);
+    assert.deepEqual(log.map((x) => x[0]), ['undying', 'revive', 'undying']);
+    c.h.run(8.2);
+    hit();
+    assert.equal(c.u.alive, false, `${items}: nothing left (one revive, one lock in that deployment)`);
+  }
+});
+
+// The 埃芒加德 strategy's revive (命结之秘, the first 3 knock-downs of the battle revive at once) stands in place for the same
+// redeploy as M3茧甲's: the lock is armed again after it.
+test('F1 坚固维式重锤 + 埃芒加德: the band revive re-arms the lock, once per revive', () => {
+  const h = makeBattle({
+    defs: { chess: { t_op: op('t_op') }, enemies: { e_d: enemyRec({ key: 'e_d', hp: 1e7, speed: 0 }) } },
+    units: [{ chessId: 't_op', row: 10, col: 4, items: [HAMMER] }], bandId: 'band_ermengard',
+    enemies: [{ key: 'e_d', pos: [10, 9] }], timeLimit: 999, autoFinish: false,
+  });
+  h.step(1);
+  const u = h.unit('t_op');
+  const e = h.b.enemies.find((x) => x.alive);
+  const log = fxLog(h, u);
+  const hit = () => h.b.dealDamage(e, u, { amount: 1e7, type: 'true', canDodge: false });
+  hit();
+  h.run(8.2);
+  hit();
+  assert.ok(u.alive && Math.round(u.hp) === 2000, 'the band revives the carrier after its first lock');
+  hit();
+  assert.ok(u.alive && u.hp < 2, 'locked again after the revive');
+  h.run(1);
+  hit();
+  assert.ok(u.alive && u.hp < 2, 'inside the new window');
+  assert.deepEqual(log.map((x) => [x[0], x[2]]), [['undying', 'item:hammer'], ['revive', 'band:band_ermengard'], ['undying', 'item:hammer']]);
+});
+
+// 萨尔贡 × 娜仁图亚 lends a carrier's items to its neighbours for 60 s (items/battle.js lendItemEffects). The lock belongs to
+// the borrower's deployment, not to the lend: a borrower knocked out while lent, whose lend ran out while it was down,
+// gets a fresh lock when it is lent the hammer again in its next deployment (QA: it came back spent — the per-grant
+// hook that re-armed it was gone with the lend); and a window started through the lend lasts its 8 s after the lend
+// ends [ASSUMED: the 异常效果 不死 outlasts its source] (QA: it ended with the lend).
+/** A lender carrying the hammer at (10, 4), a borrower (no items) at (11, 4) and a static dummy. */
+function lendPair() {
+  const h = makeBattle({
+    defs: { chess: { t_op: op('t_op'), t_bor: op('t_bor') }, enemies: { e_d: enemyRec({ key: 'e_d', hp: 1e7, speed: 0 }) } },
+    units: [{ chessId: 't_op', row: 10, col: 4, items: [HAMMER] }, { chessId: 't_bor', row: 11, col: 4 }],
+    enemies: [{ key: 'e_d', pos: [10, 9] }], timeLimit: 999, autoFinish: false,
+  });
+  h.step(1);
+  return { h, lender: h.unit('t_op'), u: h.unit('t_bor'), e: h.b.enemies.find((x) => x.alive) };
+}
+const lent = (h, u) => itemGrants(h.b, u).some((g) => g.lent && g.key === 'chess_item_3_09_e');
+
+test('F1 坚固维式重锤 lent by 萨尔贡 × 娜仁图亚: a fresh lock in the next deployment, though the lend ran out while it was down', () => {
+  {
+    const { h, lender, u, e } = lendPair();
+    const log = fxLog(h, u);
+    const hit = () => h.b.dealDamage(e, u, { amount: 1e7, type: 'true', canDodge: false });
+    assert.equal(lendItemEffects(h.b, lender, u, { duration: 12 }), 1, 'the hammer is lent');
+    hit();
+    assert.ok(u.alive && holdsUndying(h.b, u), 'the lent hammer locks');
+    h.run(8.2);
+    hit();
+    assert.equal(u.alive, false, 'knocked out after the window');
+    h.run(5);
+    assert.ok(!lent(h, u), 'the lend ran out while it was down');
+    h.runUntil(() => u.alive, 60);
+    assert.ok(u.alive, 'redeployed');
+    hit();
+    assert.equal(u.alive, false, 'no hammer, no lock');
+    h.runUntil(() => u.alive, 60);
+    assert.equal(lendItemEffects(h.b, lender, u, { duration: 12 }), 1, 'lent again in this deployment');
+    hit();
+    assert.ok(u.alive && u.hp < 2, 'a new deployment with the hammer: a fresh lock');
+    h.run(8.2);
+    lendItemEffects(h.b, lender, u, { duration: 12 });
+    hit();
+    assert.equal(u.alive, false, 'a lend refreshed in the same deployment does not re-arm it');
+    assert.equal(log.filter((x) => x[0] === 'undying').length, 2);
+  }
+});
+
+test('F1 坚固维式重锤 lent by 萨尔贡 × 娜仁图亚: a window started through the lend lasts its 8 s after the lend ends', () => {
+  {
+    const { h, lender, u, e } = lendPair();
+    const hit = () => h.b.dealDamage(e, u, { amount: 1e7, type: 'true', canDodge: false });
+    lendItemEffects(h.b, lender, u, { duration: 3 });
+    h.run(2);
+    hit();
+    assert.ok(u.alive && u.hp < 2, 'locked 1 s before the lend ends');
+    h.run(3);
+    assert.ok(!lent(h, u), 'the lend is over');
+    hit();
+    assert.ok(u.alive && holdsUndying(h.b, u), 'still held: the window runs its 8 s');
+    h.run(5.2);
+    hit();
+    assert.equal(u.alive, false, 'knocked out once the 8 s are over');
   }
 });
 

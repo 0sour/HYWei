@@ -20,11 +20,13 @@
 // either quality satisfies them; lent items count as carried. Both are evaluated live, at the moment of use.
 //
 // Hook priorities (non-default): 'fatal' — consumable death savers run LAST, so a skill's / talent's own undying (kits
-// use 10 … −60) never wastes a charge: 坚固维式重锤's lock (异常效果 不死, once per deployment) at PRIO_REVIVE −100, then the
-// M3茧甲 revive at PRIO_RESPAWN −101 — PRTS 卫戍协议：盟约 下半/PRTS盟约记录 备注 "“复活”的实现方式为：受益者因移动之外的
-// 原因退场时下次部署的再部署时间和费用归零": a revive acts on a knock-out, which a 不死 prevents, so the lock always comes
-// first whatever the equip order (player report F1 after 0.1.0: with the 茧甲 equipped first the revive ran first and
-// the first lethal hit showed no lock); 埃芒加德's band revive follows (bands/battle.js PRIO_BAND_REVIVE −110).
+// use 10 … −60) never wastes a charge: 坚固维式重锤's lock (异常效果 不死, once per deployment — deploymentOf; its running
+// windows held by one battle-level hook) at PRIO_REVIVE −100, then the M3茧甲 revive at PRIO_RESPAWN −101 — PRTS
+// 卫戍协议：盟约 下半/PRTS盟约记录 备注 "“复活”的实现方式为：受益者因移动之外的原因退场时下次部署的再部署时间和费用归零": a
+// revive acts on a knock-out, which a 不死 prevents, so the lock always comes first whatever the equip order (player
+// report F1 after 0.1.0: with the 茧甲 equipped first the revive ran first and the first lethal hit showed no lock);
+// 埃芒加德's band revive follows (bands/battle.js PRIO_BAND_REVIVE −110). Both revives stand in place for that redeploy,
+// so each opens a new deployment for the lock (revivedInPlace).
 // 骑士戒律's free in-skill undying runs early (20). Flat damage reduction 'hit' −10 (after the other damage modifiers).
 // Proc damage dealt by items carries the tag 'item' and never re-triggers item procs.
 //
@@ -219,10 +221,37 @@ function fieldHammers(battle, rt, pid) {
 function hammerState(battle, rt, u) {
   let hs = rt.hammers.get(u);
   if (!hs) {
-    hs = { own: { burn: 0, undying: 0, aspd: 0, tremble: 0 }, params: {}, steam: 0, steamP: null, refs: 0, scope: null, aspdCur: 0, undyingUsed: false, undyingUntil: -Infinity };
+    // lockAt: the deployment (deploymentOf) whose 坚固 lock is spent — kept here, not in the grant's Scope, so a lend
+    // that ends and comes back never resets it, and a redeploy while no hammer is held still re-arms it
+    hs = { own: { burn: 0, undying: 0, aspd: 0, tremble: 0 }, params: {}, steam: 0, steamP: null, refs: 0, scope: null, aspdCur: 0, lockAt: null };
     rt.hammers.set(u, hs);
   }
   return hs;
+}
+
+// 坚固维式重锤's 不死 lock — once per DEPLOYMENT (the user's first-hand memory of the official mode, 2026-10-03: "每次部署
+// 一次"; the text only says 首次). The lock belongs to the deployment, not to the grant that gave it: a borrower (萨尔贡 ×
+// 娜仁图亚's 60 s lend) follows the same rule as an owner.
+
+/**
+ * The deployment `u` is in: every deploy bumps `deploySeq` (the redeploy after a knock-out, a 突袭 retreat + redeploy
+ * [ASSUMED a deployment], 阿戈尔's 立刻复活), and an in-place 复活 (M3茧甲, 埃芒加德: revivedInPlace) opens a new one too
+ * [ASSUMED] — PRTS (M3茧甲 / 埃芒加德 / 阿戈尔 备注) "“复活”的实现方式为：受益者因移动之外的原因退场时下次部署的再部署时间和
+ * 费用归零": officially a revive is a 0-time / 0-cost redeploy; the remake keeps the unit standing instead.
+ */
+function deploymentOf(u) { return `${u.deploySeq}:${u.mem.revives | 0}`; }
+
+/** An in-place 复活 (M3茧甲, 埃芒加德) happened: a new deployment for the once-per-deployment lock (deploymentOf). */
+export function revivedInPlace(u) { if (u && u.mem) u.mem.revives = (u.mem.revives | 0) + 1; }
+
+/**
+ * Does `u` hold 坚固维式重锤's 不死 right now — a window started in this deployment that has not run out? The window lives
+ * on the unit (`mem.undyingUntil`, `mem.undyingAt`) and a battle-level hook holds it (hammerAcquire), so it outlives the
+ * grant that started it — a lend running out mid-window leaves the 不死 for its 8 s [ASSUMED: the 异常效果 outlasts its
+ * source] — and ends with the deployment. 信仰搅拌机 S2 steps aside while it holds (kits/tier4.js).
+ */
+export function holdsUndying(battle, u) {
+  return !!u && u.mem.undyingAt === deploymentOf(u) && battle.time < (u.mem.undyingUntil ?? -Infinity);
 }
 /** Effective multiplier of a hammer type on `u` and its params (null when the type does not apply). */
 function hammerMul(battle, rt, u, hs, type) {
@@ -247,6 +276,10 @@ function hammerAcquire(battle, rt, u) {
   const hs = hammerState(battle, rt, u);
   hs.refs++;
   if (hs.scope) return hs;
+  // every running 坚固 window of the battle (holdsUndying): one hook that no grant owns, registered before any lock hook
+  if (!rt.undyingHook) {
+    rt.undyingHook = battle.on('fatal', (c) => { if (!c.prevented && holdsUndying(battle, c.unit)) c.prevented = true; }, { priority: PRIO_REVIVE });
+  }
   const S = new Scope(battle, u, `item:hammer#${u.id}`);
   hs.scope = S;
   hs.aspdCur = 0;
@@ -272,29 +305,22 @@ function hammerAcquire(battle, rt, u) {
       if (t && t.side === 'enemy' && t.alive && chance(battle, pr)) battle.applyStatus(t, 'tremble', { duration: num(p.disarmed_duration, 2), source: u });
     }
   });
-  // 坚固: first lethal hit of each deployment ⇒ HP never below 1 for undeadable_duration × m s. Once per DEPLOYMENT (the
-  // user's first-hand memory of the official mode, 2026-10-03: "每次部署一次"; the text only says 首次): the carrier's own
-  // non-initial 'deploy' — the redeploy after a knock-out, a 突袭 jump (retreat + redeploy; [ASSUMED] a deployment too)
-  // — re-arms the lock and ends a window still running (the retreat ends the unit's states). Any lethal HP loss sets
-  // it off, an ally's (the 阿戈尔 battle-start devour, "造成5000点物理伤害") or the carrier's own (源石溶剂) included.
-  S.on('deploy', (c) => {
-    if (c.unit !== u || c.initial) return;
-    hs.undyingUsed = false;
-    hs.undyingUntil = -Infinity;
-    if (u.mem.undyingUntil != null) u.mem.undyingUntil = -Infinity;
-  }, 100);
+  // 坚固: the first lethal hit of each deployment (deploymentOf) ⇒ HP never below 1 for undeadable_duration × m s — the
+  // window, held by the battle-level hook above. A new deployment re-arms the lock and leaves a window still running
+  // behind (the retreat ends the unit's states). Any lethal HP loss sets it off, an ally's (the 阿戈尔 battle-start
+  // devour, "造成5000点物理伤害") or the carrier's own (源石溶剂) included.
   S.on('fatal', (c) => {
     if (c.unit !== u || c.prevented) return;
-    if (battle.time < hs.undyingUntil) { c.prevented = true; return; }
-    if (hs.undyingUsed) return;
+    const at = deploymentOf(u);
+    if (hs.lockAt === at) return;
     const p = hammerParams(hs, 'undying');
     if (!p) return;
     const m = hammerMul(battle, rt, u, hs, 'undying');
     if (!(m > 0)) return;
-    hs.undyingUsed = true;
+    hs.lockAt = at;
     const dur = num(p.undeadable_duration, 8) * m;
-    hs.undyingUntil = battle.time + dur;
-    u.mem.undyingUntil = hs.undyingUntil;               // the carrier holds 不死 (信仰搅拌机 S2 steps aside: kits/tier4.js)
+    u.mem.undyingUntil = battle.time + dur;             // the carrier holds 不死 (holdsUndying)
+    u.mem.undyingAt = at;
     c.prevented = true;
     fxOn(battle, 'undying', u, 'item:hammer', 'chess_item_3_09_e', { duration: dur });
   }, PRIO_REVIVE);
@@ -565,7 +591,8 @@ const BY_ITEM = {
       if (addShieldLayer(battle, c.target, SHIELD_KEY, cap)) fxOn(battle, 'shield', c.target, 'item:chess_item_4_11_e', rec.id);
     });
   },
-  // M3茧甲: knocked down in battle ⇒ revive at full HP (max_respawn_cnt per battle)
+  // M3茧甲: knocked down in battle ⇒ revive at full HP (max_respawn_cnt per battle), in place — PRTS's form (退场, then a
+  // 0-time / 0-cost redeploy) is not modelled, but it counts as a new deployment for 坚固维式重锤's lock (revivedInPlace)
   chess_item_4_12_e(battle, u, rec, S) {
     const p = bp(rec, 'act1autochess_equip_acarm068_global_buff');
     const max = p ? Math.floor(num(p.max_respawn_cnt, 1)) : 0;
@@ -576,6 +603,7 @@ const BY_ITEM = {
       used++;
       c.prevented = true;
       u.hp = u.s.maxHp;
+      revivedInPlace(u);
       fxOn(battle, 'revive', u, 'item:chess_item_4_12_e', rec.id, { left: max - used });
     }, PRIO_RESPAWN); // after the hammer's 不死 lock, whatever the equip order (header)
   },

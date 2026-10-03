@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBattle, enemyRec, checkInvariants } from '../helpers/battleHarness.js';
 import { getData } from '../../server/data.js';
+import { holdsUndying } from '../../server/sim/content/items/battle.js';
 
 const DATA = getData({ log: { warn() {}, error() {}, info() {} } });
 
@@ -84,7 +85,7 @@ test('信仰搅拌机 S2 steps aside while she holds 不死 (坚固维式重锤\
   const foe = h.b.enemies[0];
   const lethal = () => h.b.dealDamage(foe, u, { amount: u.s.maxHp * 10, type: 'true', tags: ['test'] });
   lethal();                                            // before the skill: the hammer's lock starts (8 s of 不死)
-  assert.ok(u.alive && u.mem.undyingUntil > h.b.time, 'the hammer holds her');
+  assert.ok(u.alive && holdsUndying(h.b, u), 'the hammer holds her');
   assert.ok(u.skill.activate('test', { free: true }), 'S2 on');
   const ammo = u.skill.ammoLeft;
   lethal();
@@ -95,5 +96,30 @@ test('信仰搅拌机 S2 steps aside while she holds 不死 (坚固维式重锤\
   lethal();
   assert.ok(u.alive, 'S2 blocks it');
   assert.equal(u.skill.ammoLeft, ammo - 30);
+  assert.equal(h.b.errorCount, 0);
+});
+
+test('信仰搅拌机 S2 guards again in a new deployment although the old 不死 window has not run out (holdsUndying is per deployment)', () => {
+  const id = 'chess_char_4_01_a';
+  const h = makeBattle({
+    defs: { enemies: { e_hit: enemyRec({ key: 'e_hit', hp: 1e8, atk: 0, speed: 0 }) } },
+    units: [{ chessId: id, row: 9, col: 5, skillIndex: 1, items: ['chess_item_3_09_e_a'] }], enemies: [{ key: 'e_hit', pos: [9, 8] }],
+    timeLimit: 60, autoFinish: false,
+  });
+  h.step(2);
+  const u = h.unit(id);
+  const foe = h.b.enemies[0];
+  const lethal = () => h.b.dealDamage(foe, u, { amount: u.s.maxHp * 10, type: 'true', tags: ['test'] });
+  lethal();
+  assert.ok(holdsUndying(h.b, u), 'the hammer\'s window runs');
+  h.run(1);
+  h.b.retreat(u, { reason: 'raid' });                 // a 突袭-style retreat + redeploy 3 s into the window
+  assert.ok(h.b.redeploy(u, { free: true, tile: [9, 6] }), 'redeployed');
+  assert.ok(!holdsUndying(h.b, u), 'the window ended with its deployment');
+  assert.ok(u.skill.activate('test', { free: true }), 'S2 on');
+  const ammo = u.skill.ammoLeft;
+  lethal();
+  assert.ok(u.alive, 'S2 blocks it');
+  assert.equal(u.skill.ammoLeft, ammo - 30, 'she holds no 不死 in this deployment: S2 spends its bullets');
   assert.equal(h.b.errorCount, 0);
 });
