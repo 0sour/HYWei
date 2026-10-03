@@ -582,6 +582,27 @@ export function modeOffBonds(mode) {
   return new Set(list.filter((b) => typeof b === 'string'));
 }
 
+/**
+ * The bonds a strategy is built around that this mode switches off: bands.json `bondIds` (shared/bandBonds.js at build
+ * time — the field the server's bot reads too, GameData.bandBondIds) ∩ `off` (modeOffBonds). 标准: 潘格尼尼 → 拉特兰,
+ * 克莱门莎 → 阿戈尔, 玛恩纳 → 卡西米尔; the strategy draft marks such a band 本局禁用 (still selectable, DESIGN §21.26).
+ * @param {any} band bands.json record @param {Set<string>|null} off
+ * @returns {string[]}
+ */
+export function bandOffBonds(band, off) {
+  if (!(off instanceof Set) || !off.size || !Array.isArray(band?.bondIds)) return [];
+  return band.bondIds.filter((b) => typeof b === 'string' && off.has(b));
+}
+
+/**
+ * The strategy draft's note for such a band: "本局禁用【拉特兰】盟约，此策略效果可能无法发挥".
+ * @param {string[]} names the switched-off bonds' names
+ */
+export function bandOffLine(names) {
+  const list = (Array.isArray(names) ? names : []).filter((n) => typeof n === 'string' && n);
+  return list.length ? `本局禁用${list.map((n) => `【${n}】`).join('')}盟约，此策略效果可能无法发挥` : '';
+}
+
 // ---- shop ---------------------------------------------------------------------------------------------
 
 /**

@@ -8,8 +8,10 @@
 // At 1920×1080 and on phones (844×390, 756×366, touch): the 变形同构体 card from the shop lists its 14 pairings (5 marked 本局禁用),
 // the wearer's card highlights 维多利亚 (生效中), and the popup of a core bond holding 调和's +1 says 在场 n（含调和 +1） with the
 // 调和 row naming 缪尔赛思 — every line inside its panel (the detail card without sideways scrolling), text ≥ 9 px on the
-// phones. Screenshots:
-// fb1-gaps-{morph-shop,morph-wearer,harmony}-<w>x<h>.png. Unit counterparts: test/ui/feedback1-gaps.test.js.
+// phones. The strategy draft of a 标准 match (?phase=BAND_DRAFT&variant=funny, 1920×1080 and 844×390): 潘格尼尼, 克莱门莎 and
+// 玛恩纳 — and no other — read 本局禁用 on their card, the detail pane says "本局禁用【拉特兰】盟约，此策略效果可能无法发挥", and
+// 潘格尼尼 can still be picked. Screenshots:
+// fb1-gaps-{morph-shop,morph-wearer,harmony,draft}-<w>x<h>.png. Unit counterparts: test/ui/feedback1-gaps.test.js.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -125,6 +127,59 @@ describe('0.1.1 gaps: 变形同构体 pairings and 调和\'s +1 (mock harness, h
       // the 调和 row opens 缪尔赛思's card
       await tap('.bpop .bpop__harmony');
       await page.waitForFunction(() => /缪尔赛思/.test(document.querySelector('.dpanel .dhead__name')?.textContent || ''), { timeout: 5000 });
+      assert.deepEqual(problems, []);
+      await page.close();
+    });
+  }
+
+  // the strategy draft of a 标准 match (?phase=BAND_DRAFT&variant=funny; my turn): the strategies built around a bond 标准
+  // switches off read 本局禁用 on their card and in the detail pane — and can still be picked
+  for (const [name, w, h, touch] of [['1920x1080', 1920, 1080, false], ['844x390', 844, 390, true]]) {
+    test(`${name}: the 标准 strategy draft marks 潘格尼尼 / 克莱门莎 / 玛恩纳 本局禁用, and 潘格尼尼 can still be picked`, { timeout: 120000 }, async () => {
+      const page = await browser.newPage();
+      await page.setViewport({ width: w, height: h, deviceScaleFactor: 1, isMobile: touch, hasTouch: touch });
+      const problems = [];
+      page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
+      page.on('console', (m) => { if (m.type() === 'error') problems.push(`console: ${m.text()}`); });
+      await page.goto(`${base}/dev/game-mock.html?shot=1&phase=BAND_DRAFT&variant=funny`, { waitUntil: 'networkidle0' });
+      await page.waitForSelector('.draft-grid .dband[data-band]', { timeout: 20000 });
+      await sleep(500);
+      const tap = async (sel) => { const el = await page.$(sel); assert.ok(el, sel); await el.scrollIntoView(); if (touch) await el.tap(); else await el.click(); await sleep(300); };
+      const cards = await page.$$eval('.draft-grid .dband[data-band]', (els) => els.map((c) => {
+        const t = c.querySelector('.dband__off');
+        const r = c.getBoundingClientRect();
+        const q = t ? t.getBoundingClientRect() : null;
+        return { id: c.getAttribute('data-band'), off: c.classList.contains('is-off'), tag: t ? t.textContent : null, title: c.title || null,
+          font: t ? parseFloat(getComputedStyle(t).fontSize) : null, inside: !q || (q.left >= r.left - 0.5 && q.right <= r.right + 0.5 && q.bottom <= r.bottom + 0.5) };
+      }));
+      assert.ok(cards.length >= 30, `${cards.length} strategies on offer`);
+      assert.deepEqual(cards.filter((c) => c.tag).map((c) => c.id), ['band_paganini', 'band_clementia', 'band_mlynar'], 'only the three');
+      assert.ok(cards.filter((c) => c.tag).every((c) => c.off && c.tag === '本局禁用' && c.inside && c.font >= (touch ? 8 : 11.5)), JSON.stringify(cards.filter((c) => c.tag)));
+      assert.equal(cards.find((c) => c.id === 'band_paganini').title, '本局禁用【拉特兰】盟约，此策略效果可能无法发挥');
+      await page.screenshot({ path: path.join(OUT, `fb1-gaps-draft-${name}.png`) });
+      // its detail pane: the note, inside the pane; 确认选择 stays enabled (information only)
+      await tap('.draft-grid .dband[data-band="band_paganini"]');
+      await page.waitForSelector('.draft-detail .draft-detail__off', { timeout: 5000 });
+      const note = await page.evaluate(() => {
+        const n = document.querySelector('.draft-detail .draft-detail__off');
+        const p = document.querySelector('.draft-detail').getBoundingClientRect();
+        const r = n.getBoundingClientRect();
+        const btn = [...document.querySelectorAll('.draft-detail__btns button')].pop();
+        return { text: n.textContent.trim(), struck: n.querySelector('.draft-detail__offname')?.textContent, font: parseFloat(getComputedStyle(n).fontSize),
+          inside: r.left >= p.left - 0.5 && r.right <= p.right + 0.5, confirm: btn ? { text: btn.textContent.trim(), disabled: btn.disabled } : null };
+      });
+      assert.equal(note.text, '本局禁用【拉特兰】盟约，此策略效果可能无法发挥');
+      assert.equal(note.struck, '拉特兰');
+      assert.ok(note.inside && note.font >= (touch ? 9 : 13.5), JSON.stringify(note));
+      assert.deepEqual(note.confirm, { text: '确认选择', disabled: false }, 'still selectable');
+      await page.screenshot({ path: path.join(OUT, `fb1-gaps-draft-${name}-detail.png`) });
+      // a strategy tied to no switched-off bond: no note
+      await tap('.draft-grid .dband[data-band="band_bldsk"]');
+      assert.equal(await page.$('.draft-detail .draft-detail__off'), null);
+      // picking 潘格尼尼 works like any strategy
+      await tap('.draft-grid .dband[data-band="band_paganini"]');
+      await tap('.draft-detail__btns button:last-child');
+      await page.waitForFunction(() => /已选择「潘格尼尼」/.test(document.querySelector('.draft-detail__status')?.textContent || ''), { timeout: 5000 });
       assert.deepEqual(problems, []);
       await page.close();
     });

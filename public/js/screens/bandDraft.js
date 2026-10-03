@@ -9,6 +9,9 @@
 // is reported (g.bandFocus) and the server assigns it while it is free, else 「华法琳」, else the first free strategy
 // (timeoutBand). It starts on that default, so the tip under the order list always names what a timeout gives.
 // Solo, and a co-op match with a single human (the server's soloUntimed: draft.untimed): no clock at all.
+// A strategy built around a bond the mode switches off (bands.json bondIds ∩ the mode's inactive bonds — 标准: 潘格尼尼
+// 拉特兰, 克莱门莎 阿戈尔, 玛恩纳 卡西米尔; the bot never picks one) reads 本局禁用 on its card and in the detail pane
+// (BandOffTag / BandOffNote, DESIGN §21.26, §21.7's look); it stays selectable — information only.
 
 import { useEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
 import { html, Button, Icon, MicroLabel, useTicker, secondsLeft } from '../ui/components.js';
@@ -18,8 +21,20 @@ import { actions, act } from '../ui/gameActions.js';
 import { normalizeDraft, sortedPlayers } from '../ui/gameLogic.js';
 import { useStore } from '../store.js';
 import { audio } from '../audio.js';
+import { modeOffBonds, bandOffBonds, bandOffLine } from '../ui/gameLogic.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
+
+/** 本局禁用 on a strategy card whose bonds `names` the mode switches off (bandOffBonds); nothing otherwise. */
+export function BandOffTag({ names = [] }) {
+  return names.length ? html`<span class="dband__off" title=${bandOffLine(names)}>本局禁用</span>` : null;
+}
+
+/** The detail pane's note for such a strategy: "本局禁用【拉特兰】盟约，此策略效果可能无法发挥" (the bond names struck through). */
+export function BandOffNote({ names = [] }) {
+  if (!names.length) return null;
+  return html`<p class="draft-detail__off" role="note" aria-label=${bandOffLine(names)}><${Icon} name="info" /><span>本局禁用${names.map((n, i) => html`<span key=${i}>【<s class="draft-detail__offname">${n}</s>】</span>`)}盟约，此策略效果可能无法发挥</span></p>`;
+}
 
 /**
  * Bands selectable in a mode (modeTypeList contains the mode's type), sorted by sortId.
@@ -137,6 +152,7 @@ export function BandDraftScreen() {
   const [skipped, setSkipped] = useState(false);
 
   const mode = gd.config?.modes?.[pub?.modeId];
+  const offBonds = modeOffBonds(mode); // the bonds this mode never activates (标准: 10 of 23)
   const solo = roomSolo || mode?.type === 'SINGLE' || String(pub?.modeId || '').includes('single');
   const bands = useMemo(() => allowedBands(gd.list('bands'), mode?.type || (solo ? 'SINGLE' : 'MULTI')), [gd.ready, mode?.type, solo]);
   const players = sortedPlayers(pub);
@@ -233,12 +249,14 @@ export function BandDraftScreen() {
         ${bands.map((b) => {
           const who = pickers.get(b.bandId) || [];
           const isTaken = taken.has(b.bandId);
-          return html`<button key=${b.bandId} type="button" role="option" aria-selected=${sel === b.bandId ? 'true' : 'false'}
-              aria-disabled=${isTaken ? 'true' : 'false'} title=${isTaken ? '队友已选' : undefined}
-              class=${cx('dband', sel === b.bandId && 'is-sel', myPick === b.bandId && 'is-mine', isTaken && 'is-taken')} onClick=${() => { setSel(b.bandId); audio.sfx('tab', { volume: 0.5 }); }}>
+          const offNames = bandOffBonds(b, offBonds).map((id) => gd.bond(id)?.name || id); // 本局禁用 (still selectable)
+          return html`<button key=${b.bandId} type="button" role="option" aria-selected=${sel === b.bandId ? 'true' : 'false'} data-band=${b.bandId}
+              aria-disabled=${isTaken ? 'true' : 'false'} title=${isTaken ? '队友已选' : offNames.length ? bandOffLine(offNames) : undefined}
+              class=${cx('dband', sel === b.bandId && 'is-sel', myPick === b.bandId && 'is-mine', isTaken && 'is-taken', offNames.length && 'is-off')} onClick=${() => { setSel(b.bandId); audio.sfx('tab', { volume: 0.5 }); }}>
             <${BandIcon} bandId=${b.bandId} size="lg" />
             <span class="dband__name">${b.name}</span>
             <span class="dband__lp num"><i></i>${b.totalHp}</span>
+            <${BandOffTag} names=${offNames} />
             ${who.length ? html`<span class="dband__who">${who.slice(0, 4).map((p) => html`<${PlayerAvatar} key=${p.playerId} player=${p} size="sm" />`)}</span>` : null}
             ${isTaken ? html`<span class="dband__taken">队友已选</span>` : null}
           </button>`;
@@ -252,6 +270,7 @@ export function BandDraftScreen() {
           </div>
           <div class="draft-detail__hp"><span>初始生命值</span><${LpTower} value=${band.totalHp} size="lg" /></div>
           <h2 class="draft-detail__name">${band.name}</h2>
+          <${BandOffNote} names=${bandOffBonds(band, offBonds).map((id) => gd.bond(id)?.name || id)} />
           <div class="draft-detail__eff">
             <${MicroLabel} tone="mint">EFFECT</${MicroLabel}>
             <b>${band.effectName || ''}</b>

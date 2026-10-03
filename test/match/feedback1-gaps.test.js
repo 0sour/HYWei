@@ -260,7 +260,8 @@ test('§21.26 docs: DESIGN (the subsection and the normative lines), META, PLAYI
   const at = DESIGN.indexOf('### 21.26 Gaps found while triaging GitHub issues #1 / #8 (v0.1.1)');
   assert.ok(at > 0, 'the subsection');
   const s = DESIGN.slice(at);
-  for (const k of ['morphPairings', 'harmonyMembers', '`harmony: 1`', 'bandBondIds', 'botPickBand', '0 of 200 and 0 of 800', '5 of 200 solo and 23 of 800 co-op']) assert.ok(s.includes(k), k);
+  for (const k of ['morphPairings', 'harmonyMembers', '`harmony: 1`', 'bandBondIds', 'botPickBand', '0 of 200 and 0 of 800', '5 of 200 solo and 23 of 800 co-op',
+    'shared/bandBonds.js', 'bandOffBonds', 'BandOffTag', '本局禁用【拉特兰】盟约，此策略效果可能无法发挥', 'it stays selectable']) assert.ok(s.includes(k), k);
   assert.match(doc('docs/DATA.md'), /\| `bondIds` \| `\["lateranoShip"\]` \(潘格尼尼\) \/ `\[\]` \|/, 'DATA.md bands.json bondIds');
   assert.match(DESIGN, /bonds:\[\{bondId,count,active,tier,layers,harmony\? \/\* 调和's \+1 is in count, §21\.26 \*\/\}\]/, '§8.2');
   assert.match(DESIGN, /bonds: \[ \{ bondId, count, active, tier, layers, harmony\? \/\* 调和's \+1 is in count, §21\.26 \*\/, thresholds, countsHand \} \]/, '§8.3');
@@ -274,4 +275,6 @@ test('§21.26 docs: DESIGN (the subsection and the normative lines), META, PLAYI
   assert.match(v011, /变形同构体的详情卡列出天赋栏里的对应关系/);
   assert.match(v011, /盟约详情写明「含调和 \+1」/);
   assert.match(v011, /人机不再选择围绕本局禁用盟约的策略（标准模拟下的潘格尼尼、克莱门莎、玛恩纳）/);
+  assert.match(v011, /选择策略时，围绕本局禁用盟约的策略（标准模拟下的潘格尼尼、克莱门莎、玛恩纳）标出「本局禁用」并在详情里说明，仍可选择/);
+  assert.match(META, /The strategy draft marks the same bands 本局禁用 for humans \(still selectable\)/);
 });

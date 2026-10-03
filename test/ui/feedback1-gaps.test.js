@@ -8,6 +8,10 @@
 //      调和's +1 (`harmony` in m.private bonds / m.public players[].bonds — test/match/feedback1-gaps.test.js); the popup
 //      says 在场 n（含调和 +1） and a 调和 row heads the member list naming the 调和 operators on that board — own and a
 //      teammate's (ui/watchBonds.js popupView over the scouted field), the chip's and the strip's titles too.
+//   4. The strategy draft marks a strategy built around a bond the mode switches off 本局禁用 (bands.json `bondIds`, built
+//      by shared/bandBonds.js — the field the bot reads too: gameLogic bandOffBonds = GameData.bandBondIds ∩ the mode's
+//      inactive bonds), on its card and in the detail pane (screens/bandDraft.js BandOffTag / BandOffNote); still selectable.
+//   (3, the bot's pick, is server-side: test/match/feedback1-gaps.test.js.)
 // On screen (headless Chrome, opt-in): test/ui/feedback1-gaps.e2e.test.js.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,7 +33,7 @@ globalThis.fetch = async (url) => {
   }
 };
 
-const { morphPairings, modeOffBonds, grantedBonds, harmonyMembers, HARMONY_BOND } = await import('../../public/js/ui/gameLogic.js');
+const { morphPairings, modeOffBonds, grantedBonds, harmonyMembers, HARMONY_BOND, bandOffBonds, bandOffLine } = await import('../../public/js/ui/gameLogic.js');
 const { data, getMode } = await import('../../public/js/data.js');
 await data.loadAll('bonds', 'chess', 'items', 'assets', 'garrisons', 'config');
 const { ItemDetail, ChessDetail, MorphPairings, MorphGrantLine, BondChips } = await import('../../public/js/ui/detailPanel.js');
@@ -306,5 +310,57 @@ describe('§21.26 2 — 调和\'s +1 in the bond popup', () => {
     assert.equal(chip.props.title, '炎：在场 3/6（含调和 +1），已激活 1 阶');
     const noPlus = [...walk(BondChips({ bondIds: ['yanShip'], bonds: [{ ...entry, harmony: undefined }] }))].find((x) => x.props?.['data-bond'] === 'yanShip');
     assert.equal(noPlus.props.title, '炎：在场 3/6，已激活 1 阶');
+  });
+});
+
+describe('§21.26 4 — the strategy draft marks a strategy built around a bond the mode switches off (本局禁用)', () => {
+  const bands = load('bands.json');
+  const modeIds = Object.keys(config.modes);
+  const markedIn = (modeId) => Object.values(bands).map((b) => [b.bandId, bandOffBonds(b, modeOffBonds(getMode(modeId)))]).filter(([, ids]) => ids.length);
+
+  test('标准: exactly 潘格尼尼 (拉特兰), 克莱门莎 (阿戈尔) and 玛恩纳 (卡西米尔); 险境 / 绝境 / 终极: none; a band tied to no bond: never', () => {
+    for (const id of ['mode_single_funny', 'mode_multi_funny']) {
+      assert.deepEqual(markedIn(id), [['band_paganini', ['lateranoShip']], ['band_clementia', ['egirShip']], ['band_mlynar', ['kazimierzShip']]], id);
+    }
+    for (const id of ['mode_single_normal', 'mode_multi_normal', 'mode_single_hard', 'mode_multi_hard', 'mode_single_abyss', 'mode_multi_abyss']) assert.deepEqual(markedIn(id), [], id);
+    for (const b of Object.values(bands).filter((x) => !x.bondIds.length)) {
+      for (const id of modeIds) assert.deepEqual(bandOffBonds(b, modeOffBonds(getMode(id))), [], `${b.name} in ${id}`);
+    }
+    // a tied band whose bond stays on (杜遥夜 炎) is not marked in 标准 either
+    assert.deepEqual(bandOffBonds(bands.band_duyaoy, modeOffBonds(getMode('mode_multi_funny'))), []);
+    assert.deepEqual(bandOffBonds(bands.band_paganini, null), []);
+    assert.deepEqual(bandOffBonds({ bandId: 'old' }, modeOffBonds(getMode('mode_multi_funny'))), [], 'data without bondIds: no mark');
+  });
+
+  test('one source with the server: the bot\'s exclusion (GameData.bandBondIds ∩ modeInactiveBonds) is the draft\'s mark, in every mode', async () => {
+    const { GameData } = await import('../../server/match/gamedata.js');
+    const { getData } = await import('../../server/data.js');
+    const DATA = getData({ log: { warn() {}, error() {}, info() {} } });
+    for (const modeId of modeIds) {
+      const gd = new GameData(DATA, modeId);
+      for (const id of Object.keys(bands)) {
+        assert.deepEqual([...gd.bandBondIds(id)], bands[id].bondIds, `${id}: the same field`);
+        const server = gd.bandBondIds(id).filter((b) => gd.modeInactiveBonds.has(b));
+        assert.deepEqual(server, bandOffBonds(bands[id], modeOffBonds(getMode(modeId))), `${modeId} ${id}`);
+      }
+    }
+  });
+
+  test('the card\'s tag and the detail pane\'s note: "本局禁用【拉特兰】盟约，此策略效果可能无法发挥", the bond struck through; nothing without one', async () => {
+    const { BandOffTag, BandOffNote } = await import('../../public/js/screens/bandDraft.js');
+    assert.equal(bandOffLine(['拉特兰']), '本局禁用【拉特兰】盟约，此策略效果可能无法发挥');
+    assert.equal(bandOffLine(['拉特兰', '阿戈尔']), '本局禁用【拉特兰】【阿戈尔】盟约，此策略效果可能无法发挥');
+    assert.equal(bandOffLine([]), '');
+    const tag = BandOffTag({ names: ['拉特兰'] });
+    assert.ok(hasClass(tag, 'dband__off'));
+    assert.equal(textOf(tag), '本局禁用');
+    assert.equal(tag.props.title, '本局禁用【拉特兰】盟约，此策略效果可能无法发挥');
+    const note = BandOffNote({ names: ['拉特兰'] });
+    assert.ok(hasClass(note, 'draft-detail__off'));
+    assert.equal(note.props.role, 'note');
+    assert.equal(textOf(note), '本局禁用【拉特兰】盟约，此策略效果可能无法发挥');
+    assert.deepEqual(byClass(note, 'draft-detail__offname').map(textOf), ['拉特兰'], 'the bond name struck through (§21.7)');
+    assert.equal(BandOffTag({ names: [] }), null);
+    assert.equal(BandOffNote({ names: [] }), null);
   });
 });
