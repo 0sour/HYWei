@@ -374,6 +374,15 @@ rehearsal 3, before → after: solo 绝境 27 → 27 wins, LP left 17.9 → 18.4
 → 24 / 57 ms solo and 16 / 36 → 16 / 36 ms co-op; the whole prep with its rehearsal wall clock 80 / 148 → 78 / 153 ms and
 74 / 152 → 73 / 151 ms.
 
+**0.1.1 after the QA (DESIGN §21.6, §21.19).** Seeds 1–40, rehearsal 3 (wins solo 绝境 / co-op 绝境, 4 AI): the merged
+build `dbd45c8` 27 / 11; with WB's 22-match bounty lists (a rule change: R11 is a 悬赏决策 in 14 of 22 and every R11 bounty
+list holds a 特异III giant) the same bot 22 / 9 (LP left 16.3 / 10.9); the residual sim fixes change no outcome (22 / 9);
+the bench-shed fix (the buy loop's shed never sells a piece that came this prep) 24 / 10 (LP left 17.4 / 13.1, co-op
+leaks per match 217 → 210). 0.1.0 on the same seeds: 19 / 5. The 29 same-prep buy → sell of co-op 绝境 (2 AI 托管 + 2
+bots, seeds 21–26) drop to 3 (a reward pick's room, `arrange`, `sellJunk`). Decision time unchanged (one thread, seeds
+1–3, both builds side by side): the whole prep p50 / p95 81 / 187 → 81 / 184 ms solo and 71 / 153 → 71 / 129 ms co-op,
+heuristics CPU 36 / 88 → 35 / 86 ms and 16 / 40 → 16 / 40 ms.
+
 ---
 
 ## 6. Match follow-ups shipped with this pass

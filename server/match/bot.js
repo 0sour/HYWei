@@ -1166,8 +1166,9 @@ function refreshValue(m, ps, ctx) {
 /**
  * Sell the weakest bench chess (temp and hand; the hand only with `handOnly`) that is not part of a merge pair (or
  * anything when keepPairs is false) and does not carry a 突变细胞 (its transformation after the battle is the point).
+ * `keepFresh`: never a piece that came this prep (`boughtRound`: bought for the lineup, an elite just merged, a reward).
  */
-function sellWeakestHand(m, ps, { keepPairs = true, below = Infinity, handOnly = false } = {}) {
+function sellWeakestHand(m, ps, { keepPairs = true, below = Infinity, handOnly = false, keepFresh = false } = {}) {
   const ctx = context(m, ps);
   let worst = null;
   let worstV = Infinity;
@@ -1175,6 +1176,7 @@ function sellWeakestHand(m, ps, { keepPairs = true, below = Infinity, handOnly =
     if (!p || p.kind !== 'chess' || (p.items || []).some((it) => isMutationCell(m.gd, it.id))) continue;
     const base = m.gd.baseIdOf(p.id);
     if (keepPairs && !m.gd.isGolden(p.id) && (ctx.copies.get(base) || 0) >= 2) continue;
+    if (keepFresh && p.boughtRound === m.round) continue;
     const v = pieceValue(m, ps, p, ctx);
     if (v < worstV) { worstV = v; worst = p; }
   }
@@ -1375,9 +1377,11 @@ function* buyLoopSteps(m, ps, { fillOnly = false, maxRefreshes = 0 } = {}) {
     const boardFull = ownedN >= ps.deployCap;
     // the first pass fills the board, then completes the merges it can afford — before any level-up spends the funds
     const mergesOnly = fillOnly && boardFull;
-    // keep room for merges: a crowded bench sheds its weakest single
+    // keep room for merges: a crowded bench sheds its weakest single — never one that came this prep (the buy picks by
+    // lineup gain, the shed by piece value: it used to sell the single just bought for 3–5 back for 1; QA of the 0.1.1
+    // bots). The shed is pre-emptive (one slot is still free), so with only fresh singles it waits for the next prep.
     const used = ps.hand.filter(Boolean).length;
-    if (used >= gd.benchSize - 1) sellWeakestHand(m, ps);
+    if (used >= gd.benchSize - 1) sellWeakestHand(m, ps, { keepFresh: true });
     let best = -1;
     let bestS = 0;
     let bestMerges = false;

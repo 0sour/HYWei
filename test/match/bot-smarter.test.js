@@ -316,3 +316,29 @@ test('cost guard: the prep heuristics of a late-round 4-bot match stay cheap (re
   assert.equal(m.errorCount, 0);
   m.dispose();
 });
+
+test('bench shed: the buy loop never sells a piece that came this prep (it used to sell the single it had just bought back for 1)', async () => {
+  // QA of the 0.1.1 bots: co-op 绝境, 2 humans on AI 托管 + 2 bots, seeds 21–23 — 29 same-prep buy → sell in 6 matches,
+  // every one the buy loop's pre-emptive bench shed (the buy picks by lineup gain, the shed by piece value)
+  const { PlayerState } = await import('../../server/match/PlayerState.js');
+  const oSell = PlayerState.prototype.sell;
+  const shed = [];
+  PlayerState.prototype.sell = function (uid) {
+    const loc = this.find(uid);
+    const p = loc && loc.piece;
+    if (p && p.boughtRound === this.m.round && /buyLoopSteps/.test(new Error().stack)) shed.push(`${p.id} R${this.m.round}`);
+    return oSell.call(this, uid);
+  };
+  try {
+    for (const seed of [21, 22, 23]) {
+      const h = makeMatch({ mode: 'coop', difficulty: 'HARD', humans: 2, bots: 2, seed, botRehearsal: 0 });
+      h.start();
+      h.autoHumans();
+      const m = h.m;
+      h.run(() => h.ended != null, { maxSteps: 3e7 });
+      assert.equal(m.errorCount, 0);
+      m.dispose();
+    }
+  } finally { PlayerState.prototype.sell = oSell; }
+  assert.deepEqual(shed, [], 'no piece of this prep sold by the shed');
+});
