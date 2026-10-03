@@ -425,3 +425,32 @@ test('F3 review 2: a debuff a ground enemy put on 蒂比 before she took off kee
     done(h);
   }
 });
+
+// QA after the integration: two ground enemies decided to cast an area skill by counting every ally in its radius —
+// 卢西恩，“猩红血钻”'s 【aoe】 (radius 2) and 锏's CircleAttack (first form, radius 1.5) — so an airborne 蒂比 alone in
+// range set it off and the blast, which skips her (对地规避), was spent on nobody (6 casts in 60 s, 0 hits). They count
+// only the allies the blast can hurt now. The `liftoff` flag on 角峰 stands for 蒂比's 起飞 (targeting.js evadesGround
+// reads the flag), so no skill of hers takes off or lands in the middle of the count.
+test('F3 QA: 卢西恩\'s 【aoe】 and 锏\'s CircleAttack are not cast for an airborne operator alone in range; they are once it lands', REAL, () => {
+  for (const [key, kind, radius] of [['enemy_2016_csphtm', 'crimsonAoe', 2], ['enemy_1525_blkswb', 'blizzard', 1.5]]) {
+    const h = makeBattle({
+      stageId: 'flat', seed: 3, autoFinish: false, timeLimit: 400,
+      units: [{ chessId: BAIT, row: 10, col: 5 }],
+      enemies: [{ key, pos: [10, 6], mods: { hpMul: 1e3, speedMul: 0, atkMul: 0.01 } }],
+    });
+    h.step();
+    const u = h.unit(BAIT);
+    const e = h.b.enemies.find((x) => x.alive && x.defId === key);
+    assert.ok(e && Math.hypot(e.x - u.x, e.y - u.y) <= radius, `${key}: 角峰 inside the radius`);
+    h.b.addBuff(u, { key: 'test:liftoff', persist: true, flags: { liftoff: true, blockFly: true } });
+    let casts = 0;
+    const fx0 = h.b.fx.bind(h.b);
+    h.b.fx = (k, p) => { if (k === 'explode' && p && p.kind === kind) casts++; return fx0(k, p); };
+    h.run(40);
+    assert.equal(casts, 0, `${key}: no ${kind} while the only ally in range is airborne`);
+    h.b.removeBuff(u, 'test:liftoff');
+    h.run(2);
+    assert.equal(casts, 1, `${key}: cast at once when a target it can hurt is there (the skill was ready all along)`);
+    done(h);
+  }
+});

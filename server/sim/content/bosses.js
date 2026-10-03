@@ -922,7 +922,9 @@ function lucienCore(ab, e) {
       dealt(c, b, e2) { elem(b, e2, c.target, 'neural', e2.s.atk * epr); },
     },
     s && {
-      cd: s.cd, icd: s.icd, cond: (b) => b.alliesInRadius(e.x, e.y, LUCIEN_AOE_RADIUS).length > 0,
+      // cast only with someone the blast can hurt: an airborne (起飞) operator evades a ground leader (对地规避 — the
+      // blast skips her in damage.js; counting her spent the skill on nobody)
+      cd: s.cd, icd: s.icd, cond: (b) => b.alliesInRadius(e.x, e.y, LUCIEN_AOE_RADIUS).some((u) => !evadesGround(e, u)),
       fire(b, e2) {
         b.fx('explode', { x: e2.x, y: e2.y, r: LUCIEN_AOE_RADIUS, kind: 'crimsonAoe' });
         for (const u of b.alliesInRadius(e2.x, e2.y, LUCIEN_AOE_RADIUS)) { hurt(b, e2, u, e2.s.atk * (s.bb.atk_scale ?? 0), 'phys'); elem(b, e2, u, 'neural', e2.s.atk * (s.bb.ep_damage_ratio ?? 0)); }

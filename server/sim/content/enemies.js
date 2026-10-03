@@ -2168,7 +2168,8 @@ function kitMace(ab) {
     b.fx('explode', { x: e.x, y: e.y, r, kind: 'blizzard', id: e.id });
     for (const u of b.alliesInRadius(e.x, e.y, r)) hurt(b, e, u, e.s.atk * (s.bb.atk_scale ?? 1), 'phys');
   };
-  const inR = (b, e, s) => b.alliesInRadius(e.x, e.y, (s && s.bb.range_radius) || 0).length > 0;
+  // someone the circle can hurt: an airborne (起飞) operator evades a ground enemy (对地规避; damage.js skips her)
+  const inR = (b, e, s) => b.alliesInRadius(e.x, e.y, (s && s.bb.range_radius) || 0).some((u) => !evadesGround(e, u));
   return [resist(), {
     hitOut(c, b, e) { const p = penOn(c, e); if (c.dmg.isAttack && p > 0) c.dmg.defIgnorePct = Math.min(1, (c.dmg.defIgnorePct || 0) + p); },
     taken(c, b, e) {                                             // 【瞬息杀机】 every hp_ratio of max HP lost (second form)
