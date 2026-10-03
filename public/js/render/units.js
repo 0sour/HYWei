@@ -3,11 +3,13 @@
 // UnitView = shadow sprite (shadow layer) + body container (depth-sorted unit layer: elite aura, Spine actor or
 // the avatar-in-rarity-diamond fallback) + HUD container (bar layer: HP bar with delayed "ghost" damage, SP bar
 // with ready glow / draining skill bar, tier chip, status icons, blocked marker). The fallback shows at once and
-// cross-fades to the Spine model when it has loaded; missing or failed models keep the fallback forever (the
-// game never blocks on Spine) — except an optional local-client model (assets.js spineEntry `fallback`, DESIGN §13:
-// 灼热源石虫 / 炽焰源石虫), which falls back to the web model first; that web alias (the plain 源石虫) is drawn tinted
-// toward the slug's own colours (ALIAS_TINT). Every bar is a tinted Texture.WHITE sprite, so HUDs batch into few draw
-// calls.
+// cross-fades to the Spine model when it has loaded (the game never blocks on Spine); an optional local-client model
+// (assets.js spineEntry `fallback`, DESIGN §13: 灼热源石虫 / 炽焰源石虫) falls back to the web model first; that web alias
+// (the plain 源石虫) is drawn tinted toward the slug's own colours (ALIAS_TINT). A model that failed or timed out is
+// loaded again after SPINE_RETRY_MS (bounded), and `retryAssets()` re-resolves a view's picture and model when the
+// asset manifest arrives after the view was built or the tab is shown again (render/app.js; public issue #8 item 5:
+// after a reload whose manifest was slow or failed, every operator stayed the image-less placeholder for good). Every
+// bar is a tinted Texture.WHITE sprite, so HUDs batch into few draw calls.
 //
 // Placement: feet anchored at world (x, y, z); scale = camera px-per-tile at the feet × UNIT.modelScale, so
 // chibis shrink with distance like the original. An enemy's model is also scaled by its official prefab factor
@@ -84,6 +86,12 @@ export const DIR_STEP = Object.freeze({ UP: [0, 1], RIGHT: [1, 0], DOWN: [0, -1]
 const nowMs = () => (globalThis.performance ? globalThis.performance.now() : Date.now());
 /** How long a view waits for its avatar before showing the image-less placeholder diamond. */
 const PIC_WAIT_MS = 400;
+/**
+ * Waits (ms, real time) before a view loads its Spine model again after the load failed or timed out (assets.js, 20 s)
+ * — bounded: after the last one the view keeps its diamond until `retryAssets` (a manifest that arrived late, the tab
+ * shown again). Counted from the failure; a hidden tab runs no frames, so nothing is retried while hidden.
+ */
+export const SPINE_RETRY_MS = Object.freeze([2000, 6000, 15000, 30000]);
 
 /** Heights above this count as standing on a raised top (bench pads are the lowest raised tiles, 0.16). */
 const RAISED_Z = 0.12;
@@ -317,6 +325,9 @@ export class UnitView {
     this.body.addChild(this.fallback);
     this.actor = null;
     this.spineReady = false;
+    this._spineBusy = false;             // a Spine load of this view is in flight
+    this._spineTries = 0;                // failed loads since the last model (SPINE_RETRY_MS)
+    this._retryAt = 0;                   // when the next retry is due (ms, performance clock; 0 = none)
     this.baseTint = 0xffffff;            // the drawn model's own tint (ALIAS_TINT), under the status tints
 
     this.hud = new P.Container();
@@ -365,7 +376,8 @@ export class UnitView {
     pic.shown = want;
   }
 
-  _loadSpine() {
+  /** @param {boolean} [retry] load again even after a remembered failure (assets.js acquire `{ retry }`) */
+  _loadSpine(retry = false) {
     const a = this.ctx.assets;
     if (!a || !a.spineEntry || !a.spine) return;
     const id = this.info.spine || this.info.defId;
@@ -374,21 +386,38 @@ export class UnitView {
     const entry = id ? a.spineEntry(id, { back }) : null;
     if (!entry || this.ctx.settings?.quality === 'low' && this.isEnemy && !this.isBoss && this.ctx.crowded?.()) return;
     this.entryBack = back;
-    this._acquireSpine(entry, id);
+    this._acquireSpine(entry, id, retry);
+  }
+
+  /**
+   * Re-resolve what this view could not draw yet (public issue #8 item 5): the picture when it has none (no avatar URL —
+   * the asset manifest arrived after the view was built — or the image failed) and, at once, the Spine model when none
+   * is shown and none is loading (no manifest entry then, or a load that failed / timed out). render/app.js calls it for
+   * every view when a manifest arrives (assets.js onChange) and when the tab is shown again. Nothing to do otherwise.
+   */
+  retryAssets() {
+    if (this.destroyed) return;
+    if (!this._pic || this._pic.state === 'none') this._loadPicture();
+    if (!this.actor && !this._spineBusy) { this._retryAt = 0; this._loadSpine(true); }
   }
 
   /**
    * Load `entry` and show it. Every acquire is paired with exactly one release: a superseded / failed / post-destroy
    * load releases its own entry; the displayed model's entry (`_actorEntry`) is released when that model is replaced or
-   * destroyed. A model that fails to load keeps the fallback diamond — unless the entry names a `fallback` (an optional
-   * local-client model, assets.js spineEntry: DESIGN §13), which is loaded in its place.
+   * destroyed. A model that fails to load falls back to the entry's `fallback` (an optional local-client model,
+   * assets.js spineEntry: DESIGN §13) when it names one; otherwise the view keeps its fallback diamond and — while no
+   * model is shown — loads again after SPINE_RETRY_MS (a timed-out or failed download used to stay a diamond for good).
    */
-  _acquireSpine(entry, id) {
+  _acquireSpine(entry, id, retry = false) {
     const a = this.ctx.assets;
     this.entry = entry;
     const req = this._spineReq = (this._spineReq || 0) + 1;
-    a.spine.acquire(entry).then((data) => {
+    this._spineBusy = true;
+    a.spine.acquire(entry, retry ? { retry: true } : undefined).then((data) => {
+      if (req === this._spineReq) this._spineBusy = false;
       if (this.destroyed || req !== this._spineReq) { this._releaseEntry(entry); return; }
+      this._spineTries = 0;
+      this._retryAt = 0;
       let actor = null;
       try {
         actor = new SpineActor(data, entry);
@@ -421,9 +450,12 @@ export class UnitView {
         this.actor.setBase(this._baseFromAnim());
       }
     }, () => {
+      if (req === this._spineReq) this._spineBusy = false;
       this._releaseEntry(entry);
-      if (entry.fallback && !this.destroyed && req === this._spineReq) this._acquireSpine(entry.fallback, id);
-      // else keep the fallback diamond
+      if (this.destroyed || req !== this._spineReq) return;
+      if (entry.fallback) { this._acquireSpine(entry.fallback, id, retry); return; }
+      // keep the fallback diamond (or the model already shown: a failed Front ⇄ Back swap) — and try again later
+      if (!this.actor && this._spineTries < SPINE_RETRY_MS.length) this._retryAt = nowMs() + SPINE_RETRY_MS[this._spineTries++];
     });
   }
 
@@ -729,6 +761,8 @@ export class UnitView {
   update(dt, cam, t) {
     if (this.destroyed) return;
     const P = this.P;
+    // a failed / timed-out model load is tried again once its wait is over (SPINE_RETRY_MS; frames only: never hidden)
+    if (this._retryAt && nowMs() >= this._retryAt) { this._retryAt = 0; if (!this.actor && !this._spineBusy) this._loadSpine(true); }
     if (this.zTarget != null && this.z !== this.zTarget) {
       const d = this.zTarget - this.z;
       this.z = Math.abs(d) < 1e-3 ? this.zTarget : this.z + d * Math.min(1, dt * 12);
@@ -1297,9 +1331,16 @@ export class ItemView {
     this.plate = new P.Sprite(itemTexture(String(info.defId || 'item'), null, info.color || 0x9aa5a0));
     this.plate.anchor.set(0.5, 1);
     this.root.addChild(this.plate);
-    const url = info.icon;
-    if (url && ctx.assets?.image) ctx.assets.image(url).then((img) => { if (!this.destroyed && img) this.plate.texture = itemTexture(String(info.defId), img, info.color || 0x9aa5a0); }, () => {});
+    this.info.icon = null;
+    this.setIcon(info.icon);
     this.hud = null;
+  }
+  /** Show the item's icon (an URL; the plain plate until it loads) — again when the asset manifest named it late. */
+  setIcon(url) {
+    if (this.destroyed || !url || url === this.info.icon) return;
+    this.info.icon = url;
+    const a = this.ctx.assets;
+    if (a?.image) a.image(url).then((img) => { if (!this.destroyed && img && this.info.icon === url) this.plate.texture = itemTexture(String(this.info.defId), img, this.info.color || 0x9aa5a0); }, () => {});
   }
   setWorld(x, y, z = 0) { this.x = x; this.y = y; this.z = z; }
   update(dt, cam, t) {

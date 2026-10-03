@@ -1,6 +1,8 @@
 // Field view loader: mounts the Pixi render engine (public/js/render/app.js → createFieldView, DESIGN §9)
 // into a host element, falling back to the DOM view (fallbackField.js) when the engine is missing, times
 // out or throws. Every call into the view goes through a guard so a render bug can never crash the HUD.
+// The shared asset store gets the game data's copy of the asset manifest (`seedAssets`, public issue #8 item 5), and the
+// prep cameras the HUD bands they keep clear (`hudBands`; the folded shop's band: public issue #5).
 //
 // `?render=fallback` (or globalThis.__SP_RENDER__ = 'fallback') skips the engine (dev / mock harness);
 // `?render=engine` never falls back silently (errors are logged and the fallback still mounts).
@@ -161,6 +163,27 @@ export function guardView(view, kind) {
 }
 
 /**
+ * Hand the game data's copies of /data/assets.json and /data/local-assets.json (data.js 'assets' / 'local': the match
+ * screen waits for them, gameComponents GAME_FILES) to the asset store, now or when they land: it then never downloads
+ * the manifest a second time — after a page reload (a phone browser discarding a background tab, Chrome's Memory Saver)
+ * that second download was the one createFieldView waited ≤ 4 s for, and a slow or failed one left every operator the
+ * image-less placeholder (public issue #8 item 5). Without a copy the store fetches and retries by itself.
+ * @param {{ seed?: (m: any) => boolean, seedLocal?: (m: any) => boolean }} store public/js/assets.js store
+ */
+export function seedAssets(store) {
+  if (!store) return;
+  const give = (name, fn) => {
+    if (typeof fn !== 'function') return;
+    const now = data.get(name);
+    if (now) { fn(now); return; }
+    // still loading (or failed): adopt it if it lands; a later success of the store's own fetch makes this a no-op
+    Promise.resolve(data.load(name)).then((m) => { if (m) fn(m); }, () => {});
+  };
+  give('assets', store.seed?.bind(store));
+  give('local', store.seedLocal?.bind(store));
+}
+
+/**
  * Create a field view in `host`: the render engine when available, else the DOM fallback.
  * @param {HTMLElement} host
  * @returns {Promise<ReturnType<typeof guardView>>}
@@ -172,7 +195,10 @@ export async function mountFieldView(host) {
     try {
       // the shared asset store (public/js/assets.js) keeps its Spine cache across remounts (next match, reconnect)
       const am = await withTimeout(import('../assets.js'), LOAD_TIMEOUT_MS, 'asset store import').catch(() => null);
-      if (am?.assets && typeof am.assets.ready === 'function') opts.assets = am.assets;
+      if (am?.assets && typeof am.assets.ready === 'function') {
+        opts.assets = am.assets;
+        seedAssets(am.assets);
+      }
       const mod = await withTimeout(import('../render/app.js'), LOAD_TIMEOUT_MS, 'render engine import');
       if (typeof mod?.createFieldView !== 'function') throw new Error('createFieldView missing');
       const view = await withTimeout(Promise.resolve(mod.createFieldView(host, opts)), LOAD_TIMEOUT_MS, 'createFieldView');
