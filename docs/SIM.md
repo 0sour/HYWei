@@ -263,7 +263,8 @@ operators put on the enemy — the buffs with an ally source and source-less cat
 ("重生结束时，重置自身的通用技能与当前形态的技能冷却为初始冷却"; `rebirthCooldowns`, since 0.1.1) — and keeps [ASSUMED: the
 whitelist] its `persist` talents, what it or
 another enemy gave it (锏's self-applied 抵抗, enemy auras) and source-less field state (terrain, airflow, element burst
-locks): a 逐火 knocked out while feared is no unblockable ember. 重生 / form changes: `reborn()` (first knock-out → second
+locks): a 逐火 knocked out while feared is no unblockable ember — nor one feared by the knocking-out hit itself (the
+重生's 无敌 + 无法选中 refuses it, `Battle.applyStatus`). 重生 / form changes: `reborn()` (first knock-out → second
 form; fx forms 'reborn' → 'form2'), `statue()` (守墓石像: melee only while blocked; first knock-out → 10 s unblockable,
 immobile statue → a flyer with ranged arts attacks that skip flyers; forms 'stone' → 'fly'), `husk()` (talent
 Revive[Trigger], every knock-out: 1 s 重生 — 无敌, 无法阻挡, immobile — then a hit-count husk that
@@ -448,7 +449,10 @@ attribute such as 安洁莉娜's 兼职工作 still applies, PRTS 异常效果),
 as +1 taunt level (DESIGN §5.3).
 
 **Statuses** — `battle.applyStatus(target, key, { duration, source, value, force, refresh, point })` (returns true if
-applied); honours enemy/op immunities (`stun`, `silence`, `sleep`, `frozen`, `levitate`, `feared`) unless `force`; fires
+applied); a unit that is 无敌 and 无法选中 at once (flags `invulnerable` + `untargetable`: a 重生 in progress, a hovering or
+永久无敌 leader part) takes no status from the other side, `force` included (PRTS 无敌 "无法被不同阵营选中" — so the status
+a knocking-out hit carries, 妮芙 S2's fear say, does not land after the 重生's cleanse; since 0.1.1's QA); honours
+enemy/op immunities (`stun`, `silence`, `sleep`, `frozen`, `levitate`, `feared`) unless `force`; fires
 `beforeStatus` (cancellable; handlers may also change `ctx.duration` / `ctx.value`), then applies 抵抗 (`resist`, below)
 and the 浮空 weight rule, then `statusApplied { source, target, status, duration (final), value, entered }` — `entered`
 = the target carried no buff of that status before (a refresh / a weaker "取最高" application is not an entry: "进入…时"). Effects follow the official term table

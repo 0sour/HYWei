@@ -279,6 +279,7 @@ function hammerAcquire(battle, rt, u) {
     hs.undyingUsed = true;
     const dur = num(p.undeadable_duration, 8) * m;
     hs.undyingUntil = battle.time + dur;
+    u.mem.undyingUntil = hs.undyingUntil;               // the carrier holds 不死 (信仰搅拌机 S2 steps aside: kits/tier4.js)
     c.prevented = true;
     fxOn(battle, 'undying', u, 'item:hammer', 'chess_item_3_09_e', { duration: dur });
   }, PRIO_REVIVE);

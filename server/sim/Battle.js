@@ -1280,9 +1280,14 @@ export class Battle {
    * was applied and from where (fear.js stampFear: the fan of 恐惧可达地块 its movement uses). A stunned/sleeping operator
    * releases the enemies it blocks; a feared/levitated/unblockable/attracted enemy is released by its blocker.
    * `statusApplied` reports the final duration and `entered` (the target did not carry the status before).
+   * A unit that is 无敌 and 无法选中 at once (a 重生 in progress, a hovering or 永久无敌 leader part) takes no status from
+   * the other side, `force` included — PRTS 无敌 "无法被不同阵营选中": so a status carried by the very hit that knocked an
+   * enemy out does not land after its 重生's cleanse (DESIGN §21.4).
    */
   applyStatus(target, key, opts = {}) {
     if (!target || !target.alive) return false;
+    const src = opts.source;
+    if (src && src.side && src.side !== target.side && target.s.flags.invulnerable && target.s.flags.untargetable) return false;
     const tpl = STATUS[key] || { flags: { [key]: true } };
     let duration = opts.duration == null ? Infinity : Number(opts.duration);
     let value = opts.value;

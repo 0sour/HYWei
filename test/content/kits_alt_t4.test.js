@@ -113,7 +113,7 @@ test('信仰搅拌机 S1 铳骑主考官 (自动触发 ⇒ DEFAULT: hurt SP, fir
   }
 });
 
-test('信仰搅拌机 S2 八臂电锯侠: ammo skill, ATK/DEF up; a lethal hit is negated for ammo_cost bullets (not with fewer)', () => {
+test('信仰搅拌机 S2 八臂电锯侠: ammo skill, ATK/DEF up; a lethal hit is negated for ammo_cost bullets; with fewer it is still negated, every bullet goes and the skill ends (PRTS 备注)', () => {
   for (const id of pair('chess_char_4_01_a')) {
     const bb = D(id, 1).skill.bb;
     for (const enough of [true, false]) {
@@ -136,7 +136,11 @@ test('信仰搅拌机 S2 八臂电锯侠: ammo skill, ATK/DEF up; a lethal hit i
         const shots = h.hooksOf('attack').filter((c) => c.attacker === u).length;
         assert.equal(u.skill.ammoLeft, before - bb.ammo_cost - shots, `${bb.ammo_cost} bullets spent`);
       } else {
-        assert.ok(!u.alive, `${id}: fewer than ${bb.ammo_cost} bullets ⇒ no guard`);
+        // PRTS 备注 "弹药量不足时仍可抵挡致命伤害，此时将消耗所有剩余弹药并退出技能状态" (0.1.0: [ASSUMED] no guard)
+        assert.ok(u.alive, `${id}: fewer than ${bb.ammo_cost} bullets still block the lethal hit`);
+        approx(u.hp, 500, 1e-9, 'HP kept');
+        assert.equal(u.skill.ammoLeft, 0, 'every bullet spent');
+        assert.equal(u.skill.active, false, 'the skill ends');
       }
     }
   }

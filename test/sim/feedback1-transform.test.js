@@ -519,6 +519,23 @@ describe('a 重生 clears what operators put on the enemy (PRTS 特殊机制 §�
     assert.ok(h.b.time < 2 + HUSK_REBIRTH + tb('enemy_1288_duskls', 'Revive[Trigger].interval') + 10);
   });
 
+  test('a status carried by the knocking-out hit itself (妮芙 S2 / 叙拉古 6: damage, then `if (target.alive) applyStatus`) does not land after the cleanse — 无敌 + 无法选中 takes no status from the other side (PRTS 无敌 "无法被不同阵营选中")', () => {
+    const h = arena({ units: [{ chessId: 't_gun', row: 10, col: 4 }], kits: QUIET_GUNS });
+    h.step();
+    const e = put(h, 'enemy_1288_duskls', { pos: [10, 8], mods: { speedMul: 0 } });
+    const gun = h.unit('t_gun');
+    h.b.dealDamage(gun, e, { amount: 1e7, type: 'true', tags: ['test'] });
+    assert.ok(e.alive && e.form === 'husk' && e.s.flags.invulnerable && e.s.flags.untargetable, 'knocked out: its 1 s 重生');
+    // the same hit's rider, as the kits run it
+    if (e.alive) assert.equal(h.b.applyStatus(e, 'fear', { duration: 4, source: gun }), false, 'the fear is refused');
+    assert.equal(h.b.applyStatus(e, 'sluggish', { duration: 4, source: gun }), false, 'so is any other status from an operator');
+    assert.equal(e.findBuff('fear'), null);
+    assert.ok(!e.s.flags.fear, 'not feared');
+    h.run(HUSK_REBIRTH + 0.1);
+    assert.ok(!e.s.flags.fear && !e.s.flags.unblockable && e.s.flags.stealth, 'after the 重生: a 隐匿 ember that can be blocked, not a feared one');
+    assert.ok(h.b.applyStatus(e, 'fear', { duration: 4, source: gun }), 'a later fear lands again');
+  });
+
   test('锏\'s 重生 clears an operator\'s slow and 脆弱 but keeps its 抵抗 (a self-applied talent status); 守墓石像\'s instant 重生 too', () => {
     const h = arena({ units: [{ chessId: 't_gun', row: 10, col: 4 }], kits: QUIET_GUNS });
     h.step();

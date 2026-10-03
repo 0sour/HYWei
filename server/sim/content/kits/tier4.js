@@ -281,17 +281,22 @@ const kits = {
       install(battle, unit) {
         if (S2) {
           // S2 "技能期间若受到致命伤害，立即消耗N发弹药抵挡这次伤害": the lethal hit is negated (HP back to its value
-          // before the hit) while at least N bullets are left ([ASSUMED]: fewer bullets ⇒ no guard); 0 left ends the skill
+          // before the hit) and N bullets go; with fewer left it still blocks, spends them all and the skill ends (PRTS 备注
+          // "弹药量不足时仍可抵挡致命伤害，此时将消耗所有剩余弹药并退出技能状态"). "自身持有不死时此效果不会生效": a 不死
+          // that runs before it (骑士戒律, priority 20) has already prevented the hit; 坚固维式重锤's held window
+          // (unit.mem.undyingUntil, items/battle.js) runs last, so the guard steps aside while it lasts
           const cost = Math.max(1, Math.floor(num(bb.ammo_cost, 30)));
           battle.on('hit', (c) => { if (c.target === unit) unit.mem.rmixerPre = { dmg: c.dmg, hp: unit.hp }; }, { owner: unit, priority: -100 });
           battle.on('fatal', (c) => {
             const sk = unit.skill;
-            if (c.unit !== unit || c.prevented || !sk || !sk.active || sk.kind !== 'ammo' || sk.ammoLeft < cost) return;
+            if (c.unit !== unit || c.prevented || !sk || !sk.active || sk.kind !== 'ammo' || !(sk.ammoLeft > 0)) return;
+            if (battle.time < (unit.mem.undyingUntil ?? -Infinity)) return;
             c.prevented = true;
             const pre = unit.mem.rmixerPre;
             unit.hp = pre && pre.dmg === c.dmg ? Math.max(1, Math.min(unit.s.maxHp, pre.hp)) : 1;
-            sk.ammoLeft -= cost;
-            battle.fx('shield', { x: unit.x, y: unit.y, id: unit.id, n: cost });
+            const spent = Math.min(cost, sk.ammoLeft);
+            sk.ammoLeft -= spent;
+            battle.fx('shield', { x: unit.x, y: unit.y, id: unit.id, n: spent });
             if (sk.ammoLeft <= 0) sk.end('ammo');
           }, { owner: unit });
         }

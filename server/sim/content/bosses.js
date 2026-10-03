@@ -240,7 +240,7 @@ export function registerMeta() {}
 function onSpawn(b, e) {
   const kit = BOSS_KITS[e.defId];
   if (typeof kit !== 'function') return;
-  if (SELF_BOUND.includes(e.defId)) b.addBuff(e, { key: 'boss:selfBound', persist: true, flags: { noMove: true, unblockable: true } });
+  if (SELF_BOUND.includes(e.defId)) b.addBuff(e, { key: 'boss:selfBound', persist: true, flags: { noMove: true, selfBound: true, unblockable: true } });
   const tpl = templateOf(b);
   const ab = abOf(b, e);
   let list = [];
@@ -484,7 +484,7 @@ function kitBlade(ab, e, b, tpl) {
       spawn(b2, e2) {
         hover(b2, true);
         // 自缚 (moved by hand) · 不可阻挡 · 失衡免疫 (PRTS 天赋 "{{特殊机制|静态刚体}}，不可阻挡、失衡免疫…" — data `staticBody` too)
-        b2.addBuff(e2, { key: 'boss:anchor', persist: true, flags: { noMove: true, unblockable: true, noDisplace: true } });
+        b2.addBuff(e2, { key: 'boss:anchor', persist: true, flags: { noMove: true, selfBound: true, unblockable: true, noDisplace: true } });
         if (BLADE_ATK_SCALE[e2.defId]) e2.profile.atkScale = BLADE_ATK_SCALE[e2.defId];
       },
       before(c, b2, e2) { const l = targetsNear(b2, e2, e2.base.rangeRadius || 1.6, { ranged: false }); if (l.length) c.targets = l; }, // 范围物理伤害

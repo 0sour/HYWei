@@ -944,7 +944,7 @@ function statue(ab) {
       ab2.immune = new Set([...(ab2.immune || []), 'levitate']);
       setForm(b, e, 'stone', 'stone', { dur });
       b.addBuff(e, {
-        key: 'ab:stone', duration: dur, visible: true, flags: { noMove: true, unblockable: true, noDisplace: true },
+        key: 'ab:stone', duration: dur, visible: true, flags: { noMove: true, selfBound: true, unblockable: true, noDisplace: true },
         mods: { defFlat: T(ab, 'stone.def') ?? 0, resFlat: T(ab, 'stone.magic_resistance') ?? 0 },
         onExpire: ({ battle }) => {
           if (!e.alive) return;

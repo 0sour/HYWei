@@ -199,10 +199,12 @@ function cleanseAbnormal(battle, u) {
 }
 /**
  * "传送至自身位置": a ground enemy that can reach `unit`'s tile on the ground grid is moved onto it (unblocked, its
- * route re-planned from there — the engine then blocks it on that tile when capacity allows). Flyers / bosses stay.
+ * route re-planned from there — the engine then blocks it on that tile when capacity allows). Flyers / bosses stay, and
+ * so does a 自缚 unit (flag `selfBound`, e.g. 守墓石像's 转换模式): PRTS 余 S2 备注 "处于消失状态的/持有自缚的单位不视为可达
+ * 目标" (束缚 alone does not exempt it, so not `noMove`).
  */
 function teleportEnemy(battle, unit, e) {
-  if (!e || !e.alive || e.isFlying || e.isBoss) return false;
+  if (!e || !e.alive || e.isFlying || e.isBoss || e.s.flags.selfBound) return false;
   const r = unit.tileR, c = unit.tileC;
   if (!battle.grid.groundPassable(r, c)) return false;
   const er = Math.round(e.y), ec = Math.round(e.x);
