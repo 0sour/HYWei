@@ -460,6 +460,8 @@ export class UnitView {
       try {
         actor = new SpineActor(data, entry);
         actor.setSkillIndex(this.info.skillIndex);
+        // enemies play their attack clip once per attack, then walk on (GitHub #58: the sim stands them for that clip)
+        actor.clipPerAttack = this.isEnemy;
       } catch (err) {
         console.warn('[render] spine build failed', id, err?.message || err);
         this._releaseEntry(entry);
