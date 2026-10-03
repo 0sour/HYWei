@@ -1359,7 +1359,7 @@ Still [ASSUMED] (each in its section):
 - §21.16: the 技能范围 areas on the card, extra content tiles not drawn, the 全场 / 6 × 7 thresholds, the bonus on a dodged hit.
 - §21.18: no target cap; damage at the attack instant; the beam look.
 - §21.19: the 奥术法阵 rider ending with its carriers; the 自行炮's immunity window = its bombardment.
-- §21.21: the 阿戈尔 devour and the carrier's own 源石溶剂 spend the lock; kits' own savers before the item's 不死; M3茧甲 before 埃芒加德; a running window ends with its deployment; a free pick or grant is no 购买; a 谢拉格 already priced ≤ 1 still counts as the round's first.
+- §21.21: a 突袭 retreat + redeploy is a deployment (it re-arms the lock); the 阿戈尔 devour and the carrier's own 源石溶剂 spend the lock; kits' own savers before the item's 不死; M3茧甲 before 埃芒加德; a running window ends with its deployment; a free pick or grant is no 购买; a 谢拉格 already priced ≤ 1 still counts as the round's first.
 - §21.22: a ground enemy's shot in flight when 蒂比 takes off lands on nothing; ground-enemy auras still apply; 流失 DoTs keep ticking.
 - §21.23: air blocking (blockFly) on a fenced tile stays; the gate reads ground passability.
 - §21.24: the body goes home once, at the knock-out, only when its home is free; 初始位置 = the board pieces of every player on the field; 歌利亚头盔 ignores bodies; a withdrawn operator leaves no body.
