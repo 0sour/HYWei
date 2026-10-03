@@ -1,6 +1,7 @@
 // Player feedback after 0.1.0, #4 (workstream WA): the 突变细胞 item card says what the official text leaves out — the
-// cell is not consumed, it returns to the hand with the destroyed operator's other equipment (items.json `note`, built
-// by tools/build-data.mjs ITEM_RULES; server: builtinMeta char_chess_transformation_equip).
+// cell is not consumed, it returns to the hand with the destroyed operator's other equipment, and the new operator joins
+// the 整备区 to be deployed again (official footage; PR #2) (items.json `note`, built by tools/build-data.mjs ITEM_RULES;
+// server: builtinMeta char_chess_transformation_equip).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -35,7 +36,7 @@ const textOf = (v) => {
 };
 const hasClass = (v, c) => typeof v?.props?.class === 'string' && v.props.class.split(/\s+/).includes(c);
 
-test('ItemDetail: 突变细胞 (both qualities) says it returns to the hand; an ordinary item has no rule line', async () => {
+test('ItemDetail: 突变细胞 (both qualities) says it returns to the hand and the new operator joins the 整备区; an ordinary item has no rule line', async () => {
   await data.loadAll('items', 'assets');
   const rule = (item) => [...walk(ItemDetail({ item, piece: null, editable: false }))].find((n) => hasClass(n, 'dhint--rule'));
   for (const id of ['chess_item_5_08_e_a', 'chess_item_5_08_e_b']) {
@@ -44,6 +45,7 @@ test('ItemDetail: 突变细胞 (both qualities) says it returns to the hand; an 
     const t = textOf(rule(cell));
     assert.match(t, /原干员销毁/);
     assert.match(t, /突变细胞与其他装备退回整备区，可再次配发/);
+    assert.match(t, /高一阶的随机初始干员（最高6阶），进入整备区，需要重新部署/);
   }
   const plain = data.lookup('items', 'chess_item_1_01_e_a'); // 维式重锤
   assert.equal(plain.note, null);

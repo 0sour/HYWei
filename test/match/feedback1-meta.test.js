@@ -5,12 +5,16 @@
 //      (each copy counts the manual refreshes it witnessed this round), not the player's.
 //   #4 昆图斯 突变细胞 "战斗结束后，装备者替换为高一阶的随机干员": the cell is not consumed — the original operator is
 //      destroyed (PRTS 备注 "生效时，原干员销毁，获得一名高一阶的随机初始干员（最高六阶）") and its equipment, the cell
-//      included, returns to the hand, to be equipped again ("之后就是一直打针，扎到核心卡…就换人扎").
+//      included, returns to the hand, to be equipped again ("之后就是一直打针，扎到核心卡…就换人扎"); then the new operator
+//      is gained like any gained operator — into the 整备区, never onto the carrier's tile (official footage: bilibili
+//      BV1vzyVBuEN9 ≈ 8:24, BV1Qkw1zMEoR ≈ 7:25 — the tile is empty at the next prep, one more deployment is left, the
+//      new operator waits on the bench; pointed out in PR #2). Bots / AI 托管 deploy it in their normal placement step.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeMatch, give, giveItem, legalTileFor, checkInvariants, DATA } from './harness.js';
 import { createRegistry } from '../../server/match/effectsMeta.js';
 import { botPrep, botPrepEnd, cellTarget } from '../../server/match/bot.js';
+import { mergeTile } from '../../server/match/board.js';
 
 const QUIET = { warn() {}, error() {}, info() {} };
 const REG = createRegistry({ log: QUIET });
@@ -164,37 +168,91 @@ const plainOf = (m, tier) => Object.values(DATA.chess)
   .map((c) => c.chessId).sort();
 const ownedItems = (ps, id) => [...ps.hand, ...ps.temp].filter((p) => p && p.kind === 'item' && p.id === id);
 const equip = (m, item, target) => m.handle('p_0', { t: 'g.equip', itemUid: item.uid, targetUid: target.uid });
+const SWORD = 'chess_item_1_01_e_a'; // 维式重锤
+const PACK = 'chess_item_5_07_e_a'; // 商业包装方案 (counts sells per item: player counter `pack:<item uid>`)
+const VIGIL = 'chess_char_3_19_a'; // 伺夜 (Ⅲ) — a placeable 狼群 summon card
+/** Distinct normal equipment ids (never merge with each other), the cell excluded. */
+const fillerItems = () => Object.values(DATA.items).filter((it) => it.itemType === 'EQUIP' && !it.isGolden && it.id !== CELL).map((it) => it.id).sort();
+const unusedFillers = (ps) => fillerItems().filter((id) => ![...ps.hand, ...ps.temp].some((p) => p && p.id === id));
+/** Fill every free hand slot but `leave` with distinct items. */
+const fillHand = (m, ps, leave = 1) => {
+  const ids = unusedFillers(ps);
+  while (ps.hand.filter((x) => x == null).length > leave) giveItem(m, ps, ids.shift());
+};
+/** Fill every free temp slot with distinct items. */
+const fillTemp = (m, ps) => {
+  const ids = unusedFillers(ps);
+  while (ps.temp.some((x) => x == null)) giveItem(m, ps, ids.shift(), 'temp');
+};
+/** Force the cell's roll (the random draw) of `tier` to `id`; everything else stays the real path. */
+const forceRoll = (m, tier, id) => { const roll = m.pool.roll.bind(m.pool); m.pool.roll = (rng, o = {}) => (o.tier === tier ? id : roll(rng, o)); };
+const where = (ps, pred) => (ps.hand.some((p) => p && pred(p)) ? 'hand' : ps.temp.some((p) => p && pred(p)) ? 'temp' : null);
+const handIdx = (ps, pred) => ps.hand.findIndex((p) => p && pred(p));
+/** The round loop's SETTLE dispatch, alone. */
+const battleResult = (m, ps) => m.dispatch(ps, 'onBattleResult', { result: {}, lpLoss: 0, perfect: true });
 
-test('#4 players\' report: 突变细胞 is not used up — after each battle the carrier is replaced (normal, tier +1) and the cell returns to the hand', () => {
+test('#4 players\' report and the official flow: after each battle the deployed carrier is destroyed — its tile empties, one more deployment is left —, its equipment (the cell too) comes back first, then a NORMAL tier+1 operator joins the hand', () => {
   const s = setup({ seed: 5 });
   const { h, m, ps } = s;
   const t2 = plainOf(m, 2)[0];
   const carrier = give(m, ps, t2, 'board', legalTileFor(m, ps, t2));
   const tile = ps.find(carrier.uid).key;
   const cell = giveItem(m, ps, CELL);
-  const sword = giveItem(m, ps, 'chess_item_1_01_e_a'); // 维式重锤: other equipment returns too
+  const sword = giveItem(m, ps, SWORD); // other equipment returns too
   assert.deepEqual(equip(m, cell, carrier), OK);
   assert.deepEqual(equip(m, sword, carrier), OK);
+  assert.equal(ps.deployCount, 1);
   h.toPrep(2);
   assert.ok(!ps.find(carrier.uid), 'the original operator is gone (原干员销毁)');
-  const next = ps.board.get(tile);
-  assert.ok(next && next.kind === 'chess', 'the new operator takes the tile');
+  assert.ok(!ps.board.has(tile), 'its tile is empty (bilibili BV1vzyVBuEN9 ≈ 8:24, BV1Qkw1zMEoR ≈ 7:25)');
+  assert.equal(ps.deployCount, 0, 'one more deployment is left');
+  const next = ps.hand.find((p) => p && p.kind === 'chess');
+  assert.ok(next, 'the new operator waits in the hand (整备区)');
   assert.equal(m.gd.chess(next.id).tier, 3, 'one tier higher');
   assert.ok(!m.gd.isGolden(next.id), 'an initial (normal) operator');
-  assert.deepEqual(next.items, [], 'its equipment came off');
+  assert.deepEqual(next.items, [], 'nothing equipped');
   assert.equal(ownedItems(ps, CELL).length, 1, 'the cell is back in the hand, not consumed');
-  assert.equal(ownedItems(ps, 'chess_item_1_01_e_a').length, 1, 'the other equipment too');
-  // "一直打针": inject again — the same new operator here; it climbs once more
+  assert.equal(ownedItems(ps, SWORD).length, 1, 'the other equipment too');
+  // the hand fills right → left ("被发送至手牌区的物资优先从右到左填充空位"): the equipment came off first, then the gain
+  assert.deepEqual([handIdx(ps, (p) => p.id === CELL), handIdx(ps, (p) => p.id === SWORD), ps.hand.indexOf(next)], [9, 8, 7]);
+  assert.ok(ps.tempEmpty);
+  // the player deploys it by hand, then "一直打针": inject again — it climbs once more and comes back to the bench
+  const [row, col] = legalTileFor(m, ps, next.id);
+  assert.deepEqual(m.handle('p_0', { t: 'g.move', uid: next.uid, to: { area: 'board', row, col } }), OK);
+  assert.equal(ps.deployCount, 1);
   assert.deepEqual(equip(m, ownedItems(ps, CELL)[0], next), OK);
   h.toPrep(3);
-  const third = ps.board.get(tile);
-  assert.equal(m.gd.chess(third.id).tier, 4, 'tier 4 after the second battle');
+  assert.ok(!ps.find(next.uid) && !ps.board.has(`${row},${col}`), 'the second carrier is gone too, its tile empty');
+  assert.equal(ps.deployCount, 0);
+  const third = ps.hand.find((p) => p && p.kind === 'chess');
+  assert.equal(m.gd.chess(third.id).tier, 4, 'tier 4 after the second battle, on the bench');
   assert.equal(ownedItems(ps, CELL).length, 1, 'and the cell is back again');
   checkInvariants(m);
   m.dispose();
 });
 
-test('#4 突变细胞 details: an elite carrier → a NORMAL operator one tier higher; 6阶 → another 6阶; no room → it stays on the new operator', () => {
+test('#4 bench carriers transform too: a hand or temp carrier leaves its slot; the cell, then the new operator, fill the hand right → left', () => {
+  for (const area of ['hand', 'temp']) {
+    const s = setup({ seed: 6 });
+    const { m, ps } = s;
+    const t1 = plainOf(m, 1)[0];
+    const carrier = give(m, ps, t1, area);
+    assert.deepEqual(equip(m, giveItem(m, ps, CELL), carrier), OK);
+    battleResult(m, ps);
+    assert.ok(!ps.find(carrier.uid), `${area}: the carrier is destroyed`);
+    const got = ps.allChess();
+    assert.equal(got.length, 1, `${area}: one operator gained`);
+    assert.equal(m.gd.chess(got[0].id).tier, 2, `${area}: one tier higher`);
+    assert.ok(!m.gd.isGolden(got[0].id));
+    assert.deepEqual([handIdx(ps, (p) => p.id === CELL), ps.hand.indexOf(got[0])], [9, 8], `${area}: the cell first, then the gain`);
+    assert.ok(ps.tempEmpty, `${area}: nothing waits in temp`);
+    assert.equal(ps.deployCount, 0);
+    checkInvariants(m);
+    m.dispose();
+  }
+});
+
+test('#4 突变细胞 details: an elite carrier → a NORMAL operator one tier higher; 6阶 → another 6阶', () => {
   {
     const s = setup({ seed: 9 });
     const { h, m, ps } = s;
@@ -222,23 +280,85 @@ test('#4 突变细胞 details: an elite carrier → a NORMAL operator one tier h
     assert.equal(ownedItems(ps, CELL).length, 1);
     m.dispose();
   }
-  {
-    // hand and temp full: the cell cannot come off and stays on the new operator (nothing is lost)
-    const s = setup({ seed: 11 });
-    const { m, ps } = s;
-    const t2 = plainOf(m, 2)[0];
-    const carrier = give(m, ps, t2, 'board', legalTileFor(m, ps, t2));
-    assert.deepEqual(equip(m, giveItem(m, ps, CELL), carrier), OK);
-    const at = ps.find(carrier.uid).key;
-    for (let i = 0; i < ps.hand.length; i++) if (!ps.hand[i]) giveItem(m, ps, 'chess_item_1_01_e_a', 'hand', i);
-    for (let i = 0; i < ps.temp.length; i++) if (!ps.temp[i]) giveItem(m, ps, 'chess_item_1_01_e_a', 'temp', i);
-    m.dispatch(ps, 'onBattleResult', { result: {}, lpLoss: 0, perfect: true });
-    const next = ps.board.get(at);
-    assert.ok(next && next.uid !== carrier.uid && m.gd.chess(next.id).tier === 3);
-    assert.deepEqual(next.items.map((it) => it.id), [CELL], 'kept on the new operator');
-    checkInvariants(m);
-    m.dispose();
-  }
+});
+
+test('#4 hand full: the returned cell takes the last hand slot, the new operator overflows into temp — with no summon card until it is deployed', () => {
+  const s = setup({ seed: 31 });
+  const { m, ps } = s;
+  forceRoll(m, 3, VIGIL);
+  const t2 = plainOf(m, 2)[0];
+  const carrier = give(m, ps, t2, 'board', legalTileFor(m, ps, t2));
+  const at = ps.find(carrier.uid).key;
+  assert.deepEqual(equip(m, giveItem(m, ps, CELL), carrier), OK);
+  fillHand(m, ps, 1);
+  battleResult(m, ps);
+  assert.ok(!ps.board.has(at), 'the carrier\'s tile is empty');
+  assert.equal(ps.deployCount, 0);
+  assert.equal(where(ps, (p) => p.id === CELL), 'hand', 'the cell came back first, into the last hand slot');
+  const vigil = ps.temp.find((p) => p && p.id === VIGIL);
+  assert.ok(vigil, '伺夜 overflows into temp like any gain with a full hand');
+  assert.equal(where(ps, (p) => p.kind === 'token'), null, 'no 狼群 card yet: a summon card comes with a deployment');
+  // deployed by hand from temp, it brings its card like any operator placed there
+  const [row, col] = legalTileFor(m, ps, VIGIL);
+  assert.deepEqual(m.handle('p_0', { t: 'g.move', uid: vigil.uid, to: { area: 'board', row, col } }), OK);
+  assert.ok(where(ps, (p) => p.kind === 'token' && p.ownerUid === vigil.uid), 'its 狼群 card arrived');
+  checkInvariants(m);
+  m.dispose();
+});
+
+test('#4 hand and temp full: the gained operator follows the no-room rule of every gain (back to the pool, the same toast); the carrier is destroyed all the same', () => {
+  const s = setup({ seed: 11 });
+  const { h, m, ps } = s;
+  const t2 = plainOf(m, 2)[0];
+  const t3 = plainOf(m, 3)[0];
+  forceRoll(m, 3, t3);
+  const carrier = give(m, ps, t2, 'board', legalTileFor(m, ps, t2));
+  const at = ps.find(carrier.uid).key;
+  assert.deepEqual(equip(m, giveItem(m, ps, CELL), carrier), OK);
+  fillHand(m, ps, 0);
+  fillTemp(m, ps);
+  const left0 = m.pool.left(t3);
+  const left2 = m.pool.left(t2);
+  const toasts = [];
+  const toast = m.toast.bind(m);
+  m.toast = (who, kind, text, ...rest) => { if (who === ps) toasts.push(text); return toast(who, kind, text, ...rest); };
+  battleResult(m, ps);
+  assert.ok(!ps.board.has(at), 'the carrier is destroyed wherever it stands');
+  assert.equal(ps.deployCount, 0);
+  assert.equal(m.pool.left(t2), left2 + 1, 'its copy went back to the pool');
+  assert.ok(!ps.allChess().some((p) => p.id === t3), 'no slot anywhere: the gained operator is not kept');
+  assert.equal(m.pool.left(t3), left0, 'its copy went back to the pool (PlayerState.acquireChess)');
+  assert.ok(toasts.includes('整备区已满，获得的干员已返还'), 'the toast of any gained operator with no room');
+  // the cell found no slot and no gained operator to stay on: destroyed with a log warning, as in a merge
+  assert.equal(ownedItems(ps, CELL).length, 0);
+  assert.ok(h.logs.warn.some((w) => w.includes(`returned item ${CELL} destroyed (no space)`)), 'logged');
+  checkInvariants(m);
+  m.dispose();
+});
+
+test('#4 per-piece state rides on the returned equipment: 商业包装方案 keeps its sell count through the transformation', () => {
+  const s = setup({ seed: 36 });
+  const { m, ps } = s;
+  const t2 = plainOf(m, 2)[0];
+  const carrier = give(m, ps, t2, 'board', legalTileFor(m, ps, t2));
+  const pack = giveItem(m, ps, PACK);
+  assert.deepEqual(equip(m, giveItem(m, ps, CELL), carrier), OK);
+  assert.deepEqual(equip(m, pack, carrier), OK);
+  const [fodder] = plainOf(m, 1);
+  const sell = () => assert.deepEqual(m.handle('p_0', { t: 'g.sell', uid: give(m, ps, fodder, 'hand').uid }), OK);
+  for (let i = 0; i < 3; i++) sell();
+  const key = `pack:${pack.uid}`;
+  assert.equal(ps.counters[key], 3, 'three sells counted while equipped');
+  battleResult(m, ps);
+  const back = ownedItems(ps, PACK)[0];
+  assert.ok(back && back.uid === pack.uid, 'the same item came back to the hand');
+  assert.equal(ps.counters[key], 3, 'with its progress');
+  const next = ps.hand.find((p) => p && p.kind === 'chess');
+  assert.deepEqual(equip(m, back, next), OK);
+  sell();
+  assert.equal(ps.counters[key], 4, 'it goes on counting on its next carrier');
+  checkInvariants(m);
+  m.dispose();
 });
 
 test('#4 strategy 昆图斯 end to end: the R3 cell survives its first transformation; a bot injects its weakest single normal operator, never an elite', () => {
@@ -281,56 +401,122 @@ test('#4 strategy 昆图斯 end to end: the R3 cell survives its first transform
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// #4 follow-up: the returned cell must not be pushed into temp by the new operator's summon card (it would be lost at
-// the deadline), and a bot never throws it away
+// #4: a gain that completes a merge merges like any gained copy (DESIGN §20.11) — the elite goes to a consumed DEPLOYED
+// copy's tile (board.js mergeTile), else to the hand; the destroyed carrier's tile is no copy's. The returned cell is
+// stowed before the elite's summon card (it would be lost in temp at the deadline).
 
-const VIGIL = 'chess_char_3_19_a'; // 伺夜 (Ⅲ) — a placeable 狼群 summon card
-/** Distinct normal equipment ids (never merge with each other), the cell excluded. */
-const fillerItems = () => Object.values(DATA.items).filter((it) => it.itemType === 'EQUIP' && !it.isGolden && it.id !== CELL).map((it) => it.id).sort();
-/** Fill every free hand slot but `leave` with distinct items. */
-const fillHand = (m, ps, leave = 1) => {
-  const ids = fillerItems().filter((id) => ![...ps.hand, ...ps.temp].some((p) => p && p.id === id));
-  while (ps.hand.filter((x) => x == null).length > leave) giveItem(m, ps, ids.shift());
-};
-/** Force the cell's roll (the random draw) to 伺夜 for tier 3; everything else stays the real path. */
-const forceVigil = (m) => { const roll = m.pool.roll.bind(m.pool); m.pool.roll = (rng, o = {}) => (o.tier === 3 ? VIGIL : roll(rng, o)); };
-const where = (ps, pred) => (ps.hand.some((p) => p && pred(p)) ? 'hand' : ps.temp.some((p) => p && pred(p)) ? 'temp' : null);
-
-test('#4 one free hand slot, the new operator brings a summon card: the returned cell takes the slot, the card waits in temp', () => {
-  const s = setup({ seed: 31 });
+test('#4 the gain completes a merge with deployed copies: the elite takes the first deployed copy\'s tile, never the carrier\'s; the cell is returned before the elite\'s summon card', () => {
+  const s = setup({ seed: 32 });
   const { m, ps } = s;
-  forceVigil(m);
+  forceRoll(m, 3, VIGIL);
+  // the carrier deploys FIRST: its tile leads the deploy order (under the 0.1.1 WA rule the elite took it)
   const t2 = plainOf(m, 2)[0];
   const carrier = give(m, ps, t2, 'board', legalTileFor(m, ps, t2));
-  const at = ps.find(carrier.uid).key;
+  const ct = ps.find(carrier.uid).key;
+  const copies = [give(m, ps, VIGIL, 'board', legalTileFor(m, ps, VIGIL))];
+  copies.push(give(m, ps, VIGIL, 'board', legalTileFor(m, ps, VIGIL)));
+  copies[0].dir = 'UP';
+  copies[1].dir = 'DOWN';
+  for (const c of copies) ps.removeTokensOf(c.uid); // keep the hand count exact
+  const copyTiles = copies.map((c) => ps.find(c.uid).key);
+  assert.equal(mergeTile([ct, ...copyTiles].map((key) => ({ key }))).key, ct, 'the carrier\'s tile is the first in deploy order');
   assert.deepEqual(equip(m, giveItem(m, ps, CELL), carrier), OK);
   fillHand(m, ps, 1);
-  m.dispatch(ps, 'onBattleResult', { result: {}, lpLoss: 0, perfect: true });
-  const next = ps.board.get(at);
-  assert.equal(next && next.id, VIGIL, '伺夜 takes the carrier\'s tile');
-  assert.equal(where(ps, (p) => p.id === CELL), 'hand', 'the cell came back into the hand (it would be lost in temp at the deadline)');
-  assert.equal(where(ps, (p) => p.kind === 'token' && p.ownerUid === next.uid), 'temp', 'the 狼群 card overflows into temp (it comes back at the next round start)');
+  battleResult(m, ps);
+  const want = mergeTile(copyTiles.map((key) => ({ key })));
+  const elite = ps.board.get(want.key);
+  assert.ok(elite && elite.id === m.gd.goldenIdOf(VIGIL), 'the elite 伺夜 stands on the first deployed copy\'s tile');
+  assert.equal(elite.dir, want.key === copyTiles[0] ? 'UP' : 'DOWN', 'with that copy\'s facing');
+  assert.ok(!ps.board.has(ct), 'the carrier\'s tile is empty');
+  assert.equal(ps.deployCount, 1, 'carrier + two copies deployed → the elite alone');
+  assert.equal(where(ps, (p) => p.id === CELL), 'hand', 'the cell came back first, into the last hand slot');
+  assert.equal(where(ps, (p) => p.kind === 'token' && p.ownerUid === elite.uid), 'temp', 'the elite\'s 狼群 card overflows into temp');
+  assert.equal(ps.stats.merges, 1);
   checkInvariants(m);
   m.dispose();
 });
 
-test('#4 the transformation completes a merge on the board: the cell is returned before the elite\'s summon card', () => {
-  const s = setup({ seed: 32 });
+test('#4 the gain completes a merge with no deployed copy: the elite goes to the hand (no summon card); the carrier\'s tile stays empty', () => {
+  const s = setup({ seed: 35 });
   const { m, ps } = s;
-  forceVigil(m);
-  const copies = [give(m, ps, VIGIL, 'board', legalTileFor(m, ps, VIGIL))];
-  copies.push(give(m, ps, VIGIL, 'board', legalTileFor(m, ps, VIGIL)));
-  for (const c of copies) ps.removeTokensOf(c.uid); // keep the hand count exact
+  forceRoll(m, 3, VIGIL);
   const t2 = plainOf(m, 2)[0];
   const carrier = give(m, ps, t2, 'board', legalTileFor(m, ps, t2));
+  const ct = ps.find(carrier.uid).key;
+  const copies = [give(m, ps, VIGIL, 'hand'), give(m, ps, VIGIL, 'hand')];
   assert.deepEqual(equip(m, giveItem(m, ps, CELL), carrier), OK);
-  fillHand(m, ps, 1);
-  m.dispatch(ps, 'onBattleResult', { result: {}, lpLoss: 0, perfect: true });
-  const elite = [...ps.board.values()].find((p) => p.id === m.gd.goldenIdOf(VIGIL));
-  assert.ok(elite, 'the elite 伺夜 is deployed on a consumed copy\'s tile');
-  assert.equal(where(ps, (p) => p.id === CELL), 'hand', 'the cell is in the hand');
-  assert.equal(where(ps, (p) => p.kind === 'token' && p.ownerUid === elite.uid), 'temp', 'the elite\'s 狼群 card in temp');
+  battleResult(m, ps);
+  const elite = ps.allChess().find((p) => p.id === m.gd.goldenIdOf(VIGIL));
+  assert.ok(elite, 'the gain completed the merge');
+  assert.ok(copies.every((c) => !ps.find(c.uid)), 'both bench copies were consumed');
+  assert.equal(ps.find(elite.uid).area, 'hand', 'no consumed copy was deployed (the carrier\'s tile is no copy\'s): the hand');
+  assert.ok(!ps.board.has(ct), 'the carrier\'s tile is empty');
+  assert.equal(ps.deployCount, 0);
+  assert.equal(where(ps, (p) => p.kind === 'token'), null, 'an elite on the bench brings no summon card');
+  assert.equal(where(ps, (p) => p.id === CELL), 'hand');
+  assert.equal(ps.stats.merges, 1);
+  assert.deepEqual(ps.offers.map((o) => o.source), ['merge'], 'the promotion reward as for any merge');
   checkInvariants(m);
+  m.dispose();
+});
+
+test('#4 bots and AI 托管 deploy the gained operator in their normal placement step (a real co-op round: SETTLE → the next prep)', () => {
+  const h = makeMatch({ mode: 'coop', difficulty: 'NORMAL', humans: 1, bots: 1, seed: 41, registry: REG, fake: true }).start();
+  const m = h.m;
+  h.toPrep(1);
+  const human = h.ps('p_0');
+  const bot = h.ps('ai_0');
+  h.run(() => bot.ready); // the bot's own R1 prep is done
+  // each seat: a small board — a tier-2 carrier of the cell and a tier-1 operator, nothing on the bench
+  const [t1a, t1b] = plainOf(m, 1);
+  const [t2a, t2b] = plainOf(m, 2);
+  const before = new Map();
+  for (const [ps, t1, t2] of [[human, t1a, t2a], [bot, t1b, t2b]]) {
+    for (const p of [...ps.board.values(), ...ps.hand.filter(Boolean), ...ps.temp.filter(Boolean)]) if (p.kind === 'chess') ps.returnCopies(p);
+    ps.board.clear();
+    ps.hand.fill(null);
+    ps.temp.fill(null);
+    ps.offers.length = 0;
+    const carrier = give(m, ps, t2, 'board', legalTileFor(m, ps, t2));
+    give(m, ps, t1, 'board', legalTileFor(m, ps, t1));
+    carrier.items.push(ps.newPiece('item', CELL));
+    ps.recompute();
+    before.set(ps, { uids: new Set(ps.allChess().map((p) => p.uid)), carrier });
+  }
+  // SETTLE: each carrier is destroyed and a tier-3 operator gained into the hand
+  const gained = new Map();
+  const settle = m.settle.bind(m);
+  m.settle = (...a) => {
+    const r = settle(...a);
+    for (const [ps, b] of before) gained.set(ps, ps.allChess().find((p) => !b.uids.has(p.uid)) || null);
+    return r;
+  };
+  // the layout each seat readies with in R2 (its bot prep ends with g.ready)
+  const atReady = new Map();
+  for (const ps of [human, bot]) {
+    const setReady = ps.setReady.bind(ps);
+    ps.setReady = (on) => {
+      const g = gained.get(ps);
+      if (on && m.round === 2 && g && !atReady.has(ps)) atReady.set(ps, { area: ps.find(g.uid)?.area ?? null, deployed: ps.deployCount });
+      return setReady(on);
+    };
+  }
+  h.toPrep(2);
+  for (const [ps, b] of before) {
+    const g = gained.get(ps);
+    assert.ok(g && m.gd.chess(g.id).tier === 3 && !m.gd.isGolden(g.id), `${ps.playerId}: a NORMAL tier-3 operator was gained at SETTLE`);
+    assert.ok(!ps.find(b.carrier.uid), `${ps.playerId}: the carrier is gone`);
+    assert.notEqual(ps.find(g.uid)?.area, 'board', `${ps.playerId}: it starts the prep on the bench`);
+  }
+  assert.ok(!human.ready, 'the human has not readied yet');
+  assert.deepEqual(m.handle('p_0', { t: 'g.autoplay', on: true }), OK); // AI 托管 plays the human seat from here
+  h.run(() => atReady.size === 2);
+  for (const ps of [bot, human]) {
+    const r = atReady.get(ps);
+    assert.ok(r, `${ps.playerId}: readied in R2`);
+    assert.equal(r.area, 'board', `${ps.playerId}: the gained operator was deployed by the placement step`);
+    assert.ok(r.deployed >= 2, `${ps.playerId}: the freed deployment is used (${r.deployed} deployed)`);
+  }
   m.dispose();
 });
 

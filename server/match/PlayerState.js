@@ -33,9 +33,12 @@
 //   * Per-piece round counters (pieceRoundCount, piece.meta.round): an operator's own counts of the current round
 //     (拉普兰德: the manual refreshes she witnessed — player feedback after 0.1.0); a new piece starts at 0, an elite
 //     merged this round keeps the highest of its copies' [ASSUMED].
-//   * Transformations (transformChess, 突变细胞): the new chess keeps the tile when legal; `returnItems` sends the old
-//     piece's equipment to the hand (overflow temp) like a destroyed operator's — before the new piece's summon stack,
-//     as in a merge, so a summon card never pushes the returned 突变细胞 into temp.
+//   * Transformations (transformChess, 突变细胞 — PRTS 备注 "生效时，原干员销毁，获得一名高一阶的随机初始干员"): a destroy
+//     followed by a gain. The carrier leaves wherever it stands (a board tile is freed, the deploy count drops), its
+//     equipment — the cell included — returns to the hand first (overflow temp), then the new chess is gained like any
+//     other (acquireChess: hand, overflow temp, the no-room rule; a merge it completes puts the elite on a consumed
+//     deployed copy's tile — never the carrier's —, else in the hand). Official footage: the tile is empty at the next
+//     prep and the new operator waits in the 整备区 (pointed out in PR #2).
 //   * Items: equip max 2 (a 3rd replaces the equipped item the player picks — g.equip replaceUid, the oldest when
 //     absent; equipped items are otherwise locked: g.destroy refuses them),
 //     2 identical normal items (hand/temp/equipped) merge into the golden item in the hand, items are never sold
@@ -58,9 +61,9 @@
 //     the next round start (grantTokensFor) — no out-of-range placement reaches the battle.
 //   * Facing (DESIGN §3, research 09 §1.2): every board piece has `dir` ∈ UP|RIGHT|DOWN|LEFT (server/sim/dir.js), set
 //     by g.move {…, dir} (absent ⇒ RIGHT) and kept across rounds. g.move onto the piece's OWN tile re-orients it in
-//     place; a swap keeps the occupant's dir; pieces put on the board by effects (a merge elite taking a consumed
-//     copy's tile, a transformation keeping the tile) keep that tile's dir, anything else defaults to RIGHT
-//     (`pieceDir`). g.art {…, dir} rotates the Art's range (画卷 1-1: its tile + the tile in front).
+//     place; a swap keeps the occupant's dir; a piece put on the board by an effect (a merge elite taking a consumed
+//     copy's tile) keeps that tile's dir, anything else defaults to RIGHT (`pieceDir`). g.art {…, dir} rotates the
+//     Art's range (画卷 1-1: its tile + the tile in front).
 //   * Operator loadout (DESIGN §16): the human's checked `seat.loadout` ({ [baseChessId]: { skill, module } }, entries
 //     equal to the defaults dropped) is re-checked against this match's data (shared/protocol.js checkLoadout; a
 //     mismatch falls back to the defaults) and kept frozen; bots always use the defaults. Match.setLoadout may replace
@@ -507,10 +510,10 @@ export class PlayerState {
    * the elite — PRTS 卫戍协议/帮助 §干员的获得与精锐化: "发送1名【精锐】状态的该干员至手牌区（若消耗已部署至作战区的干员，
    * 则发送至作战区对应位置）" (the user's playtest #6 follow-up confirms it). The tile (`mergeTile`): when a consumed copy
    * stood on the board the elite takes its tile and facing — of several, the one that deploys first (board reading
-   * order: top → bottom, then left → right) [ASSUMED]; `fromKey` / `fromDir` = the tile the incoming piece stood on (a
-   * transformation of a deployed operator) counts as such a copy. It replaces a deployed copy, so the deploy count never
-   * grows. Otherwise the elite goes to the hand, overflow temp — outside PREP too (a SETTLE merge's elite waits in temp
-   * through the next prep, tempDue). The copies' equipment returns to the hand ("干员晋级后已配发装备会回收至整备区";
+   * order: top → bottom, then left → right) [ASSUMED]. The incoming copy is never deployed (a 突变细胞 transformation
+   * destroyed its carrier before the gain: that tile is no copy's). It replaces a deployed copy, so the deploy count
+   * never grows. Otherwise the elite goes to the hand, overflow temp — outside PREP too (a SETTLE merge's elite waits in
+   * temp through the next prep, tempDue). The copies' equipment returns to the hand ("干员晋级后已配发装备会回收至整备区";
    * overflow temp; with both full it stays on the elite, up to its equipPerChess (2) slots — any further item is
    * destroyed with a log warning, as before the official rule) and an identical normal pair among it merges like any gain
    * (checkItemMerges); their summons are removed, and an elite on the board
@@ -518,15 +521,14 @@ export class PlayerState {
    * the elite could not be stored).
    * @param {string} baseId
    * @param {any} incoming the acquired, not yet stowed copy (null: only owned copies)
-   * @param {{ fromKey?: string|null, fromDir?: string }} [opts]
    */
-  _mergeChess(baseId, incoming, { fromKey = null, fromDir = undefined } = {}) {
+  _mergeChess(baseId, incoming) {
     const need = this.gd.mergeCount(baseId);
     const goldenId = this.gd.goldenIdOf(baseId);
     if (!(need > 1) || !goldenId) return null;
     const locs = this._chessLocations().filter((l) => !this.gd.isGolden(l.piece.id) && this.gd.baseIdOf(l.piece.id) === baseId);
     const consumed = [];
-    if (incoming) consumed.push({ piece: incoming, area: 'new', key: fromKey || undefined, dir: fromDir });
+    if (incoming) consumed.push({ piece: incoming, area: 'new' });
     for (const l of locs) { if (consumed.length >= need) break; consumed.push(l); }
     if (consumed.length < need) return null;
     let copies = 0;
@@ -545,7 +547,7 @@ export class PlayerState {
       const rc = l.piece.meta && l.piece.meta.round;
       if (rc && rc.r === this.m.round) for (const [k, v] of Object.entries(rc.n)) this.bumpPieceRoundCount(elite, k, Math.max(0, v - this.pieceRoundCount(elite, k)));
     }
-    const deployed = consumed.filter((l) => l.key && !this.board.has(l.key)).map((l) => ({ key: l.key, dir: l.area === 'new' ? l.dir : pieceDir(l.piece) }));
+    const deployed = consumed.filter((l) => l.key && !this.board.has(l.key)).map((l) => ({ key: l.key, dir: pieceDir(l.piece) }));
     const toTile = (t) => { elite.dir = parseDir(t.dir) || 'RIGHT'; this.board.set(t.key, elite); return 'board'; };
     const tile = mergeTile(deployed, (r, c) => this._legal(elite, r, c));
     let where = tile ? toTile(tile) : this.stow(elite, { allowTemp: true });
@@ -591,51 +593,43 @@ export class PlayerState {
   }
 
   /**
-   * Replace a chess piece by another chess (突变细胞 and similar). The new piece keeps the tile when legal (else goes
-   * to the hand/temp) and keeps the equipment — or, with `returnItems`, the equipment returns to the hand like the
-   * equipment of a destroyed / promoted operator (突变细胞: PRTS 备注 "生效时，原干员销毁，获得一名高一阶的随机初始干员"; the
-   * cell itself comes back, player feedback after 0.1.0), overflowing into temp; with both full an item stays on the new
-   * piece up to its equipPerChess slots (any further one is destroyed with a log warning, as in a merge). Pool copies are
-   * swapped; completes a merge when possible — a deployed piece's tile then counts as a consumed copy's for the elite
-   * (_mergeChess fromKey, when legal for it), and the merge returns the equipment itself. A new piece on the board gets
-   * its summon stack only after the equipment came back (like _mergeChess: a summon card must not push the returned
-   * equipment — 突变细胞 — into temp, where it would be lost at the deadline).
-   * @param {{ returnItems?: boolean }} [opts]
+   * Transformation (突变细胞 "战斗结束后，装备者替换为高一阶的随机干员"; PRTS 卫戍协议：盟约 下半/PRTS盟约记录 备注 "生效时，原
+   * 干员销毁，获得一名高一阶的随机初始干员（最高六阶）"): a destroy followed by a gain. The carrier is destroyed wherever it
+   * stands — a board tile is freed (the deploy count drops), its summons are removed, its pool copies return. Its
+   * equipment, the cell included, comes off first (PRTS 卫戍协议/帮助 "在失去该干员（干员出售、销毁、合并等）…时自动卸除"): to
+   * the hand, overflowing into temp, auto-merging like any gain. Then `newId` is gained like any other gained operator
+   * (acquireChess, onGain source 'transform'): the hand, overflow temp ("被发送至手牌区的物资优先从右到左填充空位"), and with
+   * both full it goes back to the pool ("整备区已满，获得的干员已返还"); it gets no summon card in the hand (only a deployment
+   * brings one), and a merge it completes follows the ordinary rule (_mergeChess: the elite on a consumed deployed copy's
+   * tile, else the hand — the carrier's freed tile is no copy's). An item that found no slot takes one the gain freed (a
+   * merge consumes copies), else stays on the gained operator up to its equipPerChess slots, else it is destroyed with a
+   * log warning (as in a merge). Official footage (bilibili BV1vzyVBuEN9, BV1Qkw1zMEoR; pointed out in PR #2): at the
+   * next prep the carrier's tile is empty, one more deployment is left and the new operator waits in the 整备区.
+   * @param {any} piece the carrier (an owned chess piece)
+   * @param {string} newId chess id gained in its place
+   * @returns {any} the gained piece (the elite when it completed a merge) or null
    */
-  transformChess(piece, newId, { returnItems = false } = {}) {
+  transformChess(piece, newId) {
     const loc = this.find(piece.uid);
-    const rec = this.gd.chess(newId);
-    if (!loc || loc.piece.kind !== 'chess' || !rec) return null;
+    if (!loc || loc.piece.kind !== 'chess' || !this.gd.chess(newId)) return null;
+    // 原干员销毁: off its tile / slot, its summons removed, its copies back to the pool
     this._detach(loc);
     this.removeTokensOf(piece.uid);
     const items = piece.items || [];
     piece.items = [];
     this.returnCopies(piece);
-    const base = this.gd.baseIdOf(newId);
-    const taken = this.m.pool.take(base, rec.isGolden ? this.gd.goldenCopies : 1);
-    let np = this.newPiece('chess', newId, { poolCopies: taken });
-    const merging = !rec.isGolden && this.completesChessMerge(newId);
-    // a merge returns the consumed copies' equipment (this one's too) before the elite's summons (_mergeChess)
-    const pending = returnItems && !merging ? items : [];
-    np.items = returnItems && !merging ? [] : items;
-    let deployed = false;
-    if (merging) {
-      np = this._mergeChess(base, np, loc.area === 'board' ? { fromKey: loc.key, fromDir: pieceDir(piece) } : undefined);
-    } else if (loc.area === 'board') {
-      const [r, c] = parseKey(loc.key);
-      if (this._legal(np, r, c)) { np.dir = pieceDir(piece); this.board.set(loc.key, np); deployed = true; } else if (!this.stow(np, { allowTemp: true })) { this.returnCopies(np); np = null; }
-    } else if (!this._putBack(loc, np)) { this.returnCopies(np); np = null; }
-    // after the new piece took its place (a hand piece keeps its slot), its predecessor's equipment comes off
-    for (const it of pending) {
+    // its equipment comes off first (the returned pair auto-merges, which may free a slot for the gain)
+    const left = items.filter((it) => !this.stow(it, { allowTemp: true }));
+    this.checkItemMerges();
+    // 获得一名…干员: gained like any other gained operator
+    const np = this.acquireChess(newId, { source: 'transform' });
+    for (const it of left) {
       if (this.stow(it, { allowTemp: true })) continue;
-      if (np && np.items.length < this.gd.equipPerChess) { np.items.push(it); continue; }
+      if (np && this.find(np.uid) && np.items.length < this.gd.equipPerChess) { np.items.push(it); continue; }
       this.m.log.warn?.(`[match ${this.m.roomCode}] ${this.playerId}: returned item ${it.id} destroyed (no space)`);
     }
-    if (returnItems) this.checkItemMerges();
-    // deployed in its predecessor's place: its manually deployable summons join the hand, after the returned equipment
-    if (deployed) this.grantTokensFor(np);
+    if (left.length) this.checkItemMerges();
     this.recompute();
-    if (np) this.m.dispatch(this, 'onGain', { piece: np, kind: 'chess', source: 'transform' });
     return np;
   }
 

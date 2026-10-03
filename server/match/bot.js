@@ -53,7 +53,8 @@
 //   5. items by what they do (itemTarget): equipment on the strongest deployed damage dealers (survival items on
 //      blockers, bond signature items on a member), 信标 on a bench single, 拟态物质 on a pair, 博士投影 (both
 //      qualities) on the strongest normal operator, 突变细胞 on the least valuable normal single below 6阶 (cellTarget:
-//      never an elite or a pair member), bond items on a focus member; Arts (useArt): 画卷 copies the most valuable
+//      never an elite or a pair member; the operator its transformation gains joins the bench and steps 3–4 of the next
+//      prep deploy it like any owned unit), bond items on a focus member; Arts (useArt): 画卷 copies the most valuable
 //      deployed operator, 教鞭 / “神秘顾客” are used after a perfect battle and kept otherwise (consume-on-equip items /
 //      Arts only with a handler)
 //   6. resolve the temp slots (a 突变细胞 left there — it comes back after every transformation — gets a hand slot made
@@ -1613,7 +1614,8 @@ const isMutationCell = (gd, itemId) => itemEffect(gd.item(itemId)) === 'char_che
 
 /**
  * Whom the bot injects with 突变细胞 (after the battle its carrier — deployed or on the bench: every owned carrier's item
- * hooks run — becomes a random operator one tier higher; items meta char_chess_transformation_equip): the least
+ * hooks run — is destroyed and a random operator one tier higher joins the bench, PlayerState.transformChess; the next
+ * prep's lineup step deploys it like any owned unit, so a deployed carrier only costs a re-placement): the least
  * valuable normal operator below 6阶 with a free equip slot — never an elite, never one of a merge pair (the merge
  * progress would be lost), nobody already carrying a cell. null: the cell waits in the hand.
  */
