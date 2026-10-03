@@ -448,7 +448,7 @@ test('阿戈尔 5 + the devour chain (GitHub #33): a member the devour knocks ou
   }
 });
 
-test('阿戈尔 devour: a unit revived during the pass is out of it — a marker back from the 5-tier revive gives no mark, a target 埃芒加德 revived in place takes none', () => {
+test('阿戈尔 devour, a unit back during the pass: a marker revived by the 5-tier revive still gives its marks; a target revived in place (埃芒加德) or redeployed (不屈) takes none', () => {
   // g1 (10,3) → g2 (10,4, 3000 × 1.35 HP: knocked out by g1's mark, revived) → g3 (10,5) → fodder (10,6); g4 / g5 face empty tiles
   const list = [
     ['g1_a', ['egirShip']], ['g2_a', ['egirShip'], { stats: { maxHp: 3000 } }], ['g3_a', ['egirShip'], { stats: { maxHp: 20000 } }],
@@ -460,19 +460,22 @@ test('阿戈尔 devour: a unit revived during the pass is out of it — a marker
   ];
   const h = makeBattle({ defs: defsOf(list), units, bonds: { egirShip: bondOn(5, 0, null, [3, 5]) }, hooks: ['damaged', 'deploy'], captureNoisy: true });
   h.step(1);
-  const [g2, g3, f] = ['g2_a', 'g3_a', 'fod_a'].map((id) => h.unit(id));
+  const [g2, f] = ['g2_a', 'fod_a'].map((id) => h.unit(id));
   assert.ok(g2.alive && h.hooksOf('deploy').some((c) => c.unit === g2 && !c.initial), 'g2 knocked out and revived');
-  // [ASSUMED] (PRTS names only the target): g2's own marks on g3 and the fodder are cancelled with its knock-out
+  // only a marker off the field gives no further mark (the rule since 0.1.0): g2, back at once, still devours g3 and the fodder
   assert.deepEqual(tagged(h, 'bond:egir:devour').map((c) => [c.source.defId, c.target.defId]),
-    [['g1_a', 'g2_a'], ['g1_a', 'g3_a'], ['g1_a', 'fod_a'], ['g3_a', 'fod_a']]);
-  close(f.hp, 20000 - 2 * 5000, 1e-6, 'the fodder: g1 and g3 only');
+    [['g1_a', 'g2_a'], ['g1_a', 'g3_a'], ['g1_a', 'fod_a'], ['g2_a', 'g3_a'], ['g2_a', 'fod_a'], ['g3_a', 'fod_a']]);
+  close(f.hp, 20000 - 3 * 5000, 1e-6, 'the fodder: g1, g2 and g3');
   close(g2.s.atk, 1000 + 1000 + 1000, 1e-6, 'g2 keeps the base ATK it gained at marking (a persistent buff) [ASSUMED]');
   assert.equal(h.b.getPlayer('p1').bonds.egirShip.layers, 1 + 1 + 2, 'each devoured unit adds its tier once');
   checkInvariants(h.b);
-  // 3 members + 埃芒加德 (命结之秘, the first 3 knocked-out operators revive in place — a new deployment, items revivedInPlace):
-  // g1 → g2 → fodder (3000 HP): g1's mark knocks the fodder out, 埃芒加德 revives it, g2's mark on it is cancelled
-  const list2 = [['g1_a', ['egirShip']], ['g2_a', ['egirShip'], { stats: { maxHp: 20000 } }], ['g3_a', ['egirShip']], ['fod_a', ['preciShip'], { tier: 2, stats: { maxHp: 3000 } }]];
+  // 3 members, g1 → g2 → fodder (3000 HP): g1's mark knocks the fodder out, it is back at once, g2's mark on it is cancelled
+  const list2 = [
+    ['g1_a', ['egirShip']], ['g2_a', ['egirShip'], { stats: { maxHp: 20000 } }], ['g3_a', ['egirShip']],
+    ['fod_a', ['indomShip'], { tier: 2, stats: { maxHp: 3000 } }],
+  ];
   const units2 = [{ chessId: 'g1_a', row: 10, col: 3 }, { chessId: 'g2_a', row: 10, col: 4 }, { chessId: 'fod_a', row: 10, col: 5 }, { chessId: 'g3_a', row: 12, col: 3 }];
+  // 埃芒加德 (命结之秘: the first 3 knocked-out operators revive in place — a new deployment, items revivedInPlace)
   const e = makeBattle({ defs: defsOf(list2), units: units2, bandId: 'band_ermengard', bonds: { egirShip: bondOn(3, 0, null, [3, 5]) }, hooks: ['damaged'], captureNoisy: true });
   e.step(1);
   const fe = e.unit('fod_a');
@@ -481,6 +484,18 @@ test('阿戈尔 devour: a unit revived during the pass is out of it — a marker
   close(fe.hp, fe.s.maxHp, 1e-6, 'at full HP: no second mark');
   assert.deepEqual(e.eventsOf('fx').filter((x) => x[1] === 'revive').map((x) => x[4].left), [2], 'one 埃芒加德 revive spent, not two');
   checkInvariants(e.b);
+  // 不屈 at p = min(1, 0.18 + 0.004 × 300) = 1: 立刻重新部署 where it lies — a knock-out and a new deployment. Until 0.1.1
+  // g2's mark knocked the fodder out again within the same instant, where 不屈 does not fire twice, and it stayed down
+  const u = makeBattle({
+    defs: defsOf(list2), units: units2, hooks: ['damaged', 'death', 'deploy'], captureNoisy: true,
+    bonds: { egirShip: bondOn(3, 0, null, [3, 5]), indomShip: bondOn(2, 300, 1, [2, 3]) },
+  });
+  u.step(1);
+  const fu = u.unit('fod_a');
+  assert.deepEqual(tagged(u, 'bond:egir:devour').map((c) => [c.source.defId, c.target.defId]), [['g1_a', 'g2_a'], ['g1_a', 'fod_a']]);
+  assert.ok(fu.alive && u.hooksOf('deploy').some((c) => c.unit === fu && !c.initial), 'redeployed by 不屈');
+  assert.equal(u.hooksOf('death').filter((c) => c.unit === fu && c.reason === 'killed').length, 1, 'knocked out once');
+  checkInvariants(u.b);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
