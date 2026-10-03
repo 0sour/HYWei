@@ -157,6 +157,13 @@ export const EL_BAR = Object.freeze({ icon: 0.15, min: 8, max: 15, enemy: 0.8, g
  *   clip (`end`) is timed from the 重生's `dur` (the 'telegraph' fx) to end with it, so the second form walks and
  *   attacks on its own clips at once (a view that missed the timing — built mid-重生 — skips the closing clip);
  * - 守墓石像 (forms 'stone' → 'fly'): the statue on Sleep [ASSUMED by name], then the flyer's *_2 clips.
+ * - the 傀儡师 operators' <替身> (sim professions.js installDollkeeper: form 'doll' from the start of the switch to it
+ *   until the switch back starts, GitHub issue #44): the skeletons draw it on their *_B clips (their own slots — the
+ *   本体's are hidden). 归溟幽灵鲨: Start_B fades it in (the 1 s switch), Idle_B (it never attacks), Die_B breaks it
+ *   apart over its last second (`end`, timed from the 'substitute' fx's `dur`), the 本体 comes back on Start_2 (`leave`:
+ *   played when the form ends); knocked out as the 替身 it collapses on Die_B_2 and stays down so. 风丸: Start_B, then
+ *   Idle_B / Attack_B (her 替身 attacks), Die_B; the 本体 comes back on Start. A Back skeleton (facing UP) only has
+ *   Idle_B (归溟幽灵鲨 also Start_2): the switch clips it lacks are skipped.
  * A kind without a clip set of this skeleton (barriers, charges, …) changes nothing. 吉兆飞鳞's 晕眩模式 is its Stun clip.
  */
 const loop = (name, via = null) => Object.freeze(via ? { begin: null, loop: name, end: null, via } : { begin: null, loop: name, end: null });
@@ -180,7 +187,17 @@ const STATUE = Object.freeze({
   fly: Object.freeze({ change: null, roles: clipSet('Idle_2', 'Move_2', 'Die_2', 'Attack_2') }),
 });
 const JAKILL2 = clipSet('C2_Idle', 'C2_Move', 'C2_Die', 'C2_Attack');
+/** A 傀儡师's 替身 roles: idle `idle`, death `die`, attack `attack` (null: none), no skill clip of its own. */
+const dollRoles = (idle, die, attack = null) => Object.freeze({
+  idle, deploy: idle, die, attack: attack ? Object.freeze({ begin: null, loop: attack, end: null }) : null, attackDown: null, skill: null,
+});
 export const FORMS = Object.freeze({
+  char_1023_ghost2: Object.freeze({
+    doll: Object.freeze({ change: 'Start_B', end: 'Die_B', leave: 'Start_2', roles: dollRoles('Idle_B', 'Die_B_2') }),
+  }),
+  char_4016_kazema: Object.freeze({
+    doll: Object.freeze({ change: 'Start_B', leave: 'Start', roles: dollRoles('Idle_B', 'Die_B', 'Attack_B') }),
+  }),
   enemy_1040_bombd: Object.freeze({
     bombed: Object.freeze({
       roles: Object.freeze({
@@ -487,14 +504,15 @@ export class UnitView {
    * The unit changed mode (the `form` of a sim fx — shared/protocol.js fxForm; `fx` = that fx's extra): the mode's clip
    * set (FORMS) after its change clip, and its closing clip (`end`, landing in the `next` form's clips) timed to end
    * `fx.dur` game s later — the unit is still in this mode while it plays (an ember can be beaten in its last second),
-   * so this mode's death clip stays until the next mode's fx; null goes back to the manifest clips; a kind this skeleton
-   * has no clip set for (an arts barrier, a broken charge …) changes nothing. Kept for a model built later.
+   * so this mode's death clip stays until the next mode's fx; null goes back to the manifest clips (through the old
+   * mode's `leave` clip when it has one: a 替身's 本体 coming back); a kind this skeleton has no clip set for (an arts
+   * barrier, a broken charge …) changes nothing. Kept for a model built later.
    */
   setForm(kind, fx = null) {
     const k = typeof kind === 'string' ? kind : null;
     if (k === this.form) return;
     if (k && !FORMS[this.info.spine || this.info.defId]?.[k]) return;
-    const had = !!this._formSpec();
+    const prev = this._formSpec();
     this.form = k;
     this.info.form = k;
     const f = this._formSpec();
@@ -506,7 +524,7 @@ export class UnitView {
     const late = fx && Number(fx.late) > 0 ? Number(fx.late) : 0;
     const change = f && f.change && !(late > 0 && late >= (this.actor.dur?.(f.change) ?? Infinity)) ? f.change : null;
     if (f) this.actor.setForm(f.roles, change, f.end && dur > 0 ? { clip: f.end, in: dur, roles: next } : null);
-    else if (had) this.actor.setForm(null);
+    else if (prev) this.actor.setForm(null, prev.leave && !(late > 0 && late >= (this.actor.dur?.(prev.leave) ?? Infinity)) ? prev.leave : null);
   }
 
   // ---- HUD -------------------------------------------------------------------------------------------------

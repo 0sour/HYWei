@@ -221,9 +221,9 @@ A skill clip may also come from directional-only animations when a model has no 
 
 The resolver's full precedence list is in the header of `tools/assets/anim-roles.mjs`.
 
-The manifest roles describe an enemy's first form. Enemies whose skeleton holds another form's clip set get it from
+The manifest roles describe a unit's first form. Units whose skeleton holds another form's clip set get it from
 `public/js/render/units.js FORMS` (keyed by Spine id, switched by the `form` of the sim's 'phase' / 'ember' / 'revive'
-/ 'telegraph' / 'stone' fx — `shared/protocol.js fxForm`; no client stage drops these fx: the runner keeps them through
+/ 'telegraph' / 'stone' / 'substitute' / 'swap' / 'dollEnd' fx — `shared/protocol.js fxForm`; no client stage drops these fx: the runner keeps them through
 catch-up frames and hidden tabs (`keepsState`), the game screen's pre-entry buffer (`keepEarly`) and the render engine's
 event queue (`render/interp.js isCosmeticEvent`) too — or, for a view built mid-battle, UnitInfo `form`, which `render/app.js renderInfo` passes to the view; a
 `change` clip plays once first, an `end` clip is timed from the fx's `dur` to finish as that state ends, keeping the
@@ -236,6 +236,11 @@ stealth bit only while its 隐匿 is on:
 - the leaders' 重生: 锏 (`Revive1`, `Revive2` held, `Revive3`, then `B_*`), 扎罗 (`A_revive_1` / `_2` / `_3`, then `B_*`),
   “复仇者” (`Revive_Begin` / `_Loop` / `_End`), 杰斯顿 (`C1_Die`, then `C2_*`);
 - 守墓石像 (the statue on `Sleep` [ASSUMED by name], then the flyer's `*_2`).
+- the 傀儡师 operators' <替身> (form `doll` of the sim's 'substitute' / 'swap' / 'dollEnd' fx, DESIGN §22.11; the `*_B`
+  clips draw the 替身's own slots and hide the 本体's): 归溟幽灵鲨 `Start_B` (it fades in), `Idle_B`, `Die_B` over its last
+  second (it breaks apart and fades), `Die_B_2` when it is knocked out (it collapses), and the 本体 back on `Start_2` (a
+  form's `leave` clip); 风丸 `Start_B`, `Idle_B` / `Attack_B` / `Die_B`, the 本体 back on `Start`. Their Back skeletons
+  (facing up) only have `Idle_B` (归溟幽灵鲨 also `Start_2`): the missing switch clips are skipped.
 
 Not mapped (clip names ambiguous): “自在”, “巨大的丑东西”, 主角阵营角色 and “余音” (`*_A` / `*_B`: which of its two forms is A
 is not known) keep their manifest clips.

@@ -29,7 +29,7 @@
 //   every MANUAL skill; AUTO skills never take a class row).
 // - fx kinds emitted (battle.fx(kind, {x, y, id, …})): 'aoe' {r, skill}, 'healAoe' {r}, 'summon' {token}, 'anchor'
 //   {fromX, fromY, r}, 'teleport', 'zone' {r, duration}, 'iceSpike' {r}, 'extraAttack', 'downed', 'revive' {r},
-//   'overload', 'ember', 'bloodBattle', 'reborn', 'candle', 'wake' {scale}, 'mote', 'hpShare', 'knockout', 'crit',
+//   'overload', 'ember', 'bloodBattle', 'reborn', 'candle', 'wake' {scale}, 'mote', 'hpShare', 'crit',
 //   'meltdown', 'soul', 'sleepGuard', 'weightless'; engine kinds used: 'dodge'.
 
 import { COLS } from '../../constants.js';
@@ -1642,10 +1642,13 @@ const KITS = {
   },
 
   // ---------------------------------------------------------------------------------------------------------------
-  // 归溟幽灵鲨 — dollkeeper. S2 生存的渴望 (15/17 s): ATK/ASPD +, HP never below 1; afterwards she counts as knocked out
-  // (→ substitute, or death if already one). T1 拥抱自我: the substitute slows nearby enemies −40 % and deals 40 % ATK
-  // arts/s to them (PRTS 备注 "伤害与减速不可对空": ground enemies only). T2 阿戈尔的深邃: Abyssal Hunters in the team
-  // max HP +20 %. Module (elite): substitute ATK +15 %.
+  // 归溟幽灵鲨 — dollkeeper (professions.js installDollkeeper: the 替身 form, its switch animations, 阻回). Her <替身> makes
+  // no normal attack (PRTS 特性备注 "<替身>不进行普通攻击") and so casts no skill (kit trait `dollNoAttack`).
+  // S2 生存的渴望 (15/17 s): ATK/ASPD +, HP never below 1 (PRTS 备注: 不死 — a lethal hit does not switch her meanwhile);
+  // when it ends she switches to the 替身 at once (PRTS 修正 "技能结束后立刻切换为<替身>", the text's 视为被击倒: no lethal
+  // HP loss, so no 不死 / 复活 effect takes it). T1 拥抱自我: the 替身 slows nearby enemies −40 % and deals 40 % ATK
+  // arts/s to them (PRTS 备注 "伤害与减速不可对空": ground enemies only) — once it fights (not during its switch
+  // animation). T2 阿戈尔的深邃: Abyssal Hunters in the team max HP +20 %. Module (elite): substitute ATK +15 %.
   // S1 生存的技巧 (duration): swaps HP ratios with the other operator of the skill area (周围) with the lowest HP ratio,
   // ATK +. S3 生存的重压 (duration): BAT +1 s, hits every blocked enemy, ATK +, max HP +; an attacked enemy whose HP ratio
   // is ≥ hers takes attack@atk_scale_ex × ATK phys more, otherwise she loses attack@hp_ratio of her max HP.
@@ -1685,21 +1688,23 @@ const KITS = {
       skill: {
         kind: 'duration',
         mods: mods({ atkPct: num(bb.atk), aspd: num(bb.attack_speed) }),
+        // "技能结束后立刻切换为<替身>": nothing when the skill ended with her (death) or by her switch to the 替身, or she
+        // already is one
         onEnd({ battle, unit, reason }) {
-          if (reason === 'death' || !unit.alive || !unit.deployed) return;
-          battle.fx('knockout', { x: unit.x, y: unit.y, id: unit.id });
-          battle.loseHp(unit, unit.hp + 1, { source: unit });
+          if (reason === 'death' || reason === 'substitute' || !unit.alive || !unit.deployed || unit.trait.doll) return;
+          battle.emit('dollSwitch', { unit, reason: 'skill', done: false });
         },
       },
+      trait: { dollNoAttack: true },
       talents: [
-        { install(battle, unit) { // 拥抱自我
+        { install(battle, unit) { // 拥抱自我 (the 替身 fighting: not during a switch animation)
           const slow = num(t0.move_speed), scale = num(t0.atk_scale);
           whileOn(battle, unit, AURA_IV, () => {
-            if (!unit.trait.doll || !slow) return;
+            if (!unit.trait.doll || unit.trait.dollSwitch || !slow) return;
             for (const e of battle.unitsInGrid(unit, aroundGrid, { side: 'enemy' })) if (!e.isFlying) battle.addBuff(e, { key: 'ghost2:embrace', duration: AURA_DUR, mods: { moveMul: Math.max(0, 1 + slow) } });
           });
           whileOn(battle, unit, 1, () => {
-            if (!unit.trait.doll || !(scale > 0)) return;
+            if (!unit.trait.doll || unit.trait.dollSwitch || !(scale > 0)) return;
             for (const e of battle.unitsInGrid(unit, aroundGrid, { side: 'enemy' })) if (!e.isFlying) battle.dealDamage(unit, e, { amount: unit.s.atk * scale, type: 'arts', tags: ['talent', 'embrace'] });
           });
         } },
