@@ -2219,7 +2219,12 @@ function buildStages(ctx, modesById) {
     const byKey = (k) => devices.find((d) => d.key === k);
     if (rows.some((l) => l.includes('m'))) {
       const d = byKey('trap_098_mire');
-      special.mire = { source: d ? d.key : null, intervalSec: d?.skill?.bb?.value ?? 3, aspdPerStack: d?.skill?.bb?.attack_speed ?? -0.05, moveMulPerStack: d?.skill?.bb?.move_speed ?? -0.05, maxStacks: d?.skill?.bb?.max_stack_cnt ?? 10, clearedOnLeave: true };
+      // PRTS 沼泽控制: a unit in the mire triggers 【陷入沼泽】 "每秒…一次" (the device skill's charge time, spData
+      // maxChargeTime 1) and an enemy "若其重量大于等于3，改为获得2层" — the skill's `value` (3) is that 重量, not an
+      // interval; "上述减益于单位不再位于沼泽之中时解除" (clearedOnLeave)
+      const mireSk = d?.skill ? ctx.skillTable[d.skill.skillId]?.levels?.[Math.max(0, (d.skill.level || 1) - 1)] : null;
+      const charge = mireSk?.spData?.maxChargeTime;
+      special.mire = { source: d ? d.key : null, intervalSec: typeof charge === 'number' && charge > 0 ? charge : 1, aspdPerStack: d?.skill?.bb?.attack_speed ?? -0.05, moveMulPerStack: d?.skill?.bb?.move_speed ?? -0.05, maxStacks: d?.skill?.bb?.max_stack_cnt ?? 10, heavyWeight: d?.skill?.bb?.value ?? 3, clearedOnLeave: true };
     }
     if (rows.some((l) => l.includes('d'))) {
       const d = byKey('trap_042_tidectrl');

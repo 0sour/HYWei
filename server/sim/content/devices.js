@@ -9,8 +9,10 @@
 //              RIGHT|DOWN|LEFT) equals the blower's dir / is its opposite / is perpendicular get ATK +
 //              blower_s_character[equal|opposite|vertical].atk (the m01 blowers blow DOWN); enemies moving with /
 //              against the flow get move speed × (1 + blower_s_enemy[equal|opposite].move_speed)
-//   沼泽 m      +1 stack on entering and every intervalSec s on the tile (max maxStacks): ASPD aspdPerStack (fractions
-//              are ×100 ASPD), move speed × (1 + moveMulPerStack × stacks); cleared on leaving (allies and ground enemies)
+//   沼泽 m      a unit on it (allies and ground enemies) triggers 【陷入沼泽】 on entering and every intervalSec (1) s
+//              there: an enemy gains 1 layer — 2 at 重量 ≥ heavyWeight (the device's `value`, 3) — of ASPD aspdPerStack
+//              (fractions are ×100 ASPD) and move speed × (1 + moveMulPerStack × layers), an operator 1 layer of the
+//              ASPD part only; at most maxStacks layers; cleared on leaving
 //   烟雾 g      operators on it cannot be targeted by enemy ranged attacks (stealth flag: blocked enemies still hit them)
 //   深水 d      ground enemies on it: sea_drown[enemy].damage true dmg/s, ASPD attack_speed (×100), move × move_speed
 //   活性源石 i  a unit on it (allies and ground enemies) gets a timed effect: damage true dmg/s, ATK + atk, ASPD +
@@ -46,7 +48,7 @@ const CRATE_KEY = 'trap_1105_accrate';
 const TURRET_KEY = 'trap_1104_aclasert';
 /** Research 05 §2.3 values, used only when a stage has no `special` block / device blackboard. */
 const RESEARCH = Object.freeze({
-  mire: { intervalSec: 3, aspdPerStack: -0.05, moveMulPerStack: -0.05, maxStacks: 10 },
+  mire: { intervalSec: 1, aspdPerStack: -0.05, moveMulPerStack: -0.05, maxStacks: 10, heavyWeight: 3 },
   deepsea: { damage: 40, attack_speed: -0.6, move_speed: 0.6 },
   infection: { damage: 70, atk: 0.2, attack_speed: 20, duration: 300 },
 });
@@ -288,11 +290,14 @@ function buildTerrain(battle, st) {
   // mire
   const m = sp.mire || {};
   const mdev = devSkill('mireController') || {};
+  // the device skill's `value` (3) is the 重量 from which an enemy gains 2 layers, not an interval (PRTS 沼泽控制)
+  const mInterval = num(m.intervalSec, RESEARCH.mire.intervalSec);
   st.mire = {
-    interval: num(m.intervalSec ?? mdev.value, RESEARCH.mire.intervalSec),
+    interval: mInterval > 0 ? mInterval : RESEARCH.mire.intervalSec,
     aspdPer: aspdOf(num(m.aspdPerStack ?? mdev.attack_speed, RESEARCH.mire.aspdPerStack)),
     movePer: num(m.moveMulPerStack ?? mdev.move_speed, RESEARCH.mire.moveMulPerStack),
     max: Math.max(1, Math.floor(num(m.maxStacks ?? mdev.max_stack_cnt, RESEARCH.mire.maxStacks))),
+    heavyWeight: num(m.heavyWeight ?? mdev.value, RESEARCH.mire.heavyWeight),
   };
   // deep sea
   const ds = sp.deepsea?.bb || devSkill('tideController') || {};
@@ -340,13 +345,14 @@ function enterTerrain(battle, st, u, code) {
   m.terrain = code;
   m.terrainSince = battle.time;
   m.mireStacks = 0;
+  m.mireTriggers = 0;
   if (!code) return;
   if (code === TERRAIN.smog) battle.addBuff(u, { key: BUFF[code], flags: { stealth: true } });
   else if (code === TERRAIN.deepsea) {
     const D = st.deepsea;
     battle.addBuff(u, { key: BUFF[code], mods: { aspd: D.aspd, moveMul: D.moveMul }, interval: 1, onTick: terrainDamage(battle, D.damage) });
   }
-  // mire stacks are applied by tickMire, 活性源石 by touchInfection (every tick on the tile)
+  // mire layers are applied by tickMire, 活性源石 by touchInfection (every tick on the tile)
 }
 
 /**
@@ -371,12 +377,26 @@ function touchInfection(battle, st, u) {
   battle.addBuff(u, { key, duration: I.duration, mods: { atkPct: I.atk, aspd: I.aspd }, interval: 1, onTick: terrainDamage(battle, I.damage) });
 }
 
+/** Layers an enemy gains per 【陷入沼泽】 trigger at 重量 ≥ heavyWeight (PRTS 沼泽控制: "若其重量大于等于3，改为获得2层"). */
+const MIRE_HEAVY_LAYERS = 2;
+
+/**
+ * 沼泽 (PRTS 沼泽控制 备注): a unit in the mire triggers its 【陷入沼泽】 "每秒…一次" (the device skill charges in 1 s) — an
+ * enemy gains 1 layer of ASPD −5 % and move speed −5 % (2 layers at 重量 ≥ heavyWeight, the skill's `value` 3), any other
+ * unit 1 layer of ASPD −5 % only; at most 10 layers; "上述减益于单位不再位于沼泽之中时解除" (enterTerrain).
+ * [ASSUMED] the first trigger comes on entering, then one every second.
+ */
 function tickMire(battle, st, u) {
-  const M = st.mire;
-  const n = Math.min(M.max, 1 + Math.floor((battle.time - u.mem.terrainSince + 1e-9) / M.interval));
-  if (n === u.mem.mireStacks) return;
-  u.mem.mireStacks = n;
-  battle.addBuff(u, { key: BUFF[TERRAIN.mire], refresh: 'replace', mods: { aspd: M.aspdPer * n, moveMul: Math.max(0, 1 + M.movePer * n) } });
+  const M = st.mire, m = u.mem;
+  const due = 1 + Math.floor((battle.time - m.terrainSince + 1e-9) / M.interval);
+  if (due <= m.mireTriggers) return;
+  const enemy = u.side === 'enemy';
+  const per = enemy && num(u.s.massLevel, 0) >= M.heavyWeight ? MIRE_HEAVY_LAYERS : 1;
+  const n = Math.min(M.max, m.mireStacks + per * (due - m.mireTriggers));
+  m.mireTriggers = due;
+  if (n === m.mireStacks) return;
+  m.mireStacks = n;
+  battle.addBuff(u, { key: BUFF[TERRAIN.mire], refresh: 'replace', mods: enemy ? { aspd: M.aspdPer * n, moveMul: Math.max(0, 1 + M.movePer * n) } : { aspd: M.aspdPer * n } });
 }
 
 /**

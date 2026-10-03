@@ -608,17 +608,40 @@ test('气流 (act2 m01 blowers): enemies moving with the flow ×(1+equal), again
   assert.ok(up.has(Math.round((1 + bb['blower_s_enemy[opposite].move_speed']) * 100) / 100), `against the flow ${[...up]}`);
 });
 
-test('沼泽 (act2 m02): +1 stack on entering and every intervalSec (ASPD −5, move −5 % each), max stacks, cleared on leaving', REAL, () => {
+test('沼泽 (act2 m02): a trigger on entering and every second — 1 layer (an enemy of 重量 ≥ 3: 2) of ASPD −5 / move −5 %, at most 10; operators ASPD only; cleared on leaving', REAL, () => {
   const mire = ds.getStage('act2autochess_m02').special.mire;
+  // PRTS 沼泽控制: "每秒将会触发一次" (sktok_mire spData maxChargeTime 1); "若其重量大于等于3，改为获得2层" (the skill's value 3)
+  assert.equal(mire.intervalSec, 1);
+  assert.equal(mire.heavyWeight, 3);
   const h = makeBattle({ stageId: 'act2autochess_m02', defs: { chess: { test_guard: guard() } }, units: [{ chessId: 'test_guard', row: 11, col: 7 }], autoFinish: false, timeLimit: 60 });
   h.step(2);
   assert.equal(terrainAt(h.b, 11, 7), 'mire');
   const g = h.unit('test_guard');
-  approx(g.s.aspd, 100 + mire.aspdPerStack * 100, 1e-9, '1 stack');
+  approx(g.s.aspd, 100 + mire.aspdPerStack * 100, 1e-9, '1 layer');
+  assert.equal(g.findBuff('terrain:mire').mods.moveMul, undefined, 'an operator gets the ASPD part only');
   h.run(mire.intervalSec);
-  approx(g.s.aspd, 100 + 2 * mire.aspdPerStack * 100, 1e-9, '2 stacks');
+  approx(g.s.aspd, 100 + 2 * mire.aspdPerStack * 100, 1e-9, '2 layers');
   h.run(mire.intervalSec * mire.maxStacks);
-  approx(g.s.aspd, 100 + mire.maxStacks * mire.aspdPerStack * 100, 1e-9, 'max stacks');
+  approx(g.s.aspd, 100 + mire.maxStacks * mire.aspdPerStack * 100, 1e-9, 'max layers');
+  // enemies standing in the mire: 重量 1 gains 1 layer a second, 重量 3 two (heavyWeight), both capped at maxStacks
+  const layersOver = (mass) => {
+    const key = `enemy_mass${mass}`;
+    const h3 = makeBattle({ stageId: 'act2autochess_m02', defs: { enemies: { [key]: walker({ key, mass }) } }, enemies: [{ key, pos: [10, 7], route: { motion: 'WALK', start: [10, 7], end: [10, 7], checkpoints: [{ type: 'WAIT', time: 99 }] } }], autoFinish: false, timeLimit: 60 });
+    h3.step();
+    const e = h3.enemy(key);
+    assert.equal(terrainAt(h3.b, 10, 7), 'mire');
+    const t0 = e.mem.terrainSince;
+    const out = [0.5, 1.5, 2.5, 4.5, 9.5, 20].map((t) => {
+      h3.run(t0 + t - h3.b.time);
+      const n = Math.round((e.s.aspd - 100) / (mire.aspdPerStack * 100));
+      approx(e.s.moveSpeed, 1 + n * mire.moveMulPerStack, 1e-9, `move ×(1 − 5 % × ${n})`);
+      return n;
+    });
+    checkInvariants(h3.b);
+    return out;
+  };
+  assert.deepEqual(layersOver(1), [1, 2, 3, 5, 10, 10], 'weight 1: a layer per second');
+  assert.deepEqual(layersOver(3), [2, 4, 6, 10, 10, 10], 'weight 3: two layers per second');
   // an enemy walking down col 7 (mire) is slowed there and recovers once it leaves
   const h2 = makeBattle({ stageId: 'act2autochess_m02', defs: { enemies: { enemy_walker: walker() } }, enemies: [{ key: 'enemy_walker', route: { motion: 'WALK', start: [12, 7], end: [9, 2], checkpoints: [] } }], autoFinish: false, timeLimit: 60 });
   let slowed = false;
