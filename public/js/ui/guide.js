@@ -1,8 +1,10 @@
-// 玩法说明 (How to play): viewer for the 19 official tutorial pages of the mode (local-client art, DESIGN §13:
-// data/local-assets.json → guide/autochess_{home 1–9, shop 1–6, handbook 1–4}). The pages are stored squashed to
-// 1024² and are displayed stretched back to 16:9. Three chapters (基础规则 / 调度手册 / 进阶图鉴), ‹ › buttons,
-// ←/→ (A/D) keys, page dots, thumbnails; Esc or the backdrop closes. Adjacent pages are preloaded.
-// Without the local art the viewer shows the official loading-screen tips (config.tips) instead.
+// 玩法说明 (How to play): viewer for the 19 official tutorial pages of the mode: guide/autochess_{home 1–9, shop 1–6,
+// handbook 1–4} from the local-client art (DESIGN §13: data/local-assets.json) when it is there, else the copies setup
+// downloads from the public mirror (data/assets.json → ui['guide/<key>']; GitHub issue #42) — data.js artUrls; a page
+// whose picture fails to load tries its next URL. The pages are stored squashed to 1024² (both copies) and are
+// displayed stretched back to 16:9. Three chapters (基础规则 / 调度手册 / 进阶图鉴), ‹ › buttons, ←/→ (A/D) keys, page
+// dots, thumbnails; Esc or the backdrop closes. Adjacent pages are preloaded.
+// With neither copy the viewer shows the official loading-screen tips (config.tips) instead.
 //
 // Global & imperative so every screen can open it: `openGuide(page?)`; <GuideHost/> is mounted once by main.js
 // (and by the dev mock harness); <GuideButton/> is the standard trigger (title, lobby, room, in-match menu).
@@ -10,7 +12,7 @@
 import { useEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
 import { html, Icon, MicroLabel, Button, Spinner } from './components.js';
 import { createStore, useStore } from '../store.js';
-import { data, useData, localAsset } from '../data.js';
+import { data, useData, artUrls, nextArtUrl } from '../data.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
 
@@ -32,15 +34,16 @@ export const GUIDE_CHAPTERS = [
 ];
 
 /**
- * Flat page list with URLs (only pages the local manifest lists).
- * @returns {Array<{ key: string, title: string, chapter: number, url: string }>}
+ * Flat page list with URLs (only pages the local-art manifest or the asset manifest lists): `urls` best first (the
+ * local file, then the mirror copy), `url` the first of them.
+ * @returns {Array<{ key: string, title: string, chapter: number, url: string, urls: string[] }>}
  */
 export function guidePages() {
   const out = [];
   GUIDE_CHAPTERS.forEach((ch, ci) => {
     for (const [key, title] of ch.pages) {
-      const url = localAsset('guide', key);
-      if (url) out.push({ key, title, chapter: ci, url });
+      const urls = artUrls('guide', key);
+      if (urls.length) out.push({ key, title, chapter: ci, url: urls[0], urls });
     }
   });
   return out;
@@ -52,6 +55,7 @@ export const guideStore = createStore({ open: false, page: 0 });
 /** Open the viewer (optionally at a page index). */
 export function openGuide(page = 0) {
   data.load('local');
+  data.load('assets');
   data.load('config');
   guideStore.set({ open: true, page: Math.max(0, page | 0) });
 }
@@ -84,7 +88,7 @@ function TipsFallback() {
 /** The viewer (mounted once near the root). */
 export function GuideHost() {
   const { open, page } = useStore((s) => s, Object.is, guideStore);
-  const ready = useData('local', 'config');
+  const ready = useData('local', 'assets', 'config');
   const pages = useMemo(() => (ready ? guidePages() : []), [ready]);
   const [loaded, setLoaded] = useState(() => new Set());
   const [failed, setFailed] = useState(() => new Set());
@@ -122,7 +126,8 @@ export function GuideHost() {
   if (!open) return null;
   const chapter = cur ? GUIDE_CHAPTERS[cur.chapter] : null;
   const firstOf = (ci) => pages.findIndex((p) => p.chapter === ci);
-  const isLoaded = cur && loaded.has(cur.url);
+  const src = cur ? nextArtUrl(cur.urls, failed) : null; // the next copy when one fails to load
+  const isLoaded = !!src && loaded.has(src);
   return html`<div class="guide" role="presentation" onMouseDown=${(e) => { if (e.target === e.currentTarget) closeGuide(); }}>
     <div class="guide__box brackets" role="dialog" aria-modal="true" aria-label="玩法说明" tabindex="-1" ref=${boxRef}>
       <header class="guide__head">
@@ -145,10 +150,10 @@ export function GuideHost() {
       ${n ? html`<div class="guide__stage">
         <button type="button" class="guide__nav guide__prev" aria-label="上一页" onClick=${() => go(i - 1)}><${Icon} name="chevronLeft" /></button>
         <div class=${cx('guide__page', isLoaded && 'is-loaded')}>
-          ${cur && !failed.has(cur.url) ? html`<img key=${cur.url} src=${cur.url} alt=${cur.title} draggable=${false}
-            onLoad=${() => setLoaded((s) => new Set(s).add(cur.url))}
-            onError=${() => setFailed((s) => new Set(s).add(cur.url))} />` : html`<div class="guide__missing"><${Icon} name="info" />该页面暂时无法显示</div>`}
-          ${!isLoaded && cur && !failed.has(cur.url) ? html`<span class="guide__loading"><${Spinner} size="md" /></span>` : null}
+          ${src ? html`<img key=${src} src=${src} alt=${cur.title} draggable=${false}
+            onLoad=${() => setLoaded((s) => new Set(s).add(src))}
+            onError=${() => setFailed((s) => new Set(s).add(src))} />` : html`<div class="guide__missing"><${Icon} name="info" />该页面暂时无法显示</div>`}
+          ${src && !isLoaded ? html`<span class="guide__loading"><${Spinner} size="md" /></span>` : null}
         </div>
         <button type="button" class="guide__nav guide__next" aria-label="下一页" onClick=${() => go(i + 1)}><${Icon} name="chevronRight" /></button>
       </div>` : html`<div class="guide__stage guide__stage--text"><${TipsFallback} /></div>`}
