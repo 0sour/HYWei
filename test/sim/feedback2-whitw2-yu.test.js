@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { makeBattle, enemyRec, checkInvariants } from '../helpers/battleHarness.js';
 import { TICK } from '../../server/sim/constants.js';
+import { rotateOffset, toLocal } from '../../server/sim/dir.js';
 
 const BOTH = ['chess_char_6_18_a', 'chess_char_6_18_b'];
 const dummy = (key, o = {}) => enemyRec({ key, hp: 1e7, speed: 0, ...o });
@@ -195,6 +196,57 @@ test('荒芜拉普兰德 S3: 头狼 stage 3 reached while the skill runs release
   assert.ok(h.runUntil(() => nd.rampId != null, 10), 'the new drone reaches the enemy and attacks');
   assert.ok(droneHits(h, u, (c) => c.t >= tn).length >= 1);
   done(h);
+});
+
+test('荒芜拉普兰德 S3: knocked out in the middle of a tick (here by a kill hook), she deals nothing more in that tick', () => {
+  // the weak one dies to a drone hit with the strong one on the same spot; its death hook knocks her out at once
+  const h = wolf('chess_char_6_18_a', [{ key: 'w', pos: [10, 7], rec: dummy('w', { hp: 300 }) }, { key: 'e', pos: [10, 7] }]);
+  const u = h.unit('chess_char_6_18_a');
+  let ko = false;
+  const late = [];
+  h.b.on('damaged', (c) => { if (c.source === u && !u.alive) late.push((c.dmg?.tags || []).join('+')); });
+  h.b.on('death', (c) => { if (c.unit.side === 'enemy' && !ko) { ko = true; h.b.dealDamage(null, u, { amount: 1e9, type: 'true' }); } });
+  assert.ok(h.runUntil(() => ko, 30), 'a drone hit kills the weak one');
+  assert.equal(u.alive, false);
+  assert.equal(u.mem.drones, null, 'the skill ended with her');
+  assert.deepEqual(late, [], 'no drone / area hit from the knocked-out wolf');
+  done(h);
+});
+
+test('荒芜拉普兰德 S3 facing UP / LEFT / DOWN plays like facing RIGHT (enemies at turned offsets; a target falls, so the drones reappear)', () => {
+  const OPEN = { id: 'open', name: 'open', rows: Array.from({ length: 19 }, () => '#' + 'r'.repeat(19) + '#'), devices: [] };
+  const R0 = 9, C0 = 9;
+  const OFFS = [[0, 2, 'weak'], [1, 4, 'e'], [-2, 3, 'e'], [3, -1, 'e']]; // facing-RIGHT offsets, no distance ties
+  const run = (dir) => {
+    const h = makeBattle({
+      stage: OPEN, rect: { r0: 0, r1: 18, c0: 0, c1: 20 }, seed: 5, autoFinish: false, timeLimit: 60, hooks: [],
+      routes: [{ motion: 'FLY', start: [18, 20], end: [18, 19], checkpoints: [] }],
+      defs: { enemies: { weak: dummy('weak', { hp: 900 }), e: dummy('e') } },
+      units: [{ chessId: 'chess_char_6_18_a', row: R0, col: C0, dir, abs: true, carryState: { sp: 999 } }],
+      enemies: OFFS.map(([dr, dc, key]) => {
+        const [ar, ac] = rotateOffset(dr, dc, dir), pos = [R0 + ar, C0 + ac];
+        return { key, pos, route: { motion: 'WALK', start: pos, checkpoints: [{ type: 'WAIT', time: 1e4 }], end: pos } };
+      }),
+    });
+    const u = h.unit('chess_char_6_18_a');
+    h.step(1);
+    const foes = h.b.enemies.slice(); // in OFFS order (a fallen one leaves battle.enemies)
+    assert.equal(foes.length, OFFS.length);
+    assert.ok(h.runUntil(() => u.skill.active, 5));
+    h.run(12);
+    done(h);
+    return { hp: foes.map((e) => (e.alive ? e.hp : 0)), drones: u.mem.drones.map((d) => toLocal(d.y - R0, d.x - C0, dir)) };
+  };
+  const base = run('RIGHT');
+  assert.equal(base.hp[0], 0, 'the weak one fell: its drones reappeared around it and picked again');
+  for (const dir of ['UP', 'LEFT', 'DOWN']) {
+    const o = run(dir);
+    base.hp.forEach((hp, i) => approx(o.hp[i], hp, `${dir}: enemy ${OFFS[i]} HP`, 1e-9));
+    base.drones.forEach(([lr, lc], i) => {
+      approx(o.drones[i][0], lr, `${dir}: drone ${i} local row`, 1e-6);
+      approx(o.drones[i][1], lc, `${dir}: drone ${i} local col`, 1e-6);
+    });
+  }
 });
 
 // =====================================================================================================================

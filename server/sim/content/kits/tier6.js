@@ -52,7 +52,7 @@
 //                脆弱 status (同名效果取最高).
 //  6_17 耀骑士临光 "上一名部署干员" = the op of the same owner deployed right before her (deploy order).
 //  6_18 荒芜拉普兰德 S3 drones are virtual (fx events) flying PRTS's 技能流程 (spread attack@times s, chase 2.0 → 4.0
-//                tiles/s; the turn rate is not modelled: straight at the target); every drone is out, so she makes no
+//                tiles/s; [ASSUMED] the turn rate is not modelled: straight at the target); every drone is out, so she makes no
 //                normal attack herself, while each drone on its target attacks like a normal drone (her attack
 //                interval, ATK × its own funnel ramp; neither attack nor skill damage — PRTS 备注); 头狼 stage 2
 //                "特殊能力失效" = silence; stage 3 = +1 drone (normal attacks hit once more; S3 releases one more drone,
@@ -2766,12 +2766,13 @@ function nearl2(bb, chess, def) {
 /**
  * S3 终幕·浩劫's drone flight — PRTS 荒芜拉普兰德 S3 备注 "技能流程": ① for `attack@times` (1.3) s after the cast, or after
  * a drone is added ("补充浮游单元"), the drones spread evenly outward from her, one along her facing ("散开的方向始终包括
- * 自身的朝向"): 初速度 0.1, 加速度 1.9, 最大速度 2.0; ② then each picks the target nearest to itself, ties nearest to her
- * ("距离自身最近>距离本体最近"), anywhere on the field, and flies at it: 初速度 2.0, 加速度 1.0, 最大速度 4.0, restarting
- * at 2.0 whenever its target leaves or turns unselectable on the way; ③ once there it stays on the target and attacks it
- * like a normal drone ("此状态下的攻击行为同正常浮游单元"); when that target leaves / turns unselectable it reappears at a
- * random point of the 1.5-side square around it and picks again (②). With no selectable target it circles (radius 0.9,
- * 1.0 tiles/s, counter-clockwise) with its heading as the tangent, the circle on its left. Speeds in tiles/s.
+ * 自身的朝向"): 初速度 0.1, 加速度 1.9, 最大速度 2.0 — [ASSUMED] after an addition (头狼 stage 3 mid-skill) only the added
+ * drone spreads, along her facing, while the others carry on; ② then each picks the target nearest to itself, ties
+ * nearest to her ("距离自身最近>距离本体最近"), anywhere on the field, and flies at it: 初速度 2.0, 加速度 1.0, 最大速度
+ * 4.0, restarting at 2.0 whenever its target leaves or turns unselectable on the way; ③ once there it stays on the target
+ * and attacks it like a normal drone ("此状态下的攻击行为同正常浮游单元"); when that target leaves / turns unselectable it
+ * reappears at a random point of the 1.5-side square around it and picks again (②). With no selectable target it circles
+ * (radius 0.9, 1.0 tiles/s, counter-clockwise) with its heading as the tangent, the circle on its left. Speeds in tiles/s.
  */
 const WHITW2_SPREAD = Object.freeze({ v0: 0.1, acc: 1.9, max: 2 });
 const WHITW2_CHASE = Object.freeze({ v0: 2, acc: 1, max: 4 });
@@ -2800,7 +2801,10 @@ function whitw2(bb, chess, def) {
   };
   // speed v → v + acc·dt (capped); the distance covered at the mean of the two (exact under constant acceleration)
   const accelerate = (d, lim, dt) => { const v1 = Math.min(lim.max, d.v + lim.acc * dt), s = ((d.v + v1) / 2) * dt; d.v = v1; return s; };
-  // ② the selectable enemy nearest to the drone, ties broken by the one nearest to her
+  // ② the selectable enemy nearest to the drone, ties broken by the one nearest to her. [ASSUMED] a huge enemy's distance
+  // is to its hit rectangle (body.js bodyDist), as in the sim's other nearest-enemy picks (targeting.js sortEnemyTargets
+  // 'nearest' / 'farthest', tier3 enemiesAround, 异客's storm chain, 溯光星源's bounces and links): a huge leader (胄, 管 …)
+  // is near every drone around it, so in such a round the drones mostly lock the leader
   const pickTarget = (battle, unit, d, ok) => {
     let best = null, bd = Infinity, bh = Infinity;
     for (const e of battle.enemies) {
@@ -2818,10 +2822,12 @@ function whitw2(bb, chess, def) {
     d.x = d.orbit.cx + r * Math.cos(a); d.y = d.orbit.cy + r * Math.sin(a);
     d.hx = -Math.sin(a); d.hy = Math.cos(a);
   };
-  // one tick of one drone: spread → (pick) → chase → on the target, attacking like a normal drone. Its attack clock runs
-  // all the time (one attack per interval of hers at most, whatever it chased in between). The turn rate (PRTS
+  // one tick of one drone: spread → (pick) → chase → on the target, attacking like a normal drone. [ASSUMED] its attack
+  // clock runs all the time (one attack per interval of hers at most, whatever it chased in between) and its first hit
+  // lands as it arrives when the clock is ready; [ASSUMED] a drone on a target sits at its position (a huge enemy's
+  // centre, its 判定中心), and it reaches a huge enemy when it touches the hit rectangle. [ASSUMED] the turn rate (PRTS
   // 转向速度 1/6 per frame = attack@projectile_turn_speed × 1/30 s) is not modelled: a chasing drone heads straight at
-  // its target [ASSUMED].
+  // its target. [ASSUMED] the fear's source is her (the enemy flees from her, not from the drone).
   const flyDrone = (battle, unit, d, dt, ok) => {
     d.cd = Math.max(0, d.cd - dt);
     if (d.phase === 'spread') {
@@ -2832,10 +2838,12 @@ function whitw2(bb, chess, def) {
       d.phase = 'seek';
     }
     if (d.phase === 'lock' && !ok(d.t)) {
-      // ③ its target left / is no longer selectable: it reappears at a random point of the square around that spot
+      // ③ its target left / is no longer selectable: it reappears at a random point of the square around that spot (the
+      // draw taken in her facing-RIGHT frame, so a battle turned with her direction plays the same)
       const h = WHITW2_REAPPEAR_SIDE / 2;
-      d.x = d.t.x + battle.rng.range(-h, h);
-      d.y = d.t.y + battle.rng.range(-h, h);
+      const [ar, ac] = rotateOffset(battle.rng.range(-h, h), battle.rng.range(-h, h), unit.dir);
+      d.x = d.t.x + ac;
+      d.y = d.t.y + ar;
       d.t = null; d.phase = 'seek';
     } else if (d.phase === 'chase' && !ok(d.t)) { d.t = null; d.phase = 'seek'; }
     if (d.phase === 'seek') {
@@ -2857,7 +2865,7 @@ function whitw2(bb, chess, def) {
       if (fear > 0) battle.applyStatus(t, 'fear', { duration: fear, source: unit });
     }
     d.x = t.x; d.y = t.y;
-    if (d.cd > 1e-9 || !ok(t)) return;
+    if (d.cd > 1e-9 || !ok(t) || !unit.alive) return; // (the fear's hooks could have knocked her out)
     d.cd = unit.s.interval;
     const f = unit.profile?.funnel || { init: 0.2, delta: 0.15, max: 1.1 };
     d.ramp = d.rampId === t.id ? Math.min(f.max, d.ramp + f.delta) : f.init;
@@ -2942,13 +2950,17 @@ function whitw2(bb, chess, def) {
     },
     // S3 终幕·浩劫: ATK +atk; 1 + attack@cnt drones (+1 from 头狼 stage 3) fly the PRTS 技能流程 (WHITW2_* above). Every
     // drone is out, so she makes no normal attack of her own (`noAttack`); a drone on its target attacks it every attack
-    // interval of hers (her live ASPD; the first hit as it arrives) for ATK × its OWN funnel ramp — the trait's init,
-    // +delta per hit on the same target, the cap (头狼 stage 1 raises it), back to init on a new target (PRTS 分支特性信息
-    // 驭械术师 "浮游单元攻击不同目标…时，上述的伤害立刻恢复至初始值"). That damage is arts and neither a normal attack nor
-    // skill damage (PRTS S3 备注 "该技能释放的浮游单元造成的伤害不属于普通攻击/技能直接伤害": no 'attack' hook, isAttack /
-    // isSkill false — the 叙拉古 6 assassin proc and the on-attack items skip it), and 缴械 does not stop it (PRTS 驭械术师
-    // "通过技能释放的浮游单元…不受缴械类效果制约"). Around every drone (attack@range_radius): move speed attack@move_speed
-    // and, once per second, attack@magic_atk_scale × ATK arts (不叠加: one hit per enemy whatever the number of drones).
+    // interval of hers (her live ASPD; [ASSUMED] the first hit as it arrives) for ATK × its OWN funnel ramp — the trait's
+    // init, +delta per hit on the same target, the cap (头狼 stage 1 raises it), back to init on a new target (PRTS 分支特性
+    // 信息 驭械术师 "浮游单元攻击不同目标…时，上述的伤害立刻恢复至初始值"). That damage is arts and neither a normal attack
+    // nor skill damage (PRTS S3 备注 "该技能释放的浮游单元造成的伤害不属于普通攻击/技能直接伤害", which for this skill
+    // overrides the branch note "通过技能释放的浮游单元造成技能直接伤害": no 'attack' hook, isAttack / isSkill false — the
+    // 叙拉古 6 assassin proc and the on-attack items skip it), and 缴械 does not stop it (PRTS 驭械术师 "…不受缴械类效果
+    // 制约"); [ASSUMED] nor do her stun, freeze or silence (PRTS names only 缴械) — the skill ticks on and so do the drones.
+    // Around every drone (attack@range_radius): move speed attack@move_speed and, once per second, attack@magic_atk_scale
+    // × ATK arts (不叠加: one hit per enemy whatever the number of drones); [ASSUMED] that area hit keeps `isSkill` (a skill
+    // DoT — the 备注 speaks of 直接伤害). A knocked-out / withdrawn wolf (onEnd cleared the drones mid-tick, e.g. from a
+    // kill hook) deals nothing more in that tick.
     skill: {
       kind: 'duration',
       mods: { atkPct: num(bb.atk) },
@@ -2962,18 +2974,26 @@ function whitw2(bb, chess, def) {
       onTick({ battle, unit, dt }) {
         const D = unit.mem.drones;
         if (!D) return;
-        // 头狼 stage 3 reached while the skill runs: the extra drone is released like the others (PRTS ① "补充浮游单元")
+        const gone = () => !unit.alive || unit.mem.drones !== D;
+        // 头狼 stage 3 reached while the skill runs: the extra drone is released (PRTS ① "补充浮游单元"; [ASSUMED] only it spreads)
         const add = droneCount(unit) - D.length;
         if (add > 0) { releaseDrones(unit, add); battle.fx('drones', { x: unit.x, y: unit.y, id: unit.id, n: add }); }
         const ok = (e) => e && e.alive && !e.hidden && canTargetEnemy(unit, e, ANY);
-        for (const d of D) flyDrone(battle, unit, d, dt, ok);
+        for (const d of D) {
+          if (gone()) return;
+          flyDrone(battle, unit, d, dt, ok);
+        }
+        if (gone()) return;
         const near = new Set();
         for (const d of D) for (const e of battle.foesInRadius(d.x, d.y, R)) if (ok(e)) near.add(e);
         if (slow) for (const e of near) battle.addBuff(e, { key: 'whitw2:slow', duration: 0.2, refresh: 'replace', mods: { moveMul: Math.max(0, 1 + slow) }, source: unit });
         unit.mem.droneAcc += dt;
         if (unit.mem.droneAcc + 1e-9 >= 1) {
           unit.mem.droneAcc -= 1;
-          for (const e of near) if (e.alive) battle.dealDamage(unit, e, { amount: unit.s.atk * dmgScale, type: 'arts', isSkill: true, tags: ['skill', 'drone'] });
+          for (const e of near) {
+            if (gone()) return;
+            if (e.alive) battle.dealDamage(unit, e, { amount: unit.s.atk * dmgScale, type: 'arts', isSkill: true, tags: ['skill', 'drone'] });
+          }
           // (a drone on its target already pulses with each of its attacks)
           for (const d of D) if (d.phase !== 'lock') battle.fx('drone', { x: d.x, y: d.y, id: unit.id });
         }
