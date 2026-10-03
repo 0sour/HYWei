@@ -131,7 +131,10 @@ export function normalizeLegendEntry(glyph, e) {
 
 const EMPTY_TILE = Object.freeze({ glyph: 'X', key: 'tile_forbidden', height: 'HIGH', build: 'NONE', pass: 'NONE', terrain: null, special: null });
 
-/** A melee operator may stand (and block) on this terrain: LOW ground buildable for ALL or MELEE. */
+/**
+ * A melee operator may stand on this terrain: LOW ground buildable for ALL or MELEE. It blocks ground enemies there only
+ * where ground units can pass — never on a fenced 围墙 / 围栏 tile (Battle._blockerFor, DESIGN §21.23).
+ */
 function isBlockableTile(t) { return t.height === 'LOW' && (t.build === 'ALL' || t.build === 'MELEE'); }
 
 export class Grid {
@@ -213,7 +216,7 @@ export class Grid {
 
   isLow(r, c) { return this.tile(r, c).height === 'LOW'; }
 
-  /** Ground a melee operator can be deployed on and block from (LOW, buildable ALL / MELEE) — terrain only. */
+  /** Ground a melee operator can be deployed on (LOW, buildable ALL / MELEE) — terrain only; blocking: isBlockableTile. */
   blockable(r, c) { return isBlockableTile(this.tile(r, c)); }
 
   /**
