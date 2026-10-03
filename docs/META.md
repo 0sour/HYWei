@@ -110,8 +110,9 @@ family defaults are documented in `choices.js` (bounty / supply / shop / tactic)
 text "无需消耗资金") and follow the 4 official 机密商店 (choices.json `shopDraft`, build-data `SHOP_DRAFT`; the user:
 "机密商店按官方改成可以重复吧"): six slots drawn with replacement — VI, VI, V, 盟约之币 and twice V / IV / III / 盟约之币,
 an item within its tier weighted by the official cards it showed on — so the same item can be offered twice (official:
-盟约之币 ×2, 变形同构体 ×2; the slot split and the weights [ASSUMED]); two identical cards are two cards (picks go by
-index). 悬赏决策 offers only choices.json cards with `draft: true` (`choices.js draftBounty`): never 战术特训 (PRTS
+盟约之币 ×2, 变形同构体 ×2; the slot split and the weights [ASSUMED]) — at R11 (绝境 / 终极), the round of the
+screenshots; the earlier 机密商店 of 标准 / 险境 (no screenshot) keep the previous draw, any tier I–VI per card with
+replacement [ASSUMED]; two identical cards are two cards (picks go by index). 悬赏决策 offers only choices.json cards with `draft: true` (`choices.js draftBounty`): never 战术特训 (PRTS
 "※以下悬赏任务仅由法术教鞭生成") nor the 鸭爵 / 高普尼克 / 流泪小子 / 圆仔 cards (user playtest #6 item 4). **Each draft is
 built like the official one of its round** (`choices.js bountyDraftCards`, choices.json `bountyDrafts` / schedule
 `bountyDraft`; player feedback after 0.1.0, report #2 — late bounty enemies in the early drafts — settled by 66
@@ -120,13 +121,16 @@ screenshots of 22 official co-op 绝境 / 终极 matches of this season, reading
 it, each drawn with weight 1 + the official drafts of its group it showed in [ASSUMED]. **R3** one of the 10 official
 sets of six "接下来两场作战" cards (all six), 3 × I + 2 × II + 1 × III in 22 of 22 — 9 seen, hand-made (one holds two
 series-20 cards), the 10th built by a rule whose III is 法术大师A1 or 鼎沸 (the two-battle cards no draft showed)
-[ASSUMED]; **R9** boss bounties + 源石虫·特训: one of 6 groups of 9 cards (one per bossInitial event; 庞贝 and 鼠王
-never together); the 鼠王 group (杰斯顿 / “自在” / 陷落雪祀) came in 14 of 22 matches, every match on the dark grey board
+[ASSUMED]; **R9** boss bounties + 源石虫·特训: one of 6 groups (one per bossInitial event; 庞贝 and 鼠王 never
+together) of 9, 9, 9, 9, 8 and 6 cards — 9 where three named bosses came, the single-draft groups completed only with
+the base cards they lack [ASSUMED; match 4's base-only group may instead be a draft of the 泥岩 group]; the 鼠王 group (杰斯顿 / “自在” / 陷落雪祀) came in 14 of 22 matches, every match on the dark grey board
 among them, so a group is picked by the matches it came in [ASSUMED: something of the match — map, leader or
 difficulty — decides, open]; **R11** (绝境 / 终极 co-op: 悬赏决策 14, 机密商店 4, 战术决策 4, never 道具补给, weights =
 those counts; solo the same [ASSUMED]) a list of 7 "下场战斗" cards — one 特异III giant, one card per faction series —
-of which the draft leaves out one (matches 1 / 6 / 21 / 22 leave out four different cards of one list); 7 of the 15
-lists seen, the unseen ones and the 4 lists' 7th cards built by that shape [ASSUMED]. 险境 R6 drafts like R3
+of which the draft leaves out one (matches 1 / 6 / 21 / 22 leave out four different cards of one list); one of the 7
+lists seen, uniform (taken as the events bounty_hunter_1..7, one block of the data; 15 equally likely events would
+rarely show only 7 lists in 14 drafts) [ASSUMED], the 4 lists seen with 6 cards completed by that shape — so the R11
+cards no draft showed (12_8 / 16_2 / 16_6) come in about 1 draft in 15 [ASSUMED]. 险境 R6 drafts like R3
 [ASSUMED]. A card's enemy is fixed by its effect (`enemy_id`): the title only names category and tier (悬赏·损伤I =
 底海滑动者 or 临时收音师). The players pick in turn from one shared draft (a taken card stays greyed with the taker's
 avatar, as in the official matches 17 and 21).

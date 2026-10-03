@@ -2348,8 +2348,8 @@ function bountyDraftExclusion(e, main) {
  * in turn from ONE shared draft (a taken card stays greyed with the taker's avatar: match 17 R3, match 21 R9).
  *
  * One rule covers all three rounds: the draft's event is a fixed list of cards, and the draft shows 6 different cards of
- * it (positions shuffled): R3 lists hold 6 cards (all shown), R9 lists 9 (every R9 group seen in 3 or more drafts — and
- * only those — shows exactly 9 different cards: 鼠王 group, 喷气人 group, 复仇者 group), R11 lists 7 (the three R11 groups
+ * it (positions shuffled): R3 lists hold 6 cards (all shown), R9 lists up to 9 (every R9 group seen in 3 or more drafts —
+ * and only those — shows exactly 9 different cards: 鼠王 group, 喷气人 group, 复仇者 group), R11 lists 7 (the three R11 groups
  * seen in 2–4 drafts show exactly 7: matches 1 / 6 / 21 / 22 each leave out a different one of the same 7 cards). Within a
  * list a card is drawn with weight 1 + the drafts of its group it appeared in (`hits`; a card no draft of the group has
  * shown yet, 1) [ASSUMED: smooths the official counts — in the 鼠王 group 鼠王 showed in 4 of 14, 杰斯顿 in 12].
@@ -2364,14 +2364,24 @@ function bountyDraftExclusion(e, main) {
  *            the match decides — every match on the dark grey board (7) had it (if independent of the board, 2 %); the
  *            leader, the map or the difficulty (终极 opened 2026-03-27) are candidates. Picked by the matches each group
  *            came in [ASSUMED]. A named boss does not always come with its partners (杰斯顿 alone in 12 / 15 / 21, 复仇者
- *            and 萨卡兹百夫长 without 邪魔的利刃 in 20). The three single-draft groups are completed with the 庞贝 base
- *            cards they lack [ASSUMED]. 凋零骑士, “遗弃者”, 锏, 扎罗 and 迷路的巨像 never appeared: not offered [ASSUMED].
- *   hunter   R11 (bounty_hunter_1..15; R11 is a 悬赏决策 in 14 of the 22 matches): six "下场战斗" cards, the faction _7 / _8
- *            cards and series 16 (16_1..8 the 特异III giants), at most one per faction series 10–15 (14 of 14). 7 groups
- *            seen (BOUNTY_HUNTER_GROUPS): three complete (7 cards), four with 6 cards seen and a 7th drawn by the rule
- *            (`open`; the group of match 15 shows no giant, so its 7th is one). The 8 unseen events: BOUNTY_HUNTER_RULE
- *            [ASSUMED] — one giant + 6 tier I / II cards, one per faction series, at most two of 16_9..12.
- * In none of the 58 bounty drafts: the 7 multi-round cards (山海众头目·多轮悬赏, 多轮悬赏·假想敌 ×6), the pre-series cards
+ *            and 萨卡兹百夫长 without 邪魔的利刃 in 20). The groups hold 9, 9, 9, 9, 8 and 6 cards: the three seen in 3 or
+ *            more drafts show 9 (the 庞贝 / 鼠王 base of 6 + three named bosses); the three single-draft groups are
+ *            completed only with the base cards they lack [ASSUMED] — 腐败骑士 group 9, 泥岩 + 澪 group 8, and match 4
+ *            (the base alone) 6, so that one always shows the same six. Match 4 may instead be a draft of another group
+ *            (most likely the 泥岩 group: 1 in 28 for a uniform 6 of 8), leaving one event unseen — open.
+ *            凋零骑士, “遗弃者”, 锏, 扎罗 and 迷路的巨像 never appeared: not offered [ASSUMED].
+ *   hunter   R11 (R11 is a 悬赏决策 in 14 of the 22 matches): six "下场战斗" cards, the faction _7 / _8 cards and series 16
+ *            (16_1..8 the 特异III giants), at most one per faction series 10–15 (14 of 14). 7 groups seen
+ *            (BOUNTY_HUNTER_GROUPS): three complete (7 cards), four with 6 cards seen and a 7th drawn by the rule (`open`;
+ *            the group of match 15 shows no giant, so its 7th is one). The list is one of these 7, uniform [ASSUMED]:
+ *            the 7 seen lists are taken as the 7 events bounty_hunter_1..7 — one block of effectChoiceInfoDict (act1 and
+ *            act2), while bounty_hunter_8..15 sit later, beside artifact_paid_4 / 5 and hardbuff_select. With 15 equally
+ *            likely events, 14 drafts would show 7 lists or fewer about 6 % of the time (with 7: all 7 about 37 %), and
+ *            the counts 4 / 2 / 3 / 1 / 2 / 1 / 1 fit a uniform pick (χ² = 4, 6 df). No list is built from nothing: the
+ *            R11 cards no draft showed (12_8 异光体孽生者, 16_2 “越长尘”, 16_6 高准度伦蒂尼姆城防自行炮) come only as an
+ *            `open` card (BOUNTY_HUNTER_RULE: one giant for a list without one, else tier I / II cards of the free
+ *            faction series, at most two of 16_9..12), in about 1 R11 bounty draft in 15.
+ * In none of the 59 bounty drafts: the 7 multi-round cards (山海众头目·多轮悬赏, 多轮悬赏·假想敌 ×6), the pre-series cards
  * enemyeffect_3_* (法术大师A2·悬赏 …), 战术特训 (法术教鞭 only) and the 鸭爵 set; no card twice in one draft.
  */
 const EE = (s) => `enemyeffect_${s}`;
@@ -2421,9 +2431,9 @@ const BOUNTY_HUNTER_GROUPS = [
   hunterGroup(['10_8', '12_7', '13_7', '14_7', '11_7', '16_12'], [1, 1, 1, 1, 1, 1], [15], 1), // no giant seen (枯朽萃聚使徒 …)
 ];
 /**
- * An unseen R11 list, and the `open` card of a seen one [ASSUMED]: `size` cards — one tier-III giant (a list without one
- * gets one) + tier I / II cards, at most one per series of `onePerSeries` and `maxSeries16` of 16_9..12 — over the R11
- * cards by tier (buildChoices).
+ * The `open` card of a seen R11 list [ASSUMED]: up to `size` cards — one tier-III giant (a list without one gets one) +
+ * tier I / II cards, at most one per series of `onePerSeries` and `maxSeries16` of 16_9..12 — over the R11 cards by tier
+ * (buildChoices).
  */
 const BOUNTY_HUNTER_RULE = { size: 7, onePerSeries: [10, 11, 12, 13, 14, 15], maxSeries16: 2 };
 /**
@@ -2433,9 +2443,13 @@ const BOUNTY_HUNTER_RULE = { size: 7, onePerSeries: [10, 11, 12, 13, 14, 15], ma
  * out V ×3, IV ×2, III ×1, 盟约之币 ×2. So: six slots, each drawn on its own (with replacement) — VI, VI, V, 盟约之币 and
  * twice a pick of V 3 / IV 2 / III 1 / 盟约之币 2 [ASSUMED: the slot split]; an item within its tier with weight 1 + the
  * official 机密商店 cards it showed on (`seen`: 变形同构体 on 4 of the 8 tier-VI cards) [ASSUMED]. Solo shows 3 of the 6
- * [ASSUMED]; outside R11 of 绝境 / 终极 no screenshot [ASSUMED the same].
+ * [ASSUMED]. Only at R11 (`rounds`; R11 is 绝境 / 终极 only, the rounds of the screenshots): the 机密商店 of 标准 R3 / R9
+ * and 险境 R3 / R6 / R9 has no screenshot, and the data's shop events sit in three blocks (artifact_paid_1 by the R3
+ * events, _2 / _3 by bossInitial / bounty_hunter_1..7, _4 / _5 by hardbuff_select), so those keep the previous draw —
+ * any normal shop item of tiers I–VI per card, with replacement (the same item can come twice there too) [ASSUMED].
  */
 const SHOP_DRAFT = {
+  rounds: [11],
   slots: [{ 6: 1 }, { 6: 1 }, { 5: 1 }, { coin: 1 }, { 5: 3, 4: 2, 3: 1, coin: 2 }, { 5: 3, 4: 2, 3: 1, coin: 2 }],
   coin: '盟约之币',
   seen: { 变形同构体: 4, 天师古鼎: 1, 人事部文档: 1, 家族徽章: 1, 铳骑之威: 1, 天马之盔: 2, 双模机械臂: 2, 商业包装方案: 2, 博士投影: 1, 护盾无人机: 1, 寻呼模块: 1, 骑士储蓄罐: 1, 盟约之币: 6 },
@@ -2598,9 +2612,9 @@ function buildChoices(ctx, effects, items, chess) {
   return {
     events,
     families: {
-      bounty: { name: '悬赏决策', desc: '选定悬赏目标，获取额外奖励。', cards: 'bountyDrafts[schedule[*].bountyDraft] — one official card list of the round (initial: an R3 set of 6; boss: an R9 group of 9; hunter: an R11 group of 7), six different cards of it drawn by weight, over cards.bounty entries with draft: true and that draftPool' },
+      bounty: { name: '悬赏决策', desc: '选定悬赏目标，获取额外奖励。', cards: 'bountyDrafts[schedule[*].bountyDraft] — one official card list of the round (initial: an R3 set of 6; boss: an R9 group of up to 9; hunter: one of the 7 seen R11 lists of 7), six different cards of it drawn by weight, over cards.bounty entries with draft: true and that draftPool' },
       supply: { name: '道具补给', desc: '无需消耗资金，获得装备补给。', cards: 'random normal EQUIP items in schedule[*].supplyTiers (duplicates allowed)' },
-      shop: { name: '机密商店', desc: '无需消耗资金，获得装备补给。', cards: 'shopDraft: six slots drawn with replacement (VI, VI, V, 盟约之币, 2 × V / IV / III / 盟约之币) — the same item can come twice' },
+      shop: { name: '机密商店', desc: '无需消耗资金，获得装备补给。', cards: 'at shopDraft.rounds (R11): six slots drawn with replacement (VI, VI, V, 盟约之币, 2 × V / IV / III / 盟约之币); other rounds: random normal EQUIP shop items of tiers I–VI (duplicates allowed) — the same item can come twice' },
       tactic: { name: '战术决策', desc: '选择战术增益。', cards: 'cards.tactic (terrain cards only for the match stage)' },
     },
     format: {
@@ -2623,19 +2637,21 @@ function buildChoices(ctx, effects, items, chess) {
         assumed: ['a group picked by the matches it came in (the per-match cause is open)', 'card weights 1 + hits', 'the single-draft groups completed with their base cards', 'boss bounties of no seen group are not offered'],
       },
       hunter: {
-        events: eventsOf('bounty', (e) => bountyEventRe.hunter.test(e.id) && !e.solo), slots: eventsOf('bounty', (e) => bountyEventRe.hunter.test(e.id) && !e.solo).length,
+        events: eventsOf('bounty', (e) => bountyEventRe.hunter.test(e.id) && !e.solo), slots: BOUNTY_HUNTER_GROUPS.length,
+        // the 7 seen lists = the 7 events bounty_hunter_1..7 (one block of effectChoiceInfoDict) [ASSUMED]: `slots` 7, so
+        // no list is built from nothing; `rule` builds the `open` cards only
         pick: 'slot', groups: BOUNTY_HUNTER_GROUPS.map(withWeights),
         rule: { ...BOUNTY_HUNTER_RULE, giants: hunterTier(3), cards: [...hunterTier(2), ...hunterTier(1)] }, count: 6,
-        assumed: ['a uniform pick among the 15 events', 'card weights 1 + hits', 'the `open` cards and the 8 unseen lists built by `rule`'],
+        assumed: ['the 7 seen lists are the R11 events (bounty_hunter_1..7), picked uniformly', 'card weights 1 + hits', 'the `open` cards built by `rule`'],
       },
     },
-    // the official 机密商店 (SHOP_DRAFT): `slots` tier → weight (`coin` = 盟约之币), each drawn on its own; `itemWeights` =
-    // 1 + the official cards an item showed on (other shop items 1)
+    // the official 机密商店 (SHOP_DRAFT) at `rounds`: `slots` tier → weight (`coin` = 盟约之币), each drawn on its own;
+    // `itemWeights` = 1 + the official cards an item showed on (other shop items 1)
     shopDraft: {
-      slots: SHOP_DRAFT.slots, coin: itemByName(SHOP_DRAFT.coin),
+      rounds: SHOP_DRAFT.rounds, slots: SHOP_DRAFT.slots, coin: itemByName(SHOP_DRAFT.coin),
       itemWeights: Object.fromEntries(Object.entries(SHOP_DRAFT.seen).filter(([n]) => n !== SHOP_DRAFT.coin).map(([n, k]) => [itemByName(n), 1 + k]).sort((a, b) => naturalCmp(a[0], b[0]))),
       seen: SHOP_DRAFT.matches, count: 6,
-      assumed: ['the slot split', 'item weights 1 + seen', 'solo shows 3 of the 6', 'the same outside R11 of 绝境 / 终极'],
+      assumed: ['the slot split', 'item weights 1 + seen', 'solo shows 3 of the 6', 'other rounds (标准 / 险境) keep the previous draw: tiers I–VI with replacement'],
     },
     schedule,
     pools: {

@@ -11,11 +11,11 @@
 //                     official drafts of the group it showed in):
 //                       initial (R3, 险境 R6 [ASSUMED]): one of the 10 official sets of six "接下来两场作战" cards (all
 //                               six) — 9 seen, the 10th built by `rule` (I I I II II III) [ASSUMED];
-//                       boss (R9): one of the 6 groups of 9 boss bounties / 源石虫·特训, picked by the matches it came in
-//                               [ASSUMED];
-//                       hunter (R11): one of the 15 events, a list of 7 "下场战斗" cards — 7 seen (their `open` cards and
-//                               the 8 unseen lists built by `rule`: one 特异III giant + tier I / II cards, one per faction
-//                               series) [ASSUMED];
+//                       boss (R9): one of the 6 groups (9, 9, 9, 9, 8 and 6 cards) of boss bounties / 源石虫·特训,
+//                               picked by the matches it came in [ASSUMED];
+//                       hunter (R11): one of the 7 seen lists of 7 "下场战斗" cards, uniform (taken as the 7 events
+//                               bounty_hunter_1..7) [ASSUMED]; a list seen with 6 cards gets its 7th (`open`) by `rule`
+//                               (one 特异III giant, else a tier I / II card of a free faction series) [ASSUMED];
 //                     only `draft` cards of that `draftPool` (never 战术特训 — 法术教鞭 only —, the 鸭爵 set, the 7
 //                     multi-round cards or the pre-series cards: no official draft shows them); positions shuffled; the
 //                     mode's inactive enemy list does not apply (PRTS 卫戍协议：盟约 11/18 note "以上调整仅针对战术特训敌人，
@@ -24,11 +24,12 @@
 //                     MULTI_ROUND_BOUNTY_BATTLES battles and says so (`bountyBattles` / `bountyText`: the user's call
 //                     after playtest #6 — "我不记得有过多轮悬赏")
 //   supply  道具补给  random normal EQUIP shop items with tier in supplyTiers [lo, hi] (duplicates allowed)
-//   shop    机密商店  choices.json `shopDraft` (the 4 official 机密商店 at R11; the user: "机密商店按官方改成可以重复吧"):
-//                     six slots, each drawn on its own — with replacement, so the same item can be offered twice
-//                     (official: 盟约之币 ×2, 变形同构体 ×2): VI, VI, V, 盟约之币 and twice V / IV / III / 盟约之币, an
-//                     item within its tier by `itemWeights` (solo: 3 of the 6 slots [ASSUMED]); without `shopDraft`
-//                     random normal EQUIP shop items of any tier. FREE — the official card text is "无需消耗资金，获得装备
+//   shop    机密商店  at the rounds of choices.json `shopDraft` (R11: the 4 official 机密商店; the user: "机密商店按官方改
+//                     成可以重复吧"): six slots, each drawn on its own — with replacement, so the same item can be
+//                     offered twice (official: 盟约之币 ×2, 变形同构体 ×2): VI, VI, V, 盟约之币 and twice V / IV / III /
+//                     盟约之币, an item within its tier by `itemWeights` (solo: 3 of the 6 slots [ASSUMED]); other rounds
+//                     (标准 / 险境, no screenshot) and without `shopDraft`: random normal EQUIP shop items of any tier I–VI,
+//                     each card on its own (duplicates allowed) [ASSUMED]. FREE — the official card text is "无需消耗资金，获得装备
 //                     补给" (research 01 A4/04 addendum), so the price is 0. Two identical cards are two cards: picks,
 //                     `taken` and the client go by the card's `idx`
 //   tactic  战术决策  distinct cards.tactic entries; terrain cards only for the match stage; a 驰援 card
@@ -261,7 +262,8 @@ function hunterFill(rng, rule, list, byId) {
 /**
  * The cards of a 悬赏决策 of kind `kind` after its official card lists (choices.json `bountyDrafts[kind]`, see the module
  * header), over the eligible cards `byId` (effectId → cards.bounty entry). Ids the eligible list lacks are skipped.
- *   pick 'slot': one of `slots` events, uniform — a seen group, or for an unseen event a list built by `rule`;
+ *   pick 'slot': one of `slots` events, uniform — a seen group, or for an unseen event a list built by `rule` (R3's
+ *               10th set; R11 has `slots` = its 7 seen lists, so none is built);
  *   pick 'seen': a group by the number of official matches it came in.
  * The draft is `count` different cards of the list drawn by the group's `weights` (a rule-built card weighs 1).
  */
@@ -316,12 +318,13 @@ function bountyDraftCards(gd, rng, n, sch, round) {
  * The 机密商店 cards (choices.json `shopDraft`, module header): every slot drawn on its own — a tier (or `coin`, the
  * 盟约之币) by the slot's weights, then an item of that tier by `itemWeights` (1 when unlisted; an empty tier falls back to
  * the nearest lower one, then any) — so one item can fill two slots. Positions shuffled; `n` < the slots (solo) keeps
- * `n` of them. Null without a usable `shopDraft`.
+ * `n` of them. Null without a usable `shopDraft` or at a round its `rounds` (when given) does not list.
  */
-export function shopDraftCards(gd, rng, n) {
+export function shopDraftCards(gd, rng, n, round = null) {
   const spec = gd.choices.shopDraft;
   const slots = spec && Array.isArray(spec.slots) ? spec.slots.filter((x) => x && typeof x === 'object') : [];
   if (!slots.length) return null;
+  if (Array.isArray(spec.rounds) && !spec.rounds.includes(round)) return null;
   const w = spec.itemWeights && typeof spec.itemWeights === 'object' ? spec.itemWeights : {};
   const coin = typeof spec.coin === 'string' && gd.item(spec.coin) ? spec.coin : null;
   const ofTier = (t) => {
@@ -344,7 +347,7 @@ function buildCards(gd, rng, family, n, sch, { stageId = null, bondAvailable = n
   const cardsData = gd.choices.cards || {};
   if (family === 'bounty') return bountyDraftCards(gd, rng, n, sch, round);
   if (family === 'shop') {
-    const cards = shopDraftCards(gd, rng, n);
+    const cards = shopDraftCards(gd, rng, n, round);
     if (cards) return cards;
   }
   if (family === 'supply' || family === 'shop') {

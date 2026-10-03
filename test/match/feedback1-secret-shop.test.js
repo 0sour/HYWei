@@ -2,9 +2,10 @@
 // "机密商店按官方改成可以重复吧"). The 4 official 机密商店 (R11 of matches 2, 4, 5 and 8 in
 // test/fixtures/official-bounty-drafts.json) offer the same item twice (盟约之币 ×2 in 4 and 5, 变形同构体 ×2 in 8) and
 // share one composition: exactly two tier-VI items, at least one tier V, at least one 盟约之币, no other tier-I / II item.
-// choices.json `shopDraft` (tools/build-data.mjs SHOP_DRAFT) draws six slots on their own, with replacement; picking one
-// of two identical cards is in test/content/choices.test.js (E2E), the overlay with two identical cards in
-// test/ui/feedback1-secret-shop.test.js.
+// choices.json `shopDraft` (tools/build-data.mjs SHOP_DRAFT) draws six slots on their own, with replacement, at R11 (the
+// round of the screenshots; 绝境 / 终极 only); the earlier 机密商店 of 标准 / 险境 (no screenshot) keep the previous draw,
+// any tier I–VI with replacement. Picking one of two identical cards is in test/content/choices.test.js (E2E), the
+// overlay with two identical cards in test/ui/feedback1-secret-shop.test.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -47,6 +48,7 @@ test('机密商店 (4 official shops): six free items, two of them tier VI, a ti
   assert.deepEqual(rest, { 3: 1, 4: 2, 5: 3, coin: 2 });
   for (const s of SHOP.slots.slice(4)) assert.deepEqual(s, rest);
   assert.equal(SHOP.slots.length, 6);
+  assert.deepEqual(SHOP.rounds, [11], 'the composition where the screenshots are: R11 (绝境 / 终极)');
   // an item's weight within its tier: 1 + the official cards it showed on
   const seen = {};
   for (const { cards } of SHOPS) for (const [n] of cards) if (n !== '盟约之币') seen[itemByName(n).id] = (seen[itemByName(n).id] || 0) + 1;
@@ -98,5 +100,43 @@ test('机密商店 generated (co-op 绝境 R11): the official composition, drawn
     n++;
     assert.equal(d.cards.length, 3);
     assert.ok(d.cards.every((c) => c.id === COIN || DATA.items[c.id].tier >= 3));
+  }
+});
+
+test('机密商店 outside R11 (标准 R3 / R9, 险境 R3 / R6 / R9 — no screenshot): the previous draw, any tier I–VI per card, with replacement', () => {
+  // the data's shop events sit in three blocks (artifact_paid_1 by the R3 events, _2 / _3 by the R9 ones, _4 / _5 by
+  // hardbuff_select), so an early 机密商店 need not look like the R11 one [ASSUMED: keep the previous draw]
+  const all = new Set([1, 2, 3, 4, 5, 6].flatMap((t) => new GameData(DATA, 'mode_multi_funny').shopItemsByTier[t] || []));
+  for (const [modeId, rounds] of [['mode_multi_funny', [3, 9]], ['mode_multi_normal', [3, 6, 9]]]) {
+    assert.deepEqual(DATA.choices.schedule[modeId].spRounds, rounds);
+    const gd = new GameData(DATA, modeId);
+    for (const round of rounds) {
+      let shops = 0;
+      let dup = 0;
+      let twoVI = 0;
+      let lowTier = 0;
+      const tiers = new Set();
+      for (let seed = 1; shops < 300 && seed < 40000; seed++) {
+        const d = generateDraft(gd, createRng(seed * 7717 + round), round, { stageId: 'act2autochess_m01' });
+        if (d.family !== 'shop') continue;
+        shops++;
+        assert.equal(d.cards.length, 6);
+        assert.deepEqual(d.cards.map((c) => c.idx), [0, 1, 2, 3, 4, 5]);
+        for (const c of d.cards) {
+          assert.ok(all.has(c.id), `${modeId} R${round}: ${c.name} is a normal shop item`);
+          assert.equal(cardView(c).price, 0);
+          tiers.add(DATA.items[c.id].tier);
+        }
+        const ids = d.cards.map((c) => c.id);
+        if (new Set(ids).size < ids.length) dup++;
+        if (count(ids, (id) => DATA.items[id].tier === 6) === 2) twoVI++;
+        if (ids.some((id) => id !== COIN && DATA.items[id].tier <= 2)) lowTier++;
+      }
+      assert.equal(shops, 300, `${modeId} R${round}`);
+      assert.deepEqual([...tiers].sort(), [1, 2, 3, 4, 5, 6], `${modeId} R${round}: every tier`);
+      assert.ok(twoVI / shops < 0.4, `${modeId} R${round}: two tier-VI items in ${(100 * twoVI / shops).toFixed(0)} % (R11: always)`);
+      assert.ok(lowTier / shops > 0.5, `${modeId} R${round}: a tier-I / II item besides 盟约之币 in ${(100 * lowTier / shops).toFixed(0)} %`);
+      assert.ok(dup / shops > 0.12 && dup / shops < 0.42, `${modeId} R${round}: a repeat in ${(100 * dup / shops).toFixed(0)} % (6 of 51, with replacement: about 26 %)`);
+    }
   }
 });

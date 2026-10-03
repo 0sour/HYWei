@@ -4,9 +4,11 @@
 // names left out). They settle the draft rules (tools/build-data.mjs BOUNTY_INITIAL_SETS, server/match/choices.js
 // bountyDraftCards): a 悬赏决策 event is a fixed card list and the draft shows 6 different cards of it —
 //   R3  a set of six "接下来两场作战" cards (all six), 3 × I + 2 × II + 1 × III: 9 of the 10 events seen;
-//   R9  a group of 9 boss bounties / 源石虫·特训: 6 groups for the 6 events, the 鼠王 group in 14 of 22 matches;
+//   R9  a group of up to 9 boss bounties / 源石虫·特训: 6 groups (9, 9, 9, 9, 8, 6 cards) for the 6 events, the 鼠王
+//       group in 14 of 22 matches;
 //   R11 悬赏决策 14 / 机密商店 4 / 战术决策 4 / 道具补给 0; its bounty: a list of 7 "下场战斗" cards (one 特异III giant),
-//       one per faction series — 7 of the 15 events seen, three of them whole (each draft leaves out one card);
+//       one per faction series — 7 lists seen, three of them whole (each draft leaves out one card), taken as the 7
+//       events bounty_hunter_1..7 and picked uniformly (no list built from nothing);
 //   no draft shows a multi-round card, a pre-series card (enemyeffect_3_*), 战术特训 or the 鸭爵 set; no card twice.
 // Each card's enemy is fixed by its effect; the title only names category and tier (悬赏·损伤I = 底海滑动者 in
 // enemyeffect_12_4, 临时收音师 in enemyeffect_18_1). Real data, real draft code, the real match path for the players' case.
@@ -163,11 +165,19 @@ test('#2 R3 generated: a seen set (all six cards) or the unseen 10th set — eve
   }
 });
 
-test('#2 R9 (23 official drafts): six groups of 9 boss bounties / 源石虫·特训, 6 cards each — 庞贝 and 鼠王 never together, the 鼠王 group in 14 of 22 matches', () => {
+test('#2 R9 (23 official drafts): six groups (9, 9, 9, 9, 8, 6 cards) of boss bounties / 源石虫·特训, 6 cards a draft — 庞贝 and 鼠王 never together, the 鼠王 group in 14 of 22 matches', () => {
   const r9 = officialDrafts().filter((d) => d.round === 9);
   assert.equal(r9.length, 23, '22 matches + the Bahamut co-op screenshot');
   const B = SPEC.boss;
   assert.equal(B.groups.length, B.events.length, 'one group per bossInitial event');
+  // the groups as they are: 9 cards where three named bosses came; the single-draft groups completed only with the
+  // base cards they lack — 腐败骑士 9, 泥岩 + 澪 8, match 4 (the base alone) 6 [ASSUMED]
+  assert.deepEqual(B.groups.map((g) => g.cards.length), [9, 9, 9, 9, 8, 6]);
+  const base = B.groups.find((g) => g.seen.includes(4));
+  assert.deepEqual(base.seen, [4]);
+  assert.ok(sameSet(base.cards, ['b_10', 'b_1', 'b_3', 'b_13', 'b_12', '5_1'].map(EE)), 'match 4: W 碎骨 弑君者 大鲍勃 庞贝 源石虫');
+  // …which is also six cards of the 喷气人 and 泥岩 groups: match 4 may be a draft of one of them (open question)
+  for (const boss of ['b_8', 'b_4']) assert.ok(subset(base.cards, B.groups.find((g) => g.cards.includes(EE(boss))).cards));
   for (const d of r9) {
     assert.equal(d.family, 'bounty', `${d.where}: R9 is a 悬赏决策`);
     assert.ok(d.ids.every((id) => CARD.get(id).draftPool === 'boss' && CARD.get(id).rounds === 1), `${d.where}: boss bounties / 源石虫·特训, 下场作战`);
@@ -252,15 +262,31 @@ test('#2 R11 (22 matches: 悬赏决策 14, 机密商店 4, 战术决策 4, 道�
     assert.equal(sch.bountyDraft, 'hunter');
     assert.equal(sch.assumed, true);
   }
-  assert.equal(H.slots, 15, 'bounty_hunter_1..15');
-  // generated: six different cards, one per faction series, at most one giant; a seen group about 7 in 15; every R11
-  // card comes up (the unseen ones through the rule)
+  // the list is one of the 7 seen, uniform (taken as the events bounty_hunter_1..7) — no list built from nothing: 15
+  // equally likely events would show 7 lists or fewer in 14 drafts about 6 % of the time (7 events: all 7 about 37 %)
+  assert.equal(H.events.length, 15, 'bounty_hunter_1..15 in the data');
+  assert.equal(H.slots, H.groups.length);
+  assert.equal(H.slots, 7);
+  assert.equal(H.pick, 'slot');
+  // the data's block: bounty_hunter_1..7 together; 8..15 later, beside artifact_paid_4 / 5 and hardbuff_select
+  const p = new URL('../../.cache/gamedata/excel/activity_table.json', import.meta.url);
+  if (existsSync(p)) {
+    const keys = Object.keys(JSON.parse(readFileSync(p, 'utf8')).activity.AUTOCHESS_SEASON.act2autochess.effectChoiceInfoDict);
+    const at = (k) => keys.indexOf(k);
+    for (let i = 2; i <= 7; i++) assert.equal(at(`bounty_hunter_${i}`), at('bounty_hunter_1') + i - 1);
+    assert.ok(at('bounty_hunter_8') > at('artifact_paid_5') && at('artifact_paid_5') > at('bounty_hunter_7') + 1, 'bounty_hunter_8..15 after artifact_paid_4 / 5');
+    assert.equal(at('hardbuff_select_1'), at('bounty_hunter_15') + 1);
+  }
+  // generated: six different cards, one per faction series, at most one giant, at most the `open` card outside one seen
+  // list; a whole seen list about 3 in 7; every R11 card comes up (12_8 / 16_2 / 16_6 only as an `open` card, rarely)
   const gd = new GameData(DATA, 'mode_multi_hard');
   const seen = {};
   const offered = new Set();
+  const never = ['12_8', '16_2', '16_6'].map(EE);
   let n = 0;
   let fitSeen = 0;
   let giants = 0;
+  let unseenCard = 0;
   for (let seed = 1; seed <= 2000; seed++) {
     const d = generateDraft(gd, createRng(seed * 13 + 11), 11, { stageId: 'act2autochess_m01' });
     seen[d.family] = (seen[d.family] || 0) + 1;
@@ -269,14 +295,20 @@ test('#2 R11 (22 matches: 悬赏决策 14, 机密商店 4, 战术决策 4, 道�
     assert.equal(new Set(ids).size, 6);
     assert.ok(ids.every((id) => CARD.get(id).draftPool === 'hunter') && onePerSeries(ids) && giantsIn(ids) <= 1, d.cards.map((c) => c.name).join(', '));
     assert.match(d.eventId, /^bounty_hunter_\d+$/);
+    assert.ok(H.groups.some((g) => ids.filter((id) => !g.cards.includes(id)).length <= (g.open || 0)), `six cards of a seen list (+ its open card): ${d.cards.map((c) => c.name).join(', ')}`);
     if (H.groups.some((g) => !g.open && subset(ids, g.cards))) fitSeen++;
+    if (ids.some((id) => never.includes(id))) unseenCard++;
     giants += giantsIn(ids);
     n++;
     ids.forEach((id) => offered.add(id));
   }
   assert.deepEqual(Object.keys(seen).sort(), ['bounty', 'shop', 'tactic'], 'no 道具补给 at R11');
   assert.ok(seen.bounty / 2000 > 0.56 && seen.bounty / 2000 < 0.71, JSON.stringify(seen));
-  assert.ok(fitSeen / n > 0.13 && fitSeen / n < 0.27, `drafts of the three whole seen groups ${(100 * fitSeen / n).toFixed(0)} % (3 / 15)`);
+  assert.ok(fitSeen / n > 0.36 && fitSeen / n < 0.5, `drafts of the three whole seen groups ${(100 * fitSeen / n).toFixed(0)} % (3 / 7)`);
+  // a card no official draft showed: rare enough that 14 drafts without one (the official sample) stays likely
+  const q = unseenCard / n;
+  assert.ok(q > 0.02 && q < 0.1, `12_8 / 16_2 / 16_6 in ${(100 * q).toFixed(1)} % of R11 bounty drafts`);
+  assert.ok((1 - q) ** 14 > 0.25, `14 drafts without one: ${(100 * (1 - q) ** 14).toFixed(0)} %`);
   assert.ok(giants / n > 0.78 && giants / n < 0.93, `a giant in ${(100 * giants / n).toFixed(0)} % (official 13 / 14)`);
   for (const c of CARDS.filter((x) => x.draftPool === 'hunter')) assert.ok(offered.has(c.effectId), `${c.effectId} ${c.name} offered at R11`);
 });
