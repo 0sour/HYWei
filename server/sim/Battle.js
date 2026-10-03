@@ -10,9 +10,10 @@
 // the players of a shared field side by side), fires `deploy` (initial) for each unit, forces out the operators that
 // enter already knocked out (`carryState.down`, 联防: constants.js FORCED_EXIT — down on their tile, redeploy timer
 // running) and then fires `battleStart`.
-// A knocked-out operator lies on its `body` tile — where it fell, or its own home when it fell on another board piece's
-// home — and redeploys there; no ally deploys or moves onto that tile meanwhile (PRTS 卫戍协议/帮助 §作战阶段 单位部署;
-// `_layBody`, `downOn`, `restTile`, `isReservedTile`; docs/SIM.md §1).
+// An operator that left the field — knocked out, or forced out by its own effects (史尔特尔's 余烬 …, GitHub #60) — lies
+// on its `body` tile — where it fell, or its own home when it fell on another board piece's home — and redeploys there;
+// no ally deploys or moves onto that tile meanwhile (PRTS 卫戍协议/帮助 §作战阶段 单位部署; `isDown`, `_layBody`, `downOn`,
+// `restTile`, `isReservedTile`; docs/SIM.md §1).
 // Tick order: scheduled callbacks → spawns → DP → buffs → enemies (attack, move, block) → enemy index →
 //   allies (skill tick, attack) → projectiles → redeploys → boss sync → `tick` hook → release hooks of removed units →
 //   time += TICK → end checks. A forceEnd() requested mid-step ends the step after the current phase (docs/SIM.md §1.4).
@@ -848,8 +849,8 @@ export class Battle {
   // deployment / death / redeploy
 
   /**
-   * Deploy `u` on its home tile, or on `tile` ([r, c]: a one-off landing tile — the home stays the board tile: a
-   * withdrawn operator comes back there, a knocked-out one on its body tile, restTile). `keepSp` = { sp, charges }
+   * Deploy `u` on its home tile, or on `tile` ([r, c]: a one-off landing tile — the home stays the board tile; an
+   * operator that left the field comes back on its body tile, restTile). `keepSp` = { sp, charges }
    * restored right after the skill reset, before the `deploy` hook fires.
    */
   _deploy(u, { initial = false, carry = null, tile = null, keepSp = null } = {}) {
@@ -917,7 +918,10 @@ export class Battle {
     this._remove(unit, 'killed', killer);
   }
 
-  /** Withdraw an ally without a kill (it may redeploy after its respawn time). */
+  /**
+   * Withdraw an ally without a kill (it may redeploy after its respawn time): an operator lies down where it stood and
+   * comes back there (isDown, GitHub #60) — unless `permanent`, or the 突袭 retreat ('raid') that redeploys it at once.
+   */
   retreat(unit, { reason = 'retreat', permanent = false } = {}) {
     if (!unit || !unit.alive || unit.side !== 'ally') return;
     this._remove(unit, reason, null, permanent);
@@ -1006,8 +1010,8 @@ export class Battle {
   }
 
   /**
-   * Immediately redeploy a dead (or retreated) ally on its rest tile (restTile: where a knocked-out operator lies, else
-   * its home tile). opts:
+   * Immediately redeploy a dead (or retreated) ally on its rest tile (restTile: where an operator that left the field
+   * lies, else its home tile). opts:
    *   free=true   no DP cost (false: pays `base.cost`, refused when the player lacks the DP)
    *   tile=[r,c]  land on this in-rect tile instead (the home stays the board tile); refused (false) when the tile is
    *               outside the rect, a living unit stands there or another knocked-out operator lies there — no fallback
@@ -1044,9 +1048,9 @@ export class Battle {
   }
 
   /**
-   * Automatic redeploys (DESIGN §5.5): a withdrawn operator whose timer is done comes back on its rest tile — a knocked-out
-   * one where it lies ("满足再部署条件时，移除场上的该倒地干员并自动部署至该位置", PRTS 卫戍协议/帮助) — when that tile is
-   * free and its player has the DP.
+   * Automatic redeploys (DESIGN §5.5): an operator that left the field and whose timer is done comes back on its rest
+   * tile — where it lies ("满足再部署条件时，移除场上的该倒地干员并自动部署至该位置", PRTS 卫戍协议/帮助) — when that tile
+   * is free and its player has the DP.
    */
   _checkRedeploys() {
     for (const u of this.allyUnits) {
@@ -2057,7 +2061,7 @@ export class Battle {
   }
 
   /**
-   * The tile a withdrawn ally comes back on (redeploy, _checkRedeploys): a knocked-out operator's body tile — where it
+   * The tile a withdrawn ally comes back on (redeploy, _checkRedeploys): a down operator's body tile (isDown) — where it
    * fell, or its home (_layBody) — else its home tile.
    */
   restTile(u) {
@@ -2263,7 +2267,7 @@ export class Battle {
 
   /**
    * Compact full snapshot of this field (DESIGN §8.2 b.snap), plus (only when non-empty):
-   *   down: [[id, respawnAt, respawnTime, state, row, col]] — knocked-out operators waiting to redeploy (isDown): the
+   *   down: [[id, respawnAt, respawnTime, state, row, col]] — operators that left the field waiting to redeploy (isDown): the
    *         game time their respawn timer ends, its length (s), constants.js DOWN_STATE and the tile they lie on (and
    *         come back on: _layBody — where they fell, or their home);
    *   elem: [[id, element, fill, cooldownEnd, cooldown]] — the element gauge each unit shows (damage.js elementView).
@@ -2300,13 +2304,18 @@ export class Battle {
   }
 
   /**
-   * A knocked-out operator waiting to redeploy on the tile it lies on (DESIGN §5.5: after its respawn time, when the
-   * tile is free and DP ≥ cost; _layBody, downOn): killed — or entering the battle knocked out (FORCED_EXIT, 联防) —
-   * not withdrawn, not removed for good, after it was deployed. The client keeps its model on that tile knocked down
-   * with a redeploy countdown (b.snap `down`, render/units.js); summons, devices and enemies simply leave.
+   * An operator lying on the field, waiting to redeploy on that tile (DESIGN §5.5: after its respawn time, when the tile
+   * is free and DP ≥ cost; _layBody, downOn). PRTS 卫戍协议/帮助 §作战阶段 单位部署: "干员退场后，将返回隐藏的待部署区，并原地
+   * 留下一个“倒地干员”以供查看信息，满足再部署条件时，移除场上的该倒地干员并自动部署至该位置。" — every 退场 (GitHub #60, the owner's
+   * decision of 2026-10-04): knocked out ('killed'), entering the battle knocked out (FORCED_EXIT, 联防) and forced out
+   * by its own effects ('retreat': 史尔特尔's 余烬, 耀骑士临光 S2, 骑士戒律 + 竞技旗, 伊内丝 S3; 'merchant': a 商人 that cannot
+   * pay) — except the 突袭 retreat ('raid', redeployed at once on its landing tile); not removed for good, after it was
+   * deployed. A forced exit stays no kill: its 'die' / `death` reason is not 'killed' (no 被击倒 effect, 不屈, 阿戈尔, no
+   * knock-down count). The client keeps its model on that tile knocked down with a redeploy countdown (b.snap `down`,
+   * render/units.js); summons, devices and enemies simply leave.
    */
   isDown(u) {
-    return !!u && u.side === 'ally' && u.kind === 'op' && !u.alive && !u.removed && (u.removeReason === 'killed' || u.removeReason === FORCED_EXIT)
+    return !!u && u.side === 'ally' && u.kind === 'op' && !u.alive && !u.removed && u.removeReason !== 'raid'
       && u.deploySeq > 0 && Number.isFinite(u.respawnAt);
   }
 
