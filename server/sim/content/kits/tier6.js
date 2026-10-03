@@ -52,8 +52,8 @@
 //                脆弱 status (同名效果取最高).
 //  6_17 耀骑士临光 "上一名部署干员" = the op of the same owner deployed right before her (deploy order).
 //  6_18 荒芜拉普兰德 S3 drones are virtual (fx events) flying PRTS's 技能流程 (spread attack@times s, chase 2.0 → 4.0
-//                tiles/s; [ASSUMED] the turn rate is not modelled: straight at the target); every drone is out, so she makes no
-//                normal attack herself, while each drone on its target attacks like a normal drone (her attack
+//                tiles/s; [ASSUMED] the turn rate is not modelled: straight at the target); every drone is out, so she
+//                makes no normal attack herself, while each drone on its target attacks like a normal drone (her attack
 //                interval, ATK × its own funnel ramp; neither attack nor skill damage — PRTS 备注); 头狼 stage 2
 //                "特殊能力失效" = silence; stage 3 = +1 drone (normal attacks hit once more; S3 releases one more drone,
 //                mid-skill too). Base drone count 1.
