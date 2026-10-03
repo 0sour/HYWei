@@ -1313,7 +1313,7 @@ The last review of §21.4's client fix, the cross-workstream notes and the last 
 - **AI 托管 and temp** (the promise "你开 AI 托管时，它不会销毁你的道具"): on a human seat under AI 托管 an item left in temp with a full hand gets a hand slot (a bench operator sold) instead of being destroyed; only a hand of nothing but items still drops it, as the temp deadline would.
 - **The bot** (§21.6): reconciled with the merged rules as listed there.
 - **0.1.0 bug found in the merge**: a 联防 battle timed out during 隐德来希 S3 reported its 心烛 as leaks, so the server refused the honest client's result (fullmatch-coop3 seed 116) — candles carry `mem.noLeak` and `Battle._timeout` skips them.
-- **Checked, no change**: 斩胄之剑 / 破胄之锤 stay unblockable while grounded (their PRTS 天赋 lists 不可阻挡); the four lpr-0 enemies of the database (简饲源石虫, 节日气球, leader parts, tokens) still cost 0 LP in a leader round (the official `lifePointReduce`); 鸭爵 swaps skip bounty-tagged spawns; 转译基底's bounty coin is paid once.
+- **Checked, no change**: 斩胄之剑 / 破胄之锤 stay unblockable while grounded (their PRTS 天赋 lists 不可阻挡); the database's lpr-0 enemies (简饲源石虫, 节日气球, leader parts, tokens) still cost 0 LP in a leader round (the official `lifePointReduce`); 鸭爵 swaps skip bounty-tagged spawns; 转译基底's bounty coin is paid once.
 - Tests: `test/sim/feedback1-followups.test.js`, `test/sim/feedback1-integrate.test.js`, `test/match/feedback1-runner-forms.test.js`, `test/render/interp.test.js`, `test/ui/bosshit-ticker.test.js`, `test/match/feedback1-meta.test.js`, `test/match/bot-smarter.test.js`, `test/content/{enemies_bosses,bonds_core,kits_alt_t6}.test.js`.
 
 ### 21.20 Settled decisions and what stays [ASSUMED]
