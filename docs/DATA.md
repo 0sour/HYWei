@@ -3,6 +3,8 @@
 All files in `data/` except `data/assets.json` are produced by **`node tools/build-data.mjs`** (task F1) from the
 official zh_CN client data ([Kengxxiao/ArknightsGameData](https://github.com/Kengxxiao/ArknightsGameData)) joined
 with `docs/research/*.json`. Do not edit them by hand — change the build script and rebuild.
+`data/assets.json` is written by `tools/fetch-assets.mjs`, which keeps the current file rather than drop entries whose
+downloads failed on this machine unless `--allow-shrink` (or `--prune`) is passed (docs/ASSETS.md, DESIGN §21.25).
 
 ```
 node tools/build-data.mjs              # build (downloads missing official files into .cache/gamedata/)

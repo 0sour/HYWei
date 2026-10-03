@@ -15,7 +15,9 @@
 // blocker hits what it blocks, push force vs weight, the ASPD floor, the enemies' collider reach, the boss pool floor,
 // multi-round bounties lasting two battles, the 联防 counter, the element gauge — and the user's settled decisions; the
 // playtest6b follow-up (DESIGN §20.10–§20.13): leader HP and 直接乘算, the elite on the consumed copy's tile, the official
-// 999 layer cap (one implementation) and 限伤 300000, the 假想敌：胄 kit — and the normative lines they rewrote.
+// 999 layer cap (one implementation) and 限伤 300000, the 假想敌：胄 kit — and the normative lines they rewrote; player
+// feedback after 0.1.0 (DESIGN §21, v0.1.1) including batch 6 (§21.21–§21.25: 坚固维式重锤 once per deployment, 起飞,
+// fenced tiles, knocked-out bodies, the dispatcher snapshot and the manifest shrink guard credited to PR #2 / PR #7).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -301,8 +303,8 @@ test('user playtest #4 (DESIGN §18): picking by tile, timers, 机变 two taps, 
   assert.deepEqual(ELEMENT_ORDER.slice(0, 4), ['neural', 'erosion', 'burn', 'apoptosis']);
   assert.deepEqual({ ...DOWN_STATE }, { COUNTING: 0, WAIT_DP: 1, WAIT_TILE: 2 });
   assert.match(DESIGN, /\*\*爆发冷却\*\*/);
-  // player report F5 after 0.1.0: the entries carry the tile the operator lies on (DESIGN §8.2 follows at integration)
-  assert.match(DESIGN, /`down: \[\[id, respawnAt \(game s\), respawnTime \(s\), state(, row, col)?\]\]`/);
+  // player report F5 after 0.1.0 (DESIGN §21.24): the entries carry the tile the operator lies on
+  assert.match(DESIGN, /`down: \[\[id, respawnAt \(game s\), respawnTime \(s\), state, row, col\]\]`/);
   assert.match(SIM, /`burstLocked\(unit\)` in damage\.js/);
   assert.match(SIM, /损伤抵抗 = the target's data `epResistance`/);
   assert.ok(!/800 phys; no lock/.test(SIM), 'SIM §3: operators\' 侵蚀 locks too');
@@ -618,16 +620,19 @@ test('player feedback after 0.1.0 (DESIGN §21, v0.1.1): every report mapped, th
   const sec = (n) => DESIGN.slice(DESIGN.indexOf(`## ${n}.`), DESIGN.indexOf(`## ${n + 1}.`) > 0 ? DESIGN.indexOf(`## ${n + 1}.`) : undefined);
   const S21 = sec(21);
   assert.match(DESIGN, /## 21\. Player feedback after 0\.1\.0 \(v0\.1\.1\)/);
-  for (let i = 1; i <= 20; i++) assert.match(S21, new RegExp(`### 21\\.${i} `), `§21.${i}`);
+  for (let i = 1; i <= 25; i++) assert.match(S21, new RegExp(`### 21\\.${i} `), `§21.${i}`);
   const intro = S21.slice(0, S21.indexOf('### 21.1 '));
   for (let i = 1; i <= 10; i++) assert.match(intro, new RegExp(`#${i} `), `the intro maps report #${i}`);
-  for (const r of ['B1', 'B2', 'B3', 'B4', 'B5', 'C1', 'C2', 'D1', 'D2', 'D3', 'D4', 'D5', 'E1', 'E2', 'E3']) assert.match(intro, new RegExp(`${r} `), `the intro maps report ${r}`);
+  for (const r of ['B1', 'B2', 'B3', 'B4', 'B5', 'C1', 'C2', 'D1', 'D2', 'D3', 'D4', 'D5', 'E1', 'E2', 'E3', 'F1', 'F2', 'F3', 'F4', 'F5']) assert.match(intro, new RegExp(`${r} `), `the intro maps report ${r}`);
+  assert.match(intro, /Thirty-two reports/);
+  assert.match(intro, /\(PR #2, PR #7\) → §21\.25/);
   const sub = (n) => { const a = S21.indexOf(`### 21.${n} `); const b = S21.indexOf('\n### 21.', a + 5); return S21.slice(a, b > 0 ? b : undefined); };
   // settled: the tactician re-orientation (user-confirmed) and the screenshot-based bounty structures
   const s2120 = sub(20);
   assert.match(s2120, /A tactician re-oriented in place \(§21\.3\) \| a range-bound summon still inside the new range stays[^\n]*user-confirmed 2026-10-03/);
   assert.match(s2120, /Bounty drafts \(§21\.2\) \| the official structure of each round from the user's 66 screenshots of 22 matches/);
-  assert.match(s2120, /机密商店 \/ 战术决策 repeats \(§21\.2\) \| the same card can be offered twice/);
+  assert.match(s2120, /机密商店 \/ 战术决策 repeats \(§21\.2\) \| the same card can be offered twice[^\n]*the user, 2026-10-03/);
+  assert.match(s2120, /坚固维式重锤's scope \(§21\.21\) \| one 不死 lock per DEPLOYMENT[^\n]*the user, 2026-10-03: "每次部署一次"/);
   assert.ok(!/the remake's never do/.test(sub(2)), '§21.2: the 机密商店 and the 战术决策 repeat');
   assert.match(s2120, /MULTI_ROUND_BOUNTY_BATTLES = null/);
   // §21.2 = §7 = §20.6 superseded = the data
@@ -669,4 +674,49 @@ test('player feedback after 0.1.0 (DESIGN §21, v0.1.1): every report mapped, th
   assert.ok(!/pathfinding \(8-dir, no corner cutting\)/.test(DESIGN), '§2: grid.js line updated');
   assert.ok(!/Pushes are radial except 推击手/.test(DESIGN), '§20.3: the push rule follows the client templates');
   assert.match(sec(20), /\| 野鬃 S2 \| 中力 directional \(knockback\[dir\], §21\.13\)/);
+});
+
+test('batch 6 after 0.1.0 (DESIGN §21.21–§21.25): the hammer per deployment, 起飞, fenced tiles, bodies, the PR fixes — code and docs agree', async () => {
+  const sec = (n) => DESIGN.slice(DESIGN.indexOf(`## ${n}.`), DESIGN.indexOf(`## ${n + 1}.`) > 0 ? DESIGN.indexOf(`## ${n + 1}.`) : undefined);
+  // F1: 不死 before 复活, once per deployment (§5.4 = SIM = items/battle.js)
+  const { PRIO_REVIVE, PRIO_RESPAWN } = await import('../server/sim/content/items/battle.js');
+  assert.equal(PRIO_RESPAWN, PRIO_REVIVE - 1);
+  assert.match(sec(5), /\| `fatal` \|[^\n]*坚固维式重锤, once per deployment\) `PRIO_REVIVE` −100 → items' 复活 \(M3茧甲\) `PRIO_RESPAWN` −101 → 埃芒加德 −110/);
+  assert.match(SIM, /坚固维式重锤 — once per deployment/);
+  assert.match(PLAYING, /\*\*每次部署一次\*\*/);
+  // F2: onBuy = a shop purchase (§6.4 = META)
+  assert.match(sec(6), /`onBuy` = a shop purchase \(`g\.buy`\) only/);
+  assert.match(META, /\| `onBuy` \| after a shop purchase \(`g\.buy` only\)/);
+  // F3: the liftoff flag (§5.3 = SIM = buffs.js), blocking and enemy selection (§5.5)
+  const { FLAG_KEYS } = await import('../server/sim/buffs.js');
+  assert.ok(FLAG_KEYS.includes('liftoff'));
+  assert.match(sec(5), /liftoff \(an ally's 起飞, 蒂比's skills: it blocks flyers only and has 对地规避/);
+  assert.match(sec(5), /an airborne \(起飞\) ally is never a ground enemy's selection/);
+  assert.match(sec(5), /ignoreSelect \(no selection/);
+  assert.match(SIM, /camou liftoff` \(/);
+  // F4: no ground blocking from a fenced tile (§3 = §5.5 = SIM)
+  assert.match(sec(3), /The fenced tiles \(围墙 `tile_fence_bound` \/ 围栏 `tile_fence`/);
+  assert.match(sec(5), /A ground enemy is never blocked by a unit standing on a tile ground units cannot pass/);
+  assert.match(SIM, /blocks no\nground enemy \(PRTS 围墙 \/ 围栏 地形机制/);
+  // F5: bodies keep their tile (§5.5 = §18.3 = SIM = Battle)
+  const { Battle } = await import('../server/sim/Battle.js');
+  for (const f of ['downOn', 'restTile', '_layBody', 'isReservedTile']) assert.equal(typeof Battle.prototype[f], 'function', f);
+  assert.match(sec(5), /if the tile it lies on is free and DP ≥ cost ⇒ redeploy there/);
+  assert.match(sec(18), /a safeguard since §21\.24/);
+  assert.ok(!/2 timer done but the home tile is taken/.test(DESIGN), '§18.3: no home-tile wording');
+  // PR #2: the dispatcher's item snapshot (§6.4 = META = effectsMeta header)
+  assert.match(sec(6), /Equipped items run from a snapshot/);
+  assert.match(META, /The equipped-items step walks a snapshot/);
+  assert.match(doc('server/match/effectsMeta.js'), /That step walks a snapshot/);
+  // PR #7: the manifest shrink guard (ASSETS = DATA = the tool)
+  const { parseArgs, shrinkGuard } = await import('../tools/fetch-assets.mjs');
+  assert.equal(parseArgs(['--allow-shrink']).allowShrink, true);
+  assert.equal(shrinkGuard({ a: { b: 1 } }, { a: {} }, {}).write, false);
+  assert.match(doc('docs/ASSETS.md'), /\| `--allow-shrink` \|/);
+  assert.match(DATA_MD, /unless `--allow-shrink` \(or `--prune`\) is passed/);
+  // CHANGELOG 0.1.1 credits both pull requests
+  const log = doc('CHANGELOG.md');
+  assert.match(log, /共 32 条，其中 4 条核实后不是问题/);
+  assert.match(log, /PR #2 指出/);
+  assert.match(log, /PR #7 指出/);
 });
