@@ -7,6 +7,7 @@ import { hasGeneratedData, getDefaultSource } from '../../server/sim/simdata.js'
 import { genericKit } from '../../server/sim/content/generic.js';
 import { spawnYanyou, spawnMapChar, TOKEN_IDS, wolfShadows, tileFree, findSummonTile, summonToken } from '../../server/sim/content/tokens.js';
 import { startColdWind, kjeragColdWind, activateTurrets, terrainAt, deviceOverridesOf } from '../../server/sim/content/devices.js';
+import { HUSK_REBIRTH } from '../../server/sim/content/enemies.js';
 
 const REAL = { skip: !hasGeneratedData() };
 const ds = getDefaultSource();
@@ -731,16 +732,53 @@ test('活性源石: one effect per unit — contact restarts its duration, it en
   h.run(3);
   assert.equal(e.hp, hp0 - loss, 'nothing after the end');
   approx(e.s.atk, 500, 1e-9);
-  // an operator deployed on it is always in contact: it keeps draining past `duration` (no lifetime of the tiles)
+  // an operator deployed on it is always in contact: it keeps draining past `duration` (no lifetime of the tiles; 3 ×
+  // `duration`, so that a shut-off at `duration` followed by the effect's own `duration` would still show)
   const g = guard({ stats: { atk: 1000, maxHp: 1e5 } });
-  const h2 = makeBattle({ stage, defs: { chess: { test_guard: g } }, units: [{ chessId: 'test_guard', row: 11, col: 6 }], autoFinish: false, timeLimit: 60 });
+  const h2 = makeBattle({ stage, defs: { chess: { test_guard: g } }, units: [{ chessId: 'test_guard', row: 11, col: 6 }], autoFinish: false, timeLimit: 120 });
   h2.step();
-  h2.run(2 * bb.duration);
+  h2.run(3 * bb.duration);
   const u = h2.unit('test_guard');
-  approx(u.stats.taken, 2 * bb.duration * bb.damage, 1e-9, 'ally damage');
+  approx(u.stats.taken, 3 * bb.duration * bb.damage, 1e-9, 'ally damage');
   approx(u.s.atk, 1000 * (1 + bb.atk), 1e-9);
+  // moved off the tile (Battle.relocate, as 乌尔比安 S3 does), it keeps the effect for its time, then it ends
+  assert.ok(h2.b.relocate(u, 11, 7));
+  const taken0 = u.stats.taken;
+  h2.run(3);
+  assert.ok(u.findBuff('terrain:infection'), 'kept after the move');
+  approx(u.stats.taken - taken0, 3 * bb.damage, 1e-9, 'still draining');
+  h2.run(bb.duration);
+  assert.equal(u.findBuff('terrain:infection'), null, `gone ${bb.duration} s after the move`);
+  approx(u.s.atk, 1000, 1e-9);
   checkInvariants(h.b);
   checkInvariants(h2.b);
+});
+
+test('活性源石: a 重生 clears the lasting effect — a 深池逐火战士 that crossed the tile, knocked out off it, stands up from its ember after 1 + 10 s', REAL, () => {
+  const key = 'enemy_1288_duskls';
+  const delay = ds.getEnemy(key).talent['Revive[Trigger].interval'];
+  // it crosses (11,6) going left, then waits on (11,4), off the tile
+  const route = { motion: 'WALK', start: [11, 8], end: [9, 2], checkpoints: [{ type: 'MOVE', pos: [11, 4] }, { type: 'WAIT', time: 99 }] };
+  const h = makeBattle({ stageId: 'act1autochess_m04', enemies: [{ key, route }], autoFinish: false, timeLimit: 120 });
+  h.step();
+  const e = h.enemy(key);
+  const onTile = () => Math.round(e.y) === 11 && Math.round(e.x) === 6;
+  assert.ok(h.runUntil(onTile, 20), 'steps on (11,6)');
+  assert.ok(h.runUntil(() => Math.round(e.x) === 4, 20), 'waits on (11,4)');
+  assert.ok(e.findBuff('terrain:infection'), 'carries the effect off the tile');
+  const max = e.s.maxHp;
+  h.b.dealDamage(null, e, { amount: e.hp + 1e6, type: 'true', canDodge: false });
+  assert.ok(e.alive, 'knocked out into its ember');
+  assert.equal(e.findBuff('terrain:infection'), null, 'the 重生 cleared it');
+  h.run(HUSK_REBIRTH + delay - 0.5);
+  assert.ok(e.alive && e.s.maxHp < max, 'still the ember');
+  assert.equal(e.hp, e.s.maxHp, 'no tick took one of its hits');
+  h.run(1);
+  assert.ok(e.alive);
+  assert.equal(e.s.maxHp, max, `stood up ${HUSK_REBIRTH} + ${delay} s after the knock-out`);
+  assert.equal(e.hp, max);
+  assert.equal(e.findBuff('terrain:infection'), null);
+  checkInvariants(h.b);
 });
 
 test('盟约寒风: every interval all enemies turn cold; a gust on cold enemies freezes them; kjeragColdWind uses live layers', REAL, () => {

@@ -356,10 +356,12 @@ function enterTerrain(battle, st, u, code) {
  * global_tile_infection_1 「目标：可控感染」 "踏过活性源石地块的敌人不再持续损失生命值" switches the lasting HP loss off,
  * so without it the loss continues. One effect per unit (PRTS 作战机制: "同名buff的默认叠加策略buff只能表现出一个"): a
  * unit that already carries it gets its full `duration` back and keeps its per-second rhythm — no second effect, no
- * extra tick [ASSUMED: the time counts from the last contact]. An operator deployed on it is always in contact and
- * keeps draining, as officially. Leaving the field drops it with every buff; a 重生 keeps it (enemies.js rebirthCleanse
- * keeps source-less buffs [ASSUMED]). The tick (terrainDamage) is true damage no unit deals (无来源), tagged 'terrain' =
- * 环境伤害 (PRTS 自然环境 lists 活性源石), not 'dot' [ASSUMED: PRTS 伤害分类's list of BUFF damage does not name it].
+ * extra tick [ASSUMED: the time counts from the last contact — so an operator deployed on it, always in contact, drains
+ * past `duration`]. An operator moved off the tile (Battle.relocate: 乌尔比安 S3, 夕's 小自在 …) keeps it for its time;
+ * leaving the field drops it with every buff; a 重生 clears it (enemies.js rebirthCleanse: PRTS 特殊机制 §重生 "清空自身
+ * 身上除白名单外所有Buff") and contact gives it again while the unit is on the tile [ASSUMED]. The tick (terrainDamage)
+ * is true damage no unit deals (无来源), tagged 'terrain' = 环境伤害 (PRTS 自然环境 lists 活性源石), not 'dot' [ASSUMED:
+ * PRTS 伤害分类's list of BUFF damage does not name it].
  */
 function touchInfection(battle, st, u) {
   const I = st.infection;
