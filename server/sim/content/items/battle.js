@@ -238,8 +238,9 @@ function hammerState(battle, rt, u) {
  * [ASSUMED a deployment], 阿戈尔's 立刻复活), and an in-place 复活 (M3茧甲, 埃芒加德: revivedInPlace) opens a new one too
  * [ASSUMED] — PRTS (M3茧甲 / 埃芒加德 / 阿戈尔 备注) "“复活”的实现方式为：受益者因移动之外的原因退场时下次部署的再部署时间和
  * 费用归零": officially a revive is a 0-time / 0-cost redeploy; the remake keeps the unit standing instead.
+ * Also read by 阿戈尔's devour (bonds/core.js): a unit whose deployment changed during the pass was knocked out.
  */
-function deploymentOf(u) { return `${u.deploySeq}:${u.mem.revives | 0}`; }
+export function deploymentOf(u) { return `${u.deploySeq}:${u.mem.revives | 0}`; }
 
 /** An in-place 复活 (M3茧甲, 埃芒加德) happened: a new deployment for the once-per-deployment lock (deploymentOf). */
 export function revivedInPlace(u) { if (u && u.mem) u.mem.revives = (u.mem.revives | 0) + 1; }

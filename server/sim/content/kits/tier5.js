@@ -763,8 +763,9 @@ const KITS = {
 
   // ---------------------------------------------------------------------------------------------------------------
   // 乌尔比安 — S3 必须开辟的通路 (25 s, CUSTOM_RANGE row ahead): max HP/ATK +, throws an anchor forward that stops on the
-  // first enemy or at max distance: 135 % ATK phys + 6 s stun around it (projectile_range); moves onto the anchor tile when
-  // deployable (a 从不混淆的方向 marker keeps his tile) and returns at skill end.
+  // first enemy or at max distance — on his own tile while he blocks: 135 % ATK phys + 6 s stun around it
+  // (projectile_range); moves onto the anchor tile when deployable and not his own (a 从不混淆的方向 marker keeps his tile)
+  // and returns at skill end.
   // T1 本性的坚守: heal 100 (160 below 50 %) on every hit taken. T2 血脉的哺养: per kill +120 max HP / +30 ATK (×9),
   // other Abyssal Hunters +50 %. Module (elite): healing received ×1.2.
   // S1 必须促成的接触 (instant): the anchor lands on the best enemy of the skill range (beyond his own range, unblocked
@@ -815,23 +816,31 @@ const KITS = {
         kind: 'duration',
         mods: mods({ hpPct: num(bb.max_hp), atkPct: num(bb.atk) }),
         onStart({ battle, unit }) {
-          // the anchor flies straight ahead along his direction
-          let stop = null;
-          for (let d = 1; d <= reach; d++) {
-            const [r, c] = frontOf(unit.tileR, unit.tileC, unit.dir, d);
-            // the anchor stops at the field edge and in front of a ground obstacle (crates, roadblocks)
-            if (!battle.grid.inRect(r, c) || battle.grid.isObstacle(r, c)) break;
-            stop = d;
-            if (battle.enemiesInKeys([r * COLS + c], unit, { canHitFly: true }).length) break;
+          // PRTS 备注 ② — the anchor's target: his own tile while he blocks an enemy (e.g. just after a 突袭 landing),
+          // else the nearest tile ahead in the skill range (straight along his direction) with an enemy on it, else the
+          // farthest one. His own tile is a candidate only while he blocks ("自身所在地块（仅阻挡敌人时）"); not taken: the
+          // reading of the range's own tile (6-1 starts at [0,0]) as distance 0 for the second rule (a flyer over him)
+          let stop = 0;
+          if (!unit.blocking.some((e) => e.alive && e.blockedBy === unit)) {
+            for (let d = 1; d <= reach; d++) {
+              const [r, c] = frontOf(unit.tileR, unit.tileC, unit.dir, d);
+              // the anchor stops at the field edge and in front of a ground obstacle (crates, roadblocks)
+              if (!battle.grid.inRect(r, c) || battle.grid.isObstacle(r, c)) break;
+              stop = d;
+              if (battle.enemiesInKeys([r * COLS + c], unit, { canHitFly: true }).length) break;
+            }
           }
-          const [sr, sc] = frontOf(unit.tileR, unit.tileC, unit.dir, stop ?? 0);
+          const [sr, sc] = frontOf(unit.tileR, unit.tileC, unit.dir, stop);
           const fromX = unit.x, fromY = unit.y;
           battle.fx('anchor', { x: sc, y: sr, id: unit.id, fromX, fromY, r: radius });
           for (const e of battle.foesInRadius(sc, sr, radius)) {
             battle.dealDamage(unit, e, { amount: unit.s.atk * num(bb.atk_scale), type: 'phys', isSkill: true, tags: ['skill', 'anchor'] });
             if (e.alive) battle.applyStatus(e, 'stun', { duration: num(bb.stun), source: unit });
           }
-          if (stop == null || !unit.alive) return;
+          // ③ 【移动】 — only a change of tile moves him and leaves the 从不混淆的方向 ("若目标地块不为当前地块，会在原地部署"): an
+          // anchor on his own tile leaves him where he stands, no marker, nothing to return from [ASSUMED: the "tile one
+          // beyond the landing" is not tried when the landing is his own tile]
+          if (stop === 0 || !unit.alive) return;
           // PRTS 备注: landing tile > the tile one beyond it > his own tile (a deployable, free, unreserved melee tile)
           const ok = ([r, c]) => (r !== unit.tileR || c !== unit.tileC) && battle.grid.inRect(r, c) && battle.grid.canStand(r, c) && !battle.grid.isObstacle(r, c) && !battle.isReservedTile(r, c);
           const dest = [[sr, sc], frontOf(unit.tileR, unit.tileC, unit.dir, stop + 1)].find(ok);
