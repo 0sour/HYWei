@@ -90,7 +90,7 @@ band draft / 机变 / PREP deadline, and BATTLE_CHECK / ROUND_START / SETTLE run
 ### 1.1 Band draft
 Co-op: random order (all seats, bots included), one pick per turn, ONE countdown: `BAND_TURN_SECONDS` 30 s per turn,
 published as `m.public.deadline` (= `draft.turnDeadline`; `draft.turnSeconds` its length) — no step cap; AI seats pick
-at once. A turn that runs out takes the strategy the player highlights in the draft screen (`g.bandFocus {bandId?}`,
+at once (`bot.js botPickBand`, §1.5). A turn that runs out takes the strategy the player highlights in the draft screen (`g.bandFocus {bandId?}`,
 `Match.timeoutBand`) while it is allowed and no teammate holds it, else `bandDraft.timeoutBandId` 华法琳, else the first
 free strategy by sortId (`defaultBand`; a departing seat gets `defaultBand` too). One skip per player (`g.bandSkip`: the
 player moves to the end of the order; refused when nobody is left to pass to); a strategy a teammate already took is
@@ -212,6 +212,10 @@ The rest of this section is the legacy server-run mode
 另一组队友的战场情况" → `BAD_TARGET 'other group hidden'`); eliminated / departed players spectate any field.
 
 ### 1.5 AI player (bot.js)
+**Strategy** (`botPickBand`): weighted by starting LP among the offered bands (alone, 老鲤's withheld first-round funds
+× 0.02); a band whose mechanic rides on a bond the mode switches off weighs 0 — `GameData.bandBondIds` (the bond names
+in <…> of its text, the bond ids / bond pools of its blackboards) ∩ `modeInactiveBonds`: 标准's 潘格尼尼, 克莱门莎, 玛恩纳 —
+and with every offered band excluded it takes the default band; one rng draw per pick (DESIGN §21.26).
 Buys toward a full board first (the cap is 8 from R1; leftover funds are lost), completes the merges it can afford,
 then levels on a curve (L2 ≈ R3, L3 ≈ R5, L4 ≈ R7, L5 ≈ R10, L6 ≈ R12 — the competent curve of docs/BALANCE.md; free
 levels always), then spends the rest (a band that keeps its leftover funds — 坎诺特 利滚利 — holds its interest capital
@@ -534,15 +538,17 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   promotion, an owner moved while hand and temp are full) the summon leaves the board and its stack comes back at the
   next round start (`grantTokensFor`), so no out-of-range placement reaches the battle. The client lights and accepts
   the same tiles (`ui/gameLogic.js summonRange`), the bot plans inside them. Battle side: SIM.md §1.1 token pieces.
-* **Bonds**: bondsMeta.js (BOARD distinct, BOARD_AND_DECK, 绝技 elites, 调和 +1, 独行 downward, 助力 upper tiers,
-  变形同构体 grants). Σ activated layers for the hidden core = Σ layers of active bonds at the boss round's prep end.
+* **Bonds**: bondsMeta.js (BOARD distinct, BOARD_AND_DECK, 绝技 elites, 调和 +1 — the state and the views mark it
+  `harmony: 1`, DESIGN §21.26 —, 独行 downward, 助力 upper tiers, 变形同构体 grants). Σ activated layers for the hidden core = Σ layers of active bonds at the boss round's prep end.
   **变形同构体** (变形者集群 "与特定装备一同装备时装备者将视为特定盟约成员", 缪尔赛思's 特质 hands it out): its wearer
   with a bond item (`giveBondId`, the 14 pairings of the item's official talent) is a member of that bond — counted like
   any member (on the board only: the 14 bonds are BOARD; one member per operator, normal and elite copies alike), and
   so in the battle input / battle, the views, and on the client: the bond popup lists it among the members (tagged
   同构, `gameLogic.bondMembers` / `grantedBonds`, the same rule as `pieceBonds`) and its card shows the granted bond
   chip; a teammate's units carry their item ids for that (UnitInfo `items`, `Match.prepFieldMeta`, SIM.md §9), and a
-  card without an own piece (a teammate's unit, the card a 同构 row opens) lists those items read-only under 装备.
+  card without an own piece (a teammate's unit, the card a 同构 row opens) lists those items read-only under 装备. The
+  item's card lists the 14 pairings of its 天赋栏 from the same `giveBondId` (`gameLogic.morphPairings`, 本局禁用 marked),
+  the wearer's card highlights the pairing it wears, and a bond item's card names the bond it gives (DESIGN §21.26).
   Not covered [ASSUMED]: operator talents that test "【拉特兰】/【卡西米尔】/… 干员" in the kits read the record's bonds.
   **Layer cap** (research 11 §1; the client's `MAX_GARRISON_STACK` / `AddBondCount` = min(L + n, 999)): each bond's
   layers stop at `BOND_LAYER_CAP` = 999 (shared/constants.js; 0 / Infinity = off). Every writer clamps with
@@ -659,7 +665,8 @@ drawn set; `disabledBonds` = drawn ∪ the mode's static list), `hiddenBossId`, 
 `players[].autoplay`, `players[].uniteLeft` (UNITE, leakers only: their enemies still standing, uncapped — §4),
 `players[].bonds` = `ps.alive ? bondList(gd, ps.bondsView()) : []` — every bond with members, layers or an active tier, the same list
 and order as the player's own `m.private bonds` minus `thresholds` / `countsHand` (the client reads those from
-bonds.json): a teammate watching the player shows it in the bond strip (DESIGN §20.15); `[]` once the player is
+bonds.json; an entry whose count holds 调和's +1 carries `harmony: 1` in both lists — the bond popup's 调和 row, DESIGN
+§21.26): a teammate watching the player shows it in the bond strip (DESIGN §20.15); `[]` once the player is
 eliminated (nobody can watch them; the result screen reads `m.result`'s own bonds), and per phase: `draft { order, turn, picks, skipsLeft, turnDeadline, turnSeconds, untimed }` (BAND_DRAFT),
 `sp { family, name, desc, eventId, cards:[{ idx, kind:'bounty'|'item'|'tactic', id, name, desc, tier, descRaw?, coin?,
 payout?, rounds?, enemyKey?, count?, price?, team?, tacticKind? }], order, turn, picks:{pid: idx}, taken:{idx: pid}, untimed }`
