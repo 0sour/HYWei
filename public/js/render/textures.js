@@ -835,7 +835,7 @@ export function fxAtlas() {
   return _fx;
 }
 
-export const STATUS_KEYS = ['stun', 'freeze', 'cold', 'stealth', 'shield', 'fragile', 'sleep', 'invuln', 'silence', 'slow', 'bind', 'fear', 'weaken', 'levitate', 'taunt', 'burn', 'neural', 'necrosis', 'blocked', 'skill'];
+export const STATUS_KEYS = ['stun', 'freeze', 'cold', 'stealth', 'shield', 'fragile', 'sleep', 'invuln', 'silence', 'slow', 'bind', 'fear', 'weaken', 'levitate', 'taunt', 'burn', 'neural', 'necrosis', 'blocked', 'skill', 'healFree'];
 
 function drawStatusIcon(c, key, x, y, s) {
   const cx = x + s / 2, cy = y + s / 2;
@@ -928,6 +928,14 @@ function drawStatusIcon(c, key, x, y, s) {
     case 'skill': {
       disc('rgba(60,40,5,0.92)', '#ffe066');
       c.fillStyle = '#ffe066'; star(c, cx, cy, 10, 4.5);
+      break;
+    }
+    case 'healFree': { // 禁疗: a green heal cross struck through in red
+      disc('rgba(15,40,20,0.92)', '#7ee08a');
+      c.fillStyle = '#9dffa8';
+      c.fillRect(cx - 2.5, cy - 9, 5, 18); c.fillRect(cx - 9, cy - 2.5, 18, 5);
+      c.strokeStyle = '#ff5a5a'; c.lineWidth = 3;
+      c.beginPath(); c.moveTo(cx - 10, cy + 10); c.lineTo(cx + 10, cy - 10); c.stroke();
       break;
     }
     default: disc('rgba(30,30,30,0.9)', '#ccc');

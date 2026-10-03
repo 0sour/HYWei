@@ -1050,7 +1050,8 @@ const KITS = {
 
   // ---------------------------------------------------------------------------------------------------------------
   // 史尔特尔 — S3 黄昏 (toggle, 持续时间无限): full heal, ATK +, range +2, 3 targets, max HP +5000 (flat), HP loss ramping
-  // to 20 % max HP/s over 60 s. T1 熔火: ignores 20 RES. T2 余烬: lethal damage keeps HP ≥ 1 for 8 s, then she withdraws.
+  // to 20 % max HP/s over 60 s. T1 熔火: ignores 20 RES. T2 余烬: lethal damage keeps HP ≥ 1 for 8 s (不死 + 禁疗), then she
+  // withdraws.
   // Module (elite): ASPD +8 while not blocking.
   // S1 烈焰魔剑 (instant, attack SP): next attack atk_scale × ATK; a kill refills all SP at once.
   // S2 熔核巨影 (duration): ATK +, range +1, 2 targets; an attack that hits a single enemy is ×critical atk_scale.
@@ -1084,7 +1085,8 @@ const KITS = {
         onStart({ battle, unit }) {
           unit.mem.twilightT = 0;
           unit.mem.twilightAcc = 0;
-          battle.heal(unit, unit, unit.s.maxHp, { self: true });
+          // "立即恢复所有生命" — PRTS 技能3 备注 "（无视禁疗）": it reaches her during 余烬 too
+          battle.heal(unit, unit, unit.s.maxHp, { self: true, ignoreHealFree: true });
           battle.fx('aoe', { x: unit.x, y: unit.y, id: unit.id, r: 1, skill: 'surtr' });
         },
         onTick({ battle, unit, dt }) {
@@ -1101,6 +1103,12 @@ const KITS = {
       talents: [
         { install(battle, unit) { permBuff(battle, unit, 'surtr:magma', { resIgnoreFlat: num(t0.magic_resist_penetrate_fixed) }); } },
         { install(battle, unit) { // 余烬
+          // PRTS 天赋备注: "持有不死的情况下不会触发此天赋" (a 不死 that prevented the blow first: `c.prevented` — 坚固维式重锤's
+          // lock, PRIO_REVIVE −100, runs after this −60 on the same first lethal blow [ASSUMED order], so it never starts
+          // while 余烬 is unused). "触发本天赋后，获得禁疗与不死": 不死 = every later lethal blow is prevented (`mem.ember`);
+          // 禁疗 (异常效果 HEAL_FREE "无法成为治疗类能力的目标，且受到的治疗量变为0", an HP-regen attribute excepted) = flags
+          // noHeal (no heal pick, no heal from others) + healFree (her own heals too; S3's start heal "无视禁疗"), shown as
+          // the status 'healFree' until she leaves. "强制退出战场视为撤回干员": a retreat (Battle.retreat drops the buff).
           const wait = num(t1['surtr_t_2[withdraw].interval'], 8);
           battle.on('deploy', (c) => { if (c.unit === unit) unit.mem.ember = false; }, { owner: unit });
           battle.on('fatal', (c) => {
@@ -1109,6 +1117,7 @@ const KITS = {
             if (unit.mem.ember) return;
             unit.mem.ember = true;
             const dep = unit.deploySeq;
+            battle.addBuff(unit, { key: 'surtr:ember', status: 'healFree', flags: { noHeal: true, healFree: true } });
             battle.fx('ember', { x: unit.x, y: unit.y, id: unit.id });
             battle.after(wait, () => { if (unit.alive && unit.deploySeq === dep) battle.retreat(unit, { reason: 'retreat' }); }, { owner: unit });
           }, { owner: unit, priority: -60 });
