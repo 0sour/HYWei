@@ -15,6 +15,7 @@ import { computeBonds, bondList, bondSnapshot, bondsWithGains, HARMONY_BOND } fr
 import { botPickBand } from '../../server/match/bot.js';
 import { tileKey } from '../../server/match/board.js';
 import { validateClientResult } from '../../server/match/fields.js';
+import { bandBondIds as bandBondIdsOf } from '../../shared/bandBonds.js';
 import { DATA, makeMatch, give, legalTileFor, checkInvariants } from './harness.js';
 
 const MLYSS = 'chess_char_6_11_a'; // 缪尔赛思 (调和)
@@ -115,16 +116,21 @@ describe('§21.26 3 — strategies tied to a bond the mode switches off', () => 
     assert.deepEqual(funny.bandBondIds('nope'), []);
   });
 
-  test('a band tied only through a pool or a blackboard bond id is caught too (潘格尼尼 without its text)', () => {
-    const data = { ...DATA, bands: {
-      band_pool: { ...DATA.bands.band_paganini, bandId: 'band_pool', desc: '【定制铳械】累计花费55资金后，获得1名精锐干员' },
-      band_bb: { ...DATA.bands.band_clementia, bandId: 'band_bb', desc: '【崇高牺牲】' },
-      band_free: { ...DATA.bands.band_bldsk, bandId: 'band_free' },
-    } };
-    const gd = new GameData(data, 'mode_single_funny');
-    assert.deepEqual(gd.bandBondIds('band_pool'), ['lateranoShip'], 'choices.json pools.pool_char_later.bond');
-    assert.deepEqual(gd.bandBondIds('band_bb'), ['egirShip'], 'bbStr bond_id');
-    assert.deepEqual(gd.bandBondIds('band_free'), []);
+  test('the derivation (shared/bandBonds.js, run by the data build) catches a tie through a pool or a blackboard bond id alone; GameData reads the field', () => {
+    const ctx = { bonds: DATA.bonds, pools: DATA.choices.pools };
+    const pool = { ...DATA.bands.band_paganini, desc: '【定制铳械】累计花费55资金后，获得1名精锐干员' };
+    const bb = { ...DATA.bands.band_clementia, desc: '【崇高牺牲】' };
+    assert.deepEqual(bandBondIdsOf(pool, ctx), ['lateranoShip'], 'choices.json pools.pool_char_later.bond');
+    assert.deepEqual(bandBondIdsOf(bb, ctx), ['egirShip'], 'bbStr bond_id');
+    assert.deepEqual(bandBondIdsOf({ desc: '在<阿戈尔>部分干员缺席时体验可能不完整；<寻呼模块>', buffs: [{ bb: { bond: 'kazimierzShip,nope' } }] }, ctx), ['egirShip', 'kazimierzShip'], 'the note, comma lists; an item in <…> is no bond');
+    assert.deepEqual(bandBondIdsOf(DATA.bands.band_bldsk, ctx), []);
+    assert.deepEqual(bandBondIdsOf(null, ctx), []);
+    // the build wrote exactly this for every band (data/bands.json is not stale against the helper)
+    for (const [id, b] of Object.entries(DATA.bands)) assert.deepEqual(b.bondIds, bandBondIdsOf(b, ctx), id);
+    // GameData reads the field (known bonds, data order) — never re-derives
+    const gd = new GameData({ ...DATA, bands: { band_x: { ...DATA.bands.band_bldsk, bandId: 'band_x', bondIds: ['kazimierzShip', 'nope', 'egirShip'] }, band_old: { ...DATA.bands.band_paganini, bondIds: undefined } } }, 'mode_single_funny');
+    assert.deepEqual(gd.bandBondIds('band_x'), ['egirShip', 'kazimierzShip']);
+    assert.deepEqual(gd.bandBondIds('band_old'), [], 'data without the field: no tie');
   });
 
   /** Bands the bots took over seeds 1–200: solo (one AI's pick) and co-op (the real draft, 4 AI seats). */
@@ -255,6 +261,7 @@ test('§21.26 docs: DESIGN (the subsection and the normative lines), META, PLAYI
   assert.ok(at > 0, 'the subsection');
   const s = DESIGN.slice(at);
   for (const k of ['morphPairings', 'harmonyMembers', '`harmony: 1`', 'bandBondIds', 'botPickBand', '0 of 200 and 0 of 800', '5 of 200 solo and 23 of 800 co-op']) assert.ok(s.includes(k), k);
+  assert.match(doc('docs/DATA.md'), /\| `bondIds` \| `\["lateranoShip"\]` \(潘格尼尼\) \/ `\[\]` \|/, 'DATA.md bands.json bondIds');
   assert.match(DESIGN, /bonds:\[\{bondId,count,active,tier,layers,harmony\? \/\* 调和's \+1 is in count, §21\.26 \*\/\}\]/, '§8.2');
   assert.match(DESIGN, /bonds: \[ \{ bondId, count, active, tier, layers, harmony\? \/\* 调和's \+1 is in count, §21\.26 \*\/, thresholds, countsHand \} \]/, '§8.3');
   assert.match(DESIGN, /Strategy \(§21\.6\): pick a band \(weighted by starting LP; never one built around a bond the mode switches off — `gd\.bandBondIds`, §21\.26\)/, '§6.6');

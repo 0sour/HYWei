@@ -35,6 +35,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Grid, DEPLOY_REFUSED_TILES } from '../server/sim/grid.js';
+import { bandBondIds } from '../shared/bandBonds.js';
 
 // ===== CLI & IO ==================================================================================
 
@@ -1433,7 +1434,10 @@ function buildItems(ctx, effects) {
 
 // ===== bands (策略) ===============================================================================
 
-/** Build data/bands.json: the 40 season strategies. */
+/**
+ * Build data/bands.json: the 40 season strategies. `bondIds` (the bonds a strategy is built around: shared/bandBonds.js
+ * over its text and blackboards, needing bonds.json and choices.json pools) is added in main() once those are built.
+ */
 function buildBands(ctx, effects) {
   const { act, ac } = ctx;
   const out = {};
@@ -3072,6 +3076,7 @@ function validateAll(f) {
     if (it.requiresBondId && !bonds[it.requiresBondId]) err(`item ${it.id}: requiresBond ${it.requiresBondId} missing`);
   }
   for (const b of Object.values(bands)) if (!effects[b.effectId]) err(`band ${b.bandId}: effect missing`);
+  for (const b of Object.values(bands)) for (const id of b.bondIds || []) if (!bonds[id]) err(`band ${b.bandId}: bond ${id} missing`);
   for (const w of Object.values(waves)) {
     for (const sp of w.spawns) {
       if (sp.action) continue;
@@ -3145,6 +3150,9 @@ async function main() {
   const factions = buildFactions(ctx, enemies);
   const bosses = buildBosses(ctx, enemies, waves);
   const choices = buildChoices(ctx, effects, items, chess);
+  // the bonds each strategy is built around (DESIGN §21.26): the bot skips, and the strategy draft marks 本局禁用, a band
+  // whose bond the mode switches off
+  for (const b of Object.values(bands)) b.bondIds = bandBondIds(b, { bonds, pools: choices.pools });
   const config = buildConfig(ctx, waves, stages, bands);
   const files = { config, chess, bonds, garrisons, items, bands, effects, choices, enemies, factions, waves, stages, bosses, tokens };
 

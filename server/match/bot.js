@@ -60,8 +60,8 @@
 //      for it, makeHandRoom, instead of being destroyed), keep one hand slot free (freeHandSlot: a kept bounty Art goes
 //      before a chess on a bot's own seat, never on a human's seat under AI 托管), then Ready.
 // Strategy (botPickBand): weighted by starting LP among the offered bands; never one whose mechanic rides on a bond the
-// mode switches off (gd.bandBondIds: the bond its text names in <…> or its effect's blackboards name — 标准's 潘格尼尼,
-// 克莱门莎, 玛恩纳; DESIGN §21.26); alone, 老鲤's withheld first-round funds only rarely (× 0.02).
+// mode switches off (gd.bandBondIds = bands.json bondIds: the bond its text names in <…> or its blackboards name — 标准's
+// 潘格尼尼, 克莱门莎, 玛恩纳; DESIGN §21.26); alone, 老鲤's withheld first-round funds only rarely (× 0.02).
 // 机变 (botPickCard): a bounty by its expected payout minus the expected LP lost — bountyKillChance runs the exposure
 // model for that one enemy against the own board; a card the board is unlikely to beat wins only when nothing better
 // is offered or it pays much more —; tactic cards by what they act on (a 盟誓 / 驰援 card on the own bonds, 升华 …);

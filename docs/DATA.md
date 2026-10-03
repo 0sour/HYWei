@@ -302,6 +302,7 @@ everything needed to resolve a unit for `(chessId, skillIndex, moduleId)` (`simd
 | `effectId`, `effectName`, `desc`, `descRaw` | `"aceffect_band_21"`, `"重点监护"`, `"【重点监护】开始作战时…"` | |
 | `buffs[]`, `params` | `[{"key":"prep_finish_char_bond_add_layer","bb":{"layer":2},"bbStr":{}}]` | |
 | `victorCount`, `rewardModulus`, `unlockDesc` | `3`, `1`, `null` | |
+| `bondIds` | `["lateranoShip"]` (潘格尼尼) / `[]` | the bonds the strategy is built around (`shared/bandBonds.js`: the bond names in <…> of its text — the official note "在<X>部分干员缺席时体验可能不完整" among them — and the bond ids / bond pools of its blackboards, `pool` → choices.json `pools[pool].bond`); 9 bands are tied. The bot never picks, and the strategy draft marks 本局禁用, a band whose bond the mode switches off (DESIGN §21.26) |
 
 ## 7. `effects.json` — `{ [effectId]: Effect }` (361: every effect of the season)
 
