@@ -403,9 +403,10 @@ function installEgir(battle, pid, bb, members) {
   battle.on('battleStart', () => devour(battle, pid, bb, members), { once: true });
   if (!reached(battle, pid, 'egirShip', bb.power_bond_char_cnt)) return;
   // 5: "前3名【阿戈尔】干员首次被击倒时立刻复活" — PRTS: the knocked-out unit's next deployment has 0 redeploy time and
-  // 0 cost, i.e. it IS knocked out (被击倒 triggers, 克莱门莎, 幽灵鲨 … fire) and redeploys at once on the tile it was
-  // knocked out on (engine redeploy `tile`: a raid-relocated member comes back where it fell, later redeploys use its
-  // board tile) with full HP, SP reset and `deploy` effects (卡西米尔 / 叙拉古). Death priority 11: before 不屈 (10),
+  // 0 cost, i.e. it IS knocked out (被击倒 triggers, 克莱门莎, 幽灵鲨 … fire) and redeploys at once where it lies (the
+  // engine's rest tile, Battle._layBody: the tile it was knocked out on — a raid-relocated member comes back where it
+  // fell —, or its own home when it fell on another board piece's home; PRTS 卫戍协议/帮助 §作战阶段 单位部署) with full
+  // HP, SP reset and `deploy` effects (卡西米尔 / 叙拉古). Death priority 11: before 不屈 (10),
   // whose redeploy "also consumes a 复活 charge" — with this order the charge is always the one used, same outcome.
   const memberSet = new Set(members);
   const max = Math.max(0, Math.floor(num(bb.max_free_respawn_cnt, 0)));
@@ -415,7 +416,7 @@ function installEgir(battle, pid, bb, members) {
     if (c.reason !== 'killed' || !memberSet.has(u) || st.knocked.has(u)) return;
     st.knocked.add(u);
     if (st.revives >= max || u.alive || u.removed) return;
-    if (!battle.redeploy(u, { free: true, tile: [u.tileR, u.tileC] }) && !battle.redeploy(u, { free: true })) return;
+    if (!battle.redeploy(u, { free: true })) return;
     st.revives++;
     S.fxOn(battle, 'revive', u, 'bond:egirShip', 'respawn', { n: st.revives });
   }, { priority: 11 });

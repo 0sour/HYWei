@@ -128,10 +128,13 @@ const reveal = (battle, enemies) => { for (const e of enemies) if (e.s.flags.ste
 function shove(battle, e, from, force) {
   return e && e.alive ? battle.push(e, num(force, 0), { from }) : 0;
 }
-/** Free tile for a summon/device: in the rect, standable, empty and not the home tile of any ally (dead ones redeploy there). */
+/**
+ * Free tile for a summon/device: in the rect, standable, not reserved (Battle.isReservedTile: empty, no knocked-out
+ * operator lying there) and not the home tile of any ally (dead ones redeploy there).
+ */
 function freeTile(battle, r, c, { ranged = false, ground = false } = {}) {
   if (!Number.isInteger(r) || !Number.isInteger(c) || !battle.grid.inRect(r, c)) return false;
-  if (battle.unitAt(r, c)) return false;
+  if (battle.isReservedTile(r, c)) return false;
   if (!battle.grid.canStand(r, c, { ranged })) return false;
   if (ground && !battle.grid.groundPassable(r, c)) return false;
   for (const u of battle.allyUnits) if (!u.removed && u.homeR === r && u.homeC === c && u.kind !== 'device') return false;

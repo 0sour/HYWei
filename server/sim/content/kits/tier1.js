@@ -186,16 +186,12 @@ export function makeZone(battle, caster, { x, y, radius, duration, interval = 1,
 }
 
 /**
- * A tile a summon may take: inside the field, nobody on it, and not the home tile of a board unit that has not
- * deployed yet / waits to redeploy (a summon there would stop that operator from redeploying until it leaves).
+ * A tile a summon may take: inside the field and not reserved (Battle.isReservedTile: nobody on it, no knocked-out
+ * operator lying there, not the home tile of a board unit that has not deployed yet / waits to redeploy — a summon
+ * there would stop that operator from redeploying until it leaves).
  */
 export function summonTileFree(battle, r, c) {
-  if (!Number.isInteger(r) || !Number.isInteger(c) || !battle.grid.inRect(r, c) || battle.unitAt(r, c)) return false;
-  for (const u of battle.allyUnits) {
-    if (u.alive || u.removed || u.kind === 'device') continue;
-    if (u.homeR === r && u.homeC === c) return false;
-  }
-  return true;
+  return Number.isInteger(r) && Number.isInteger(c) && battle.grid.inRect(r, c) && !battle.isReservedTile(r, c);
 }
 
 /** First free tile around `unit` (Chebyshev ring 1, front first — offsets rotated by its direction) where `ok(r, c)` holds. */

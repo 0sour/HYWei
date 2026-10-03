@@ -19,8 +19,9 @@
 // plane). `setDir(dir)` re-orients a live view (swapping Front ⇄ Back without a fallback flash). Enemies flip by the
 // sign of their horizontal velocity (with hysteresis).
 //
-// Knocked-out operators (user playtest #4 item 9, b.snap `down`): `setDown([id, respawnAt, respawnTime, state])`
-// keeps a dead operator on its tile in its knocked-down pose — the Spine Die clip played once and held on its last
+// Knocked-out operators (user playtest #4 item 9, b.snap `down`): `setDown([id, respawnAt, respawnTime, state, row,
+// col])` keeps a dead operator on the tile it lies on (row / col: where it fell, or its home — sim Battle._layBody,
+// player report F5 after 0.1.0) in its knocked-down pose — the Spine Die clip played once and held on its last
 // frame (the collapsed / kneeling pose with closed eyes), slightly greyed — with a redeploy ring above its head:
 // a dark disc, a mint arc filling as the respawn timer runs and the seconds left; once the timer is done and it still
 // waits, a full amber ring with "DP" (not enough DP) or a red ring with "!" (its tile is taken). `onDeploy` (the
@@ -693,11 +694,13 @@ export class UnitView {
   }
 
   /**
-   * Knocked-out state (b.snap `down` entry `[id, respawnAt, respawnTime, state]`, render/interp.js downAt) or null;
-   * `t` = the render clock's game time. A living view is knocked down first (its Die clip plays; `instant`: a view made
-   * for a unit that is already down — a field joined mid-battle — starts on the held end of the clip). While down the
-   * view never fades: the Die clip's last frame stays on the tile under the redeploy ring. null on a view still down
-   * (it left for good) starts the fade; the redeploy itself comes through onDeploy / revive.
+   * Knocked-out state (b.snap `down` entry `[id, respawnAt, respawnTime, state, row?, col?]`, render/interp.js downAt)
+   * or null; `t` = the render clock's game time. A living view is knocked down first (its Die clip plays; `instant`: a
+   * view made for a unit that is already down — a field joined mid-battle — starts on the held end of the clip). While
+   * down the view never fades: the Die clip's last frame stays on the tile the entry names (the view moves there when
+   * it stands elsewhere: a body that went back to its home, a view built from the unit's deploy info) under the
+   * redeploy ring. null on a view still down (it left for good) starts the fade; the redeploy itself comes through
+   * onDeploy / revive.
    */
   setDown(d, t, instant = false) {
     if (Number.isFinite(t)) this.gameT = t;
@@ -708,6 +711,10 @@ export class UnitView {
       return;
     }
     if (this.alive) this.die(instant);
+    if (Number.isInteger(d[4]) && Number.isInteger(d[5]) && (this.x !== d[5] || this.y !== d[4])) {
+      this.x = d[5]; this.y = d[4];
+      this.z = this.zTarget = groundZ(this.ctx, this.x, this.y);
+    }
     if (this.zTarget == null) this.z = this.zTarget = groundZ(this.ctx, this.x, this.y); // never synced: its tile top
     this.dying = 0; // no death fade while down
     const dn = this.down || (this.down = { until: 0, total: 0, state: DOWN_STATE.COUNTING });
