@@ -110,3 +110,59 @@ test('dispatcher: an item whose holder an earlier item\'s handler destroyed is n
   assert.ok(!ps.find(victim.uid), 'the victim chess is gone');
   assert.deepEqual(calls, [], 'the spy on the destroyed holder never ran');
 });
+
+// QA after the integration: the pairs were taken per holder as the walk reached it, not before step 5 began — an item
+// equipped meanwhile onto a holder not yet walked ran in the same dispatch, and an item moved from a holder already
+// walked to a later one ran twice. Every [holder, item] pair is now taken before the first item runs.
+test('dispatcher: an item equipped during the walk waits for the next dispatch, whichever holder it goes to', () => {
+  for (const where of ['a holder walked later (hand)', 'a holder walked earlier (board)']) {
+    const calls = [];
+    const registry = createRegistry({ log: QUIET });
+    const GIVER = A('1_02');
+    let target = null, given = null;
+    registry.item(GIVER, { onRoundStart(ctx) { if (given) return; given = ctx.grantItem(SPY); ctx.equipDirect(given.uid, target.uid); } });
+    registry.item(SPY, { onRoundStart(ctx) { calls.push(ctx.source.piece.uid); } });
+    const h = makeMatch({ mode: 'solo', humans: 1, seed: 3, registry, fake: true }).start();
+    h.toPrep(1);
+    const m = h.m;
+    const ps = h.ps('p_0');
+    for (const p of [...ps.board.values(), ...ps.hand.filter(Boolean), ...ps.temp.filter(Boolean)]) if (p.kind === 'chess') ps.returnCopies(p);
+    ps.board.clear(); ps.hand.fill(null); ps.temp.fill(null); ps.offers.length = 0; ps.bandId = null; ps.recompute();
+    const [c1, c2] = plain((c) => c.tier === 1);
+    let giverHolder;
+    if (where.includes('later')) { giverHolder = give(m, ps, c1, 'board', [9, 4]); target = give(m, ps, c2, 'hand'); }
+    else { target = give(m, ps, c2, 'board', [9, 4]); giverHolder = give(m, ps, c1, 'hand'); }
+    assert.deepEqual(m.handle('p_0', { t: 'g.equip', itemUid: giveItem(m, ps, GIVER).uid, targetUid: giverHolder.uid }), OK);
+    m.dispatch(ps, 'onRoundStart', { round: 2 });
+    assert.ok(given && target.items.some((it) => it.uid === given.uid), `${where}: the spy item was equipped during the walk`);
+    assert.deepEqual(calls, [], `${where}: not run in the dispatch that equipped it`);
+    m.dispatch(ps, 'onRoundStart', { round: 3 });
+    assert.deepEqual(calls, [given.uid], `${where}: run once in the next dispatch`);
+  }
+});
+
+test('dispatcher: an item moved during the walk from a holder already walked to a later one runs once', () => {
+  const calls = [];
+  const registry = createRegistry({ log: QUIET });
+  const MOVER = A('1_02');
+  let first = null, later = null, spy = null, done = false;
+  registry.item(SPY, { onRoundStart(ctx) { calls.push(ctx.source.holder.uid); } });
+  registry.item(MOVER, { onRoundStart(ctx) { if (done) return; done = true; ctx.destroyPiece(first.uid); ctx.equipDirect(spy.uid, later.uid); } });
+  const h = makeMatch({ mode: 'solo', humans: 1, seed: 3, registry, fake: true }).start();
+  h.toPrep(1);
+  const m = h.m;
+  const ps = h.ps('p_0');
+  for (const p of [...ps.board.values(), ...ps.hand.filter(Boolean), ...ps.temp.filter(Boolean)]) if (p.kind === 'chess') ps.returnCopies(p);
+  ps.board.clear(); ps.hand.fill(null); ps.temp.fill(null); ps.offers.length = 0; ps.bandId = null; ps.recompute();
+  const [c1, c2, c3] = plain((c) => c.tier === 1);
+  first = give(m, ps, c1, 'board', [12, 3]);           // walked first (deployment order)
+  const moverHolder = give(m, ps, c2, 'board', [9, 3]);
+  later = give(m, ps, c3, 'hand');                     // walked last
+  spy = giveItem(m, ps, SPY);
+  assert.deepEqual(m.handle('p_0', { t: 'g.equip', itemUid: spy.uid, targetUid: first.uid }), OK);
+  assert.deepEqual(m.handle('p_0', { t: 'g.equip', itemUid: giveItem(m, ps, MOVER).uid, targetUid: moverHolder.uid }), OK);
+  const firstUid = first.uid;
+  m.dispatch(ps, 'onRoundStart', { round: 2 });
+  assert.ok(done && !ps.find(firstUid) && later.items.includes(spy), 'the spy item was moved to the later holder mid-walk');
+  assert.deepEqual(calls, [firstUid], 'run once, on the holder it stood on when its turn came (it ran twice)');
+});
