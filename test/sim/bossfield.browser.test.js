@@ -1,8 +1,8 @@
 // test/sim/bossfield.browser.test.js — the Final Assault / Hidden Core fields in the BROWSER sim (DESIGN §14: the
 // clients simulate the boss fields; the server re-simulates them for SP_VERIFY and takeovers). A real bot co-op match
-// (终极, seed 14 since 0.1.1 — the bots and the rules of 0.1.1 play seed 12 to boards without a 麻痹 or a 剑 / 锤 transfer on
-// every field; seed 14's pair fields carry 奥术, 催泪瓦斯 and 限伤-sized hits) is played to the Hidden Core with every active bond at the
-// official 999 layers (DESIGN §20.12); its four captured boss specs (R14 假想敌：胄 boss_1, R15 隐秘核心 boss_8) run to
+// (终极, seed 14 since 0.1.1 — the bots and the rules of 0.1.1 play seed 12 to boards without a 麻痹 or a 剑 / 锤
+// transfer on every field; seed 14's pair fields carry 奥术, 催泪瓦斯 and 限伤-sized hits) is played to the Hidden Core
+// with every active bond at the official 999 layers (DESIGN §20.12); its four captured boss specs (R14 假想敌：胄 boss_1, R15 隐秘核心 boss_8) run to
 // the end in Node and in headless Chrome through the client's own loader (public/js/battle/runner.js loadBrowserSim)
 // with the field's LocalBossPool, and must give the same result digest, the same pool and the same fx per kind.
 // The fields exercise the playtest-6b sim paths: 直接乘算 bonus sums (§20.10), one 奥术 instance per target
