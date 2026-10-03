@@ -350,6 +350,7 @@ const BY_BUFF = {
     S.on('damaged', (c) => {
       const a = c.source, t = c.target;
       if (!a || a === u || a.side !== 'ally' || !ENEMY_RECORD.test(a.defId ?? '') || !t || t.side !== 'enemy' || !t.alive || !onField(u)) return;
+      if (c.type === 'element') return; // an element 损伤 (the gauge) is no damage instance
       if (c.dmg) { if (c.dmg.arcaneSilence) return; c.dmg.arcaneSilence = true; }
       battle.applyStatus(t, 'silence', { duration: d, source: a });
     });
