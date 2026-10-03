@@ -2,9 +2,9 @@
 //
 // b.snap  = { fieldId, t, units: [[id, x, y, hp, maxHp, sp, spMax, flags, anim]], dp, killed, total }
 // UnitInfo = { id, kind, side, ownerId, defId, name, tier, golden, spine, avatar, x, y, facing, dir, maxHp, motion?, boss?, uid?,
-//   form?, skillIndex?, moduleId?, items? }  (form = an enemy's current model form, content/enemies.js setForm — 掠海漂移体
-//   'crawl', 暴鸰 'bombed', 转译基底·α's forms …: a view built after the change, a field opened mid-battle, draws it —
-//   render/units.js FORMS)
+//   form?, skillIndex?, moduleId?, items? }  (form = the unit's current model form — an enemy's, content/enemies.js setForm:
+//   掠海漂移体 'crawl', 暴鸰 'bombed', 转译基底·α's forms …; a 傀儡师 fighting as its 替身 'doll', professions.js — a view built
+//   after the change, a field opened mid-battle, draws it: render/units.js FORMS)
 //   dir = 'UP'|'RIGHT'|'DOWN'|'LEFT' (allies: the deploy direction, sim/dir.js); facing = its horizontal sign (±1).
 //   items = an ally operator's equipped item ids (absent without any).
 // flags bits & anim codes come from shared/constants.js (UF / ANIM); an enemy's stealth bit = its 隐匿 is on (not while it
@@ -37,8 +37,8 @@ export function unitInfo(u) {
     maxHp: Math.max(1, Math.round(u.s.maxHp)),
     motion: u.motion === 'FLY' ? 'FLY' : undefined,
     boss: u.isBoss ? true : undefined,
-    // an enemy's current model form (content/enemies.js setForm, render/units.js FORMS): a view built mid-battle
-    // (fieldMeta — a watched teammate's field, 联防 observers, a reconnect) starts on that clip set
+    // the unit's current model form (an enemy's content/enemies.js setForm, a 傀儡师's 替身 — render/units.js FORMS): a
+    // view built mid-battle (fieldMeta — a watched teammate's field, 联防 observers, a reconnect) starts on that clip set
     form: typeof u.form === 'string' ? u.form : undefined,
     uid: u.uid ?? undefined,
     // DESIGN §16: the equipped skill's index (the renderer / audio pick that skill's Spine clip and sound)
