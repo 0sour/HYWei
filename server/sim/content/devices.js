@@ -357,7 +357,8 @@ function enterTerrain(battle, st, u, code) {
  * so without it the loss continues. One effect per unit (PRTS 作战机制: "同名buff的默认叠加策略buff只能表现出一个"): a
  * unit that already carries it gets its full `duration` back and keeps its per-second rhythm — no second effect, no
  * extra tick [ASSUMED: the time counts from the last contact]. An operator deployed on it is always in contact and
- * keeps draining, as officially. The tick (terrainDamage) is true damage no unit deals (无来源), tagged 'terrain' =
+ * keeps draining, as officially. Leaving the field drops it with every buff; a 重生 keeps it (enemies.js rebirthCleanse
+ * keeps source-less buffs [ASSUMED]). The tick (terrainDamage) is true damage no unit deals (无来源), tagged 'terrain' =
  * 环境伤害 (PRTS 自然环境 lists 活性源石), not 'dot' [ASSUMED: PRTS 伤害分类's list of BUFF damage does not name it].
  */
 function touchInfection(battle, st, u) {
