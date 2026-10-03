@@ -57,7 +57,9 @@
 //   INVISIBLE  — permanent `stealth` flag (engine: untargetable unless blocked or revealed). An operator's radius area
 //                damage skips an unblocked one too (Battle.foesInRadius: profession splash around a struck target,
 //                skill circles — PRTS 作战机制 §AOE伤害判定 "对攻击范围内的每个可以被选中的敌人进行判定"; until 0.1.1 it
-//                still hit it); tile selectors (enemiesInKeys) always skipped it.
+//                still hit it); tile selectors (enemiesInKeys) always skipped it. After a block it hides again only
+//                STEALTH_RESTORE (3) s later — or after the "（解除阻挡N秒后恢复）" of its PRTS page (STEALTH_RESTORE_BY_KEY,
+//                清明's veil 0 s) — Battle._stealthSwitch / targeting.js enemyStealthed (until 0.1.2: at once).
 //   REFLECTION — 折射 (ba.refraction "生效时，法术抗性+70"): RES +refracting.magic_resistance while NOT silenced
 //                (the ability line is SILENCE-flagged: silencing turns it off); 镜膜 also gets max HP +100 % while on.
 //   SPECIAL    — mostly stats; prisoners, 穿刺手, 暴虐兵长, 镜卫, 动力装甲 … below.
@@ -78,7 +80,7 @@
 // Custom hook: 'lpLoss' {amount, reason, source} — leader "扣除目标生命" effects; also summed into result.lpLoss.
 
 import { TICK, MOVE_SCALE, ELEMENT, ATTACK_PAUSE, PROJECTILE_SPEEDS, ALLY_COLLIDER_RADIUS } from '../constants.js';
-import { canTargetAlly, sortAllyTargets, aggroCmp, evadesGround } from '../targeting.js';
+import { canTargetAlly, sortAllyTargets, aggroCmp, evadesGround, enemyStealthed } from '../targeting.js';
 import { mitigate, periodicDamage } from '../damage.js';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -107,6 +109,23 @@ const TANK_ZONE_RADIUS = 1.7;
 const POLLUTION_INTERVAL = 1;
 /** "数个目标" of 假想敌：骨刺 while stealthed [ASSUMED]. */
 const ACBUNN_TARGETS = 3;
+/**
+ * 隐匿 that comes back sooner after a block than the general 3 s (PRTS 作战机制 §隐匿 "对于绝大部分可隐匿的敌人而言…不被阻挡的
+ * 3秒后重新进入隐匿"; engine STEALTH_RESTORE): the enemy pages' 天赋 "隐匿（解除阻挡N秒后恢复）" — PRTS text search
+ * "解除阻挡0秒后恢复" (21 enemies; these 6 are in this mode) and "解除阻挡1秒后恢复" (the two 家族灭迹人), checked
+ * 2026-10-03. Every other stealthy enemy here has a plain "隐匿" (3 s), the 深池逐火 embers included. 清明 / 堂皇's veil
+ * ("获得隐匿（解除阻挡0秒后恢复）") is kitInvisShield's.
+ */
+const STEALTH_RESTORE_BY_KEY = Object.freeze({
+  enemy_10031_cnvsld: 0,     // 业余竞演者
+  enemy_10034_cnvsax: 0,     // 节日爵士乐手
+  enemy_9008_acbunn: 0,      // 假想敌：骨刺
+  enemy_2034_sythef: 0,      // 流泪小子
+  enemy_2034_sythef_2: 0,    // 流泪小子 (its stronger copy)
+  enemy_1389_winbab_2: 0,    // 访问团强攻冠军
+  enemy_1283_sgkill: 1,      // 家族灭迹人
+  enemy_1283_sgkill_2: 1,    // 家族暗影灭迹人
+});
 /** 假想敌：再生 shield aura radius (PRTS 假想敌：再生 天赋 "进入此形态时，使半径1.8范围内的其他敌方单位（无视其可选性）获得5层…护盾"). */
 const ACPUPP_AURA_RADIUS = 1.8;
 /** 重弩突袭者 直击 reach along a row/column [ASSUMED]. */
@@ -572,8 +591,16 @@ const onTerrain = (b, u, terrain) => { const [r, c] = tileOf(u); return b.grid.t
 // ---------------------------------------------------------------------------------------------------------------
 // archetypes
 
-/** 隐匿: permanent stealth. */
-const stealth = () => ({ spawn(b, e) { b.addBuff(e, { key: 'ab:stealth', flags: { stealth: true }, persist: true }); } });
+/**
+ * 隐匿: permanent stealth. Blocked it is lifted; it hides again STEALTH_RESTORE s after the block ends, or after its own
+ * "（解除阻挡N秒后恢复）" (STEALTH_RESTORE_BY_KEY → buff `data.stealthRestore`; Battle._stealthSwitch).
+ */
+const stealth = () => ({
+  spawn(b, e, a, ab) {
+    const n = STEALTH_RESTORE_BY_KEY[ab.key];
+    b.addBuff(e, { key: 'ab:stealth', flags: { stealth: true }, persist: true, data: n != null ? { stealthRestore: n } : {} });
+  },
+});
 /** 无法被阻挡. */
 const unblockable = () => ({ spawn(b, e) { b.addBuff(e, { key: 'ab:unblockable', flags: { unblockable: true }, persist: true }); } });
 /**
@@ -889,9 +916,10 @@ function artsBarrier(amount, { key = 'ab:artsBarrier', whileUp = null } = {}) {
  * (PRTS 深池逐火战士 天赋 "被击倒后重生，持续1s，随后变为怨恨的余烬，1s内不移动且持有无敌+无法阻挡+失衡免疫"; PRTS 特殊机制 §重生) —
  * then the husk until `delay` s after that: `hits` HP of 特殊生命值机制 (every damage instance removes 1 — PRTS 特殊机制
  * §特殊生命值机制; engine flag hitCount), no attack (缴械), walking its route on — 隐匿 (`stealthy`: targetable only while
- * blocked, targeting.js canTargetEnemy — the 余烬 must be blocked to be beaten; drawn solid while blocked)
- * and / or unblockable (`unblock`: 再生's 傀儡 "不可被阻挡"). Killing the husk is the real death; a husk still standing
- * after `delay` s stands up in its first form with full HP, and every later knock-out starts it again ("一次又一次地站起").
+ * blocked and for 3 s after a block ends, the block the knock-out itself releases included — targeting.js
+ * enemyStealthed; drawn solid meanwhile) and / or unblockable (`unblock`: 再生's 傀儡 "不可被阻挡"). Killing the husk is
+ * the real death; a husk still standing after `delay` s stands up in its first form with full HP, and every later
+ * knock-out starts it again ("一次又一次地站起").
  * `onHusk(b, e)` runs as the husk begins, after the 重生 ("进入此形态时": 再生's shields).
  * User report after 0.1.0 (#8): the v2.5 ember stood still, stealthed AND unblockable — nobody could ever target it.
  * fx (setForm): 'ember' {id, hits, dur, form: 'husk'} at the knock-out, 'revive' {id, form: 'revived'} when it stands
@@ -929,6 +957,13 @@ function husk({ hits, delay, stealthy = true, unblock = false, onHusk = null, ke
       hitCount(b, e, true);
       b.addBuff(e, { key, visible: true, persist: true, flags: { disarm: true, ...(stealthy ? { stealth: true } : {}), ...(unblock ? { unblockable: true } : {}) } });
       b.addBuff(e, { key: `${key}:reborn`, duration: HUSK_REBIRTH, flags: { invulnerable: true, untargetable: true, unblockable: true, noMove: true, noDisplace: true } });
+      // the 重生's 无法阻挡 ends a block at once (as applyStatus does for a status): a warrior knocked out while blocked
+      // leaves an ember whose 隐匿 is switched off until STEALTH_RESTORE (3) s after that block ended
+      // (Battle._stealthSwitch) — ~2 s after the 1 s 重生, which stays 无敌 + untargetable — so ranged operators and
+      // operator splash can finish it although its blocker took the next warrior meanwhile (players after 0.1.1: "the
+      // stealth monster revives forever"). [ASSUMED] the order: the 重生's cleanse first, then the ember's 隐匿 with the
+      // block-end switch (PRTS documents neither the order of 重生 vs that switch nor whether it survives the 重生)
+      b._unblock(e);
       if (e.route) e.route.pts = null;
       setForm(b, e, 'husk', 'ember', { hits, dur: HUSK_REBIRTH + delay });
       b.after(HUSK_REBIRTH, () => { if (e.alive && a.state === 'husk') { rebirthCooldowns(e); if (onHusk) onHusk(b, e); } }, { owner: e });
@@ -1069,7 +1104,8 @@ const kitStun3 = (ab) => [nthAttackStatus(nthOf(ab.sk.stuncombat), 'stun', (ab.s
 const kitSelfFear = (ab) => [selfFear(ab)];
 /** 深池逐火战士 / 精锐战士 / 护卫: knock-out ⇒ 1 s 重生 ⇒ a walking, 隐匿, disarmed 余烬 / 火灰 of prop_max_hp hits for `interval` s
  *  (PRTS 深池逐火战士 天赋: "基础最大生命值临时变为5…具有特殊生命值机制，不进行攻击，获得隐匿、缴械，10s后若未被击倒则变回战士形态并恢复所有
- *  生命"); blocking it lifts the 隐匿, so its blocker (and every operator in range) can beat it. */
+ *  生命"); blocking it lifts the 隐匿, so its blocker (and every operator in range) can beat it — also during the 3 s
+ *  after a block ends, the warrior's own block that the knock-out releases included (Battle._stealthSwitch). */
 const kitEmber = (ab) => [husk({ hits: T(ab, 'Revive[Trigger].prop_max_hp'), delay: T(ab, 'Revive[Trigger].interval') })];
 const kitPolluted = (ab) => [{
   death(c, b, e) {
@@ -1318,7 +1354,8 @@ function kitInvisShield(ab, e) {
   return [...kitDeathSpawn()(ab), skill(s, (b, e2) => {
     const dur = s.bb.duration ?? T(ab, 'InvisibleShield.duration') ?? 0;
     b.fx('telegraph', { x: e2.x, y: e2.y, r, kind: 'invisShield', id: e2.id });
-    for (const o of b.enemiesInRadius(e2.x, e2.y, r)) if (o !== e2 && dur > 0) b.addBuff(o, { key: 'ab:veiled', duration: dur, flags: { stealth: true }, visible: true });
+    // "获得隐匿（解除阻挡0秒后恢复）" (PRTS 清明 / 堂皇 天赋): the veil's 隐匿 is back as soon as a block ends
+    for (const o of b.enemiesInRadius(e2.x, e2.y, r)) if (o !== e2 && dur > 0) b.addBuff(o, { key: 'ab:veiled', duration: dur, flags: { stealth: true }, visible: true, data: { stealthRestore: 0 } });
   })];
 }
 
@@ -1338,10 +1375,18 @@ function kitCrossbow(ab) {
   }, { sil: true, cond: (b, e) => aligned(b, e).length > 0 })];
 }
 
+/**
+ * 山海众头目 / 山海众秘使 (PRTS 天赋 "隐匿，该隐匿每次生效后自身获得强击标记（不可叠加）"; 技能 破隐一击 "仅持有强击标记且被阻挡时可
+ * 触发：对阻挡目标造成攻击力200%的物理普通伤害，技能开始时消耗强击标记"): the mark comes with its 隐匿 — at the spawn and every
+ * time it hides again (3 s after a block, Battle._stealthSwitch; or once a 反隐 ends) — and its next attack (a melee
+ * one: blocked) spends it at InvisibleCombat.atk_scale. A new block inside the 3 s gives no new mark (until 0.1.2 every
+ * block did).
+ */
 function kitShadowKiller(ab) {
   const scale = (ab.sk.InvisibleCombat && ab.sk.InvisibleCombat.bb.atk_scale) || 1;
   return [stealth(), {
-    blocked(c, b, e, a) { a.power = true; },                      // 隐匿效果失效 (blocked) → next attack ×scale
+    spawn(b, e, a) { a.power = true; a.on = true; },
+    tick(b, e, a) { const on = enemyStealthed(e); if (on && !a.on) a.power = true; a.on = on; },
     hitOut(c, b, e, a) { if (a.power && c.dmg.isAttack) c.dmg.amount *= scale; },
     attack(c, b, e, a) { a.power = false; },
   }];
@@ -1350,7 +1395,7 @@ function kitShadowKiller(ab) {
 function kitJazz(ab, e) {
   const s = ab.sk.fire;
   const r = (e.def.raw && e.def.raw.stats && e.def.raw.stats.rawRangeRadius) || 2.5;
-  const revealed = (u) => !!(u.blockedBy || u.s.flags.reveal);
+  const revealed = (u) => !enemyStealthed(u);                  // blocked, 反隐 (its 隐匿 returns 0 s after a block)
   return [stealth(), {
     spawn(b, e2) { e2.profile.noAttack = true; },
     tick(b, e2) { e2.profile.noAttack = !revealed(e2); },      // 平时不攻击，失去隐匿时反击
@@ -1503,7 +1548,7 @@ function kitParasite(ab) {
 function kitBoneSpike() {
   return [stealth(), {
     before(c, b, e) {
-      if (e.blockedBy || e.s.flags.reveal) return;                // 隐匿状态下同时攻击数个目标
+      if (!enemyStealthed(e)) return;                             // 隐匿状态下同时攻击数个目标 (back 0 s after a block)
       const l = byPriority(e, targetsNear(b, e, e.base.rangeRadius));
       if (l.length) c.targets = l.slice(0, ACBUNN_TARGETS);
     },

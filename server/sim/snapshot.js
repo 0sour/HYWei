@@ -8,10 +8,12 @@
 //   dir = 'UP'|'RIGHT'|'DOWN'|'LEFT' (allies: the deploy direction, sim/dir.js); facing = its horizontal sign (±1).
 //   items = an ally operator's equipped item ids (absent without any).
 // flags bits & anim codes come from shared/constants.js (UF / ANIM); an enemy's stealth bit = its 隐匿 is on (not while it
-// is blocked or revealed), an ally's = 隐匿 / 迷彩 whatever it blocks.
+// is blocked or revealed, nor in the seconds after a block before it hides again — targeting.js enemyStealthed), an
+// ally's = 隐匿 / 迷彩 whatever it blocks.
 
 import { UF, ANIM } from '../../shared/constants.js';
 import { DIE_ANIM_TIME, ATTACK_ANIM_TIME, DEPLOY_ANIM_TIME } from './constants.js';
+import { enemyStealthed } from './targeting.js';
 
 const r2 = (v) => Math.round(v * 100) / 100;
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -60,9 +62,10 @@ export function flagsOf(u) {
   if (f.stun && !f.freeze && !f.sleep) bits |= UF.STUNNED;
   if (f.freeze) bits |= UF.FROZEN;
   // 隐匿 or 迷彩 (buffs.js camou), shown the see-through way. An ally keeps it while blocking (targeting.js
-  // canTargetAlly); an enemy's 隐匿 is off while it is blocked or revealed (PRTS 作战机制 §隐匿 "在被阻挡时开关会被关掉从而
-  // 失去隐匿"; targeting.js canTargetEnemy): a blocked 逐火 余烬 is drawn solid while the team beats it
-  if (u.side === 'enemy' ? (f.stealth && !f.reveal && !u.blockedBy) || f.camou : f.stealth || f.camou) bits |= UF.STEALTH;
+  // canTargetAlly); an enemy's 隐匿 is off while it is blocked or revealed and until it hides again after a block (PRTS
+  // 作战机制 §隐匿 "在被阻挡时开关会被关掉从而失去隐匿，阻挡状态解除后3s开关重新被开启"; targeting.js enemyStealthed): a
+  // blocked 逐火 余烬 is drawn solid while the team beats it, and for 3 s after it slips away
+  if (u.side === 'enemy' ? (f.stealth && enemyStealthed(u)) || f.camou : f.stealth || f.camou) bits |= UF.STEALTH;
   if (u.skill && u.skill.active && u.skill.kind !== 'passive') bits |= UF.SKILL;
   if (u.s.shield > 0 || u.buffs.some((b) => b.shieldHits > 0)) bits |= UF.SHIELD;
   if (f.invulnerable) bits |= UF.INVULN;

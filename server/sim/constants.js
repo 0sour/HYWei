@@ -31,6 +31,13 @@ export const ALLY_COLLIDER_RADIUS = 0.25;
  */
 export const BLOCK_RADIUS = Object.freeze({ ground: 0.70709997, fly: 0.8944, device: 0.4472 });
 export const BLOCK_RADIUS_SQ = Object.freeze({ ground: 0.49999037, fly: 0.79995137, device: 0.4472 * 0.4472 });
+/**
+ * An enemy's 隐匿 after a block ends (s): PRTS 作战机制 §隐匿 "对于绝大部分可隐匿的敌人而言，在被我方单位阻挡后会解除隐匿，不被
+ * 阻挡的3秒后重新进入隐匿" / §隐匿与Buff的关系 "阻挡状态解除后3s开关重新被开启而恢复隐匿". An enemy page's "（解除阻挡N秒后
+ * 恢复）" overrides it per 隐匿 source (buff `data.stealthRestore`: content/enemies.js). Battle._stealthSwitch; our
+ * operators' 隐匿 / 迷彩 are never lifted by blocking ("我方干员并不会因为阻挡而解除隐匿").
+ */
+export const STEALTH_RESTORE = 3;
 /** Default projectile speed in tiles/s for ranged operators/enemies. */
 export const PROJECTILE_SPEED = 12;
 /**

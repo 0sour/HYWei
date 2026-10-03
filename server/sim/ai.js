@@ -97,7 +97,7 @@ export function enforceBlockCapacity(b, u) {
   for (const e of u.blocking) used += e.blockWeight ?? 1;
   while (used > cap && u.blocking.length) {
     const e = u.blocking.pop();
-    if (e.blockedBy === u) e.blockedBy = null;
+    if (e.blockedBy === u) { e.blockedBy = null; b._stealthSwitch(e); }   // a released 隐匿 enemy hides again later
     used -= e.blockWeight ?? 1;
   }
 }

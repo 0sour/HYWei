@@ -127,6 +127,8 @@ export const STATUS_ICON = Object.freeze({
   burn: 'burn', burnBurst: 'burn', neural: 'neural', neuralBurst: 'neural', necrosis: 'necrosis', apoptosis: 'necrosis',
   // a 傀儡师 fighting as its <替身> (sim professions.js buff 'trait:substitute', the 20 s form)
   substitute: 'doll',
+  // 禁疗 (sim status 'healFree': 史尔特尔's 余烬 — no heal reaches her until she leaves)
+  healFree: 'healFree',
 });
 
 /** Keyword fallbacks for namespaced / content status keys ('ab:frost', 'reed2:scorch', 'skill:shotst_shred' …). */
