@@ -20,8 +20,18 @@ npm run assets       # = node tools/vendor.mjs && node tools/fetch-assets.mjs
 | `--offline` | No network. Re-runs post-processing (atlas fixes, skeleton parsing, WOFF2) on what is already on disk, then rebuilds `data/assets.json`. |
 | `--dry-run` | Print the plan (file and model counts, alias notes) and exit. |
 | `--refresh-index` | Re-download the two upstream indexes: `audio_data.json` and `models_data.json`. |
-| `--prune` | Delete files under `public/assets/` that the manifest no longer references, for example after a mapping change. Without this flag they are only listed in the report. `public/assets/local/` (written by `tools/local-extract`) is never pruned. |
+| `--prune` | Delete files under `public/assets/` that the manifest no longer references, for example after a mapping change. Without this flag they are only listed in the report. `public/assets/local/` (written by `tools/local-extract`) is never pruned. Implies `--allow-shrink`. |
+| `--allow-shrink` | Write `data/assets.json` even when it loses entries the current one has (see "The manifest never shrinks by accident" below). |
 | `--local-spines` | Rewrite `tools/assets/local-enemy-spines.json` (the metadata of the enemy models only the local client has, see "Enemy aliases") from the models `tools/local-extract/extract.py` extracted to `public/assets/local/spine/enemy/`. Run it after a game update changed them; without it the committed file is used and a differing extraction only gets a warning. |
+
+**The manifest never shrinks by accident.** An entry whose files are missing on this machine is left out of a rebuilt
+manifest, so a run where some downloads failed (or whose upstream audio / model index lost them) would drop entries that
+every other install still has from the committed `data/assets.json` (a pull request once carried such a manifest, 42
+audio entries short — all 42 still resolve upstream; PR #7). When the rebuilt manifest lacks an entry of the current
+one, the run keeps the current file, prints the entries it would drop (also in the report: `droppedEntries`,
+`manifestWritten: false`) and exits 1. Re-run to retry the downloads, or pass `--allow-shrink` (or `--prune`) when the
+smaller manifest is intended, for example after a mapping change. Build fields (`version`, `hash`, `generator`,
+`stats`), new entries and a changed value are never a drop (`tools/assets/manifest.mjs droppedEntries`).
 
 The script is **idempotent**. A file on disk is kept, not re-downloaded, when any one of these holds:
 - its size matches the ledger entry from a previous download (`.cache/assets-ledger.json`);

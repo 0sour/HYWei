@@ -146,3 +146,35 @@ export function totalBytes(root, rels) {
 export function contentHash(value) {
   return createHash('sha1').update(JSON.stringify(value)).digest('hex').slice(0, 12);
 }
+
+/** Top-level manifest fields that describe the build, not assets: never counted as dropped entries. */
+const BUILD_FIELDS = new Set(['version', 'hash', 'generator', 'stats']);
+
+/**
+ * Entries of the manifest `prev` that `next` no longer has, as sorted dotted paths. An entry is a leaf value (a URL
+ * string, a number, a flag, null or an array — an array is one entry); an object entry missing from `next` contributes
+ * all its leaves. A path that changed shape (a leaf became an object or the reverse) is still there, not dropped.
+ * The build fields (version, hash, generator, stats) are left out.
+ * @param {object} prev the current data/assets.json
+ * @param {object} next the manifest about to replace it
+ * @returns {string[]}
+ */
+export function droppedEntries(prev, next) {
+  const out = [];
+  const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+  const leaves = (v, path) => {
+    if (!isObj(v)) { out.push(path); return; }
+    for (const [k, x] of Object.entries(v)) leaves(x, `${path}.${k}`);
+  };
+  const walk = (p, n, path) => {
+    if (n === undefined) { leaves(p, path); return; }
+    if (!isObj(p) || !isObj(n)) return;
+    for (const [k, v] of Object.entries(p)) walk(v, Object.hasOwn(n, k) ? n[k] : undefined, `${path}.${k}`);
+  };
+  if (!isObj(prev)) return out;
+  const nx = isObj(next) ? next : {};
+  for (const [k, v] of Object.entries(prev)) {
+    if (!BUILD_FIELDS.has(k)) walk(v, Object.hasOwn(nx, k) ? nx[k] : undefined, k);
+  }
+  return out.sort();
+}
