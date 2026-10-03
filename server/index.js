@@ -8,6 +8,9 @@
 //                                /data.js → a generated browser stand-in of server/data.js (the sim's content modules
 //                                           import `../../../data.js`; in the browser it serves the data injected with
 //                                           /sim/simdata.js setSimData). No other server file is ever served.
+//                                /media/bgm/act1 → public/assets/audio/bgm/act1.mp3 — the same audio files, addressed
+//                                           **without** an extension so download managers (IDM / 迅雷 …) stop popping a
+//                                           "下载文件信息" dialog for every BGM track (shared/media.js, public/js/media.js)
 //     MIME types incl. .mjs/.js text/javascript, .skel application/octet-stream, .atlas text/plain;
 //     gzip for text-like types, .skel and uncompressed fonts when the client accepts it (small files are
 //     compressed once and cached in memory); strong ETag + Last-Modified with 304s; Cache-Control
@@ -39,6 +42,7 @@ import { Network, SessionRegistry, NET_DEFAULTS } from './net.js';
 import { Lobby } from './lobby.js';
 import { getData, loadData } from './data.js';
 import { PROTOCOL_VERSION, APP_VERSION } from '../shared/constants.js';
+import { MEDIA_PREFIX, AUDIO_EXTS } from '../shared/media.js';
 
 /** Repository root. */
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -383,11 +387,9 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
  * Clients ask for audio through this path because download managers (IDM, 迅雷, FDM …) hijack XHR/fetch whose
  * URL ends in a media extension and pop a "下载文件信息" dialog for every BGM track — see `public/js/media.js`.
  * Requests for the direct `/assets/audio/…` URLs keep working (they are the fallback for plain static hosts).
+ * `MEDIA_PREFIX` / `AUDIO_EXTS` live in `shared/media.js`: the browser decides which URLs to rewrite with the
+ * same two values, and they must not drift apart.
  */
-const MEDIA_PREFIX = '/media/';
-/** Extensions a `/media/…` request may resolve to, in order. */
-export const AUDIO_EXTS = Object.freeze(['.mp3', '.m4a', '.aac', '.ogg', '.oga', '.opus', '.wav']);
-
 async function serveMedia(req, res, rest, query, publicDir, gzipCache, log) {
   const root = path.join(path.resolve(publicDir), 'assets', 'audio');
   const segments = String(rest || '').split('/').filter((s) => s.length > 0);

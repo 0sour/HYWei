@@ -1,4 +1,4 @@
-// Audio URLs for download managers (IDM / 迅雷 / FDM …) — and why they have no extension.
+// audio URL rewriting for download managers (IDM / 迅雷 / FDM …) — see shared/media.js for the why.
 //
 // The game plays audio with fetch() + Web Audio (`audio.js`): it never uses <audio src>, <a download> or a
 // navigation. Download managers do not care — their browser integration hooks XHR/fetch whose URL ends in a
@@ -11,13 +11,10 @@
 //
 // `server/index.js` resolves /media/… back to the real file under public/assets/audio and still answers with
 // `Content-Type: audio/mpeg` + range support; Web Audio sniffs the container, so the URL is all the same to it.
-// A host that does not implement /media/ keeps working: `audio.js` falls back to the original URL on 404.
-
-/** Prefix of the extension-less audio route served by `server/index.js`. */
-export const MEDIA_PREFIX = '/media/';
-
-/** Extensions `/media/…` may resolve to, in the order the server tries them. */
-export const AUDIO_EXTS = Object.freeze(['.mp3', '.m4a', '.aac', '.ogg', '.oga', '.opus', '.wav']);
+// A host that does not implement /media/ keeps working: `audio.js` falls back to the original URL whenever the
+// /media/ response is unusable (a 404, or a 200 that is not audio at all — some static hosts answer a missing
+// path with the SPA's index.html).
+import { MEDIA_PREFIX, AUDIO_EXTS } from '../../shared/media.js';
 
 const AUDIO_PATH = /^\/assets\/audio\/(.+)$/i;
 
@@ -48,13 +45,4 @@ export function mediaUrl(url, origin = globalThis.location?.origin) {
   const segments = rest.split('/');
   if (!rest || segments.some((s) => !s || s === '.' || s === '..' || s.startsWith('.'))) return url;
   return `${MEDIA_PREFIX}${rest}${u.search}`;
-}
-
-/**
- * Is this URL already one of the extension-less media paths?
- * @param {string} url
- * @param {string} [origin]
- */
-export function isMediaUrl(url, origin = globalThis.location?.origin) {
-  return mediaUrl(url, origin) !== url;
 }

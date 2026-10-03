@@ -229,6 +229,62 @@ describe('AudioManager', () => {
         assert.ok(!urls.includes(raw), '/media/ 成功就不该再请求 .mp3 地址');
       } finally { globalThis.fetch = origFetch; }
     }
+
+    // 第一发 200 但内容不是音频：有些静态托管对不存在的路径回 200 + index.html，解码会静默失败，也要回退。
+    {
+      const fw = fakeWindow();
+      const urls = [];
+      let cancelled = 0;
+      const origFetch = globalThis.fetch;
+      globalThis.fetch = async (u) => {
+        urls.push(u);
+        if (u !== media) return { ok: true, arrayBuffer: async () => new ArrayBuffer(8) };
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (n) => (n.toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null) },
+          body: { cancel: async () => { cancelled += 1; } },
+          arrayBuffer: async () => new ArrayBuffer(8),
+        };
+      };
+      try {
+        const a = new AudioManager({ win: fw.win, getManifest: () => manifest });
+        a.install();
+        fw.fire('pointerdown');
+        a.playBgm('prep');
+        await new Promise((r) => setTimeout(r, 25));
+        assert.ok(urls.includes(raw), '内容不是音频时回退到原地址');
+        assert.equal(cancelled, 1, '丢掉那个用不上的响应，别把连接挂着');
+      } finally { globalThis.fetch = origFetch; }
+    }
+
+    // /media/ 直接给出 audio/*（服务端真实行为）：不回退，也不去 cancel 一个能用的响应
+    {
+      const fw = fakeWindow();
+      const urls = [];
+      let cancelled = 0;
+      const origFetch = globalThis.fetch;
+      globalThis.fetch = async (u) => {
+        urls.push(u);
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (n) => (n.toLowerCase() === 'content-type' ? 'audio/mpeg' : null) },
+          body: { cancel: async () => { cancelled += 1; } },
+          arrayBuffer: async () => new ArrayBuffer(8),
+        };
+      };
+      try {
+        const a = new AudioManager({ win: fw.win, getManifest: () => manifest });
+        a.install();
+        fw.fire('pointerdown');
+        a.playBgm('prep');
+        await new Promise((r) => setTimeout(r, 25));
+        assert.ok(urls.includes(media));
+        assert.ok(!urls.includes(raw), 'audio/* 就是成功，不该再回退');
+        assert.equal(cancelled, 0);
+      } finally { globalThis.fetch = origFetch; }
+    }
   });
 });
 

@@ -2,7 +2,9 @@
 // stop hijacking BGM playback with a "下载文件信息" dialog. See public/js/media.js for the full rationale.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mediaUrl, isMediaUrl, MEDIA_PREFIX, AUDIO_EXTS } from '../public/js/media.js';
+import { mediaUrl } from '../public/js/media.js';
+// 前缀与扩展名列表只有一份（客户端和服务端都从这里取），所以断言也直接盯住这一份。
+import { MEDIA_PREFIX, AUDIO_EXTS } from '../shared/media.js';
 
 const ORIGIN = 'http://127.0.0.1:3000';
 
@@ -42,11 +44,6 @@ describe('mediaUrl: 音频地址去掉扩展名（躲开下载器嗅探）', () 
     assert.equal(mediaUrl('/assets/audio/.hidden.mp3', ORIGIN), '/assets/audio/.hidden.mp3');
     // URL 解析本来就会把 .. 归一化，改写跟着归一化后的路径走（服务端仍是同一道校验）
     assert.equal(mediaUrl('/assets/audio/bgm/../x.mp3', ORIGIN), '/media/x');
-  });
-
-  test('isMediaUrl 只对真正会改写的地址为真', () => {
-    assert.equal(isMediaUrl('/assets/audio/bgm/a.mp3', ORIGIN), true);
-    assert.equal(isMediaUrl('/assets/img/a.png', ORIGIN), false);
   });
 
   test('没有 location 时（测试环境）用传入的 origin 判断同源', () => {
