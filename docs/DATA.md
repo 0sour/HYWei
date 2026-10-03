@@ -194,7 +194,7 @@ Top level: `{ season, seasonName, modes, economy, lpCapPerRound, bossOvertimeAft
 ### 2.1 Combat classification heuristic (`dmgType` / `attackKind` / `projectile` / `canHitFly`)
 - `dmgType`: MEDIC (except `incantationmedic`) and `bard` → `heal`; trait text containing 法术伤害 or profession CASTER → `arts`; else `phys`.
 - `attackKind`: `bard`, `phalanx`, `librator` → `none` (no normal attack); heal → `heal`; position RANGED or melee sub-professions with a ranged normal attack (`lord`, `fortress`, `shotprotector`, `agent`, `hookmaster`) → `ranged`; else `melee`.
-- `canHitFly`: ranged attackers unless the trait says 地面敌人 (投掷手); `skywalker` (蒂比) true.
+- `canHitFly`: ranged attackers unless the trait says 地面敌人 (投掷手) or the sub-profession is `fortress` (要塞: 灰毫, 号角 — DESIGN §22.13); `skywalker` (蒂比) true.
 - These are defaults for the generic engine; kits may override.
 
 ### 2.2 Loadout choices: skills & modules (DESIGN §16)
@@ -493,9 +493,9 @@ Glyph legend (`rows`):
 5. **Every non-DIY chess (258 records: 129 normal + 129 golden) has a resolvable default skill, stats and range** — no
    skill anomalies.
 6. **Skill triggers** (§2.2): the class rows cover every MANUAL skill of the class (all 重装 MANUAL skills are
-   `TAKE_DAMAGE` but the six of the deliberate deviation, DESIGN §21.29, which are `DEFAULT` with `rawRule` `TAKE_DAMAGE`; 薄绿 / 卡涅利安 / 蜜蜡 / 玛恩纳 S2 `SEARCH`; 伺夜 / 魔王 / 浊心斯卡蒂 S3 `SP_FULL`) and no AUTO skill (古米 /
+   `TAKE_DAMAGE` but the six of the deliberate deviation, DESIGN §21.29, which are `DEFAULT` with `rawRule` `TAKE_DAMAGE`, and 余 S2, `SKILL_RANGE` on its x-1 (DESIGN §22.10); 薄绿 / 卡涅利安 / 蜜蜡 / 玛恩纳 S2 `SEARCH`; 伺夜 / 魔王 / 浊心斯卡蒂 S3 `SP_FULL`) and no AUTO skill (古米 /
    雷蛇 / 瑕光 / 塞雷娅 / 号角 / 信仰搅拌机 S1, 伺夜 S1/S2, 魔王 S1); 13 MANUAL skills (26 normal + elite records) with
-   their own 技能范围 are `SKILL_RANGE` (德克萨斯 S2, 凛御银灰 S2, 锏 S2/S3, 异客 S3, 忍冬 S2, 焰尾 S2 …).
+   their own 技能范围 are `SKILL_RANGE` (德克萨斯 S2, 凛御银灰 S2, 锏 S2/S3, 异客 S3, 忍冬 S2, 焰尾 S2 …); 余 S2 joins them by the §22.10 deviation, 14 skills / 28 records in the data.
 7. **Trait candidate `rangeId`** (送葬人, 松果 1-3; 风丸, 归溟幽灵鲨 x-4) is the trait-effect area, exposed as
    `trait.rangeGrid`, not the attack range.
 8. **Passive skills** use numeric `spType 8` in skill_table → normalized to `ON_DEPLOY`.
