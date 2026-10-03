@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createBattleRunner, keepsState, compactHeld, HELD_MAX } from '../../public/js/battle/runner.js';
+import { createBattleRunner, keepsState, compactHeld, HELD_MAX, EV_SLICE } from '../../public/js/battle/runner.js';
 import { SnapshotBuffer } from '../../public/js/render/interp.js';
 import { createStore, initialState } from '../../public/js/store.js';
 import * as specMod from '../../server/sim/spec.js';
@@ -152,9 +152,15 @@ test('a hidden tab across the change: nothing rendered meanwhile, the first fram
   assert.ok(e.held.length > 0 && e.held.every(keepsState), 'the battle on screen holds its state-bearing events');
   r.show();
   r.advance(1000 / 60);
-  const first = r.feed.evs[0]?.ev || [];
+  const first = all(r.feed);   // nothing was rendered while hidden: the first frame back
   assert.ok(first.some((x) => x[0] === 'spawn' && x[1].id === tr.id), 'the translator\'s spawn (it used to come back as an unknown view)');
   assert.deepEqual(formsOf(first, tr.id), ['translator_youling'], 'and its form');
+  // each held tuple keeps the game time it was drained at (batches of EV_SLICE ticks), not the first frame's
+  const spawnMsg = r.feed.evs.find((m) => m.ev.some((x) => x[0] === 'spawn' && x[1].id === tr.id));
+  const formMsg = r.feed.evs.find((m) => formsOf(m.ev, tr.id).length);
+  const frameGt = r.feed.evs[r.feed.evs.length - 1].gt;
+  assert.ok(spawnMsg.gt < formMsg.gt && formMsg.gt < frameGt - 1.5, `stamps: spawn ${spawnMsg.gt}, form ${formMsg.gt}, frame ${frameGt}`);
+  assert.ok(r.feed.evs.every((m, i) => i === 0 || m.gt >= r.feed.evs[i - 1].gt), 'in game-time order');
   assert.equal(e.held.length, 0);
   assert.equal(r.feed.fields.length, 1, 'no re-entry needed');
   r.runner.dispose();
@@ -179,7 +185,7 @@ test('a hidden-tab backlog of status toggles beyond HELD_MAX is compacted: no re
   r.show();
   r.advance(1000 / 60);
   assert.equal(r.feed.fields.length, 1, 'no re-entry');
-  const first = r.feed.evs[0]?.ev || [];
+  const first = all(r.feed);
   assert.deepEqual(first.filter((x) => x[0] === 'status' && x[2] === 'stun'), [['status', tr.id, 'stun', 1]], 'the last toggle only');
   assert.deepEqual(formsOf(first, tr.id), ['translator_youling'], 'the form fx kept');
   r.runner.dispose();
@@ -245,6 +251,7 @@ function viewRig({ hidden = false } = {}) {
   const r = rig({ hidden });
   const interp = new SnapshotBuffer({ delay: 0.034, rate: 2 });
   const handled = [];
+  const late = new Map();   // like render/app.js processEvents: state events handed out > 1.5 game s late → how late
   let clock = 0;
   r.runner.on('field', () => interp.reset());
   r.runner.on('snap', (x) => interp.push(x, clock));
@@ -252,7 +259,7 @@ function viewRig({ hidden = false } = {}) {
   const render = (tSec) => {
     clock = tSec;
     const rT = interp.update(tSec);
-    if (Number.isFinite(rT)) interp.takeEvents(rT, handled, rT - 1.5);
+    if (Number.isFinite(rT)) interp.takeEvents(rT, handled, rT - 1.5, late);
   };
   const advance = r.advance;
   let realMs = 1000;
@@ -265,7 +272,7 @@ function viewRig({ hidden = false } = {}) {
       if (!r.doc.hidden) render(realMs / 1000);
     }
   };
-  return { ...r, handled, interp };
+  return { ...r, handled, interp, late };
 }
 
 test('runner → render engine: one 1.2 s stall right after the change — the view still handles the 幽灵 form fx', async () => {
@@ -297,5 +304,52 @@ test('runner → render engine: a watched replica hidden 20 s across the change 
   assert.ok(id != null, 'the translator was announced');
   assert.ok(r.runner.stats().catchups > 0, 'caught up on return');
   assert.deepEqual(formsOf(r.handled, id), ['translator_youling'], `the view learnt the form (sim: ${trOf(e)?.form ?? 'gone'})`);
+  r.runner.dispose();
+});
+
+// QA of feedback1 (§21.19): a hidden tab's backlog and a catch-up frame used to go out stamped with the frame's game time,
+// so the render engine saw a form fx as on time and replayed its 2 s change clip seconds after the change (a 转译基底·α
+// walking along in A_Die_C). Each batch now keeps its own game time (EV_SLICE ticks): the fx is handed out as late as it
+// is, and render/app.js skips a change clip that would already have ended.
+const formLate = (r, id) => { const x = r.handled.find((ev) => fxForm(ev) !== undefined && ev[4].id === id); return x ? r.late.get(x) ?? 0 : null; };
+
+test('runner → render engine: the own battle hidden 20 s across the change — the form fx comes out as late as it is (the 2 s change clip is not replayed)', async () => {
+  const r = viewRig();
+  r.net.emit('b.start', start(true));
+  await r.settle();
+  const e = r.runner._entries.get('fb1.runner');
+  let changedAt = null;
+  e.battle.on('tick', () => { if (changedAt == null && trOf(e)?.form != null) changedAt = e.battle.time; });
+  r.advance(300);
+  r.doc.hidden = true;
+  r.advance(20000, 250);
+  assert.ok(changedAt != null && changedAt < 15, `changed while hidden (t ${changedAt})`);
+  r.show();
+  r.advance(1000);
+  const tr = trOf(e);
+  const id = tr?.id ?? all(r.feed).find((x) => x[0] === 'spawn' && x[1].defId === TR)?.[1].id;
+  const formMsg = r.feed.evs.find((m) => formsOf(m.ev, id).length);
+  assert.ok(formMsg && formMsg.gt >= changedAt - 1e-9 && formMsg.gt <= changedAt + EV_SLICE / 30 + 1e-9, `stamped at the change (${formMsg?.gt} vs ${changedAt})`);
+  const late = formLate(r, id);
+  assert.ok(late != null && late > 10, `handed out ${late?.toFixed(1)} game s late — render/app.js skips the change clip`);
+  r.runner.dispose();
+});
+
+test('runner → render engine: catch-up frames of 8 game s (a replica shown 20 s late) stamp each slice — the form fx is late by its age in the frame', async () => {
+  const r = viewRig();
+  r.net.emit('b.start', start(false));
+  await r.settle();
+  r.advance(300);
+  r.doc.hidden = true;
+  r.advance(20000, 250);
+  r.show();
+  r.advance(4000);
+  const id = all(r.feed).find((x) => x[0] === 'spawn' && x[1].defId === TR)?.[1].id;
+  assert.ok(r.runner.stats().catchups > 0, 'caught up on return');
+  const formMsg = r.feed.evs.find((m) => formsOf(m.ev, id).length);
+  const sameFrame = r.feed.evs.filter((m) => m.gt > formMsg.gt);
+  assert.ok(sameFrame.length && sameFrame[0].gt - formMsg.gt < 8, 'later batches of the catch-up carry later stamps');
+  const late = formLate(r, id);
+  assert.ok(late != null && late > 2, `the fx is handed out ${late?.toFixed(1)} game s late (was 0: the frame's stamp)`);
   r.runner.dispose();
 });
