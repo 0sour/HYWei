@@ -150,6 +150,7 @@ Top level: `{ season, seasonName, modes, economy, lpCapPerRound, bossOvertimeAft
 | `name`, `appellation` | `"隐现"`, `"Insider"` | |
 | `rarity` | `5` | stars 1–6 |
 | `profession`, `subProfessionId`, `subProfessionName`, `position` | `"SNIPER"`, `"fastshot"`, `"速射手"`, `"RANGED"` | |
+| `placement` | `"all"` | only on a MELEE chess whose branch trait (the character's own trait text, no module) reads 可以放置于远程位 — 钩索师 歌蕾蒂娅 / 崖心, 推击手 见行者, normal and elite: the prep placement also allows the ranged (高台) tiles (`server/match/board.js positionClass`); `position` stays MELEE for the battle (DESIGN §22.6). Absent otherwise |
 | `nationId` | `"laterano"` | |
 | `bonds[]` | `["lateranoShip","swiftShip"]` | bondIds (→ `bonds.json`) |
 | `garrisonIds[]` | `["garrison_16_b"]` | 特质 (→ `garrisons.json`); first = displayed trait |
