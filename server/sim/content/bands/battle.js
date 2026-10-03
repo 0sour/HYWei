@@ -40,7 +40,7 @@ import { weaknessRetype, addShieldLayer, PRIO_REVIVE } from '../items/battle.js'
 import { spawnMapChar } from '../tokens.js';
 
 export const AMEDIC_BAND = 'band_amedic';
-/** 'fatal' priority of 埃芒加德: after the operators' own items (PRIO_REVIVE) and every talent / skill saver. */
+/** 'fatal' priority of 埃芒加德: after the operators' own items (PRIO_REVIVE / PRIO_RESPAWN) and every talent / skill saver. */
 export const PRIO_BAND_REVIVE = PRIO_REVIVE - 10;
 
 const keyOf = (bandId, part = '') => `band:${bandId}${part ? `:${part}` : ''}`;
