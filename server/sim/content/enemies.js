@@ -33,15 +33,21 @@
 //   keeps its ground path, Unit.isFlying; kitSyufo / kitParrot lose it when stunned). `e.profile.canTarget(ally)` = the
 //   enemy's own target rule (只攻击地面单位 …), applied by the engine to the candidates before its priority order; a
 //   special priority (优先攻击防御力最高的… / 生命上限最高的…) sorts by its key, ties by taunt then latest deployed
-//   (targeting.js aggroCmp — PRTS 索敌: 特殊优先级 → 仇恨值). An airborne ally (起飞, flag `liftoff`) is no target of a
-//   ground enemy (对地规避, targeting.js evadesGround): targetsNear / allTargets skip it through canTargetAlly, the picks
-//   and one-shot areas that bypass it (周围四格 additions, chain and bounce jumps, shells, barrages, 沙狱, death blasts)
-//   filter it, and the engine refuses a ground enemy's damage and statuses on it. Not selections, so they still reach
-//   it (`ignoreSelect`): abilities PRTS marks "无视无法选择" (【污染秽蚀】, 【盲信之誓】, 萨卡兹悖谬暴虐兵长's 暴击 splash),
+//   (targeting.js aggroCmp — PRTS 索敌: 特殊优先级 → 仇恨值). Area effects — splash, blasts, area skills and statuses,
+//   pulses, the zones an enemy leaves, chain / bounce jumps, 周围四格 additions, whole-column / whole-field skills —
+//   select with areaAllies / areaAlliesInTiles / fieldAllies (targeting.js areaSelectable; PRTS 作战机制 §AOE伤害判定
+//   "AOE的判定是对攻击范围内的每个可以被选中的敌人进行判定"): no 隐匿 ally that does not block the enemy, no untargetable
+//   or sleeping one, no airborne 起飞 one for a ground enemy — 迷彩 does not protect from them (ba.camou "无法躲避溅射类
+//   攻击"). Until 0.1.2 they took every ally in the area (GitHub issue #32 item 6; DESIGN §22.12). An airborne ally
+//   (起飞, flag `liftoff`) is no target of a ground enemy (对地规避, targeting.js evadesGround): targetsNear / allTargets
+//   skip it through canTargetAlly, the area selectors through areaSelectable, and the engine refuses a ground enemy's
+//   damage and statuses on it. Not selections, so they still reach it (`ignoreSelect`): abilities PRTS marks "无视无法
+//   选择 / 无视(目标)可选性" (【污染秽蚀】, 【盲信之誓】, 萨卡兹悖谬暴虐兵长's 暴击 splash, 假想敌：淤困's burst spread),
 //   direct picks of the attacker (碎铳之簧's counter — PRTS 异常效果 "'直接选中'的能力…不受这些仅在选择时生效的异常效果
 //   制约"), the blasts of flying units credited to a ground leader (刺胄之弹, 斩胄之剑 / 破胄之锤) and the ticks of a debuff
-//   already on it (出血, 沙狱, “庞贝”'s burning, 淤困, 【自然涌动】 — a tick selects nobody). Auras of ground enemies still
-//   apply [ASSUMED].
+//   already on it (出血, 沙狱, “庞贝”'s burning, 淤困, 【自然涌动】 — a tick selects nobody). The buff auras of enemies
+//   (寒霜 — PRTS: its debuff ignores 隐匿 —, 深池伙友卫队, 扎罗's 远古威慑), map / tile effects (“墓碑”, 【国度】, the
+//   chimera's 源石污染区) and the sourceless 毒雾 of 假想敌：蚀裂 still reach every ally [ASSUMED for all but 寒霜 and “墓碑”].
 //
 // Special types (factions.json):
 //   FLY        — engine (FLY motion, ranged-only targeting). Flyer kits below (御4, 护障, 寒霜, 萨科塔之翼/眼, 黑云 …).
@@ -52,12 +58,15 @@
 //   ELEMENT    — element damage on hit = ATK × ep_damage_ratio into the ally's gauge. 侵蚀 (erosion) is an engine
 //                gauge whose burst is the official one (termDescription ba.dt.erosion: "永久降低100点防御力并受到800点物理伤害").
 //   DOT        — damage zones (污染秽蚀: true damage, one tick per second however many cover a unit, "可对空，无视无法选择"
-//                — `ignoreSelect`, 起飞 allies included; 毒雾, 燃烧区域: a ground enemy's zone skips a 起飞 ally — PRTS
-//                集团军重型火炮 "碰撞不受迷彩制约，不可对空", no 无视无法选择), bleeding (removed by healing), pulsing auras.
+//                — `ignoreSelect`, 起飞 / 隐匿 allies included; 燃烧区域: the enemy's area selection — PRTS 集团军重型火炮
+//                "碰撞不受迷彩制约，不可对空", no 无视无法选择 —, so no 起飞 or unblocking 隐匿 ally; 假想敌：蚀裂's sourceless
+//                毒雾 reaches everyone inside), bleeding (removed by healing), pulsing damage around an enemy (area
+//                selection).
 //   INVISIBLE  — permanent `stealth` flag (engine: untargetable unless blocked or revealed). An operator's radius area
 //                damage skips an unblocked one too (Battle.foesInRadius: profession splash around a struck target,
 //                skill circles — PRTS 作战机制 §AOE伤害判定 "对攻击范围内的每个可以被选中的敌人进行判定"; until 0.1.1 it
-//                still hit it); tile selectors (enemiesInKeys) always skipped it.
+//                still hit it); tile selectors (enemiesInKeys) always skipped it. The mirror rule for an ally's 隐匿 —
+//                enemy area effects skip it unless it blocks the enemy — is areaAllies (since 0.1.2, DESIGN §22.12).
 //   REFLECTION — 折射 (ba.refraction "生效时，法术抗性+70"): RES +refracting.magic_resistance while NOT silenced
 //                (the ability line is SILENCE-flagged: silencing turns it off); 镜膜 also gets max HP +100 % while on.
 //   SPECIAL    — mostly stats; prisoners, 穿刺手, 暴虐兵长, 镜卫, 动力装甲 … below.
@@ -78,7 +87,7 @@
 // Custom hook: 'lpLoss' {amount, reason, source} — leader "扣除目标生命" effects; also summed into result.lpLoss.
 
 import { TICK, MOVE_SCALE, ELEMENT, ATTACK_PAUSE, PROJECTILE_SPEEDS, ALLY_COLLIDER_RADIUS } from '../constants.js';
-import { canTargetAlly, sortAllyTargets, aggroCmp, evadesGround } from '../targeting.js';
+import { canTargetAlly, sortAllyTargets, aggroCmp, areaSelectable } from '../targeting.js';
 import { mitigate, periodicDamage } from '../damage.js';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -328,11 +337,12 @@ function onBurst(b, c) {
   const t = c.target;
   if (!t) return;
   if (t.side === 'enemy') { if (t.mem.ab) dispatch(b, t, 'burst', c); return; }
-  // 假想敌：淤困 parasite: the host's burst spreads the same element to the 4 neighbouring allies
+  // 假想敌：淤困 parasite: the host's burst spreads the same element to the 4 neighbouring allies — PRTS 天赋 "（中点判定，
+  // 无视目标可选性，不受迷彩制约）": every ally there, 隐匿 / untargetable / airborne 起飞 ones included (`ignoreSelect`)
   const par = t.findBuff('ab:parasite');
   if (par && par.data && par.data.src) {
     const src = par.data.src;
-    for (const o of alliesInTiles(b, t.tileR, t.tileC, 'plus', 1)) if (o !== t) elem(b, src, o, c.element, par.data.spread);
+    for (const o of alliesInTiles(b, t.tileR, t.tileC, 'plus', 1)) if (o !== t) elem(b, src, o, c.element, par.data.spread, { ignoreSelect: true });
   }
 }
 
@@ -410,15 +420,39 @@ export function allTargets(b, e) {
   return b.allies().filter((a) => canTargetAlly(e, a, true));
 }
 
+/**
+ * The allies an AREA effect of enemy `src` selects within `r` of (x, y) — splash, blast, area skill / status, pulse, zone
+ * tick, chain or bounce jump (targeting.js areaSelectable: no unblocking 隐匿, untargetable or sleeping ally, no 起飞 one
+ * for a ground `src`; 迷彩 is hit). `src` = the enemy whose effect it is (null: none — 隐匿 still applies). Abilities PRTS
+ * marks "无视无法选择 / 无视可选性" use b.alliesInRadius with `ignoreSelect` instead.
+ */
+export function areaAllies(b, src, x, y, r) {
+  return b.alliesInRadius(x, y, r).filter((a) => areaSelectable(src, a));
+}
+
+/** alliesInTiles for an area effect of `src` (周围四格 / 周围八格 / cross / 3×3 areas — 格子判定): areaSelectable. */
+export function areaAlliesInTiles(b, src, r, c, shape = 'plus', n = 1) {
+  return alliesInTiles(b, r, c, shape, n).filter((a) => areaSelectable(src, a));
+}
+
+/** Every ally on the field a whole-field ability of `src` selects ("对场上所有我方单位…": 【大潮】, 【斥退】 …). */
+export function fieldAllies(b, src) {
+  return b.allies().filter((a) => areaSelectable(src, a));
+}
+
 /** Engine priority (blocker → taunt → latest deployed) on a copy. */
 export function byPriority(e, list) { return sortAllyTargets(e, list.slice()); }
 
-/** An HP-loss / damage zone. `tick(units)` runs every `iv` s for `life` s on the allies inside. */
-export function zone(b, { x, y, r, life, iv = 1, kind = 'zone', tick }) {
+/**
+ * An HP-loss / damage zone. `tick(units)` runs every `iv` s for `life` s on the allies inside: `pick(x, y, r)` chooses
+ * them — by default every ally in the circle (【污染秽蚀】 "无视无法选择", a sourceless 毒雾); a zone an enemy's ability
+ * leaves passes its area selection (areaAllies).
+ */
+export function zone(b, { x, y, r, life, iv = 1, kind = 'zone', tick, pick = null }) {
   b.fx('zone', { x, y, r, dur: life, kind });
   let left = life;
   const h = b.every(iv, () => {
-    tick(b.alliesInRadius(x, y, r));
+    tick(pick ? pick(x, y, r) : b.alliesInRadius(x, y, r));
     left -= iv;
     if (left <= 1e-6) h.cancel();
   });
@@ -591,8 +625,11 @@ const maxTargets = (n) => ({ spawn(b, e) { if (n > 1) e.profile.maxTargets = n; 
 const ep = (el, ratio, sil = false) => ({ sil, dealt(c, b, e) { if (ratio > 0) elem(b, e, c.target, el, e.s.atk * ratio); } });
 /** Status on every attack hit. */
 const onHitStatus = (key, dur, value) => ({ dealt(c, b, e) { if (dur > 0) b.applyStatus(c.target, key, { duration: dur, source: e, value }); } });
-/** Attack hits every targetable ally within radius r (+ optional extra selector). */
-const hitAllInRadius = (r) => ({ before(c, b, e) { const l = targetsNear(b, e, r); if (l.length) c.targets = byPriority(e, l); } });
+/**
+ * The attack becomes a hit on every ally within radius r it can select as an area (深溟巢涌者 "令攻击范围内的所有我方单位每秒
+ * 受到…伤害": areaAllies — a 迷彩 ally is hit, an unblocking 隐匿 one not; the attack itself still needs a target).
+ */
+const hitAllInRadius = (r) => ({ before(c, b, e) { const l = areaAllies(b, e, e.x, e.y, r); if (l.length) c.targets = byPriority(e, l); } });
 /**
  * 抵抗 (ba.buffres, the engine `resist` status: control durations halved, 麻痹 loses 1 stack every 5 s) + optional
  * immunities. Value from the talent's `Buff.one_minus_status_resistance` when present (−0.5 ⇒ half).
@@ -630,7 +667,10 @@ const enemyAura = (r, key, mods, sil = true, iv = 0.5) => ({
   sil, iv,
   tick(b, e) { for (const o of b.enemiesInRadius(e.x, e.y, r)) if (o !== e) auraBuff(b, o, key, iv, mods); },
 });
-/** Aura on allies within r. */
+/**
+ * Aura on allies within r — every ally there, 隐匿 ones included: its one user, 寒霜, is PRTS's own example of an enemy
+ * debuff that "无视隐匿状态起作用" (PRTS 作战机制 §隐匿与Buff的关系: "敌方寒霜的攻速下降Debuff").
+ */
 const allyAura = (r, key, mods, sil = true, iv = 0.5, flags = null) => ({
   sil, iv,
   tick(b, e) { for (const u of b.alliesInRadius(e.x, e.y, r)) auraBuff(b, u, key, iv, mods, flags, true); },
@@ -650,14 +690,17 @@ const deathSpawn = (key, cnt, extra = {}) => ({
   death(c, b, e) { if (c.reason === 'killed' && key && cnt > 0) spawnChildren(b, e, key, cnt, extra); },
 });
 
-/** Death explosion on allies within r. */
+/**
+ * Death explosion on the allies within r it can select (areaAllies — PRTS 高能源石虫 / 冰爆源石虫 / 卷心籽 死亡爆炸 "…无视迷彩，
+ * 不可对空", no 无视无法选择: a 隐匿 ally is spared; the dead enemy blocks nobody).
+ */
 const deathBoom = ({ scale, type = 'phys', r = BOOM_RADIUS, status = null, sil = true, cond = null }) => ({
   sil,
   death(c, b, e, a) {
     if (c.reason !== 'killed' || (cond && !cond(e, a))) return;
     const atk = e.s.atk;
     b.fx('explode', { x: e.x, y: e.y, r, kind: 'deathBoom', id: e.id });
-    for (const u of b.alliesInRadius(e.x, e.y, r)) {
+    for (const u of areaAllies(b, e, e.x, e.y, r)) {
       if (scale > 0) hurt(b, e, u, atk * scale, type);
       if (status && u.alive) b.applyStatus(u, status.key, { duration: status.dur, source: e, value: status.value });
     }
@@ -828,7 +871,8 @@ function frontGuard(cut, face) {
 }
 /** Faces its walking direction (horizontal component; keeps the last one while standing). */
 const faceMove = (b, e, a) => { const dx = e.x - a.px; if (Math.abs(dx) > 1e-6) a.facing = dx > 0 ? 1 : -1; a.px = e.x; };
-/** "始终面向我方干员数量较多的方向": the side with more deployed operators (ties keep the current facing). */
+/** "始终面向我方干员数量较多的方向": the side with more deployed operators (ties keep the current facing; PRTS 圆仔 "无视其可选性":
+ *  隐匿 operators count). */
 const faceCrowd = (b, e, a) => {
   let l = 0, r = 0;
   for (const u of b.allies()) { if (u.kind !== 'op') continue; if (u.x > e.x + 1e-6) r++; else if (u.x < e.x - 1e-6) l++; }
@@ -1008,12 +1052,14 @@ function pollution(b, src, x, y, r, life, low, high) {
 }
 
 /**
- * Damage zone (`amount` per tick, tagged `kind`) on every ally inside. Unlike 【污染秽蚀】 it does not ignore 无法选择:
- * a ground enemy's zone skips an airborne 起飞 ally (the damage pipeline; PRTS 集团军重型火炮 【燃烧区域】 "碰撞不受迷彩
- * 制约，不可对空" — 迷彩 only). A sourceless zone (假想敌：蚀裂's 毒雾) reaches everyone inside.
+ * Damage zone (`amount` per tick, tagged `kind`). Unlike 【污染秽蚀】 it does not ignore 无法选择: an enemy's zone ticks on
+ * the allies its area selection takes (areaAllies: no unblocking 隐匿 ally, no airborne 起飞 one for a ground enemy —
+ * PRTS 集团军重型火炮 【燃烧区域】 "碰撞不受迷彩制约，不可对空": 迷彩 only). A sourceless zone (`src` null: 假想敌：蚀裂's
+ * 毒雾) reaches everyone inside [ASSUMED: PRTS 作战机制 "可以受到无来源的毒雾伤害" names the stage hazard; PRTS 假想敌：蚀裂
+ * gives its cloud no 无视可选性 either].
  */
 function dmgZone(b, src, x, y, r, life, iv, amount, type = 'arts', kind = 'zone', el = null, elAmount = 0) {
-  zone(b, { x, y, r, life, iv, kind, tick(units) {
+  zone(b, { x, y, r, life, iv, kind, pick: src ? (zx, zy, zr) => areaAllies(b, src, zx, zy, zr) : null, tick(units) {
     for (const u of units) {
       hurt(b, src, u, amount, type, { tags: [kind] });
       if (el && elAmount > 0) elem(b, src, u, el, elAmount, { tags: [kind] });
@@ -1146,7 +1192,8 @@ function kitChimera(ab) {
         auraBuff(b, u, 'ab:originium', 0.25, { spRecoveryMul: Math.max(0, 1 + spr) }, null, true);
         // PRTS "持续视为受到源石污染区影响…每0.5秒受到50真实持续伤害": a damage instance (受击回复, the 重装 trigger), not a
         // 流失 — 无来源 like the 源石污染区 terrain it stands for [ASSUMED], the chimera keeps the credit; "同类效果取最高": one
-        // tick per unit per period however many chimeras reach it (`mem.chimeraAt`; every chimera's is 50)
+        // tick per unit per period however many chimeras reach it (`mem.chimeraAt`; every chimera's is 50). A terrain
+        // effect, not an area selection: 隐匿 allies inside are reached too ("所有单位" [ASSUMED], DESIGN §22.12)
         if (!pulse || !(dmg > 0) || b.time - (u.mem.chimeraAt ?? -Infinity) < CHIMERA_AURA_EVERY - 1e-6) continue;
         u.mem.chimeraAt = b.time;
         b.dealDamage(e, u, { ...periodicDamage(dmg), tags: ['dot', 'pollution'] });
@@ -1169,10 +1216,12 @@ function kitNazg(ab, e) {
 function kitTidmag(ab) {
   return [ep('erosion', T(ab, 'EpDamage.attack@ep_damage_ratio') ?? 0), {
     before(c, b, e) {
+      // PRTS 控潮术师 "对目标所在地块及周围四格内的所有我方单位造成法术普通伤害": the 周围四格 are an area selection (格子判定:
+      // a 迷彩 ally is hit; an unblocking 隐匿 or an airborne 起飞 one is not — areaAlliesInTiles)
       const t0 = c.targets[0];
       if (!t0) return;
       const l = c.targets.slice();
-      for (const u of alliesInTiles(b, t0.tileR, t0.tileC, 'plus', 1)) if (!l.includes(u) && !evadesGround(e, u)) l.push(u);
+      for (const u of areaAlliesInTiles(b, e, t0.tileR, t0.tileC, 'plus', 1)) if (!l.includes(u)) l.push(u);
       c.targets = l;
     },
   }];
@@ -1299,7 +1348,7 @@ function kitDeathEye(ab, e) {
       if (++n >= dur) {
         h.cancel();
         b.fx('explode', { x: t.x, y: t.y, r: 1, kind: 'apoptosis' });
-        for (const u of b.alliesInRadius(t.x, t.y, 1)) elem(b, e2, u, 'apoptosis', e2.s.atk * (s.bb.ep_damage_ratio ?? 0));
+        for (const u of areaAllies(b, e2, t.x, t.y, 1)) elem(b, e2, u, 'apoptosis', e2.s.atk * (s.bb.ep_damage_ratio ?? 0));
       }
     }, { owner: e2 });
   }, { sil: true, cond: (b, e2) => targetsNear(b, e2, r).length > 0 })];
@@ -1393,6 +1442,8 @@ function kitHolyGuard(ab) {
     tick(b, e) {
       const on = b.enemiesInRadius(e.x, e.y, r).some((o) => /enemy_1175_dushdo/.test(o.defId));
       if (!on) return;
+      // a buff aura: every ally in it, 隐匿 / airborne ones included [ASSUMED — PRTS 作战机制 says a Buff selector skips
+      // 隐匿 unless it ignores it; kept as §21.22 kept ground-enemy auras for 起飞, DESIGN §22.12]
       for (const u of b.alliesInRadius(e.x, e.y, r)) auraBuff(b, u, 'ab:forceField', 0.5, { aspd }, null, true);
     },
   }];
@@ -1452,6 +1503,7 @@ function kitExposeOnHit(ab) {
   return [{ sil: true, taken(c, b) { const s = c.source; if (s && s.side === 'ally' && s.alive && s.kind !== 'device') expose(b, s, dur, scale); } }];
 }
 
+/** 远眺: knocked out ⇒ 暴露 on every ally within r — PRTS 天赋 "（可被沉默；无视其可选性）": 隐匿 / untargetable ones too. */
 function kitExposeOnDeath(ab) {
   const dur = T(ab, 'Expose.weak[limit]') ?? 0, scale = T(ab, 'Expose.damage_scale') ?? 1, r = T(ab, 'Expose.range_radius') ?? 1;
   return [{ sil: true, death(c, b, e) { if (c.reason !== 'killed') return; b.fx('explode', { x: e.x, y: e.y, r, kind: 'expose' }); for (const u of b.alliesInRadius(e.x, e.y, r)) expose(b, u, dur, scale); } }];
@@ -1588,11 +1640,13 @@ function kitSteal(ab) {
   }];
 }
 
+/** “萨科塔昂首” 【祈祷邀约】 (PRTS "令全场我方单位（不可对空，无视迷彩）获得15s【受邀祈祷】攻击速度-30"): a whole-field skill
+ *  selection — every ally but an unblocking 隐匿 / untargetable / sleeping one (fieldAllies; no 无视无法选择). */
 function kitRoar(ab) {
   const s = ab.sk.Roar;
   return [selfFear(ab), skill(s, (b, e) => {
     b.fx('telegraph', { x: e.x, y: e.y, r: 99, kind: 'roar', id: e.id });
-    for (const u of b.allies()) b.addBuff(u, { key: 'ab:roar', duration: s.bb.duration ?? 0, refresh: 'extend', mods: { aspd: s.bb.attack_speed ?? 0 }, visible: true });
+    for (const u of fieldAllies(b, e)) b.addBuff(u, { key: 'ab:roar', duration: s.bb.duration ?? 0, refresh: 'extend', mods: { aspd: s.bb.attack_speed ?? 0 }, visible: true });
   }, { sil: true })];
 }
 
@@ -1626,7 +1680,8 @@ function kitBombd(ab) {
     const r = t ? t.tileR : Math.round(y), c = t ? t.tileC : Math.round(x);
     b.fx('explode', { x, y, r: BOMB_REACH + 0.5, kind: 'bomb', tiles: 'box' });
     if (t) hurt(b, e, t, atk, 'phys');
-    for (const u of alliesInTiles(b, r, c, 'box', BOMB_REACH)) if (u !== t) hurt(b, e, u, atk, 'phys', { tags: ['splash'] });
+    // the splash on the 8 tiles is an area selection ("伤害无视迷彩", no 无视无法选择): no unblocking 隐匿 ally
+    for (const u of areaAlliesInTiles(b, e, r, c, 'box', BOMB_REACH)) if (u !== t) hurt(b, e, u, atk, 'phys', { tags: ['splash'] });
   };
   // the end of the cast (bomb_s): 移速最终提升至200%; it flies on
   const finish = (b, e) => {
@@ -1675,7 +1730,8 @@ function kitBombd(ab) {
 /**
  * 帝国炮火先兆者 / 中枢先兆者 (PRTS): every normal attack fires a shell at the target's position that lands SHELL_FLIGHT s
  * later and deals 100 % of the ATK at launch as physical damage without a source to every ally within SHELL_RADIUS
- * (it may miss the target that moved away; camouflage does not matter). The attack itself is the engine's (cooldown,
+ * (it may miss the target that moved away; "碰撞无视迷彩"). The landing is the shell's area selection (areaAllies of the
+ * enemy that fired it: no unblocking 隐匿 ally; the damage stays 无来源). The attack itself is the engine's (cooldown,
  * pause, 'atk' event of kind 'mortar'); the damage is the shell's (ai.js `profile.deferHit`).
  */
 function kitShell() {
@@ -1688,7 +1744,7 @@ function kitShell() {
         b.fx('bombardShell', { x, y, id: e.id, r: SHELL_RADIUS, t: SHELL_FLIGHT });
         b.after(SHELL_FLIGHT, () => {
           b.fx('bombard', { x, y, r: SHELL_RADIUS, kind: 'emppnt' });
-          for (const u of b.alliesInRadius(x, y, SHELL_RADIUS)) hurt(b, null, u, atk, 'phys', { isSkill: false, tags: ['shell'] });
+          for (const u of areaAllies(b, e, x, y, SHELL_RADIUS)) hurt(b, null, u, atk, 'phys', { isSkill: false, tags: ['shell'] });
         });
       }
     },
@@ -1713,11 +1769,12 @@ function kitFlameVine(ab) {
     dealt(c, b, e, a) {
       const t = c.target;
       if (a.first) {
-        // 首次攻击 (PRTS 灼藤): every other ally of the target's 3×3 (range x-4, tile test) takes 100 % ATK arts splash and
-        // everyone there 25 % ATK burn; then the ATK ramp ends and later attacks add 20 %
+        // 首次攻击 (PRTS 灼藤): every other ally of the target's 3×3 (range x-4, "格子判定，不受迷彩制约") takes 100 % ATK
+        // arts splash and everyone there 25 % ATK burn — an area selection (no unblocking 隐匿 ally); then the ATK ramp
+        // ends and later attacks add 20 %
         a.first = false;
         b.fx('explode', { x: t.x, y: t.y, r: 1.5, kind: 'flameVine' });
-        for (const u of alliesInTiles(b, t.tileR, t.tileC, 'box', 1)) { if (u !== t) hurt(b, e, u, e.s.atk, 'arts'); elem(b, e, u, 'burn', e.s.atk * first); }
+        for (const u of areaAlliesInTiles(b, e, t.tileR, t.tileC, 'box', 1)) { if (u !== t) hurt(b, e, u, e.s.atk, 'arts'); elem(b, e, u, 'burn', e.s.atk * first); }
         b.removeBuff(e, 'ab:pow');
       } else elem(b, e, t, 'burn', e.s.atk * normal);
     },
@@ -1749,16 +1806,17 @@ function kitTeapot(ab) {
       if (c.reason !== 'killed') return;
       const aspd = T(ab, 'DeadBoom.attack_speed') ?? 0, dur = T(ab, 'DeadBoom.duration') ?? 0, iv = T(ab, 'DeadBoom.interval') ?? 1;
       const r = e.base.rangeRadius || 2, atk = e.s.atk, x = e.x, y = e.y;
-      // a selection (PRTS 烹泉 "死亡爆炸（…无视迷彩，不可对空）", no 无视无法选择): an airborne 起飞 ally is skipped
-      const hit = (units) => units.filter((u) => !evadesGround(e, u));
+      // an area selection (PRTS 烹泉 "死亡爆炸（…无视迷彩，不可对空）", no 无视无法选择): an airborne 起飞 ally and an
+      // unblocking 隐匿 one are skipped, the steam's ticks too (the blast's debuff)
+      const pick = (zx, zy, zr) => areaAllies(b, e, zx, zy, zr);
       // 被击倒后爆炸造成范围法术伤害 (one blast of ATK ×1 [ASSUMED scale]) …
       b.fx('explode', { x, y, r, kind: 'teaBoom', id: e.id });
-      for (const u of hit(b.alliesInRadius(x, y, r))) hurt(b, null, u, atk, 'arts', { tags: ['teaBoom'] });
+      for (const u of pick(x, y, r)) hurt(b, null, u, atk, 'arts', { tags: ['teaBoom'] });
       // … 使我方攻击速度大幅降低（可被抵抗）: the steam lingers `duration` s; allies inside keep the ASPD cut (re-applied
       // every `interval` s)
-      const slow = (units) => { for (const u of hit(units)) b.addBuff(u, { key: 'ab:teaBoom', duration: iv + 0.1, refresh: 'extend', mods: { aspd }, visible: true }); };
-      slow(b.alliesInRadius(x, y, r));
-      if (dur > 0) zone(b, { x, y, r, life: dur, iv, kind: 'teaSteam', tick: slow });
+      const slow = (units) => { for (const u of units) b.addBuff(u, { key: 'ab:teaBoom', duration: iv + 0.1, refresh: 'extend', mods: { aspd }, visible: true }); };
+      slow(pick(x, y, r));
+      if (dur > 0) zone(b, { x, y, r, life: dur, iv, kind: 'teaSteam', tick: slow, pick });
     },
   }])(ab);
 }
@@ -1767,7 +1825,8 @@ function kitNucleus(ab) {
   return [{
     taken(c, b, e, a) { if (a.on) return; a.on = true; b.addBuff(e, { key: 'ab:combat', persist: true, visible: true, mods: { moveMul: T(ab, '0.move_speed') ?? 1 } }); },
     iv: T(ab, '1.interval') ?? 1,
-    tick(b, e, a) { if (!a.on) return; for (const u of b.alliesInRadius(e.x, e.y, T(ab, '1.range_radius') ?? 0)) elem(b, e, u, 'neural', e.s.atk * (T(ab, '1.ep_damage_ratio') ?? 0)); },
+    // 【孽生者的神经毒素】 "（无视迷彩，同名效果不叠加…）": an area selection (no unblocking 隐匿 ally)
+    tick(b, e, a) { if (!a.on) return; for (const u of areaAllies(b, e, e.x, e.y, T(ab, '1.range_radius') ?? 0)) elem(b, e, u, 'neural', e.s.atk * (T(ab, '1.ep_damage_ratio') ?? 0)); },
   }];
 }
 
@@ -1786,7 +1845,7 @@ function kitLeaderMisc(key, ab, e) {
         tick(b, e2) {
           if (!e2.blockedBy) return; // 被阻挡时会进行自爆造成高额伤害
           b.fx('explode', { x: e2.x, y: e2.y, r: 1, kind: 'selfBlast' });
-          for (const u of b.alliesInRadius(e2.x, e2.y, 1)) hurt(b, e2, u, T(ab, 'rangedamage.attack@damage') ?? 0, 'arts');
+          for (const u of areaAllies(b, e2, e2.x, e2.y, 1)) hurt(b, e2, u, T(ab, 'rangedamage.attack@damage') ?? 0, 'arts');
         },
       }];
     }
@@ -1794,7 +1853,8 @@ function kitLeaderMisc(key, ab, e) {
       return [lowHpBuff(T(ab, 'atkup.hp_ratio') ?? 0.5, { atkPct: T(ab, 'atkup.atk') ?? 0 }), {
         dealt(c, b, e2) {
           if (e2.blockedBy) return; // 未被阻挡时会发射榴弹
-          for (const u of b.alliesInRadius(c.target.x, c.target.y, 1)) {
+          // the grenade's splash: an area selection — a 隐匿 ally next to the target is spared (GitHub issue #32 item 6)
+          for (const u of areaAllies(b, e2, c.target.x, c.target.y, 1)) {
             if (u !== c.target) hurt(b, e2, u, e2.s.atk, 'phys');
             b.applyStatus(u, 'defDown', { duration: SKULSR_DEFDOWN_DUR, source: e2, value: -(T(ab, 'defdown.def') ?? 0) });
           }
@@ -1812,7 +1872,7 @@ function kitLeaderMisc(key, ab, e) {
         for (const t of l.slice(0, n)) {
           const x = t.x, y = t.y;
           b.fx('telegraph', { x, y, r: C4_RADIUS, dur: C4_FUSE, kind: 'c4' });
-          b.after(C4_FUSE, () => { b.fx('explode', { x, y, r: C4_RADIUS, kind: 'c4' }); for (const u of b.alliesInRadius(x, y, C4_RADIUS)) hurt(b, e2, u, e2.s.atk * (s.bb.atk_scale ?? 1), 'phys'); });
+          b.after(C4_FUSE, () => { b.fx('explode', { x, y, r: C4_RADIUS, kind: 'c4' }); for (const u of areaAllies(b, e2, x, y, C4_RADIUS)) hurt(b, e2, u, e2.s.atk * (s.bb.atk_scale ?? 1), 'phys'); });
         }
       }, { cond: (b, e2) => targetsNear(b, e2, s.bb.range_radius ?? e2.base.rangeRadius).length > 0 })];
     }
@@ -1826,7 +1886,8 @@ function kitLeaderMisc(key, ab, e) {
           const t = allTargets(b, e2).sort((p, q) => q.s.maxHp - p.s.maxHp || aggroCmp(p, q))[0];
           if (!t) return;
           b.fx('telegraph', { x: t.tileC, y: t.tileR, r: DRIFT_REACH, kind: 'driftSand', tiles: 'plus', id: e2.id });
-          for (const u of alliesInTiles(b, t.tileR, t.tileC, 'plus', DRIFT_REACH)) hurt(b, e2, u, ds.bb.damage ?? 0, 'phys');
+          // the cross ("伤害无视迷彩", no 无视无法选择): an area selection
+          for (const u of areaAlliesInTiles(b, e2, t.tileR, t.tileC, 'plus', DRIFT_REACH)) hurt(b, e2, u, ds.bb.damage ?? 0, 'phys');
         }, { cond: (b, e2) => allTargets(b, e2).length > 0 }),
         // 【沙狱】 the lowest-max-HP unit and those around it: ATK −`atk` and `damage` arts per second for `duration` s
         skill(ss, (b, e2) => {
@@ -1834,9 +1895,9 @@ function kitLeaderMisc(key, ab, e) {
           if (!t) return;
           const dur = ss.bb.duration ?? 0, x = t.x, y = t.y;
           b.fx('zone', { x, y, r: SANDSTORM_RADIUS, dur, kind: 'sandStorm', id: e2.id });
-          // the 沙狱弹道 "击中…范围内的所有我方单位（弹道可对空）" selects: an airborne 起飞 ally is skipped (no 无视无法选择)
-          for (const u of b.alliesInRadius(x, y, SANDSTORM_RADIUS)) {
-            if (evadesGround(e2, u)) continue;
+          // the 沙狱弹道 "击中…范围内的所有我方单位（弹道可对空）" selects: an airborne 起飞 ally and an unblocking 隐匿 one
+          // are skipped (no 无视无法选择 — areaAllies)
+          for (const u of areaAllies(b, e2, x, y, SANDSTORM_RADIUS)) {
             b.addBuff(u, { key: 'ab:sandStorm', duration: dur, refresh: 'replace', interval: 1, visible: true, mods: { atkPct: ss.bb.atk ?? 0 },
               onTick: ({ battle, unit }) => battle.dealDamage(e2, unit, { amount: ss.bb.damage ?? 0, type: 'arts', canDodge: false, ignoreSelect: true, tags: ['enemyAbility', 'sandStorm'] }) });
           }
@@ -1856,7 +1917,8 @@ function kitLeaderMisc(key, ab, e) {
     case 'enemy_1513_dekght': {
       // 攻击时使目标与周围四格的单位受到物理伤害; 【蓄力攻击】 charge `duration` s, then ATK×atk_scale on the target's cross
       const s = ab.sk.ChargeAttack;
-      return [kitDekght(ab), { before(c, b, e2) { const t = c.targets[0]; if (t) for (const u of alliesInTiles(b, t.tileR, t.tileC, 'plus', 1)) if (!c.targets.includes(u) && !evadesGround(e2, u)) c.targets.push(u); } },
+      // the 周围四格 of every attack (PRTS "对溅射目标造成物理溅射伤害") and 【蓄力锤】's cross: area selections
+      return [kitDekght(ab), { before(c, b, e2) { const t = c.targets[0]; if (t) for (const u of areaAlliesInTiles(b, e2, t.tileR, t.tileC, 'plus', 1)) if (!c.targets.includes(u)) c.targets.push(u); } },
         skill(s, (b, e2) => {
           const t = e2.blockedBy;
           const dur = s.bb.duration ?? 0, r = t.tileR, cc = t.tileC;
@@ -1865,7 +1927,7 @@ function kitLeaderMisc(key, ab, e) {
           b.after(dur, () => {
             if (!e2.alive || e2.s.flags.stun) return;
             b.fx('explode', { x: cc, y: r, r: 1, kind: 'chargeAttack', tiles: 'plus' });
-            for (const u of alliesInTiles(b, r, cc, 'plus', 1)) hurt(b, e2, u, e2.s.atk * (s.bb['dekght[aoe].atk_scale'] ?? s.bb.atk_scale ?? 1), 'phys');
+            for (const u of areaAlliesInTiles(b, e2, r, cc, 'plus', 1)) hurt(b, e2, u, e2.s.atk * (s.bb['dekght[aoe].atk_scale'] ?? s.bb.atk_scale ?? 1), 'phys');
           }, { owner: e2 });
         }, { cond: (b, e2) => !!(e2.blockedBy && e2.blockedBy.alive) })];
     }
@@ -1881,7 +1943,7 @@ function kitLeaderMisc(key, ab, e) {
           b.after(delay, () => {
             if (!e2.alive) return;
             b.fx('explode', { x: cc, y: r, r: 1, kind: 'blastArrow', tiles: 'plus' });
-            for (const u of alliesInTiles(b, r, cc, 'plus', 1)) hurt(b, e2, u, e2.s.atk * scale, 'arts');
+            for (const u of areaAlliesInTiles(b, e2, r, cc, 'plus', 1)) hurt(b, e2, u, e2.s.atk * scale, 'arts');
           }, { owner: e2 });
         }
       }, { cond: (b, e2) => cands(b, e2).length > 0 })];
@@ -1938,7 +2000,8 @@ function kitLeaderMisc(key, ab, e) {
       }];
     case 'enemy_2008_flking': {
       // 使全战场我方所有单位攻击力、防御力减半 (text; the blackboard's atkdown.atk_scale is not the halving),
-      // 部署费用回复速度减半，再部署时间加倍; 周期性地添加正比于自身最大生命值的伤害防护屏障
+      // 部署费用回复速度减半，再部署时间加倍; 周期性地添加正比于自身最大生命值的伤害防护屏障. The halving is a map effect
+      // (PRTS “墓碑” "※文字描述中的削弱实际属于地图效果，不属于敌人本身的能力"): every ally, 隐匿 / airborne ones included
       const s = ab.sk.refreshshield;
       return [{
         iv: 0.5,
@@ -1954,7 +2017,8 @@ function kitLeaderMisc(key, ab, e) {
       }, skill(s, (b, e2) => b.addBuff(e2, { key: 'ab:tombShield', shield: e2.s.maxHp * (s.bb.hp_ratio ?? 0), persist: true }))];
     }
     case 'enemy_2048_smgrd':
-      // 持续在自身周围8格生成【国度】 (the 3×3 around its tile), 大幅降低其中我方单位的攻击速度; 对【国度】中的我方单位造成高额物理伤害
+      // 持续在自身周围8格生成【国度】 (the 3×3 around its tile), 大幅降低其中我方单位的攻击速度; 对【国度】中的我方单位造成高额物理伤害.
+      // 【国度】 is a tile effect ("将该地块及其周围8格范围内的可部署位生成【国度】"): every ally on it, 隐匿 ones too [ASSUMED]
       return [{
         iv: 0.5,
         tick(b, e2) { for (const u of alliesInTiles(b, Math.round(e2.y), Math.round(e2.x), 'box', 1)) auraBuff(b, u, 'ab:blackFog', 0.5, { aspd: T(ab, 'BlackFog.attack_speed') ?? 0 }, null, true); },
@@ -1972,7 +2036,8 @@ function kitLeaderMisc(key, ab, e) {
           let prev = c.target;
           const hit = new Set([prev]);
           for (let k = 1; k < n; k++) {
-            const nx = b.alliesInRadius(prev.x, prev.y, jr).find((u) => !hit.has(u) && !evadesGround(e2, u));
+            // a jump selects within jr of the last target (中点判定): no unblocking 隐匿 or airborne 起飞 ally (areaAllies)
+            const nx = areaAllies(b, e2, prev.x, prev.y, jr).find((u) => !hit.has(u));
             if (!nx) break;
             hit.add(nx);
             hurt(b, e2, nx, e2.s.atk * Math.pow(fall, k), 'arts');
@@ -2043,9 +2108,9 @@ function kitUglyThing(ab) {
     { hitOut(c, b, e) { if (!P.pilot && c.dmg.isAttack && c.target === e.blockedBy) c.dmg.amount *= rage; } },   // 近战攻击造成更高伤害
     reborn({
       dur: T(ab, 'reborn.duration') ?? 0,
-      onKo(b, e) {                                  // 生命值降至0后自爆，造成大范围晕眩
+      onKo(b, e) {                                  // 生命值降至0后自爆，造成大范围晕眩 (an area selection)
         b.fx('explode', { x: e.x, y: e.y, r: MCM_BOMB_RADIUS, kind: 'mechBomb', id: e.id });
-        for (const u of b.alliesInRadius(e.x, e.y, MCM_BOMB_RADIUS)) {
+        for (const u of areaAllies(b, e, e.x, e.y, MCM_BOMB_RADIUS)) {
           hurt(b, e, u, e.s.atk * (bomb.atk_scale ?? 0), 'phys');
           if (u.alive && bomb.stun > 0) b.applyStatus(u, 'stun', { duration: bomb.stun, source: e });
         }
@@ -2113,7 +2178,8 @@ function kitXi(ab) {
   const crossAt = (b, e, t) => {
     const r0 = t.tileR, c0 = t.tileC;
     b.fx('telegraph', { x: c0, y: r0, r: XI_CROSS_REACH, kind: 'xiCross', tiles: 'plus', id: e.id });
-    for (const u of alliesInTiles(b, r0, c0, 'plus', XI_CROSS_REACH)) if (u.tileR === r0 || u.tileC === c0) hurt(b, e, u, e.s.atk * ((cross && cross.bb.atk_scale) ?? 1), 'arts');
+    // "伤害无视迷彩", no 无视无法选择: the cross is an area selection
+    for (const u of areaAlliesInTiles(b, e, r0, c0, 'plus', XI_CROSS_REACH)) if (u.tileR === r0 || u.tileC === c0) hurt(b, e, u, e.s.atk * ((cross && cross.bb.atk_scale) ?? 1), 'arts');
   };
   const burst = (s) => (b, e) => {
     const dur = s.bb.duration ?? 0, r = s.bb.range_radius ?? 0;
@@ -2123,7 +2189,7 @@ function kitXi(ab) {
       onExpire: ({ battle }) => {
         if (!e.alive) return;
         battle.fx('explode', { x: e.x, y: e.y, r, kind: 'breakFree', id: e.id });
-        for (const u of battle.alliesInRadius(e.x, e.y, r)) hurt(battle, e, u, e.s.atk * (s.bb.atk_scale ?? 0), 'arts');
+        for (const u of areaAllies(battle, e, e.x, e.y, r)) hurt(battle, e, u, e.s.atk * (s.bb.atk_scale ?? 0), 'arts');
       } });
   };
   const re = reborn({
@@ -2154,22 +2220,24 @@ function kitMace(ab) {
   const cs = { ratio: T(ab, 'ClearSp.hp_ratio') ?? 0, dur: T(ab, 'ClearSp.duration') ?? 0, r: T(ab, 'ClearSp.range_radius') ?? 0 };
   const P = { form2: false, next: 1 };
   const penOn = (c, e) => (c.target === e.blockedBy ? (P.form2 ? pen2 : pen1) : 0);
+  // its blocker is hit (PRTS 技能 "对之前阻挡自身的单位造成…"); the others on the way are an area selection (areaSelectable)
   const blink = (s) => (b, e) => {
     const bl = e.blockedBy;
     const from = blinkForward(b, e, s.bb.dist ?? 1.5);
     if (!from) return;
     for (const u of b.allies()) {
-      if (u !== bl && segDist(u.x, u.y, from.x, from.y, e.x, e.y) > 0.5) continue;
+      if (u !== bl && (segDist(u.x, u.y, from.x, from.y, e.x, e.y) > 0.5 || !areaSelectable(e, u))) continue;
       hurt(b, e, u, e.s.atk * (s.bb.atk_scale ?? 1), 'phys');
     }
   };
   const circle = (s) => (b, e) => {
     const r = s.bb.range_radius ?? 0;
     b.fx('explode', { x: e.x, y: e.y, r, kind: 'blizzard', id: e.id });
-    for (const u of b.alliesInRadius(e.x, e.y, r)) hurt(b, e, u, e.s.atk * (s.bb.atk_scale ?? 1), 'phys');
+    for (const u of areaAllies(b, e, e.x, e.y, r)) hurt(b, e, u, e.s.atk * (s.bb.atk_scale ?? 1), 'phys');
   };
-  // someone the circle can hurt: an airborne (起飞) operator evades a ground enemy (对地规避; damage.js skips her)
-  const inR = (b, e, s) => b.alliesInRadius(e.x, e.y, (s && s.bb.range_radius) || 0).some((u) => !evadesGround(e, u));
+  // cast with a target in the circle — the trigger selection (targetsNear: PRTS 选择器 "所有触发选择器通常不无视迷彩"): no
+  // airborne (起飞) operator for a ground enemy (§21.22), no unblocking 隐匿 or 迷彩 one
+  const inR = (b, e, s) => targetsNear(b, e, (s && s.bb.range_radius) || 0).length > 0;
   return [resist(), {
     hitOut(c, b, e) { const p = penOn(c, e); if (c.dmg.isAttack && p > 0) c.dmg.defIgnorePct = Math.min(1, (c.dmg.defIgnorePct || 0) + p); },
     taken(c, b, e) {                                             // 【瞬息杀机】 every hp_ratio of max HP lost (second form)
@@ -2177,7 +2245,7 @@ function kitMace(ab) {
       while (e.alive && e.hpRatio <= P.next - cs.ratio + 1e-9 && P.next - cs.ratio > 1e-9) {
         P.next -= cs.ratio;
         b.fx('explode', { x: e.x, y: e.y, r: cs.r, kind: 'clearSp', id: e.id });
-        for (const u of b.alliesInRadius(e.x, e.y, cs.r)) {
+        for (const u of areaAllies(b, e, e.x, e.y, cs.r)) {
           const sk = u.skill;
           if (sk && !sk.noSkill && sk.kind !== 'passive' && !sk.active && sk.spCost > 0) { sk.sp = 0; sk.charges = 0; }   // 清空技力 (stored charges too)
           if (cs.dur > 0) b.applyStatus(u, 'disarm', { duration: cs.dur, source: e });
@@ -2238,6 +2306,7 @@ function kitWolfLord(ab) {
     during(b, e, a, t) {                                         // 【远古威慑】: nearby operators slowed; its HP refills slowly
       const dur = T(ab, 'Reborn.duration') ?? 1;
       e.hp = Math.max(1, e.s.maxHp * Math.min(1, t / Math.max(TICK, dur)));
+      // a buff aura: every ally in it, 隐匿 / airborne ones included [ASSUMED, as 深池伙友卫队's — DESIGN §22.12]
       for (const u of b.alliesInRadius(e.x, e.y, WOLF_AWE_RADIUS)) auraBuff(b, u, 'ab:ancientAwe', 0.2, { aspd: WOLF_AWE_ASPD }, null, true);
     },
     onReborn(b, e) {
@@ -2466,7 +2535,7 @@ export const KITS = Object.freeze({
     tick(b, e2) {
       const r = (e2.def.raw.stats && e2.def.raw.stats.rawRangeRadius) || 1.6;
       b.fx('explode', { x: e2.x, y: e2.y, r, kind: 'boil' });
-      for (const u of b.alliesInRadius(e2.x, e2.y, r)) { hurt(b, e2, u, e2.s.atk * (T(ab, 'aoe.atk_scale') ?? 1), 'arts'); elem(b, e2, u, 'burn', e2.s.atk * (T(ab, 'aoe.ep_damage_ratio') ?? 0)); }
+      for (const u of areaAllies(b, e2, e2.x, e2.y, r)) { hurt(b, e2, u, e2.s.atk * (T(ab, 'aoe.atk_scale') ?? 1), 'arts'); elem(b, e2, u, 'burn', e2.s.atk * (T(ab, 'aoe.ep_damage_ratio') ?? 0)); }
     },
   }],
 
@@ -2567,7 +2636,9 @@ export const KITS = Object.freeze({
       for (let i = 1; i <= CANNON_SHOTS; i++) b.after(i * CANNON_EVERY, () => {
         if (!e.alive) return;
         if (i === CANNON_SHOTS) ab2.immune = had;
-        const t = b.allies().filter((a) => canTargetAlly(e, a, true) && Math.abs(Math.round(a.y) - r0) <= 1 && Math.abs(Math.round(a.x) - c0) <= 1)
+        // each shot picks inside the 9-tile zone (格子判定): an area selection — a 迷彩 ally may be shot, an unblocking 隐匿
+        // one not (areaSelectable; it used to skip 迷彩 like a normal attack)
+        const t = b.allies().filter((a) => areaSelectable(e, a) && Math.abs(Math.round(a.y) - r0) <= 1 && Math.abs(Math.round(a.x) - c0) <= 1)
           .sort((p, q) => q.hpRatio - p.hpRatio)[0];
         if (t) { b.fx('explode', { x: t.x, y: t.y, r: 0.5, kind: 'cannon' }); hurt(b, e, t, e.s.atk * (ab.sk.Cannon.bb.atk_scale ?? 0), 'arts'); }
       }, { owner: e });
@@ -2621,8 +2692,9 @@ export const KITS = Object.freeze({
           if (!lock) return;
           b.fx('telegraph', { x: lock.x, y: lock.y, r: 1, kind: 'barrage', id: e.id });
           for (let i = 0; i < n; i++) {
-            // "对碰撞范围内的1名当前生命值最高的我方单位" — a selection: never an airborne 起飞 ally (PRTS “帝国的甲胄”)
-            const t = alliesInTiles(b, lock.tileR, lock.tileC, 'box', 1).filter((u) => !evadesGround(e, u)).sort((p, q) => q.hp - p.hp)[0];
+            // "对碰撞范围内的1名当前生命值最高的我方单位" — an area selection: never an airborne 起飞 ally nor an unblocking
+            // 隐匿 one (PRTS “帝国的甲胄”; areaAlliesInTiles)
+            const t = areaAlliesInTiles(b, e, lock.tileR, lock.tileC, 'box', 1).sort((p, q) => q.hp - p.hp)[0];
             if (t) hurt(b, e, t, e.s.atk, 'phys');
           }
         }, { owner: e });
@@ -2682,7 +2754,8 @@ export const KITS = Object.freeze({
       sil: true, cd: ab.sk.SwitchModeTrigger ? ab.sk.SwitchModeTrigger.cd : 60, icd: ab.sk.SwitchModeTrigger ? ab.sk.SwitchModeTrigger.icd : 10,
       fire(b, e, a) { a.until = b.time + (T(ab, 'EndRotate.rotate_duration') ?? 0); b.fx('telegraph', { x: e.x, y: e.y, r: 1, kind: 'spin', id: e.id }); },
       iv: T(ab, 'RotateDamage.interval') ?? 1,
-      tick(b, e, a) { if (!(a.until > b.time)) return; for (const u of b.alliesInRadius(e.x, e.y, T(ab, 'RotateDamage.attack@range_radius') ?? 1)) hurt(b, e, u, e.s.atk * (T(ab, 'RotateDamage.attack@atk_scale') ?? 1), 'phys'); },
+      // "每秒对半径1.0范围内的所有我方单位造成…（无视迷彩，不可对空）": an area selection
+      tick(b, e, a) { if (!(a.until > b.time)) return; for (const u of areaAllies(b, e, e.x, e.y, T(ab, 'RotateDamage.attack@range_radius') ?? 1)) hurt(b, e, u, e.s.atk * (T(ab, 'RotateDamage.attack@atk_scale') ?? 1), 'phys'); },
     };
     return [spin, unbalanced((b, e) => { if (spin.until > b.time) { spin.until = 0; b.fx('phase', { x: e.x, y: e.y, id: e.id, kind: 'spinStop' }); } })];
   },
@@ -2707,7 +2780,8 @@ export const KITS = Object.freeze({
       const n = T(ab, 'Attack.attack@times') ?? 1, r = T(ab, 'Attack.attack@projectile_range') ?? 0;
       const t = c.target;
       for (let i = 1; i < n; i++) hurt(b, e, t, e.s.atk, 'phys');
-      if (r > 0) for (const u of b.alliesInRadius(t.x, t.y, r)) if (u !== t) for (let i = 0; i < n; i++) hurt(b, e, u, e.s.atk, 'phys');
+      // the stone's splash ("碰撞无视迷彩"): an area selection — no unblocking 隐匿 ally
+      if (r > 0) for (const u of areaAllies(b, e, t.x, t.y, r)) if (u !== t) for (let i = 0; i < n; i++) hurt(b, e, u, e.s.atk, 'phys');
     },
   }],
   enemy_1050_lslime: (ab, e) => kitLeaderMisc('enemy_1050_lslime', ab, e),   // “庞贝” · 4 targets, burning DoT, self-blast when blocked, ASPD up below half
