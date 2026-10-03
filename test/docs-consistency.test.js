@@ -720,3 +720,48 @@ test('batch 6 after 0.1.0 (DESIGN §21.21–§21.25): the hammer per deployment,
   assert.match(log, /PR #2 指出/);
   assert.match(log, /PR #7 指出/);
 });
+
+test('batch 6 QA residuals (DESIGN §21.21–§21.25): the lock per deployment for borrowers and revives, 起飞 casts, rule 3 for summons, the snapshot timing — code and docs agree', async () => {
+  const sub = (n) => { const a = DESIGN.indexOf(`### 21.${n} `); const b = DESIGN.indexOf('\n### 21.', a + 5); return DESIGN.slice(a, b > 0 ? b : DESIGN.indexOf('\n## 22.') > 0 ? DESIGN.indexOf('\n## 22.') : undefined); };
+  // F1: the lock belongs to the deployment (deploymentOf), its window to the battle (holdsUndying); revives open one
+  const IB = await import('../server/sim/content/items/battle.js');
+  for (const f of ['holdsUndying', 'revivedInPlace']) assert.equal(typeof IB[f], 'function', f);
+  const items = doc('server/sim/content/items/battle.js');
+  assert.match(items, /function deploymentOf\(u\)/);
+  assert.ok(!/S\.on\('deploy', \(c\) => \{\s*if \(c\.unit !== u \|\| c\.initial\) return;\s*hs\.undyingUsed/.test(items), 'no per-grant re-arm hook');
+  assert.match(doc('server/sim/content/bands/battle.js'), /revivedInPlace\(u\)/);
+  assert.match(doc('server/sim/content/kits/tier4.js'), /if \(holdsUndying\(battle, unit\)\) return;/);
+  assert.match(sub(21), /\*\*QA after the integration, fixed\*\*: \(1\) the lock lived in the hooks of the carrier's hammer grants/);
+  assert.match(sub(21), /both in-place revives now call `revivedInPlace`/);
+  assert.match(sub(20), /the lock belongs to the deployment, so a borrowed hammer \(萨尔贡 × 娜仁图亚\) follows the same rule \| `content\/items\/battle\.js deploymentOf` returning one key/);
+  assert.match(sub(20), /an in-place 复活 \(M3茧甲, 埃芒加德\) is a new deployment too/);
+  assert.match(sub(20), /a running window ends with its deployment and outlasts the lend that started it/);
+  assert.match(SIM, /坚固维式重锤 — once per deployment: `items\/battle\.js deploymentOf`/);
+  assert.ok(!/the carrier's own non-initial `deploy` re-arms it/.test(SIM), 'SIM: the per-grant deploy hook is gone');
+  assert.match(PLAYING, /被 M3茧甲 \/ 埃芒加德复活）后又能锁一次，娜仁图亚借来的锤子也一样/);
+  assert.ok(!/First time per battle carrier would take lethal damage/.test(doc('docs/research/04-items.md')), 'research 04: once per deployment');
+  // F3: 卢西恩 / 锏 count only the allies they can hurt; the player text keeps auras and counters
+  assert.match(doc('server/sim/content/bosses.js'), /LUCIEN_AOE_RADIUS\)\.some\(\(u\) => !evadesGround\(e, u\)\)/);
+  assert.match(doc('server/sim/content/enemies.js'), /const inR = \(b, e, s\) => b\.alliesInRadius\([^\n]*\.some\(\(u\) => !evadesGround\(e, u\)\)/);
+  assert.match(sub(22), /they count only the allies they can hurt \(`!evadesGround`\)/);
+  assert.match(sub(20), /an area skill cast because allies are near counts only those it can hurt/);
+  assert.ok(!/燃烧区域和减益都落不到她身上/.test(PLAYING), 'PLAYING: no blanket 减益 claim');
+  assert.match(PLAYING, /地面敌人的光环和全场效果[^\n]*照常生效/);
+  // F5: rule 3 counts every board piece's home, removed or not
+  const battleSrc = doc('server/sim/Battle.js');
+  assert.match(battleSrc, /a\.uid != null && \(a\.kind === 'op' \|\| a\.kind === 'token'\) && a\.homeR === r && a\.homeC === c/);
+  assert.match(sub(24), /Every board piece's home counts now, on the field or not/);
+  assert.match(SIM, /the piece on the field or not — a summon leaves its home free only once it has expired or been\nkilled/);
+  // PR #2: the pairs are taken before the first item runs (code = header = META = §6.4 = §21.25)
+  assert.match(doc('server/match/effectsMeta.js'), /const pairs = \[\];/);
+  assert.match(doc('server/match/effectsMeta.js'), /every \[holder, item\] pair, taken before the first item runs/);
+  assert.match(META, /every\n\[holder, item\] pair, taken before the first item runs/);
+  assert.match(DESIGN, /Equipped items run from a snapshot — the owned chess and each holder's items as that step begins \(every \[holder, item\] pair, taken before the first item runs\)/);
+  assert.match(sub(25), /every \[holder, item\] pair is now taken before the first item runs/);
+  // CHANGELOG 0.1.1
+  const log = doc('CHANGELOG.md');
+  assert.match(log, /被击倒再部署或被 M3茧甲、埃芒加德复活后又能锁血/);
+  assert.match(log, /娜仁图亚借给相邻干员的坚固维式重锤同样每次部署锁血一次/);
+  assert.match(log, /卢西恩、锏不会再因为身边只有起飞的蒂比就放出打不到人的范围技能/);
+  assert.match(log, /倒在已消失的召唤物（如浊心斯卡蒂的海嗣）初始位置上的干员会回到自己的初始位置躺下/);
+});

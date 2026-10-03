@@ -82,8 +82,9 @@ release hooks/timers of units removed this tick (§1.4) → `time += TICK` → e
 fell on (`unit.body`, `Battle._layBody`; b.snap `down` carries it) and its redeploy — the timed one (`_checkRedeploys`:
 timer done, tile free, DP ≥ cost), 不屈's, 阿戈尔's — comes back there (`restTile`); "若干员被击倒的位置为其他干员或召唤物的
 初始位置，则在被击倒后，尝试返回其自身的初始位置": one that fell on another board piece's home (a 突袭 member after its jump,
-乌尔比安 off his anchor) lies on its own home instead when that is free (else it stays [ASSUMED: one attempt]); x / y /
-tileR / tileC keep where it fell for the `kill` / `death` handlers. "倒地干员所在地块视为可部署，但所有我方单位在此处的部署
+乌尔比安 off his anchor; the piece on the field or not — a summon leaves its home free only once it has expired or been
+killed) lies on its own home instead when that is free (else it stays [ASSUMED: one attempt]); x / y / tileR / tileC keep
+where it fell for the `kill` / `death` handlers. "倒地干员所在地块视为可部署，但所有我方单位在此处的部署
 行为将被阻止": `downOn(r, c)` — `_deploy` (redeploys, the 突袭 landing, summons), `spawnDevice` and `relocate` refuse that
 tile and `isReservedTile` reports it, so every automatic picker skips it. A withdrawn operator that is not down (a
 retreat) comes back on its home tile.
@@ -245,10 +246,12 @@ PRTS 术语释义 起飞 "无法被不同阵营行动方式为地面的单位选
 and one-shot areas that bypass `canTargetAlly` — 控潮术师 / 腐败骑士's 周围四格, 陷落雪祀's chain, the 碎铳之簧 bounce, the
 自行炮 shells, “帝国的甲胄”'s barrage, 鼠王's 沙狱, 烹泉's death blast and steam — filter it too; not selections, so they
 still reach it (`ignoreSelect`): abilities PRTS marks "无视无法选择" (【污染秽蚀】, 假想敌：铳's 【盲信之誓】, 萨卡兹悖谬
-暴虐兵长's 暴击 splash), direct picks (碎铳之簧's 法术护盾 counter on its attacker — PRTS 异常效果 "'直接选中'的能力…不受这些
-仅在选择时生效的异常效果制约"), the blasts of flying units credited to the ground 胄 (刺胄之弹, 斩胄之剑 / 破胄之锤 — whose
-掷剑 / 掷锤 pick "（无视无法选择）") and the ticks of a debuff a ground enemy put on it before it took off (出血, 沙狱,
-burning DoTs, 淤困, 【自然涌动】 — a tick selects nobody); auras of ground enemies still apply [ASSUMED]);
+暴虐兵长's 暴击 splash), direct picks (碎铳之簧's 法术护盾 counter and 重装侦察兵's 暴露 on their attacker — PRTS 异常效果
+"'直接选中'的能力…不受这些仅在选择时生效的异常效果制约"), the blasts of flying units credited to the ground 胄 (刺胄之弹,
+斩胄之剑 / 破胄之锤 — whose 掷剑 / 掷锤 pick "（无视无法选择）") and the ticks of a debuff a ground enemy put on it before it
+took off (出血, 沙狱, burning DoTs, 淤困, 【自然涌动】 — a tick selects nobody); auras of ground enemies still apply
+[ASSUMED]; a ground enemy's area skill whose cast depends on allies nearby counts only those it can hurt — 卢西恩's
+【aoe】, 锏's CircleAttack [ASSUMED: no source states the trigger]);
 a stealthed ally (隐匿, 排气格栅) only for the enemy it blocks — our operators keep 隐匿 while blocking (PRTS 作战机制
 §隐匿; 索敌的概念: a blocked enemy "强行无视对方可选性" attacks its blocker); a camouflaged one (迷彩, flag `camou`: ba.camou
 "不阻挡时不成为敌方普通攻击的目标") likewise (PRTS 异常效果: neither anomaly is "阻挡时解除") [ASSUMED: enemy skills and
@@ -665,7 +668,7 @@ registration order. `battle.off(handle)` / `battle.off(name, fn)` / `battle.offO
 | `elementHit` | `{ source, target, dmg }` | before a gauge fill (`dmg.type === 'element'`); mutate `dmg.amount`/`dmg.mul`, set `dmg.cancel` |
 | `damaged` | `{ source, target, amount, type, dmg, credit }` | after application (`amount` may be 0 when shielded); element fills too (with their source); 无来源: `source` null, `credit` set |
 | `heal` | `{ source, target, amount, opts }` | mutable `amount` |
-| `fatal` | `{ unit, source, credit, dmg, amount, prevented }` | HP would reach 0 — set `prevented` (substitutes, kit savers, 不死 / 复活 items, 埃芒加德; 不屈 is a `death` hook). Fired by every HP loss of a unit without a boss pool — hits of any type, element bursts, 无来源 damage, `loseHp` 流失. Order: kits' own savers (10 … −60) → items' 不死 (坚固维式重锤 — once per deployment: the carrier's own non-initial `deploy` re-arms it, DESIGN §21.21 — `PRIO_REVIVE` −100; substitutes −100) → items' 复活 (M3茧甲, `PRIO_RESPAWN` −101: PRTS "复活" acts on a knock-out, which a 不死 prevents) → 埃芒加德 (−110) |
+| `fatal` | `{ unit, source, credit, dmg, amount, prevented }` | HP would reach 0 — set `prevented` (substitutes, kit savers, 不死 / 复活 items, 埃芒加德; 不屈 is a `death` hook). Fired by every HP loss of a unit without a boss pool — hits of any type, element bursts, 无来源 damage, `loseHp` 流失. Order: kits' own savers (10 … −60) → items' 不死 (坚固维式重锤 — once per deployment: `items/battle.js deploymentOf`, a key every deploy changes and an in-place 复活 changes too; one battle-level hook holds the running windows (`holdsUndying`), so a window outlasts a lend, DESIGN §21.21 — `PRIO_REVIVE` −100; substitutes −100) → items' 复活 (M3茧甲, `PRIO_RESPAWN` −101: PRTS "复活" acts on a knock-out, which a 不死 prevents) → 埃芒加德 (−110); both 复活 revive in place and call `revivedInPlace` (a new deployment for the lock) |
 | `kill` | `{ killer, victim }` | victim HP reached 0 (a handler may revive by restoring HP) |
 | `death` | `{ unit, reason:'killed'|'leak'|'retreat'|'merchant'|'expired'|'forcedExit', killer }` | unit removed (`'forcedExit'`: an operator entering 联防 knocked out, §1.1) |
 | `skillStart` / `skillEnd` | `{ unit, skill, reason }` | mutate `skill.ammoLeft` / `skill.timeLeft` in skillStart |
