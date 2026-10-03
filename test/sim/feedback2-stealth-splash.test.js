@@ -2,21 +2,26 @@
 //
 // Official: PRTS 作战机制 §隐匿 "隐匿效果使得获得该效果的单位无法被任何敌方的能力索敌选中" (a stealthed operator that blocks an
 // enemy is attacked by it whatever its selectability: "因为“阻挡优先级最高”的效果，敌人会无视一切可选性对该干员进行攻击");
-// §AOE伤害判定 "AOE的判定是对攻击范围内的每个可以被选中的敌人进行判定"; PRTS 选择器 (可选判定): a selector skips 无法选择 units
-// unless the ability "无视可选性" — as PRTS marks 萨卡兹悖谬暴虐兵长's 暴击 "（无视无法选择，无视迷彩）" and 假想敌：淤困's burst
-// spread "（中点判定，无视目标可选性，不受迷彩制约）"; gamedata_const ba.invisible 隐匿 "不阻挡时不成为敌方攻击的目标" vs
-// ba.camou 迷彩 "不阻挡时不成为敌方普通攻击的目标（无法躲避溅射类攻击）"; PRTS 异常效果 迷彩 "所有光环类能力、以及涉及中点判定/
-// 格子判定的效果均不受迷彩制约"; PRTS 选择器 "所有触发选择器通常不无视迷彩" (an area skill is cast for a target it may attack).
+// §AOE伤害判定 "AOE的判定是对攻击范围内的每个可以被选中的敌人进行判定"; §隐匿与Buff的关系 "隐匿状态下的单位一般无法被敌方的索敌
+// 机制和Buff选择器选中为目标" (寒霜's debuff being its example of one that ignores 隐匿); PRTS 异常效果 §无法选择: a unit with
+// 隐匿 / 不可选中 / 无敌 / 对地规避 is skipped by "常见的、来自不同阵营的“选择”行为" unless the ability "无视可选性" — as PRTS
+// marks 萨卡兹悖谬暴虐兵长's 暴击 "（无视无法选择，无视迷彩）" and 假想敌：淤困's burst spread "（中点判定，无视目标可选性，不受迷彩
+// 制约）", while "'直接选中'的能力…不受这些仅在选择时生效的异常效果制约"; gamedata_const ba.invisible 隐匿 "不阻挡时不成为敌方攻击
+// 的目标" vs ba.camou 迷彩 "不阻挡时不成为敌方普通攻击的目标（无法躲避溅射类攻击）"; PRTS 异常效果 迷彩 "所有光环类能力、以及涉及
+// 中点判定/格子判定的效果均不受迷彩制约"; PRTS 选择器 "所有触发选择器通常不无视迷彩" (an area skill is cast for a target it may
+// attack; a normal attack on every operator in range skips 迷彩 too).
 // Cause: the enemy side's area effects (content/enemies.js, content/bosses.js) took every ally in the area; only the
 // operator side skipped an unblocked 隐匿 enemy (Battle.foesInRadius, 0.1.1).
 // Now: targeting.js areaSelectable / enemies.js areaAllies, areaAlliesInTiles, fieldAllies — no 隐匿 ally unless it blocks
-// the enemy, no untargetable or sleeping one, no airborne 起飞 one for a ground enemy; 迷彩 is hit (DESIGN §22.12).
+// the enemy, no untargetable or sleeping one, no airborne 起飞 one for a ground enemy; 迷彩 is not checked. Buff auras:
+// auraSelectable / auraAllies (the same without 对地规避). A locked target is hit as a direct pick (targetAndArea).
+// (DESIGN §22.12.)
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBattle, enemyRec, checkInvariants } from '../helpers/battleHarness.js';
 import { hasGeneratedData } from '../../server/sim/simdata.js';
-import { areaSelectable } from '../../server/sim/targeting.js';
+import { areaSelectable, auraSelectable } from '../../server/sim/targeting.js';
 import { areaAllies } from '../../server/sim/content/enemies.js';
 
 const REAL = { skip: !hasGeneratedData() };
@@ -70,11 +75,14 @@ test('areaSelectable: no 隐匿 ally unless it blocks the source, no untargetabl
   assert.deepEqual(areaAllies(h.b, g, g.x, g.y, 1.01).map((u) => u.def.name).sort(), [jf, hd].map((u) => u.def.name).sort(), 'areaAllies: the 隐匿 bystander is left out');
   camou(h, hd);
   assert.equal(areaSelectable(g, hd), true, '迷彩: still selected by an area effect ("无法躲避溅射类攻击")');
+  assert.equal(auraSelectable(g, gm), false, 'a buff aura: 隐匿, not blocking — not taken');
+  assert.equal(auraSelectable(g, jf), true, 'a buff aura: 隐匿 blocker — taken');
   h.b.addBuff(gm, { key: 'test:liftoff', persist: true, flags: { liftoff: true } });
   h.b.removeBuff(gm, 'stealth');
   assert.equal(areaSelectable(g, gm), false, '起飞 vs a ground source (对地规避)');
   assert.equal(areaSelectable(f, gm), true, '起飞 vs a flying source');
   assert.equal(areaSelectable(null, gm), true, '起飞 vs no source');
+  assert.equal(auraSelectable(g, gm), true, '起飞 vs a ground enemy\'s buff aura: still taken (§21.22)');
   h.b.removeBuff(gm, 'test:liftoff');
   h.b.addBuff(gm, { key: 'test:untargetable', persist: true, flags: { untargetable: true } });
   assert.equal(areaSelectable(f, gm), false, 'untargetable (不可选中)');
@@ -212,6 +220,140 @@ test('#32.6 ignoreSelect: 萨卡兹悖谬暴虐兵长\'s 暴击 ("无视无法�
     assert.ok(jf.findBuff('burnBurst') || jf.elem.burn >= jf.gaugeMax - 1e-6, 'the host bursts');
     assert.ok(gm.elem.burn > 0, '隐匿 neighbour: 1000 burn spread onto it');
     assert.ok(hd.elem.burn > 0, 'airborne 起飞 neighbour: reached too (until 0.1.2 the pipeline refused a ground enemy\'s fill)');
+    done(h);
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// review of the first round
+
+const liftoff = (h, u) => h.b.addBuff(u, { key: 'test:liftoff', persist: true, flags: { liftoff: true, blockFly: true } }); // 起飞 (蒂比's flag)
+const pool = (hp) => ({ hp, maxHp: hp, damage(pid, a) { this.hp = Math.max(0, this.hp - a); } });
+
+test('#32.6 review: 蚀裂\'s 毒雾 and the buff auras of 深池伙友卫队 / 扎罗 (远古威慑) keep a 隐匿 operator out; an airborne 起飞 one is still reached', REAL, () => {
+  // 假想敌：蚀裂 knocked out with no killer: its cloud (r 0.8) covers 角峰 (9,6) and 古米 (10,6) around its spot (9.5, 6)
+  for (const mode of ['stealth', 'liftoff']) {
+    const h = makeBattle({
+      seed: 3, timeLimit: 60, autoFinish: false,
+      units: [{ chessId: JF, row: 9, col: 6, dir: 'RIGHT' }, { chessId: GM, row: 10, col: 6, dir: 'RIGHT' }],
+      enemies: [{ key: 'enemy_9006_actoxi', pos: [9.5, 6], time: 1, mods: { hpMul: 1e3, speedMul: 0, atkMul: 0.01 } }],
+    });
+    h.step(1);
+    const jf = h.unit(JF), gm = h.unit(GM);
+    if (mode === 'stealth') stealth(h, gm); else liftoff(h, gm);
+    const ticks = new Map([[jf, 0], [gm, 0]]);
+    h.b.on('damaged', (c) => { if ((c.dmg.tags || []).includes('poison') && ticks.has(c.target)) ticks.set(c.target, ticks.get(c.target) + 1); }, { priority: 1000 });
+    h.run(1);
+    h.b.kill(h.b.enemies.find((e) => e.defId === 'enemy_9006_actoxi'), null);
+    h.run(10);
+    assert.ok(ticks.get(jf) >= 8, `the cloud ticks on 角峰 (${ticks.get(jf)})`);
+    if (mode === 'stealth') assert.equal(ticks.get(gm), 0, '隐匿 古米: no tick (in 0.1.1 every one)');
+    else assert.equal(ticks.get(gm), ticks.get(jf), 'airborne 古米: every tick (a sourceless cloud selects no ground enemy, §21.22)');
+    done(h);
+  }
+  // 深池伙友卫队's field (with 影刃 next to it) and 扎罗's 远古威慑 (during its 重生): 角峰 plain, 古米 隐匿, 红豆 起飞
+  const aura = (enemies, buff, ko) => {
+    const h = makeBattle({
+      seed: 3, timeLimit: 120, autoFinish: false,
+      units: [{ chessId: JF, row: 10, col: 6, dir: 'RIGHT' }, { chessId: GM, row: 9, col: 7, dir: 'RIGHT' }, { chessId: HD, row: 10, col: 8, dir: 'RIGHT' }],
+      enemies: enemies.map((key, i) => ({ key, pos: [10 + i, 7], time: 1, mods: { hpMul: 1e3, speedMul: 0, atkMul: 0.001 } })),
+    });
+    h.step(1);
+    stealth(h, h.unit(GM)); liftoff(h, h.unit(HD));
+    h.run(1);
+    if (ko) h.b.kill(h.b.enemies.find((e) => e.defId === ko), null);
+    h.run(1);
+    const got = [JF, GM, HD].map((id) => !!h.unit(id).findBuff(buff));
+    done(h);
+    return got;
+  };
+  assert.deepEqual(aura(['enemy_1174_duholy', 'enemy_1175_dushdo_2'], 'ab:forceField'), [true, false, true], '深池伙友卫队: 角峰 yes, 隐匿 古米 no, 起飞 红豆 yes');
+  assert.deepEqual(aura(['enemy_1535_wlfmster'], 'ab:ancientAwe', 'enemy_1535_wlfmster'), [true, false, true], '扎罗 远古威慑: 角峰 yes, 隐匿 古米 no, 起飞 红豆 yes');
+});
+
+test('#32.6 review: 死亡之眼\'s burst still hits its locked target that turned 隐匿 mid-channel (a direct pick); a 隐匿 bystander is spared', REAL, () => {
+  const h = makeBattle({
+    seed: 3, timeLimit: 120, autoFinish: false,
+    units: [{ chessId: GM, row: 9, col: 6, dir: 'RIGHT' }, { chessId: JF, row: 10, col: 6, dir: 'RIGHT' }, { chessId: HD, row: 9, col: 5, dir: 'RIGHT' }],
+    enemies: [{ key: 'enemy_1275_dwlock_2', pos: [9, 8], time: 1, mods: { hpMul: 1e3, speedMul: 0, atkMul: 0.2 } }],
+  });
+  h.step(1);
+  const gm = h.unit(GM), jf = h.unit(JF), hd = h.unit(HD);
+  stealth(h, jf);
+  let locked = null;
+  const fx0 = h.b.fx.bind(h.b);
+  h.b.fx = (k, p) => {
+    if (k === 'beam' && p && p.kind === 'deathEye' && !locked) { locked = p.to; h.b.after(1.5, () => stealth(h, gm)); } // 隐匿 mid-channel
+    return fx0(k, p);
+  };
+  const burst = [];
+  h.b.on('damaged', (c) => { if (c.source && c.source.defId === 'enemy_1275_dwlock_2' && c.dmg.element === 'apoptosis' && c.amount > 50) burst.push(c.target); }, { priority: 1000 });
+  h.run(30);
+  assert.equal(locked, gm.id, 'the channel locks 古米');
+  assert.ok(gm.s.flags.stealth, '古米 turned 隐匿 during it');
+  assert.ok(burst.includes(gm), 'the burst hits its locked target');
+  assert.ok(burst.includes(hd), '…and the plain 红豆 next to it');
+  assert.ok(!burst.includes(jf), '…not the 隐匿 角峰 next to it');
+  done(h);
+});
+
+test('#32.6 review: the 斩胄之剑 / 破胄之锤 hover attack skips 隐匿 and 迷彩; the 自行炮\'s shots and 深溟巢涌者\'s pulse hit 迷彩; 祈祷邀约 (whole field) skips 隐匿', REAL, () => {
+  // hover attack (a normal attack on every operator in range): 角峰 plain, 古米 隐匿, 红豆 迷彩 — all within 1.6
+  for (const key of ['enemy_9014_acstma', 'enemy_9015_acstmb']) {
+    const h = makeBattle({
+      kind: 'boss', sharedBoss: pool(1e6), seed: 7, autoFinish: false, timeLimit: 600,
+      units: [{ chessId: JF, row: 10, col: 9, dir: 'RIGHT' }, { chessId: GM, row: 10, col: 7, dir: 'RIGHT' }, { chessId: HD, row: 10, col: 8, dir: 'RIGHT' }],
+    });
+    h.step();
+    stealth(h, h.unit(GM)); camou(h, h.unit(HD));
+    const blade = h.spawn(key, { pos: [3, 8], routeIndex: 0, mods: { speedMul: 0 }, tag: 'part' });
+    const hit = [];
+    h.b.on('damaged', (c) => { if (c.source === blade) hit.push(c.target); }, { priority: 1000 });
+    h.run(3);
+    assert.ok(hit.includes(h.unit(JF)), `${key}: hits the plain operator`);
+    assert.ok(!hit.includes(h.unit(GM)) && !hit.includes(h.unit(HD)), `${key}: not the 隐匿 or the 迷彩 one (in 0.1.1 it hit all three)`);
+    done(h);
+  }
+  // 自行炮: 红豆 (迷彩, full HP ratio) in the 9-tile zone around 角峰 (the highest max HP) is shot too
+  {
+    const h = makeBattle({
+      seed: 3, timeLimit: 120, autoFinish: false,
+      units: [{ chessId: JF, row: 9, col: 6, dir: 'RIGHT' }, { chessId: GM, row: 10, col: 6, dir: 'RIGHT' }, { chessId: HD, row: 10, col: 5, dir: 'RIGHT' }],
+      enemies: [{ key: 'enemy_1273_stmgun_2', pos: [9, 9], time: 1, mods: { hpMul: 1e3, speedMul: 0 } }],
+    });
+    h.step(1);
+    camou(h, h.unit(HD));
+    const log = damageLog(h, 'enemy_1273_stmgun_2');
+    h.run(40);
+    assert.ok(log.some((x) => x.target === h.unit(HD) && !x.attack), '迷彩 红豆: shot inside the zone (in 0.1.1 never)');
+    done(h);
+  }
+  // 深溟巢涌者: its pulse rides on its attack — with the plain 古米 in range the 迷彩 红豆 is hit by every pulse; alone it is never
+  for (const alone of [false, true]) {
+    const units = [{ chessId: HD, row: 9, col: 6, dir: 'RIGHT' }];
+    if (!alone) units.push({ chessId: GM, row: 10, col: 7, dir: 'RIGHT' });
+    const h = makeBattle({ seed: 3, timeLimit: 120, autoFinish: false, units, enemies: [{ key: 'enemy_1234_dsubrl', pos: [9, 7], time: 1, mods: { hpMul: 1e3, speedMul: 0 } }] });
+    h.step(1);
+    camou(h, h.unit(HD));
+    const log = damageLog(h, 'enemy_1234_dsubrl');
+    h.run(10);
+    const on = (id) => log.filter((x) => x.target === h.unit(id) && x.attack).length;
+    if (alone) assert.equal(on(HD), 0, '迷彩 alone in range: no attack, so no pulse [the engine attack needs a target]');
+    else { assert.ok(on(GM) >= 5, `plain 古米 pulsed (${on(GM)})`); assert.equal(on(HD), on(GM), '迷彩 红豆: every pulse too (in 0.1.1 none)'); }
+    done(h);
+  }
+  // “萨科塔昂首”'s 【祈祷邀约】 (whole field, "无视迷彩", no 无视无法选择): 角峰 slowed, the 隐匿 古米 not
+  {
+    const h = makeBattle({
+      seed: 3, timeLimit: 120, autoFinish: false,
+      units: [{ chessId: JF, row: 10, col: 6, dir: 'RIGHT' }, { chessId: GM, row: 9, col: 7, dir: 'RIGHT' }],
+      enemies: [{ key: 'enemy_10085_hllevi_2', pos: [10, 9], time: 1, route: 2, mods: { hpMul: 1e3, speedMul: 0 } }],
+    });
+    h.step(1);
+    stealth(h, h.unit(GM));
+    h.run(22);
+    assert.ok(h.unit(JF).findBuff('ab:roar'), '角峰: 受邀祈祷');
+    assert.ok(!h.unit(GM).findBuff('ab:roar'), '隐匿 古米: not selected');
     done(h);
   }
 });
