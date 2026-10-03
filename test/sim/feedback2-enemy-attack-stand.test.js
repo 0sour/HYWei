@@ -126,3 +126,51 @@ test('no attack clip known: ATTACK_PAUSE after the strike and no wind-up stand; 
   h.run(0.3);
   assert.notEqual(e.x, x0, 'walks once the stun is over');
 });
+
+// review: a stand holds only the walking — a route's WAIT keeps running and DISAPPEAR / APPEAR still happen
+// (data/waves.json has 122 WAIT and 99 DISAPPEAR checkpoints); it used to hold every leg, so a wait ran long by each
+// clip and never ended for an enemy attacking quicker than its clip
+function routeField(key, bat, dur, checkpoints, ally) {
+  const rec = { ...enemyRec({ key, hp: 1e9, atk: 1, range: 3, bat, speed: 1 }), attackAnim: { clip: 'Attack', dur, hit: dur / 2 } };
+  return makeBattle({
+    defs: { chess: { t_a: chessRec({ id: 't_a', stats: { maxHp: 1e9, atk: 0, def: 1e6 } }) }, enemies: { [key]: rec } },
+    units: ally ? [{ chessId: 't_a', row: 10, col: 7 }] : [], routes: [{ motion: 'WALK', start: [9, 8], end: [9, 2], checkpoints }],
+    enemies: [{ key, time: 0, route: 0 }], content: 'none', autoFinish: false, timeLimit: 60, hooks: ['attack'],
+  });
+}
+
+test('a ranged enemy with a target in range on a WAIT checkpoint leaves when the wait (and its current clip) is over, as without a target', () => {
+  const leaves = (bat, dur, ally) => {
+    const h = routeField('enemy_waiter', bat, dur, [{ type: 'WAIT', time: 3 }], ally);
+    let waited = null, moved = null, x0 = null;
+    for (let i = 0; i < Math.round(8 / TICK); i++) {
+      h.step();
+      const e = h.enemies()[0];
+      x0 ??= e.x;
+      if (waited == null && e.route.legIdx >= 1) waited = h.b.time;
+      if (moved == null && Math.abs(e.x - x0) > 1e-6) moved = h.b.time;
+    }
+    return { waited, moved, attacks: h.hooksOf('attack').length };
+  };
+  const free = leaves(2.7, 1, false), sniper = leaves(2.7, 1, true), quick = leaves(1, 2, true);
+  assert.equal(free.attacks, 0);
+  assert.ok(sniper.attacks >= 2 && quick.attacks >= 5);
+  assert.ok(Math.abs(sniper.waited - free.waited) < 1e-9 && Math.abs(quick.waited - free.waited) < 1e-9, `the wait ends at ${free.waited.toFixed(2)} s for all three`);
+  // it walks on once the attack clip running at the end of the wait is over (the attack at 2.7 s: until 3.2 s)
+  assert.ok(sniper.moved > free.moved && sniper.moved <= 3.2 + 2 * TICK, `leaves at ${sniper.moved?.toFixed(2)} s (no target: ${free.moved.toFixed(2)} s)`);
+  assert.equal(quick.moved, null, 'an enemy attacking quicker than its clip stands while the target stays in range');
+});
+
+test('DISAPPEAR / APPEAR legs proceed while an enemy stands for its attacks; leaving the field ends the stand', () => {
+  const h = routeField('enemy_ghost', 1, 2, [{ type: 'WAIT', time: 1 }, { type: 'DISAPPEAR' }, { type: 'WAIT', time: 1 }, { type: 'APPEAR', pos: [9, 4] }], true);
+  let hiddenAt = null, appeared = null;
+  for (let i = 0; i < Math.round(4 / TICK); i++) {
+    h.step();
+    const e = h.enemies()[0];
+    if (hiddenAt == null && e.hidden) { hiddenAt = h.b.time; assert.equal(e.atkStandUntil, -Infinity, 'no stand left once hidden'); }
+    if (appeared == null && hiddenAt != null && !e.hidden) appeared = { t: h.b.time, x: e.x, y: e.y };
+  }
+  assert.ok(h.hooksOf('attack').length >= 1, 'it attacked before leaving');
+  assert.ok(hiddenAt != null && Math.abs(hiddenAt - 1) < 2 * TICK, `disappears after its 1 s wait (${hiddenAt})`);
+  assert.ok(appeared && Math.abs(appeared.t - 2) < 2 * TICK && Math.abs(appeared.x - 4) < 0.05 && appeared.y === 9, `appears on (9,4) 1 s later (${JSON.stringify(appeared)})`);
+});

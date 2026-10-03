@@ -1742,8 +1742,9 @@ function kitRoar(ab) {
  * ×boomb.move_speed, and it flies on. A stun / freeze / sleep before the release interrupts the cast (Boomb
  * `_immuneStunWhenAffecting` 0, like the other enemy channels here): nothing leaves the drone, it keeps its bomb and casts
  * again after the skill's cooldown (1 s, counted from the interrupt) once it is free and an operator is in range.
- * [ASSUMED] no drop when the drone is dead at the release; the ATK at the release; the hover through the cast (the
- * engine stands a ranged enemy for its attack clip, ai.js attackStand; the drop is the drone's only attack-like cast); the
+ * [ASSUMED] no drop when the drone is dead at the release; the ATK at the release; the hover through the cast (its own
+ * hold, `pauseUntil`: the drone has no normal attack — `noAttack` —, so ai.js attackStand, the stand of a ranged enemy
+ * for its attack clip, never runs for it; the drop is its only attack-like cast); the
  * bomb-less look from the release (the bomb leaves the drone on that frame of the Attack clip; at the cast end — 1 tick
  * before the clip ends — the client would draw the bomb back for a frame); an interrupted cast does not use up the one
  * trigger (`_maxTriggerTime` 1 — the bomb is still on the drone); a stun after the release does not stop the cast end.

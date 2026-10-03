@@ -465,17 +465,18 @@ export function updateEnemy(b, e, dt) {
   }
   if (!e.hidden && b._checkBlock(e)) return;
   if (b.time < e.pauseUntil) return;
-  // standing for an attack clip (attackStand, GitHub #58): drawn idle — the client plays the clip, then Move again; a
-  // 恐惧 runs at once (it cannot attack)
-  if (winding || (b.time < e.atkStandUntil && !e.s.flags.fear)) { e.moving = false; return; }
+  // standing for an attack clip (attackStand, GitHub #58): only the walking waits — a checkpoint's WAIT keeps running
+  // and DISAPPEAR / APPEAR legs still happen (advanceRoute); drawn idle (the client plays the clip, then Move again);
+  // a 恐惧 runs at once (it cannot attack)
+  const standing = winding || (b.time < e.atkStandUntil && !e.s.flags.fear);
   if (e.s.flags.noMove) { e.moving = false; return; }   // standing (a 重生, a form change): drawn idle, not walking
   // 恐惧 (ba.fear "无法被阻挡并四散逃跑"; PRTS 诱发移动: 恐惧 outranks 诱导): runs to random tiles of the fan away from
   // its source — a self-inflicted fear flutters inside its own tile (fear.js); the route re-plans once it ends
   if (e.s.flags.fear && !e.hidden) { moveFeared(b, e, dt); return; }
   if (e.mem.fearMove) endFear(e);
   // 诱导 (ba.attract "无法被阻挡并向目标位置移动"): walks to the attract point instead of following its route
-  if (e.s.flags.attract) { moveAttracted(b, e, dt); return; }
-  advanceRoute(b, e, dt, R);
+  if (e.s.flags.attract) { if (standing) e.moving = false; else moveAttracted(b, e, dt); return; }
+  advanceRoute(b, e, dt, R, standing);
 }
 
 /**
@@ -520,7 +521,11 @@ function moveAttracted(b, e, dt) {
   if (moved && e.route) e.route.pts = null;
 }
 
-function advanceRoute(b, e, dt, R) {
+/**
+ * One tick along the route legs. `standing` (an attack clip, attackStand): the time-based legs go on — a WAIT runs
+ * down, DISAPPEAR / APPEAR happen (leaving the field ends the clip) — and a MOVE leg holds (GitHub #58 review).
+ */
+function advanceRoute(b, e, dt, R, standing = false) {
   let budget = dt;
   let guard = 16;
   while (budget > 1e-9 && guard-- > 0 && e.alive) {
@@ -537,6 +542,7 @@ function advanceRoute(b, e, dt, R) {
     }
     if (leg.t === 'disappear') {
       b._setHidden(e, true);
+      e.atkStandUntil = -Infinity; standing = false;   // off the field: its attack clip is over
       R.legIdx++; R.pts = null;
       continue;
     }
@@ -547,6 +553,7 @@ function advanceRoute(b, e, dt, R) {
       continue;
     }
     // move
+    if (standing) { e.moving = false; return; }   // the walking waits for the attack clip
     if (!R.pts || R.version !== b.grid.version) planLeg(b, e, leg);
     const speed = e.s.moveSpeed * MOVE_SCALE;
     if (speed <= 0) { e.moving = false; return; }
@@ -587,7 +594,10 @@ function advanceRoute(b, e, dt, R) {
  * plays for its attacks and its strike frame (tools/build-data.mjs, from the asset manifest) —, `hit` of it before
  * the strike (the wind-up, while a target is in range) and the rest after it, both shortened when the attacks come
  * quicker than the clip (it then plays faster: render/spine.js, the same rule) — no source gives a length. An enemy in
- * another form (掠海漂移体's crawl, 转译基底's forms, 杰斯顿's second form) stands for its base clip [ASSUMED].
+ * another form (掠海漂移体's crawl, 转译基底's forms, 杰斯顿's second form) stands for its base clip [ASSUMED]; known
+ * mismatches: 扎罗's second form stands 1.433 s (A_Attack) though its B_Attack lasts 2.0 s (2.5 s interval: ~0.4 s of
+ * walking during the recovery), 转译基底's 特战术师 stands 2.0 s (B_Attack) though its D_Attack lasts 1.667 s — a per-form
+ * clip needs the client's FORMS mapping (render/units.js) in shared data.
  * Returns the wind-up and rest (s) into `out`: an enemy with no attack clip known stands ATTACK_PAUSE after the strike
  * (the old rule), a 「不停止移动」 one (`attackMoves`: data or content) never stops.
  */
