@@ -9,11 +9,17 @@
 // is reported (g.bandFocus) and the server assigns it while it is free, else 「华法琳」, else the first free strategy
 // (timeoutBand). It starts on that default, so the tip under the order list always names what a timeout gives.
 // Solo, and a co-op match with a single human (the server's soloUntimed: draft.untimed): no clock at all.
+// 本局信息 (GitHub issue #8 item 1, "选策略时没法返回查看禁用的干员和盟约"): 查看禁用盟约与干员 under the order list opens the
+// briefing's bond rows, legend and 本局禁用干员 again, read-only (ui/matchInfo.js MatchInfoDialog — the very blocks of the
+// briefing). The draft runs on underneath: its status line repeats the current turn and the countdown (draftInfoStatus),
+// a turn change (a pick, a skip, a turn that runs out, an AI pick) closes it, the end of the draft unmounts it, and it
+// never touches the highlighted band or the buttons.
 
 import { useEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
 import { html, Button, Icon, MicroLabel, useTicker, secondsLeft } from '../ui/components.js';
 import { useGameData, BandIcon, RichText, PlayerAvatar, LpTower, Sprite } from '../ui/gameComponents.js';
 import { StepHeader, ExitModal } from '../ui/matchChrome.js';
+import { MatchInfoDialog, matchInfoModel } from '../ui/matchInfo.js';
 import { actions, act } from '../ui/gameActions.js';
 import { normalizeDraft, sortedPlayers } from '../ui/gameLogic.js';
 import { useStore } from '../store.js';
@@ -124,6 +130,21 @@ export function draftClock(pub) {
   return { deadline, total: Number(d.turnSeconds) > 0 ? Number(d.turnSeconds) : null };
 }
 
+/**
+ * The status line of the 本局信息 dialog: what the draft does while the dialog covers it — my pick, else whose turn it is
+ * with the turn's seconds left (the step header's number; none when untimed), warning at ≤ 10 s like the countdown.
+ * @param {{ myPick?: string|null, pickName?: string|null, myTurn: boolean, turnName?: string|null, secs?: number|null,
+ *   waiting?: boolean }} o waiting: teammates still have to pick after my pick
+ * @returns {{ text: string, secs: number|null, tone: 'mint'|'gold'|'warn'|'dim' }}
+ */
+export function draftInfoStatus({ myPick = null, pickName = null, myTurn, turnName = null, secs = null, waiting = false }) {
+  if (myPick) return { text: `已选择「${pickName || ''}」${waiting ? '，等待其他博士' : ''}`, secs: null, tone: 'mint' };
+  const s = Number.isFinite(secs) ? Math.max(0, Math.round(secs)) : null;
+  const tone = s != null && s <= 10 ? 'warn' : 'gold';
+  if (myTurn) return { text: '轮到你决策', secs: s, tone };
+  return { text: turnName ? `${turnName} 决策中` : '等待轮到你', secs: s, tone: s != null ? tone : 'dim' };
+}
+
 /** BAND_DRAFT screen. */
 export function BandDraftScreen() {
   const pub = useStore((s) => s.match.public);
@@ -135,6 +156,7 @@ export function BandDraftScreen() {
   const [busy, setBusy] = useState(null);
   const [exit, setExit] = useState(false);
   const [skipped, setSkipped] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const mode = gd.config?.modes?.[pub?.modeId];
   const solo = roomSolo || mode?.type === 'SINGLE' || String(pub?.modeId || '').includes('single');
@@ -163,6 +185,10 @@ export function BandDraftScreen() {
   }, [bands.length, myPick, myTurn, takenKey]);
   // "your turn" cue
   useEffect(() => { if (myTurn && !solo) audio.sfx('yourTurn'); }, [myTurn]);
+  // the 本局信息 dialog never outlives the turn it was opened in: a turn change (a pick, a skip, a turn that ran out, an
+  // AI pick) or my pick closes it, so whoever's turn begins sees the draft
+  const turnKey = `${draft.turnPid || ''}|${myPick || ''}`;
+  useEffect(() => { setInfoOpen(false); }, [turnKey]);
 
   // one countdown (user playtest #4 item 4): the current turn's — m.public.deadline, the same clock as the picker's row
   const clock = solo ? null : draftClock(pub);
@@ -198,6 +224,10 @@ export function BandDraftScreen() {
   // the picker's row shows the step header's number (both read the one turn deadline)
   const turnSecs = clock ? secondsLeft(clock.deadline) : null;
   const turnLen = Number(pub?.draft?.turnSeconds) > 0 ? Math.round(pub.draft.turnSeconds) : null;
+  // 本局信息: the briefing's blocks (built only while the dialog is open) and the draft's state under it
+  const info = infoOpen ? matchInfoModel(pub, { bonds: gd.list('bonds'), chess: gd.chess, mode }) : null;
+  const infoStatus = infoOpen ? draftInfoStatus({ myPick, pickName: myPick ? gd.band(myPick)?.name : null, myTurn, turnName, secs: turnSecs,
+    waiting: !solo && !draft.done }) : null;
 
   return html`<div class="screen draft">
     <div class="brief__bg" aria-hidden="true"></div>
@@ -226,6 +256,8 @@ export function BandDraftScreen() {
             </span>
           </div>`;
         })}
+        <${Button} variant="secondary" icon="search" block=${true} class="draft-order__info" data-testid="match-info-open"
+          aria-haspopup="dialog" onClick=${() => setInfoOpen(true)}>查看禁用盟约与干员<//>
         ${!solo ? html`<p class="draft-order__tip" data-testid="draft-tip">${draftTip({ timed, turnSeconds: turnLen, autoName: myPick ? null : autoName, selected: autoId === sel })}</p>` : null}
       </aside>
 
@@ -270,5 +302,9 @@ export function BandDraftScreen() {
       </aside>
     </main>
     <${ExitModal} open=${exit} onClose=${() => setExit(false)} solo=${solo} />
+    <${MatchInfoDialog} open=${infoOpen} onClose=${() => setInfoOpen(false)} model=${info}
+      status=${infoStatus ? html`<span class=${cx('minfo-dlg__turn', `is-${infoStatus.tone}`)}>
+        <${Icon} name=${infoStatus.tone === 'mint' ? 'check' : 'hourglass'} />${infoStatus.text}${infoStatus.secs != null ? html`<b class="num">${infoStatus.secs}s</b>` : null}
+      </span>` : null} />
   </div>`;
 }
