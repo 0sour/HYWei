@@ -66,26 +66,33 @@ function chessPiece(c, golden = false) {
 }
 function itemPiece(it) { return { uid: nextUid(), kind: 'item', id: it.id, golden: !!it.isGolden, tier: it.tier }; }
 
+// the mock server's bond counts: BOARD distinct members, plus 调和 (maniShip) like server/match/bondsMeta.js — a 调和
+// operator on the board adds 1 to every core bond that has a member and marks the entry `harmony: 1` (the server sends it);
+// the mode's inactive bonds (标准) are left out, as the server does
 function computeBonds(priv) {
   const counts = new Map();
   const seen = new Set();
+  const inactive = new Set(data.get('config')?.modes?.[S?.pub?.modeId]?.inactiveBondIds || []);
   for (const p of priv.board) {
     if (p.kind !== 'chess') continue;
     const c = data.lookup('chess', p.id);
     const base = c?.baseId || p.id;
     if (seen.has(base)) continue;
     seen.add(base);
-    for (const b of c?.bonds || []) counts.set(b, (counts.get(b) || 0) + 1);
+    for (const b of c?.bonds || []) if (!inactive.has(b)) counts.set(b, (counts.get(b) || 0) + 1);
   }
+  const harmony = counts.get('maniShip') > 0;
   const out = [];
-  for (const [bondId, count] of counts) {
+  for (const [bondId, raw] of counts) {
     const b = data.lookup('bonds', bondId);
+    const plus = harmony && b?.isCore ? 1 : 0;
+    const count = raw + plus;
     const thresholds = b?.thresholds || [2];
     let tier = 0;
     for (const t of thresholds) if (count >= t) tier++;
     const layers = S?.layers?.[bondId] ?? (tier ? Math.floor(rnd() * 40) + 4 : Math.floor(rnd() * 6));
     if (S) S.layers[bondId] = layers;
-    out.push({ bondId, count, active: tier > 0, tier, layers, thresholds, countsHand: !!b?.countsHand });
+    out.push({ bondId, count, active: tier > 0, tier, layers, ...(plus ? { harmony: plus } : {}), thresholds, countsHand: !!b?.countsHand });
   }
   return out.sort((a, b) => (b.active - a.active) || (b.layers - a.layers));
 }
@@ -207,6 +214,31 @@ function buildState() {
 }
 
 /**
+ * The 0.1.1 gaps (DESIGN §21.26): `funny` — the match is 标准 (its 本局禁用 bonds: 5 of 变形同构体's 14 pairings off);
+ * `morph` — a 变形同构体 in the hand and in the shop's item slot, the first board operator wearing 变形同构体 + 维式重锤 (its
+ * card highlights that pairing); `harmony` — 缪尔赛思 (调和) in place of the second board operator, so the core bonds with a
+ * member count +1 and carry `harmony` (the bond popup's 调和 row).
+ */
+function applyGapVariants() {
+  if (VARIANTS.has('funny')) { S.pub.modeId = 'mode_multi_funny'; S.pub.difficulty = 'FUNNY'; }
+  if (VARIANTS.has('morph')) {
+    const iso = data.list('items').find((i) => i.canGiveBond && !i.isGolden);
+    const hammer = data.list('items').filter((i) => i.giveBondId === 'victoriaShip' && !i.isGolden).sort((a, b) => a.tier - b.tier)[0];
+    if (iso) {
+      S.priv.hand[5] = itemPiece(iso);
+      const slot = S.priv.shop.slots.findIndex((s) => s && s.kind === 'item');
+      if (slot >= 0) S.priv.shop.slots[slot] = { kind: 'item', id: iso.id, price: iso.price, basePrice: iso.price, sold: false };
+      if (S.priv.board[0] && hammer) S.priv.board[0].items = [{ uid: nextUid(), id: iso.id }, { uid: nextUid(), id: hammer.id }];
+    }
+  }
+  if (VARIANTS.has('harmony')) {
+    const mani = visibleChess().find((c) => c.bonds.includes('maniShip'));
+    const at = S.priv.board[1];
+    if (mani && at) S.priv.board[1] = { ...chessPiece(mani), row: at.row, col: at.col };
+  }
+}
+
+/**
  * `loadout` variant (DESIGN §16): the first board operator and the first shop card fight with a non-default skill, the
  * elite board operator with its module unequipped (m.private.loadout). Data without `skills[]` / `modules[]` (before the
  * loadout data build) gets a stand-in second skill / module list on those records — mock only.
@@ -250,6 +282,7 @@ function setPhase(phase, variant) {
   for (const v of (variant || '').split(',').filter(Boolean)) VARIANTS.add(v);
   if (VARIANTS.has('reward') && !S.priv.shop.rewardOffer) S.priv.shop.rewardOffer = { tier: 5, slots: shuffle(visibleChess(5)).slice(0, 3).map((c) => ({ kind: 'chess', id: c.chessId, price: 0, sold: false })) };
   if (VARIANTS.has('temp') && !S.priv.temp.some(Boolean)) { S.priv.temp[0] = chessPiece(pick(S.pool)); S.priv.temp[1] = itemPiece(shopItems()[2]); }
+  applyGapVariants();
   const pub = S.pub;
   pub.phase = phase;
   store.set({ match: emptyMatch(), ticker: [], emotes: [] });
@@ -700,7 +733,7 @@ const SWITCH = [
   ['INFO_CHECK', PHASE.INFO_CHECK, ''], ['BAND_DRAFT', PHASE.BAND_DRAFT, ''], ['BAND_DRAFT solo', PHASE.BAND_DRAFT, 'solo'],
   ['BATTLE_CHECK', PHASE.BATTLE_CHECK, ''], ['PREP', PHASE.PREP, ''], ['PREP + reward', PHASE.PREP, 'reward'],
   ['PREP + temp', PHASE.PREP, 'temp'], ['PREP frozen', PHASE.PREP, 'frozen'], ['PREP dead', PHASE.PREP, 'dead'],
-  ['PREP boss (L)', PHASE.PREP, 'boss'], ['PREP boss (R)', PHASE.PREP, 'bossR'],
+  ['PREP boss (L)', PHASE.PREP, 'boss'], ['PREP boss (R)', PHASE.PREP, 'bossR'], ['PREP 标准 同构体 + 调和', PHASE.PREP, 'funny,morph,harmony'],
   ['SP bounty', PHASE.SP_DRAFT, 'bounty'], ['SP supply', PHASE.SP_DRAFT, 'supply'], ['SP shop', PHASE.SP_DRAFT, 'shop'], ['SP tactic', PHASE.SP_DRAFT, 'tactic'], ['SP solo', PHASE.SP_DRAFT, 'solo'],
   ['COMBAT', PHASE.COMBAT, ''], ['COMBAT done', PHASE.COMBAT, 'done'], ['UNITE', PHASE.UNITE, ''], ['UNITE leaker', PHASE.UNITE, 'leaker'], ['SETTLE', PHASE.SETTLE, ''],
   ['FINAL_ASSAULT', PHASE.FINAL_ASSAULT, ''], ['FA overtime soon', PHASE.FINAL_ASSAULT, 'overtime'], ['FA draining', PHASE.FINAL_ASSAULT, 'drain'],

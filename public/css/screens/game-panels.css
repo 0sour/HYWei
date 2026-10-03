@@ -209,6 +209,27 @@
 .dhint--merge { color: var(--gold); }
 /* a rule the official item text leaves out (items.json `note`: 突变细胞 returns to the hand after each use) */
 .dhint--rule { color: var(--text-md); }
+/* 变形同构体's 天赋栏 (detailPanel MorphPairings, DESIGN §21.26): one line per bond — 【bond】 | the items that pair with it;
+   本局禁用 struck through, the pairing a wearer wears highlighted. Px floors keep it readable on phones (1rem = 40 px). */
+.dmorph { display: flex; flex-direction: column; gap: .05rem; font-size: max(.14rem, 9px); line-height: 1.5; color: var(--text-md); }
+.dmorph__lead { margin: 0; color: var(--text-hi); }
+.dmorph__list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
+.dmorph__row { display: grid; grid-template-columns: 6.2em minmax(0, 1fr); gap: .06rem; align-items: baseline; padding: .02rem .06rem;
+  background: rgba(255, 255, 255, .025); border-left: 2px solid transparent; }
+.dmorph__bond { font-weight: 700; color: var(--mint-400); white-space: nowrap; }
+.dmorph__items { min-width: 0; overflow-wrap: anywhere; }
+.dmorph__row.is-off .dmorph__bond { color: var(--text-dim); text-decoration: line-through; text-decoration-color: rgba(255, 84, 84, .6); }
+.dmorph__row.is-off .dmorph__items { color: var(--text-dim); }
+.dmorph__row.is-worn { background: rgba(78, 216, 175, .14); border-left-color: var(--mint-400); }
+.dmorph__item.is-worn { color: #fff; font-weight: 700; }
+.dmorph__tag { display: inline-block; margin-left: .06rem; padding: 0 .05rem; font-size: max(.11rem, 8px); line-height: 1.5; font-weight: 700; white-space: nowrap; }
+.dmorph__tag.is-on { background: var(--mint-500); color: #062019; }
+.dmorph__tag.is-off { border: 1px dashed rgba(255, 255, 255, .25); color: var(--text-dim); font-weight: 500; }
+.dmorph__none { margin: 0; color: var(--gold-2); }
+/* a bond item's line: what it gives a 变形同构体 wearer (MorphGrantLine) */
+.dhint--morph { font-size: max(.14rem, 9px); color: var(--text-md); }
+.dhint--morph.is-worn { color: var(--mint-400); }
+.dhint--morph.is-off { color: var(--text-dim); }
 .dactions { display: flex; justify-content: flex-end; gap: .1rem; padding-top: .06rem; border-top: 1px solid var(--line); }
 .dsell { margin-left: .06rem; color: #1d1400; }
 .dfactions { display: flex; flex-wrap: wrap; gap: .06rem; }
@@ -269,6 +290,17 @@
 .bpop__iso { position: absolute; top: .02rem; right: .08rem; padding: 0 .04rem; font-size: .11rem; line-height: 1.45; font-weight: 700; color: #141414; background: var(--gold-2); }
 .dbonds--top .dbond.is-granted { border-style: dashed; }
 .dbond__iso { font-size: .11rem; font-weight: 700; color: var(--gold-2); }
+/* a count that holds 调和's +1 (the server's bond entry `harmony`, DESIGN §21.26): 在场 n（含调和 +1） and the 调和 row that
+   heads the member list, naming the 调和 operators on the board (px floors: readable on phones) */
+.bpop__facts small.bpop__hnote { font-size: max(.12rem, 8px); color: var(--gold-2); }
+.bpop__harmony { display: flex; align-items: center; gap: .08rem; width: 100%; margin: 0; padding: .05rem .1rem; text-align: left;
+  font: inherit; font-size: max(.14rem, 9px); line-height: 1.45; color: var(--text-md); background: rgba(242, 189, 62, .08); border: 1px dashed rgba(242, 189, 62, .5); }
+button.bpop__harmony { cursor: pointer; }
+button.bpop__harmony:hover { border-style: solid; color: #fff; }
+.bpop__harmony b { flex: none; color: var(--gold-2); font-weight: 700; white-space: nowrap; }
+.bpop__harmony span { min-width: 0; }
+.bpop__harmony .bglyph { width: max(.24rem, 14px); height: max(.24rem, 14px); }
+.bpop__harmony .bglyph img { filter: brightness(0) invert(.78) sepia(1) saturate(3) hue-rotate(5deg); }
 
 /* ---- enemy / info drawer ---- */
 .edrawer {

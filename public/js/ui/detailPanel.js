@@ -10,7 +10,10 @@
 // info, rich description, 已调配 when not the default), elite module (模组: official type icon from the local-client
 // art, else its letter), equipped items (read-only from those `items` when the card has no own piece), talents
 // (CHESS_SECTIONS); items — icon, tier,
-// effect; tokens — the owner's variant (a golden owner's summon: its `_b` stats / skill), how a placed summon takes
+// effect; 变形同构体 (`canGiveBond`) also its 天赋栏 list (MorphPairings, gameLogic morphPairings: per bond the items that
+// make the wearer its member, 本局禁用 marked; on a wearer's card the pairing it wears highlighted, 生效中 — GitHub issue
+// #1, DESIGN §21.26) and a bond item (`giveBondId`) the line "与变形同构体一同装备时，携带者视为【X】成员" (MorphGrantLine);
+// tokens — the owner's variant (a golden owner's summon: its `_b` stats / skill), how a placed summon takes
 // the field (shared/constants.js SKILL_SUMMON_START_DEPLOY), its token skill and talents; enemies — stats, rank,
 // faction tags, abilities. Selling / destroying is the underframe's job in the
 // match (research 09 §5, ui/underframe.js): the panel's own 出售 / 销毁 buttons only render for callers that pass
@@ -28,7 +31,7 @@
 
 import { html, Icon, TierChip, MicroLabel, Button, confirmDialog, useTicker } from './components.js';
 import { Img, RichText, UnitThumb, BondGlyph, GIcon } from './gameComponents.js';
-import { attackInterval, rangeGridBox, fmtNum, tileKey, chessLoadout, nextThreshold, bondTier, briefingBondTip, pieceBondIds } from './gameLogic.js';
+import { attackInterval, rangeGridBox, fmtNum, tileKey, chessLoadout, nextThreshold, bondTier, briefingBondTip, pieceBondIds, grantedBonds, morphPairings } from './gameLogic.js';
 import { chessPortraitUrl, skillIconUrl, skillRecordIconUrl, profIconUrl, subProfIconUrl, itemIconUrl, enemyIconUrl, tokenAvatarUrl, factionIconUrl, uiUrl, moduleTypeIconUrl } from './assetUrls.js';
 import { data } from '../data.js';
 import { attackRangeGrid } from '../../../shared/loadoutRecord.js';
@@ -158,11 +161,58 @@ function Section({ title, micro, children, class: cls }) {
   </section>`;
 }
 
-function ItemRow({ itemId }) {
+const isOffIn = (off, bondId) => !!(off && typeof off.has === 'function' && off.has(bondId));
+
+/**
+ * The 变形同构体's 天赋栏 (gameLogic morphPairings): "搭配以下装备时，携带者视为对应盟约的成员：", then one line per bond — 【bond】
+ * and the items that pair with it; a bond the mode never activates (`off`, gameLogic modeOffBonds) struck through with
+ * 本局禁用. `carried` (the wearer's items — the card shows the item on an operator): the pairing it wears is highlighted
+ * (生效中; 已搭配 when that bond is off), and a wearer without one reads 暂未生效.
+ * @param {{ off?: Set<string>|null, carried?: Array<string|{id:string}>|null }} props
+ */
+export function MorphPairings({ off = null, carried = null }) {
+  const rows = morphPairings(data.list('items'), data.list('bonds'), { off, carried });
+  if (!rows.length) return null;
+  const wearer = Array.isArray(carried);
+  return html`<div class=${cx('dmorph', wearer && 'is-wearer')}>
+    <p class="dmorph__lead">搭配以下装备时，携带者视为对应盟约的成员：</p>
+    <ul class="dmorph__list" aria-label="变形同构体对应关系">
+      ${rows.map((r) => html`<li key=${r.bondId} class=${cx('dmorph__row', r.off && 'is-off', r.worn && 'is-worn')} data-bond=${r.bondId}
+          title=${`${r.items.map((it) => it.name).join('、')} → 【${r.name}】${r.off ? '（本局禁用）' : ''}`}>
+        <span class="dmorph__bond">【${r.name}】</span>
+        <span class="dmorph__items">${r.items.map((it, i) => html`<span key=${it.id} class=${cx('dmorph__item', it.worn && 'is-worn')}>${i ? '、' : ''}${it.name}</span>`)}${r.worn
+          ? html`<span class="dmorph__tag is-on">${r.off ? '已搭配' : '生效中'}</span>` : null}${r.off ? html`<span class="dmorph__tag is-off">本局禁用</span>` : null}</span>
+      </li>`)}
+    </ul>
+    ${wearer && !rows.some((r) => r.worn) ? html`<p class="dmorph__none">暂未生效：需与上表中的一件装备一同携带</p>` : null}
+  </div>`;
+}
+
+/**
+ * A bond item's own line (items.json `giveBondId`): "与变形同构体一同装备时，携带者视为【X】成员" — 本局禁用 when the mode never
+ * activates X; on a wearer that also carries a 变形同构体 (`carried`) it is in effect (生效中).
+ * @param {{ item: any, off?: Set<string>|null, carried?: Array<string|{id:string}>|null }} props
+ */
+export function MorphGrantLine({ item, off = null, carried = null }) {
+  const bond = item && !item.canGiveBond && typeof item.giveBondId === 'string' ? data.lookup('bonds', item.giveBondId) : null;
+  if (!bond) return null;
+  const morph = data.list('items').find((r) => r && r.canGiveBond);
+  if (!morph) return null;
+  const isOff = isOffIn(off, item.giveBondId);
+  const worn = grantedBonds(carried, (id) => data.lookup('items', id)).includes(item.giveBondId);
+  return html`<p class=${cx('dhint', 'dhint--morph', worn && 'is-worn', isOff && 'is-off')} data-bond=${item.giveBondId}>
+    <${Icon} name="info" /><span>与${morph.name}一同装备时，携带者视为【${bond.name}】成员${isOff ? html`<span class="dmorph__tag is-off">本局禁用</span>` : null}${worn
+      ? html`<span class="dmorph__tag is-on">${isOff ? '已搭配' : '生效中'}</span>` : null}</span>
+  </p>`;
+}
+
+/** An equipped item of the card: icon, name, effect — and for 变形同构体 / a bond item its pairing (`carried`: the wearer's items). */
+function ItemRow({ itemId, carried = null, off = null }) {
   const it = data.lookup('items', itemId);
   return html`<div class="ditem">
     <${UnitThumb} kind="item" id=${itemId} size="sm" />
-    <div class="ditem__text"><b>${it?.name || itemId}</b><${RichText} text=${it?.descRaw || it?.desc || ''} class="ditem__desc" /></div>
+    <div class="ditem__text"><b>${it?.name || itemId}</b><${RichText} text=${it?.descRaw || it?.desc || ''} class="ditem__desc" />
+      ${it?.canGiveBond ? html`<${MorphPairings} off=${off} carried=${carried || []} />` : it?.giveBondId ? html`<${MorphGrantLine} item=${it} off=${off} carried=${carried} />` : null}</div>
   </div>`;
 }
 
@@ -190,8 +240,10 @@ export function BondChips({ bondIds, bonds = [], onBond = null, off = null, gran
       const next = nextThreshold(count, th);
       const cap = next ?? th[th.length - 1] ?? null;
       const isoTag = iso.has(id) ? '（变形同构体）' : '';
+      // the count holds 调和's +1 (the server's bond entry says so, DESIGN §21.26)
+      const harmonyTag = !isOff && Number.isInteger(e?.harmony) && e.harmony > 0 ? `（含调和 +${e.harmony}）` : '';
       const label = isOff ? briefingBondTip(rec?.name || id, 'off')
-        : `${rec?.name || id}${isoTag}：在场 ${count}${cap != null ? `/${cap}` : ''}${active ? `，已激活 ${tier} 阶` : '，未激活'}`;
+        : `${rec?.name || id}${isoTag}：在场 ${count}${cap != null ? `/${cap}` : ''}${harmonyTag}${active ? `，已激活 ${tier} 阶` : '，未激活'}`;
       const body = isOff
         ? html`
         <${BondGlyph} bondId=${id} class="dbond__icon" />
@@ -355,12 +407,13 @@ export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bond
         ${!lo.defaultModule ? html`<span class="dtag-loadout" title="干员调配中选择的模组">已调配</span>` : null}
       </div>
     <//>` : null;
+  // (a 变形同构体 / bond item row shows its pairing against what this operator carries: ItemRow `carried`)
   blocks.equip = piece?.kind === 'chess' ? html`<${Section} key="equip" title="装备" micro=${`EQUIP ${items.length}/2`} class="dsec--equip">
-      ${items.length ? items.map((it) => html`<${ItemRow} key=${it.uid} itemId=${it.id} />`) : html`<p class="t-dim dempty">拖拽装备至该干员以配发（最多 2 件）</p>`}
+      ${items.length ? items.map((it) => html`<${ItemRow} key=${it.uid} itemId=${it.id} carried=${items} off=${offBonds} />`) : html`<p class="t-dim dempty">拖拽装备至该干员以配发（最多 2 件）</p>`}
     <//>`
     // no own piece (a teammate's unit, a bond popup's 变形同构体 row): what it carries, read-only
     : !piece && carried.length ? html`<${Section} key="equip" title="装备" micro=${`EQUIP ${carried.length}/2`} class="dsec--equip">
-      ${carried.map((id, i) => html`<${ItemRow} key=${`${i}:${id}`} itemId=${id} />`)}
+      ${carried.map((id, i) => html`<${ItemRow} key=${`${i}:${id}`} itemId=${id} carried=${carried} off=${offBonds} />`)}
     <//>` : null;
   blocks.talents = Array.isArray(fr.talents) && fr.talents.some((t) => t && t.name && !t.hidden) ? html`<${Section} key="talents" title="天赋" micro="TALENT" class="dsec--talent">
       ${fr.talents.filter((t) => t && t.name && !t.hidden).map((t, i) => html`<div key=${i} class="dtalent"><b>${t.name}</b><${RichText} text=${t.descRaw || t.desc} class="dtext" /></div>`)}
@@ -375,11 +428,13 @@ export function ChessDetail({ chess, piece, unit, snapHp, editable, onSell, bond
 }
 
 /**
- * An item's card (hand / temp / shop / equipped). An effect-only item (items.json `shopExcluded`: the special 维式重锤,
+ * An item's card (hand / temp / shop / reward card). An effect-only item (items.json `shopExcluded`: the special 维式重锤,
  * 突变细胞 — user playtest #4 item 5) says it is never sold and where it comes from (`shopExcludedBy`); a rule the
  * official text leaves out (items.json `note`: 突变细胞 returns to the hand after each use) is shown under the effect.
+ * 变形同构体 lists its pairings (its 天赋栏: MorphPairings, `offBonds` marks 本局禁用); a bond item says which bond it gives
+ * a 变形同构体 wearer (MorphGrantLine). (An equipped item is shown on its wearer's card: ChessDetail's 装备 rows.)
  */
-export function ItemDetail({ item, piece, editable, onDestroy }) {
+export function ItemDetail({ item, piece, editable, onDestroy, offBonds = null }) {
   const m = data.get('assets');
   return html`
     <div class="dhead dhead--item">
@@ -392,6 +447,8 @@ export function ItemDetail({ item, piece, editable, onDestroy }) {
       </div>
     </div>
     <${Section} title="效果" micro="EFFECT"><${RichText} as="p" text=${item.descRaw || item.desc} class="dtext" /><//>
+    ${item.canGiveBond ? html`<${Section} title="天赋" micro="TALENT" class="dsec--morph"><${MorphPairings} off=${offBonds} /><//>` : null}
+    ${!item.canGiveBond && item.giveBondId ? html`<${MorphGrantLine} item=${item} off=${offBonds} />` : null}
     ${item.note ? html`<p class="dhint dhint--rule"><${Icon} name="info" />${item.note}</p>` : null}
     ${item.itemType === 'MAGIC'
       ? html`<p class="dhint"><${Icon} name="info" />将其拖拽至战场上的格子使用</p>`
@@ -564,7 +621,7 @@ export function resolveDetail(target, pieces) {
  * @param {{ detail:any, editable:boolean, snapHp?:{hp:number,max:number}|null, onClose:Function, onSell:(piece:any)=>void, onDestroy:(piece:any)=>void,
  *   bonds?: any[], offBonds?: Set<string>|null, loadout?: any, onBond?: (bondId:string)=>void, side?: 'left'|'right', shopOpen?: boolean }} props
  *   bonds: the owner's m.private.bonds (counts / tiers of the bond chips); offBonds: the bonds this mode never activates
- *   (gameLogic modeOffBonds — their chips read 本局禁用); loadout: m.private.loadout (DESIGN §16) for
+ *   (gameLogic modeOffBonds — their chips and the 变形同构体 pairing lines read 本局禁用); loadout: m.private.loadout (DESIGN §16) for
  *   the player's own operators and shop cards; a teammate's unit gets its owner's choice (gameLogic unitLoadout); null
  *   = the defaults
  *   live: the unit's live stats (unitStatsEntry + src 'battle' | 'prep') — an object, or a getter the panel re-reads 4×
@@ -594,7 +651,7 @@ export function DetailPanel({ detail, editable, snapHp, onClose, onSell, onDestr
     <div class="dpanel__scroll">
       ${detail.type === 'chess' ? html`<${ChessDetail} chess=${detail.chess} piece=${detail.piece} snapHp=${snapHp} editable=${editable} onSell=${sellIt}
         bonds=${bonds} offBonds=${offBonds} loadout=${loadout} onBond=${onBond} live=${liveNow} hint=${detail.hint || null} unitItems=${detail.unitItems || null} />` : null}
-      ${detail.type === 'item' ? html`<${ItemDetail} item=${detail.item} piece=${detail.piece} editable=${editable} onDestroy=${destroyIt} />` : null}
+      ${detail.type === 'item' ? html`<${ItemDetail} item=${detail.item} piece=${detail.piece} editable=${editable} onDestroy=${destroyIt} offBonds=${offBonds} />` : null}
       ${detail.type === 'enemy' ? html`<${EnemyDetail} enemy=${detail.enemy} snapHp=${snapHp} count=${detail.count} live=${liveNow} />` : null}
       ${detail.type === 'token' ? html`<${TokenDetail} token=${detail.token} piece=${detail.piece} ownerId=${detail.ownerId ?? null} snapHp=${snapHp} live=${liveNow} />` : null}
     </div>
