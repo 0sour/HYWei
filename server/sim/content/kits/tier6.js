@@ -43,7 +43,8 @@
 //                in a (copied) 流形's range. An uncopied 流形 never attacks and its copy skill waits (ready) until someone
 //                can be copied. "被击败后25秒后自动刷新": one pending respawn at a time, only while she is on the field
 //                and no 流形 of hers stands (her knock-out cancels it; her redeploy re-summons it as her 援军).
-//  6_12 迷迭香   "溅射范围扩大" ×1.3 (not in data); 感知稳定 picks among the owner's deployed casters (none ⇒ no buff).
+//  6_12 迷迭香   "溅射范围扩大": S2 radius 1.5 (PRTS 溅射半径一览; ×1.3 [ASSUMED] until 0.1.1); 感知稳定 picks among the
+//                owner's deployed casters (none ⇒ no buff).
 //  6_13 新约能天使 bombardment radius 1 tile (not in data).
 //  6_14 流明     S3 heals an abnormal ally even at full HP (forced heal); 抵抗 = the engine `resist` status.
 //  6_15 仇白     入隙 reads the target's sluggish/bind statuses; module adds 10 % ATK arts per hit.
