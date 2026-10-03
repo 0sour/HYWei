@@ -25,10 +25,10 @@
 // owned chess (ev.source.holder). That step walks a snapshot — the owned chess and each holder's items as they stand
 // when it begins (every [holder, item] pair, taken before the first item runs) — and runs an item only if, when its
 // turn comes, it is still equipped on that holder and the holder is still owned: handlers move and destroy pieces
-// mid-walk (突变细胞 transforms its holder and returns the equipment to the hand; normal 博士投影 destroys itself, which
-// splices holder.items), and a live walk skipped the next item or ran it with a holder that was gone. Pieces gained or
-// equipped during the walk wait for the next dispatch; an item moved during it runs at most once (on the holder it
-// stood on, if its turn came before the move).
+// mid-walk (突变细胞 destroys its holder, returns the equipment to the hand and gains an operator; normal 博士投影
+// destroys itself, which splices holder.items), and a live walk skipped the next item or ran it with a holder that was
+// gone. Pieces gained or equipped during the walk wait for the next dispatch; an item moved during it runs at most once
+// (on the holder it stood on, if its turn came before the move).
 // Dispatch order per player: global → band → bonds → garrisons (board reading order,
 // then hand) → equipped items → effects (insertion order); onPrice runs the priced chess's own 特质 first (购买价格为N
 // sets the price the discounts and caps of bonds / strategies then act on — user playtest #5). Every call is
@@ -519,9 +519,10 @@ export function makeCtx(m, ps, source, hook, ev = null) {
       return m.dispatcher.triggerGarrisons(ps, l.piece, eventType, { asPiece: as ? as.piece : null, triggeredBy: source.key || null });
     },
     promote: (uid) => { const l = ps.find(uid); return l ? ps.promote(l.piece) : false; },
-    /** Replace a chess piece by another chess (keeps its tile when legal, keeps its equipment — `{ returnItems: true }`:
-     *  the equipment returns to the hand instead, as from a destroyed operator; PlayerState.transformChess). */
-    transform: (uid, chessId, opts = {}) => { const l = ps.find(uid); if (!l || l.piece.kind !== 'chess') return null; const p = ps.transformChess(l.piece, chessId, { returnItems: !!(opts && opts.returnItems) }); return p ? view(p) : null; },
+    /** 突变细胞's transformation: destroy a chess piece wherever it stands (its equipment returns to the hand first), then
+     *  gain `chessId` like any gained operator — hand, overflow temp, a completed merge as usual
+     *  (PlayerState.transformChess). Returns the gained piece's view (the elite after a merge) or null. */
+    transform: (uid, chessId) => { const l = ps.find(uid); if (!l || l.piece.kind !== 'chess') return null; const p = ps.transformChess(l.piece, chessId); return p ? view(p) : null; },
     /** Normal item piece → its golden version in place. */
     upgradeItem: (uid) => { const l = ps.find(uid); return l && l.piece.kind === 'item' ? ps.upgradeItem(l.piece) : false; },
     /** Attach an owned hand/temp item to an owned chess without equip effects (copies, restores). */

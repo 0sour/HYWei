@@ -53,7 +53,9 @@
 //   5. items by what they do (itemTarget): equipment on the strongest deployed damage dealers (survival items on
 //      blockers, bond signature items on a member), 信标 on a bench single, 拟态物质 on a pair, 博士投影 (both
 //      qualities) on the strongest normal operator, 突变细胞 on the least valuable normal single below 6阶 (cellTarget:
-//      never an elite or a pair member), bond items on a focus member; Arts (useArt): 画卷 copies the most valuable
+//      never an elite or a pair member; the operator its transformation gains joins the bench — the buy loop's bench
+//      shed leaves a piece gained since the last prep alone, rememberOwned — and steps 3–4 of the next prep deploy it
+//      like any owned unit), bond items on a focus member; Arts (useArt): 画卷 copies the most valuable
 //      deployed operator, 教鞭 / “神秘顾客” are used after a perfect battle and kept otherwise (consume-on-equip items /
 //      Arts only with a handler)
 //   6. resolve the temp slots (a 突变细胞 left there — it comes back after every transformation — gets a hand slot made
@@ -1182,7 +1184,10 @@ function refreshValue(m, ps, ctx) {
 /**
  * Sell the weakest bench chess (temp and hand; the hand only with `handOnly`) that is not part of a merge pair (or
  * anything when keepPairs is false) and does not carry a 突变细胞 (its transformation after the battle is the point).
- * `keepFresh`: never a piece that came this prep (`boughtRound`: bought for the lineup, an elite just merged, a reward).
+ * `keepFresh`: never a piece that came this prep (`boughtRound`: bought for the lineup, an elite just merged, a reward)
+ * nor one gained since the bot's last prep ended (unseen, see rememberOwned: the operator a 突变细胞 transformation
+ * gains joins the bench while its carrier's deployment is free — the placement step decides about it, not the shed's
+ * piece value).
  */
 function sellWeakestHand(m, ps, { keepPairs = true, below = Infinity, handOnly = false, keepFresh = false } = {}) {
   const ctx = context(m, ps);
@@ -1192,13 +1197,24 @@ function sellWeakestHand(m, ps, { keepPairs = true, below = Infinity, handOnly =
     if (!p || p.kind !== 'chess' || (p.items || []).some((it) => isMutationCell(m.gd, it.id))) continue;
     const base = m.gd.baseIdOf(p.id);
     if (keepPairs && !m.gd.isGolden(p.id) && (ctx.copies.get(base) || 0) >= 2) continue;
-    if (keepFresh && p.boughtRound === m.round) continue;
+    if (keepFresh && (p.boughtRound === m.round || unseen(ps, p))) continue;
     const v = pieceValue(m, ps, p, ctx);
     if (v < worstV) { worstV = v; worst = p; }
   }
   if (!worst || worstV >= below) return false;
   return tryDo(() => ps.sell(worst.uid));
 }
+
+/**
+ * The chess the bot owned when its last prep ended (`ps._botSeenUids`, written by botPrepEndSteps before Ready). A
+ * piece outside it was gained after that prep — at SETTLE (a 突变细胞 transformation's operator, battle-result grants),
+ * at the round start or in 机变 — and has not been through a placement step yet. No memory yet (a bot's first prep, a
+ * seat just put under AI 托管): nothing counts as unseen.
+ */
+function rememberOwned(ps) {
+  ps._botSeenUids = new Set(ps.allChess().map((p) => p.uid));
+}
+const unseen = (ps, p) => !!ps._botSeenUids && !ps._botSeenUids.has(p.uid);
 
 /** Lineup gain of one copy of chess `id` (full board): best single swap into the current best lineup `cur`. */
 function lineupGain(m, ps, id, ctx, cur) {
@@ -1311,6 +1327,8 @@ export function* botPrepEndSteps(m, ps, job = null) {
   // 5. temp → hand / sell / destroy; keep one hand slot free for next round's merges
   resolveTemp(m, ps);
   if (freeSlot(ps.hand) < 0) freeHandSlot(m, ps);
+  // what the next prep's bench shed may judge by value: what is owned now (later gains wait for a placement step)
+  rememberOwned(ps);
   tryDo(() => ps.setReady(true));
 }
 
@@ -1395,7 +1413,9 @@ function* buyLoopSteps(m, ps, { fillOnly = false, maxRefreshes = 0 } = {}) {
     const mergesOnly = fillOnly && boardFull;
     // keep room for merges: a crowded bench sheds its weakest single — never one that came this prep (the buy picks by
     // lineup gain, the shed by piece value: it used to sell the single just bought for 3–5 back for 1; QA of the 0.1.1
-    // bots). The shed is pre-emptive (one slot is still free), so with only fresh singles it waits for the next prep.
+    // bots) nor one gained since the last prep (the operator a 突变细胞 transformation put on the bench, its deployment
+    // freed: in 20 solo 绝境 昆图斯 matches the shed sold 44 of 222 before the placement step could deploy them). The
+    // shed is pre-emptive (one slot is still free), so with only fresh singles it waits for the next prep.
     const used = ps.hand.filter(Boolean).length;
     if (used >= gd.benchSize - 1) sellWeakestHand(m, ps, { keepFresh: true });
     let best = -1;
@@ -1629,7 +1649,8 @@ const isMutationCell = (gd, itemId) => itemEffect(gd.item(itemId)) === 'char_che
 
 /**
  * Whom the bot injects with 突变细胞 (after the battle its carrier — deployed or on the bench: every owned carrier's item
- * hooks run — becomes a random operator one tier higher; items meta char_chess_transformation_equip): the least
+ * hooks run — is destroyed and a random operator one tier higher joins the bench, PlayerState.transformChess; the next
+ * prep's lineup step deploys it like any owned unit, so a deployed carrier only costs a re-placement): the least
  * valuable normal operator below 6阶 with a free equip slot — never an elite, never one of a merge pair (the merge
  * progress would be lost), nobody already carrying a cell. null: the cell waits in the hand.
  */

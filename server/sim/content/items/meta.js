@@ -3,10 +3,10 @@
 // The engine built-ins (server/match/builtinMeta.js) already implement most consume-on-equip items and Arts from the
 // concrete item's params; they are reviewed and kept (盟约之币, 骑士储蓄罐, 随身身份牌, 精打细算玩偶, 简易通讯机 (tier ≤
 // shop level), 见钱眼开玩偶, 人事部文档 (cap 9), 博士投影 (golden now / normal at the next round start), 拟态物质, 信标,
-// 商业包装方案 (count from the concrete record: 8 / golden 7), 突变细胞 (after the battle the carrier becomes a NORMAL
-// random tier+1 operator, max 6; its equipment — the cell too, which is not consumed (player feedback after 0.1.0) —
-// returns to the hand)). The Arts' rangeGrid (画卷 = placed tile + the tile in front) and the per-round limit are engine
-// rules.
+// 商业包装方案 (count from the concrete record: 8 / golden 7), 突变细胞 (after the battle the carrier is destroyed, its
+// equipment — the cell too, which is not consumed (player feedback after 0.1.0) — returns to the hand, then a NORMAL
+// random tier+1 operator, max 6, is gained into the hand, not onto the carrier's tile (PR #2)). The Arts' rangeGrid
+// (画卷 = placed tile + the tile in front) and the per-round limit are engine rules.
 // Overridden / added here (a built-in, when present, is wrapped — never re-implemented):
 //   画卷         the copy keeps the target's items; a copied normal item that pairs with an owned one merges and the
 //               golden stays in the hand (the built-in equipped the merged golden on the copy, and its live loop over

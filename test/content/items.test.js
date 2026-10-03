@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBattle, chessRec, enemyRec, checkInvariants } from '../helpers/battleHarness.js';
-import { makeMatch, give, giveItem, DATA } from '../match/harness.js';
+import { makeMatch, give, giveItem, DATA, legalTileFor } from '../match/harness.js';
 import { createRegistry } from '../../server/match/effectsMeta.js';
 import { lendItemEffects, itemGrants, PRIO_REVIVE } from '../../server/sim/content/items/battle.js';
 import { unitBonds } from '../../server/sim/content/support/index.js';
@@ -991,6 +991,24 @@ test('突变细胞: after a battle the carrier becomes a random NORMAL tier+1 op
   assert.equal(DATA.chess[q.id].tier, 4);
   assert.ok(handIds(ps, 'item').includes(B('5_08')));
   cover(A('5_08'), B('5_08'));
+});
+
+test('突变细胞: a DEPLOYED carrier leaves the field — the new operator is gained into the 整备区, the deploy slot comes back (PR #2)', () => {
+  // official footage (bilibili BV1vzyVBuEN9, BV1Qkw1zMEoR): the tile is empty at the next prep and the new operator waits
+  // on the bench; the case added by the closed PR #2, on the destroy-then-gain rule (DESIGN §21.1)
+  const { m, ps, equip } = setup({ seed: 3 });
+  const cid = plain((c) => c.tier === 2)[0];
+  const holder = give(m, ps, cid, 'board', legalTileFor(m, ps, cid));
+  assert.deepEqual(equip(giveItem(m, ps, A('5_08')), holder), OK);
+  assert.equal(ps.deployCount, 1, 'the carrier is deployed');
+  m.dispatch(ps, 'onBattleResult', { result: {}, lpLoss: 0, perfect: true });
+  assert.equal(ps.board.size, 0, 'the carrier left the field');
+  assert.equal(ps.deployCount, 0, 'the deploy slot came back');
+  const chess = ps.hand.filter((p) => p && p.kind === 'chess');
+  assert.equal(chess.length, 1, 'the new operator waits in the 整备区');
+  assert.equal(DATA.chess[chess[0].id].tier, 3, 'the random tier+1 operator');
+  assert.equal(DATA.chess[chess[0].id].isGolden, false);
+  assert.ok(handIds(ps, 'item').includes(A('5_08')), 'the cell back in the hand');
 });
 
 test('人事部文档: deploy cap becomes 9 (a second copy adds nothing)', () => {

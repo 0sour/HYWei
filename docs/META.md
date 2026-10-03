@@ -242,7 +242,10 @@ of a merge pair, never one already carrying a cell; it comes back after every tr
 gets a hand slot made for it, `makeHandRoom` — on a bot's own seat by destroying the cheapest other hand item if no
 chess can be sold, never a human's item under AI 托管 — on such a seat any item left in temp with a full hand gets a
 hand slot the same way, a bench operator sold for it; only a hand of nothing but items still drops it, as the temp
-deadline would), 身份牌 / 通讯机 / 寻呼模块 on a focus member; 画卷 copies the most
+deadline would; the operator a transformation gains waits on the bench and the next prep's lineup step deploys it
+like any owned unit — AI 托管 too; the buy loop's bench shed, which sells by piece value while the bench is crowded,
+never sells a piece gained since the bot's last prep ended, `rememberOwned`), 身份牌 / 通讯机 / 寻呼模块 on a focus
+member; 画卷 copies the most
 valuable deployed operator; 教鞭 / “神秘顾客” are used after a perfect battle and otherwise kept in the hand — a bot drops
 a kept one only when it needs the hand slot (“神秘顾客” then pays its fund), a human's seat under AI 托管 never. 机变: a
 bounty card is scored by its expected payout minus its expected leaks × the value of an LP (2 + 20 / LP), the kill
@@ -395,7 +398,7 @@ Writes (all validated, never throw on bad input, never make funds / pools negati
 | `rollChess({ maxTier, tier, bond, filter })` / `rollItem({ pool, tier, maxTier })` | copy-weighted chess id from the shared pool / item id (choices.json pools) |
 | `grantFreeRefresh(n)` | free refreshes (stack) |
 | `modifyPrice(delta)` / `setPrice(v)` | onPrice only: edit `ev.price` |
-| `promote(uid)` / `transform(uid, chessId, { returnItems })` / `upgradeItem(uid)` | elite in place / replace a chess (keeps tile; keeps its equipment, or with `returnItems` sends it to the hand like a destroyed operator's — 突变细胞) / item → golden |
+| `promote(uid)` / `transform(uid, chessId)` / `upgradeItem(uid)` | elite in place / 突变细胞's transformation: destroy the chess wherever it stands (a board tile is freed; its equipment returns to the hand first, overflow temp), then gain `chessId` like `grantChess` (hand, overflow temp, the no-room rule; a merge it completes as usual — the carrier's tile is no copy's) and return the gained piece (the elite after a merge) / item → golden |
 | `destroyPiece(uid)` / `equipDirect(itemUid, chessUid)` | remove a piece (chess copies return, items go back) / attach without equip effects |
 | `offerChess(ids, { tier, label })` | queue a pick-one offer (shown as `shop.rewardOffer`, free) — 寻呼模块 / 信标 style; `label` (default `effectsMeta.offerLabel(source)`: the strategy's effect name, the item's name or the 特质's operator) is the shop bar's header instead of 晋升奖励 (`rewardOffer.source` `'special'`; the promotion reward is `'merge'`) |
 | `offerItems(ids, { tier, label })` | the same for items (slots of kind `'item'`, drawn as item cards) — 凯瑟琳 定向投放 style (player report #6 after 0.1.0) |
@@ -428,11 +431,13 @@ Built-ins (builtinMeta.js, overridable): 盟约之币 / 骑士储蓄罐 (random 
 紧急调度券 (take shop chess), 精打细算玩偶 (+funds each round), 简易通讯机 / 拟态物质 (same-bond chess), 见钱眼开玩偶
 (+funds next round), 人事部文档 (cap 9), 博士投影 (elite now / at the next round start), 寻呼模块 / 信标 (pick-one
 offers; 信标 gifts the original chess to the teammate with the most members of its bonds next round), 商业包装方案 (every
-N sells → same-bond chess), 突变细胞 (after battle → a random NORMAL chess one tier higher, max 6, on the carrier's tile;
-the carrier's equipment, the cell included, returns to the hand before the new operator's summon cards — the cell is
-not consumed: PRTS 下半 记录 备注 "生效时，原干员销毁，获得一名高一阶的随机初始干员（最高六阶）", PRTS 卫戍协议/帮助 "佩戴的装备
-无法手动卸除，在失去该干员（干员出售、销毁、合并等）…时自动卸除", players re-inject it every round; player feedback after 0.1.0),
-画卷 (copy the operator in range with its
+N sells → same-bond chess), 突变细胞 (after battle the carrier — deployed or on the bench — is destroyed, its tile freed;
+its equipment, the cell included, returns to the hand first; then a random NORMAL chess one tier higher, max 6, is
+gained like any gained operator: into the 整备区, overflow temp, never onto the carrier's tile — official footage,
+bilibili BV1vzyVBuEN9 ≈ 8:24 / BV1Qkw1zMEoR ≈ 7:25, pointed out in PR #2 — and a merge it completes as usual. The cell
+is not consumed: PRTS 下半 记录 备注 "生效时，原干员销毁，获得一名高一阶的随机初始干员（最高六阶）", PRTS 卫戍协议/帮助 "佩戴的
+装备无法手动卸除，在失去该干员（干员出售、销毁、合并等）…时自动卸除", players re-inject it every round; player feedback after
+0.1.0), 画卷 (copy the operator in range with its
 items), 教鞭 / “神秘顾客” (a random bounty is added).
 
 **教鞭 / “神秘顾客” stay a random bounty (deliberate).** The official Arts open a personal 悬赏 choice
@@ -498,8 +503,8 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   copies are consumed). Where it goes (PRTS 卫戍协议/帮助 "发送1名【精锐】状态的该干员至手牌区（若消耗已部署至作战区的干员，
   则发送至作战区对应位置）", the user's playtest #6 follow-up): when a consumed copy stood on the board, onto that copy's
   tile with its facing — of several, the one that deploys first (row desc, then col asc; `board.js mergeTile`,
-  [ASSUMED]); a deployed piece transformed into the completing copy (突变细胞, `transformChess`) counts with its own tile;
-  a tile the elite may not use (a stale terrain change) is skipped. It replaces a deployed copy, so the deploy count never
+  [ASSUMED]); a 突变细胞 carrier is destroyed before its gain, so its freed tile is no copy's (`transformChess`, DESIGN
+  §21.1); a tile the elite may not use (a stale terrain change) is skipped. It replaces a deployed copy, so the deploy count never
   grows (no BOARD_FULL), and as a deployment its manually deployable summons join the hand (`grantTokensFor`, the
   player's loadout). Otherwise the elite goes to the hand, overflowing into temp. Equipment returns to the hand (overflow
   temp; with both full it stays on the elite, up to its 2 equip slots — any further item is destroyed); summons of
@@ -764,7 +769,8 @@ round was over. The official 1 s `broadcastBeginDelay` is not modelled.
 * Level-up does not add slots until the next roll (refresh / round start).
 * Buying a second copy of an equipped normal item merges into the golden item in the hand (not equipped).
 * Promotions by effects (升华, 博士投影) keep the equipment; merges return it; 突变细胞's transformation returns it (the
-  cell included).
+  cell included) before its new operator is gained into the 整备区 — the carrier's tile is left empty (official footage,
+  DESIGN §21.1).
 * An elite merged in a round keeps the highest per-piece round counter of its copies (`pieceRoundCount`): an elite made
   from 拉普兰德 copies that already fired this round does not fire again before the next round (conservative; the
   official server's instance handling is not observable). A 拉普兰德 bought after selling one in the same round is a new

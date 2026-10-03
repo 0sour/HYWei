@@ -1368,14 +1368,18 @@ const SHOP_EXCLUDED_ITEMS = Object.freeze({
  *     获得一名高一阶的随机初始干员（最高六阶）", and a destroyed operator's equipment comes off (PRTS 卫戍协议/帮助 "佩戴的
  *     装备无法手动卸除，在失去该干员（干员出售、销毁、合并等）或装备合并为进阶品质时自动卸除"); the text never says 销毁 for
  *     the cell (every consumable item's does), and players re-inject it every round ("之后就是一直打针，扎到核心卡或者叠层
- *     手干员就换人扎", bilibili cv47000418; "这个道具可以无限使用", cg.163.com guide 2025-11-15).
+ *     手干员就换人扎", bilibili cv47000418; "这个道具可以无限使用", cg.163.com guide 2025-11-15). The new operator is gained
+ *     into the 整备区, never onto the carrier's tile — official footage (bilibili BV1vzyVBuEN9 ≈ 8:24, BV1Qkw1zMEoR ≈ 7:25):
+ *     at the next prep the tile is empty, one more deployment is left and the new operator waits on the bench (PRTS 帮助:
+ *     what a player gains goes to the 手牌区; pointed out in PR #2).
  */
 const ITEM_RULES = Object.freeze({
   chess_item_5_08_e_a: {
-    note: '生效时原干员销毁，获得一名高一阶的随机初始干员（最高6阶）；突变细胞与其他装备退回整备区，可再次配发',
-    implFormula: 'After the battle: the carrier is destroyed and replaced by a random NORMAL operator one tier higher (max 6; '
-      + 'an elite carrier too) on its tile when legal; its equipment, the cell included, returns to the hand (the cell is '
-      + 'not consumed). Never merges.',
+    note: '生效时原干员销毁，突变细胞与其他装备退回整备区，可再次配发；随后获得一名高一阶的随机初始干员（最高6阶），进入整备区，需要重新部署',
+    implFormula: 'After the battle: the carrier is destroyed wherever it stands (a board tile is freed); its equipment, the '
+      + 'cell included, returns to the hand first (overflow temp; the cell is not consumed); then a random NORMAL operator '
+      + 'one tier higher (max 6; an elite carrier too) is gained like any gained operator: the hand, overflow temp, a '
+      + 'completed merge as usual (the elite on a consumed deployed copy\'s tile, never the carrier\'s). Never merges.',
   },
 });
 
