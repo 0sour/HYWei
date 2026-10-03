@@ -1456,3 +1456,37 @@ Two public GitHub issues after 0.1.0, both client-only. Normative lines rewritte
 - One-line flip: remove the entry from `TRIGGER_DEVIATIONS` (for 深巡 / 雷蛇 also the kit line) and rebuild.
 - Normative lines rewritten with it: §5.6 (`TAKE_DAMAGE`), §19.2 (灰毫 S2), §20.2 (players notice, the table), §21.20 (a settled row), §21.23 (深巡 on a fenced tile).
 - Tests: `test/sim/feedback1-tank-triggers.test.js` (the data, kit = data, the real battle for the six and for every other MANUAL 重装 record), `test/data.test.js`, `kits_t1t2` / `kits_alt_t1` (PR #12's), `kits_alt_t2` (灰毫 S2), `kits_t5` / `kits_alt_t5` (号角), `test/docs-consistency.test.js`.
+
+## 22. GitHub issues after 0.1.1 (v0.1.2)
+
+TBD-22-intro
+
+
+### 22.1 Back-facing operators play their fall (GitHub #25)
+
+TBD-22.1
+
+
+### 22.2 突袭's idle redeploy lands where it can attack (#51)
+
+TBD-22.2
+
+
+### 22.3 阿戈尔's devour skips members it has already knocked out (#33 item 1)
+
+TBD-22.3
+
+
+### 22.4 活性源石 stays on an enemy after it leaves the tile (#33 item 6)
+
+TBD-22.4
+
+
+### 22.5 Emotes and guide pages without a local client; deployment docs (#42); the English title (#38)
+
+TBD-22.5
+
+
+### 22.6 钩索师 and 推击手 on 高台 (#32 item 4)
+
+TBD-22.6
