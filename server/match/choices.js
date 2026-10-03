@@ -33,11 +33,18 @@
 //                     each card on its own (duplicates allowed) [ASSUMED]. FREE — the official card text is "无需消耗资金，获得装备
 //                     补给" (research 01 A4/04 addendum), so the price is 0. Two identical cards are two cards: picks,
 //                     `taken` and the client go by the card's `idx`
-//   tactic  战术决策  distinct cards.tactic entries; terrain cards only for the match stage; a 驰援 card
-//                     (single_special_choice_gain_bond_chess) or a 盟誓 card (global_special_choice_bond_addlayer)
-//                     only while at least one of its bonds is live in this match (opts.bondAvailable = Match.bondLive:
-//                     not in the mode's static inactive list — 标准 turns off 拉特兰 / 阿戈尔 / 卡西米尔 / 奥术 … —
-//                     and still with chess in the pool); a card acting only on dead bonds would do nothing
+//   tactic  战术决策  cards.tactic entries, each card drawn on its own — with replacement, so the same card can be
+//                     offered twice (the 4 official 战术决策, R11 of matches 7 / 9 / 18 / 20: 补给 ×2 in match 7; the
+//                     user: "战术决策也按官方改成可以重复吧"; `tacticDraftCards`): at the rounds of choices.json
+//                     `tacticDraft` (R11) only its `kinds` (the ally cards — the official 24 cards hold no debuff and
+//                     no terrain card), a card by `weights` (1 + the official cards it showed on) [ASSUMED: the
+//                     weights]; other rounds (标准 / 险境, no screenshot) every card uniform, terrain cards only for
+//                     the match stage [ASSUMED]; a 驰援 card (single_special_choice_gain_bond_chess) or a 盟誓 card
+//                     (global_special_choice_bond_addlayer) only while at least one of its bonds is live in this match
+//                     (opts.bondAvailable = Match.bondLive: not in the mode's static inactive list — 标准 turns off
+//                     拉特兰 / 阿戈尔 / 卡西米尔 / 奥术 … — and still with chess in the pool); a card acting only on dead
+//                     bonds would do nothing. Two identical cards are two cards: picks, `taken` and the client go by
+//                     the card's `idx`, and each pick applies its own card once (two picks of one team card stack)
 // Application (applyCard): a registered `choice:<effectId>` handler (content) wins; otherwise the family default:
 //   bounty → the picker's bounty list (waves.js adds the enemies to the next `rounds` battles; kill payout to the
 //            killer via the Battle, perfect payout at settlement when the picker's own battle was perfect)
@@ -344,8 +351,38 @@ export function shopDraftCards(gd, rng, n, round = null) {
   return rng.shuffle(out).slice(0, Math.max(0, n));
 }
 
+/** The draft card of a cards.tactic entry. */
+export function tacticCard(c) {
+  return { kind: 'tactic', id: c.effectId, name: c.name, desc: c.desc || '', tier: null, team: !!c.team, tacticKind: c.kind };
+}
+
+/**
+ * The 战术决策 cards (module header): `n` cards, each drawn on its own — with replacement, so one card can fill two places
+ * (official R11 of match 7: 补给 ×2). At the rounds of choices.json `tacticDraft` (`rounds`; R11) only the cards of its
+ * `kinds` (ally), each by `weights` (1 when unlisted); elsewhere — or when those kinds leave nothing — every card, uniform.
+ * Terrain cards only for the match stage; a card whose every target bond is dead in this match (mode-inactive, or no
+ * chess left in the pool: `bondAvailable`) is never offered.
+ */
+export function tacticDraftCards(gd, rng, n, { stageId = null, bondAvailable = null, round = null } = {}) {
+  const bondOk = (c) => {
+    if (typeof bondAvailable !== 'function') return true;
+    const bonds = cardTargetBonds(gd, c.effectId);
+    return !bonds || bonds.some((b) => !!bondAvailable(b));
+  };
+  const list = Array.isArray(gd.choices.cards && gd.choices.cards.tactic) ? gd.choices.cards.tactic : [];
+  const pool = list.filter((c) => c && (c.kind !== 'terrain' || (stageId && c.stageId === stageId)) && gd.effect(c.effectId) && bondOk(c));
+  const spec = gd.choices.tacticDraft && typeof gd.choices.tacticDraft === 'object' ? gd.choices.tacticDraft : null;
+  const official = !!spec && (!Array.isArray(spec.rounds) || spec.rounds.includes(round));
+  const kinds = official && Array.isArray(spec.kinds) && spec.kinds.length ? spec.kinds : null;
+  const w = official && spec.weights && typeof spec.weights === 'object' ? spec.weights : {};
+  const ofKinds = kinds ? pool.filter((c) => kinds.includes(c.kind)) : pool;
+  const pairs = (ofKinds.length ? ofKinds : pool).map((c) => [c, Object.hasOwn(w, c.effectId) ? w[c.effectId] : 1]);
+  const out = [];
+  for (let i = 0; i < n && pairs.length; i++) out.push(tacticCard(weightedPick(rng, pairs)));
+  return out;
+}
+
 function buildCards(gd, rng, family, n, sch, { stageId = null, bondAvailable = null, round = 1 } = {}) {
-  const cardsData = gd.choices.cards || {};
   if (family === 'bounty') return bountyDraftCards(gd, rng, n, sch, round);
   if (family === 'shop') {
     const cards = shopDraftCards(gd, rng, n, round);
@@ -361,18 +398,7 @@ function buildCards(gd, rng, family, n, sch, { stageId = null, bondAvailable = n
     for (let i = 0; i < n && list.length; i++) out.push(itemCard(gd, list[Math.floor(rng() * list.length)]));
     return out;
   }
-  if (family === 'tactic') {
-    // a card whose every target bond is dead in this match (mode-inactive, or no chess left in the pool) does nothing
-    const bondOk = (c) => {
-      if (typeof bondAvailable !== 'function') return true;
-      const bonds = cardTargetBonds(gd, c.effectId);
-      return !bonds || bonds.some((b) => !!bondAvailable(b));
-    };
-    const pool = (Array.isArray(cardsData.tactic) ? cardsData.tactic : []).filter((c) => c && (c.kind !== 'terrain' || (stageId && c.stageId === stageId)) && gd.effect(c.effectId) && bondOk(c));
-    const pick = pool.slice();
-    rng.shuffle(pick);
-    return pick.slice(0, n).map((c) => ({ kind: 'tactic', id: c.effectId, name: c.name, desc: c.desc || '', tier: null, team: !!c.team, tacticKind: c.kind }));
-  }
+  if (family === 'tactic') return tacticDraftCards(gd, rng, n, { stageId, bondAvailable, round });
   return [];
 }
 

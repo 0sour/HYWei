@@ -288,7 +288,8 @@ function setPhase(phase, variant) {
       if (fam === 'supply') cards = shuffle(shopItems().filter((i) => i.tier >= 3)).slice(0, 6).map((i) => ({ itemId: i.id }));
       // the official 机密商店 of match 8 R11 (test/fixtures/official-bounty-drafts.json): the same item twice
       else if (fam === 'shop') cards = ['变形同构体', '盟约之币', '商业包装方案', '变形同构体', '天马之盔', '双模机械臂'].map((n) => ({ itemId: shopItems().find((i) => i.name === n).id }));
-      else if (fam === 'tactic') cards = shuffle(ch.cards.tactic.filter((t) => t.kind !== 'terrain')).slice(0, 6).map((t) => ({ effectId: t.effectId }));
+      // the official 战术决策 of match 7 R11 (test/fixtures/official-bounty-drafts.json): the same card twice
+      else if (fam === 'tactic') cards = ['补给', '补给', '谢拉格驰援', '列装', '莫斯提马的盟誓', '升华'].map((n) => ({ effectId: ch.cards.tactic.find((t) => t.name === n).effectId }));
       else cards = shuffle(ch.cards.bounty.filter((b) => b.draft !== false)).slice(0, 6).map((b) => ({ effectId: b.effectId }));
       if (solo) { cards = cards.slice(0, 3); pub.deadline = 0; }
       pub.sp = { family: fam, cards, order: solo ? ['p1'] : ['p4', 'p1', 'ai_2', 'p3'], turn: solo ? 'p1' : 'p1', picks: solo ? {} : { p4: 2 }, untimed: solo };

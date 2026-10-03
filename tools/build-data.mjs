@@ -2460,6 +2460,23 @@ const SHOP_DRAFT = {
   seen: { 变形同构体: 4, 天师古鼎: 1, 人事部文档: 1, 家族徽章: 1, 铳骑之威: 1, 天马之盔: 2, 双模机械臂: 2, 商业包装方案: 2, 博士投影: 1, 护盾无人机: 1, 寻呼模块: 1, 骑士储蓄罐: 1, 盟约之币: 6 },
   matches: [2, 4, 5, 8],
 };
+/**
+ * The official 战术决策 (R11 of matches 7, 9, 18 and 20; the user: "战术决策也按官方改成可以重复吧"): six cards, and the same
+ * card can be offered twice (补给 ×2 in match 7; the other three show six different cards). All 24 cards are ally cards
+ * (allybuff_select_*: 盟誓, 驰援, 列装 / 财富 / 补给 / 整备 / 升华, 锐利): no 排斥 / 责罚 / 裁决 debuff (four drafts without
+ * one: about 0.04 % for the previous draw, 6 different cards of the 26 ally + 9 debuff cards) and no 模拟战场演变 terrain
+ * card. 列装 / 财富 / 补给 / 整备 / 升华 made 12 of the 24 cards (a uniform draw of the 26 ally cards: about 0.07 %), so
+ * the draw is weighted. At R11 (`rounds`; 绝境 / 终极 only, the round of the screenshots): each card drawn on its own (with
+ * replacement) from the ally cards (`kinds`), weight 1 + the official cards it showed on (`seen`) [ASSUMED: the weights;
+ * terrain cards left out — the maps of the 4 matches are unknown]; solo shows 3 [ASSUMED]. Other rounds (标准 / 险境, no
+ * screenshot) keep every card, uniform, terrain cards only for the match stage — with replacement too [ASSUMED].
+ */
+const TACTIC_DRAFT = {
+  rounds: [11],
+  kinds: ['ally'],
+  seen: { 补给: 3, 列装: 3, 升华: 3, 莫斯提马的盟誓: 2, 银灰的盟誓: 2, 阿戈尔驰援: 2, 财富: 2, 谢拉格驰援: 1, 锐利: 1, 整备: 1, 玛恩纳的盟誓: 1, 斯卡蒂的盟誓: 1, 萨尔贡驰援: 1, 叙拉古驰援: 1 },
+  matches: [7, 9, 18, 20],
+};
 /** The kind of a round's 悬赏决策: R3 (and 险境 R6, [ASSUMED]) initial, R9 boss, R11 hunter. */
 const bountyDraftOf = (r) => (r < 8 ? 'initial' : r < 11 ? 'boss' : 'hunter');
 
@@ -2566,6 +2583,13 @@ function buildChoices(ctx, effects, items, chess) {
     tactic.push({ effectId: e.effectId, name: e.name, desc: e.desc, kind, stageId, team });
   }
   tactic.sort((a, b) => naturalCmp(a.effectId, b.effectId));
+  // the official 战术决策 (TACTIC_DRAFT) names cards of its `kinds` only
+  const tacticByName = (name) => {
+    const hits = tactic.filter((c) => c.name === name);
+    if (hits.length !== 1) warn(`tactic draft card "${name}": ${hits.length} cards of that name`);
+    if (hits[0] && !TACTIC_DRAFT.kinds.includes(hits[0].kind)) warn(`tactic draft card "${name}" is a ${hits[0].kind} card`);
+    return hits[0]?.effectId ?? null;
+  };
 
   const equipNormal = Object.values(items).filter((i) => i.itemType === 'EQUIP' && !i.isGolden);
   const itemByName = (name) => equipNormal.find((i) => i.name === name)?.id || (warn(`pool item "${name}" not found`), null);
@@ -2620,7 +2644,8 @@ function buildChoices(ctx, effects, items, chess) {
       bounty: { name: '悬赏决策', desc: '选定悬赏目标，获取额外奖励。', cards: 'bountyDrafts[schedule[*].bountyDraft] — one official card list of the round (initial: an R3 set of 6; boss: an R9 group of up to 9; hunter: one of the 7 seen R11 lists of 7), six different cards of it drawn by weight, over cards.bounty entries with draft: true and that draftPool' },
       supply: { name: '道具补给', desc: '无需消耗资金，获得装备补给。', cards: 'random normal EQUIP items in schedule[*].supplyTiers (duplicates allowed)' },
       shop: { name: '机密商店', desc: '无需消耗资金，获得装备补给。', cards: 'at shopDraft.rounds (R11): six slots drawn with replacement (VI, VI, V, 盟约之币, 2 × V / IV / III / 盟约之币); other rounds: random normal EQUIP shop items of tiers I–VI (duplicates allowed) — the same item can come twice' },
-      tactic: { name: '战术决策', desc: '选择战术增益。', cards: 'cards.tactic (terrain cards only for the match stage)' },
+      // desc = the official header (effectChoiceInfoDict buff_select_* / hardbuff_select_* "进行协同调整，做好迎战准备。")
+      tactic: { name: '战术决策', desc: '进行协同调整，做好迎战准备。', cards: 'cards.tactic, each card drawn on its own (with replacement) — the same card can come twice; at tacticDraft.rounds (R11) the ally cards by tacticDraft.weights, other rounds every card uniform (terrain cards only for the match stage)' },
     },
     format: {
       multi: { cards: 6, pickOrder: 'random', firstPickSec: 30, otherPickSec: 16, onTimeout: 'autoPickRandom', eachPlayerPicks: 1 },
@@ -2657,6 +2682,14 @@ function buildChoices(ctx, effects, items, chess) {
       itemWeights: Object.fromEntries(Object.entries(SHOP_DRAFT.seen).filter(([n]) => n !== SHOP_DRAFT.coin).map(([n, k]) => [itemByName(n), 1 + k]).sort((a, b) => naturalCmp(a[0], b[0]))),
       seen: SHOP_DRAFT.matches, count: 6,
       assumed: ['the slot split', 'item weights 1 + seen', 'solo shows 3 of the 6', 'other rounds (标准 / 险境) keep the previous draw: tiers I–VI with replacement'],
+    },
+    // the official 战术决策 (TACTIC_DRAFT) at `rounds`: each card drawn on its own (with replacement) from the cards.tactic
+    // entries of `kinds`, by `weights` (1 + the official cards it showed on; other cards of those kinds 1)
+    tacticDraft: {
+      rounds: TACTIC_DRAFT.rounds, kinds: TACTIC_DRAFT.kinds,
+      weights: Object.fromEntries(Object.entries(TACTIC_DRAFT.seen).map(([n, k]) => [tacticByName(n), 1 + k]).filter(([id]) => id).sort((a, b) => naturalCmp(a[0], b[0]))),
+      seen: TACTIC_DRAFT.matches, count: 6,
+      assumed: ['card weights 1 + seen', 'no terrain card at R11', 'solo shows 3', 'other rounds (标准 / 险境) keep every card, uniform, with replacement'],
     },
     schedule,
     pools: {
