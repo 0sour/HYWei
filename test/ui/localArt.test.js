@@ -53,7 +53,7 @@ describe('local-client art fallbacks', () => {
     const { guidePages, GUIDE_CHAPTERS } = await import('../../public/js/ui/guide.js');
     const { tierChipUrl } = await import('../../public/js/ui/components.js');
     assert.equal(emoteArtUrl('autochess_battle_happy'), emoteArtPath('autochess_battle_happy'));
-    assert.equal(emoteArtUrl('autochess_battle_sad'), null, 'unlisted emote art is never requested');
+    assert.equal(emoteArtUrl('autochess_battle_sad'), null, 'listed by neither manifest (no data/assets.json here): no URL, never requested');
     assert.equal(emoteArtUrl('nope'), null);
     const pages = guidePages();
     assert.deepEqual(pages.map((p) => p.key), ['autochess_home_1', 'autochess_home_2', 'autochess_shop_1', 'autochess_handbook_4'], 'reading order, missing pages skipped');
@@ -141,6 +141,26 @@ describe('emotes and 玩法说明 pages: local art first, then the mirror copy (
     assert.deepEqual(pages.map((p) => p.key), GUIDE_PAGES);
     assert.deepEqual(pages.map((p) => p.url), GUIDE_PAGES.map((k) => `/assets/ui/guide/${k}.png`));
     assert.ok(pages.every((p) => p.urls.length === 1));
+  });
+
+  test('the guide stage: the local page, else the downloaded copy, else the official tips text (0.1.1\'s fallback)', async () => {
+    const { guideStage } = await import('../../public/js/ui/guide.js');
+    const local = '/assets/local/guide/autochess_home_1.png';
+    const mirror = '/assets/ui/guide/autochess_home_1.png';
+    const page = { key: 'autochess_home_1', urls: [local, mirror] };
+    assert.deepEqual(guideStage(page, new Set()), { kind: 'image', src: local }, 'local ok → local');
+    assert.deepEqual(guideStage(page), { kind: 'image', src: local }, 'nothing failed yet');
+    assert.deepEqual(guideStage(page, new Set([local])), { kind: 'image', src: mirror }, 'local fails → the downloaded copy');
+    assert.deepEqual(guideStage(page, new Set([local, mirror])), { kind: 'tips' }, 'both fail → tips');
+    // data/assets.json lists the downloaded page but the file is not on disk (a git pull and restart without setup)
+    assert.deepEqual(guideStage({ urls: [mirror] }, new Set([mirror])), { kind: 'tips' }, 'listed, not on disk → tips, not a blank notice');
+    assert.deepEqual(guideStage({ urls: [] }), { kind: 'tips' }, 'no copy');
+    assert.deepEqual(guideStage(null), { kind: 'tips' }, 'no page');
+    // the viewer shows exactly that: the image stage for a URL, the tips stage otherwise (never the old blank notice)
+    const src = readFileSync(path.join(ROOT, 'public/js/ui/guide.js'), 'utf8');
+    assert.match(src, /const stage = guideStage\(cur, failed\)/);
+    assert.match(src, /: html`<div class="guide__stage guide__stage--text"><\$\{TipsFallback\} \/><\/div>`\}/);
+    assert.ok(!src.includes('该页面暂时无法显示'), 'no blank notice left');
   });
 
   test('tools/assets/plan.mjs GUIDE_PAGES is the viewer\'s page list (GUIDE_CHAPTERS), in reading order', async () => {

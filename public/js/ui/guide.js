@@ -4,7 +4,10 @@
 // whose picture fails to load tries its next URL. The pages are stored squashed to 1024² (both copies) and are
 // displayed stretched back to 16:9. Three chapters (基础规则 / 调度手册 / 进阶图鉴), ‹ › buttons, ←/→ (A/D) keys, page
 // dots, thumbnails; Esc or the backdrop closes. Adjacent pages are preloaded.
-// With neither copy the viewer shows the official loading-screen tips (config.tips) instead.
+// With no page listed the viewer shows the official loading-screen tips (config.tips) instead, and so does a page none
+// of whose copies loads (`guideStage`: data/assets.json lists the downloaded pages but the files are not on disk — a
+// `git pull` and restart without setup, an older asset folder, a failed download the shrink guard kept); the chapter
+// tabs, the page dots and the keys still reach the other pages.
 //
 // Global & imperative so every screen can open it: `openGuide(page?)`; <GuideHost/> is mounted once by main.js
 // (and by the dev mock harness); <GuideButton/> is the standard trigger (title, lobby, room, in-match menu).
@@ -49,6 +52,19 @@ export function guidePages() {
   return out;
 }
 
+/**
+ * What the viewer's stage shows for a page: `{ kind: 'image', src }` — the first of its URLs that has not failed to
+ * load (the local file, then the downloaded copy) — or `{ kind: 'tips' }`, the official tips text, when none is left
+ * (no page, or every copy failed to load).
+ * @param {{ urls?: string[] }|null|undefined} page an entry of guidePages()
+ * @param {Set<string>} [failed] URLs whose image fired an error
+ * @returns {{ kind: 'image', src: string } | { kind: 'tips' }}
+ */
+export function guideStage(page, failed) {
+  const src = page ? nextArtUrl(page.urls, failed) : null;
+  return src ? { kind: 'image', src } : { kind: 'tips' };
+}
+
 /** Open/closed + current page. */
 export const guideStore = createStore({ open: false, page: 0 });
 
@@ -75,7 +91,7 @@ function preload(url) {
   img.src = url;
 }
 
-/** Fallback body when the tutorial art is not installed: the official tips as a numbered list. */
+/** Fallback body when no tutorial page can be shown: the official tips as a numbered list. */
 function TipsFallback() {
   const tips = (Array.isArray(data.get('config')?.tips) ? data.get('config').tips : []).map((t) => t?.tip).filter(Boolean);
   return html`<div class="guide__tips">
@@ -119,14 +135,15 @@ export function GuideHost() {
 
   useEffect(() => {
     if (!open || !n) return;
-    preload(pages[(i + 1) % n]?.url);
-    preload(pages[(i + n - 1) % n]?.url);
-  }, [open, i, n]);
+    preload(nextArtUrl(pages[(i + 1) % n]?.urls, failed));
+    preload(nextArtUrl(pages[(i + n - 1) % n]?.urls, failed));
+  }, [open, i, n, failed]);
 
   if (!open) return null;
   const chapter = cur ? GUIDE_CHAPTERS[cur.chapter] : null;
   const firstOf = (ci) => pages.findIndex((p) => p.chapter === ci);
-  const src = cur ? nextArtUrl(cur.urls, failed) : null; // the next copy when one fails to load
+  const stage = guideStage(cur, failed); // the next copy when one fails to load; the tips when none is left
+  const src = stage.kind === 'image' ? stage.src : null;
   const isLoaded = !!src && loaded.has(src);
   return html`<div class="guide" role="presentation" onMouseDown=${(e) => { if (e.target === e.currentTarget) closeGuide(); }}>
     <div class="guide__box brackets" role="dialog" aria-modal="true" aria-label="玩法说明" tabindex="-1" ref=${boxRef}>
@@ -147,13 +164,13 @@ export function GuideHost() {
         <button type="button" class="guide__close" aria-label="关闭" title="关闭 (Esc)" onClick=${closeGuide}><${Icon} name="close" /></button>
       </header>
 
-      ${n ? html`<div class="guide__stage">
+      ${src ? html`<div class="guide__stage">
         <button type="button" class="guide__nav guide__prev" aria-label="上一页" onClick=${() => go(i - 1)}><${Icon} name="chevronLeft" /></button>
         <div class=${cx('guide__page', isLoaded && 'is-loaded')}>
-          ${src ? html`<img key=${src} src=${src} alt=${cur.title} draggable=${false}
+          <img key=${src} src=${src} alt=${cur.title} draggable=${false}
             onLoad=${() => setLoaded((s) => new Set(s).add(src))}
-            onError=${() => setFailed((s) => new Set(s).add(src))} />` : html`<div class="guide__missing"><${Icon} name="info" />该页面暂时无法显示</div>`}
-          ${src && !isLoaded ? html`<span class="guide__loading"><${Spinner} size="md" /></span>` : null}
+            onError=${() => setFailed((s) => new Set(s).add(src))} />
+          ${!isLoaded ? html`<span class="guide__loading"><${Spinner} size="md" /></span>` : null}
         </div>
         <button type="button" class="guide__nav guide__next" aria-label="下一页" onClick=${() => go(i + 1)}><${Icon} name="chevronRight" /></button>
       </div>` : html`<div class="guide__stage guide__stage--text"><${TipsFallback} /></div>`}
