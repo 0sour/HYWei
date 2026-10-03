@@ -118,9 +118,14 @@ replacement [ASSUMED]; two identical cards are two cards (picks go by index). �
 补给 ×2) — at R11 (绝境 / 终极) only the ally cards (the 24 official cards hold no 排斥 / 责罚 / 裁决 and no terrain card),
 each weighted 1 + the official cards it showed on (列装 / 财富 / 补给 / 整备 / 升华 made half of them) [ASSUMED: the
 weights]; the earlier 战术决策 of 标准 / 险境 (no screenshot) keep every card, uniform, terrain cards only for the match
-stage, with replacement too [ASSUMED]. Identical tactic cards are separate cards as well: each pick applies its own card
-once, and two picks of one team card stack (both reach every teammate). The header reads the official
-"进行协同调整，做好迎战准备。". 悬赏决策 offers only choices.json cards with `draft: true` (`choices.js draftBounty`): never 战术特训 (PRTS
+stage, with replacement too [ASSUMED]. At R11 the cards are drawn independently rather than in slots like the 机密商店
+[ASSUMED, open: all 4 drafts hold a 驰援, a 盟誓 and two of 列装 / 财富 / 补给 / 整备 / 升华 — about 3 % under
+independent draws, but a pattern spotted after the fact]. Identical tactic cards are separate cards as well: each pick
+applies its own card once, and two picks of one team card (two players taking the twins) both reach every teammate and
+add up — settled for the prep cards (补给 "可叠加"; 列装 / 财富 / 盟誓 grant their own items, coin and layers each time),
+[ASSUMED] for the battle passives 自愈 / 火力 / 征召 / 无瑕 / 锐利: one buff per pick, so 锐利 ×2 ignores 60 % of the DEF
+(open: whether the official keeps one instance of a 同名 env buff; twin passives come in about 4–5 % of R11 drafts).
+The header reads the official "进行协同调整，做好迎战准备。". 悬赏决策 offers only choices.json cards with `draft: true` (`choices.js draftBounty`): never 战术特训 (PRTS
 "※以下悬赏任务仅由法术教鞭生成") nor the 鸭爵 / 高普尼克 / 流泪小子 / 圆仔 cards (user playtest #6 item 4). **Each draft is
 built like the official one of its round** (`choices.js bountyDraftCards`, choices.json `bountyDrafts` / schedule
 `bountyDraft`; player feedback after 0.1.0, report #2 — late bounty enemies in the early drafts — settled by 66

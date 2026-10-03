@@ -2470,6 +2470,10 @@ const SHOP_DRAFT = {
  * replacement) from the ally cards (`kinds`), weight 1 + the official cards it showed on (`seen`) [ASSUMED: the weights;
  * terrain cards left out — the maps of the 4 matches are unknown]; solo shows 3 [ASSUMED]. Other rounds (标准 / 险境, no
  * screenshot) keep every card, uniform, terrain cards only for the match stage — with replacement too [ASSUMED].
+ * Open: a slot structure like SHOP_DRAFT's. Every one of the 4 drafts has at least one 驰援, at least one 盟誓 and at least
+ * two of 列装 / 财富 / 补给 / 整备 / 升华; under these independent draws a draft has 驰援 + 盟誓 about 70 % of the time (all
+ * four: about 24 %) and all three about 41 % (all four: about 3 %). The pattern was spotted after the fact, so it is kept as
+ * a question rather than slots [ASSUMED: independent draws]; more R11 战术决策 screenshots would settle it.
  */
 const TACTIC_DRAFT = {
   rounds: [11],
@@ -2689,7 +2693,7 @@ function buildChoices(ctx, effects, items, chess) {
       rounds: TACTIC_DRAFT.rounds, kinds: TACTIC_DRAFT.kinds,
       weights: Object.fromEntries(Object.entries(TACTIC_DRAFT.seen).map(([n, k]) => [tacticByName(n), 1 + k]).filter(([id]) => id).sort((a, b) => naturalCmp(a[0], b[0]))),
       seen: TACTIC_DRAFT.matches, count: 6,
-      assumed: ['card weights 1 + seen', 'no terrain card at R11', 'solo shows 3', 'other rounds (标准 / 险境) keep every card, uniform, with replacement'],
+      assumed: ['card weights 1 + seen', 'independent draws (no slot structure)', 'no terrain card at R11', 'solo shows 3', 'other rounds (标准 / 险境) keep every card, uniform, with replacement'],
     },
     schedule,
     pools: {

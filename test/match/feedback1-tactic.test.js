@@ -51,6 +51,12 @@ test('战术决策 (4 official drafts, R11): six ally cards each, 补给 twice i
   for (const n of all) seen[byName(n)[0].effectId] = (seen[byName(n)[0].effectId] || 0) + 1;
   assert.deepEqual(SPEC.weights, Object.fromEntries(Object.entries(seen).map(([id, k]) => [id, 1 + k])));
   assert.equal(SPEC.weights[byName('补给')[0].effectId], 4, '补给 on 3 of the 24 cards');
+  // open: every official draft holds a 驰援, a 盟誓 and two basic cards (a slot structure?) — the draws stay independent, marked
+  for (const { match, names } of DRAFTS) {
+    assert.ok(names.some((n) => n.endsWith('驰援')) && names.some((n) => n.endsWith('的盟誓')), `match ${match}: a 驰援 and a 盟誓`);
+    assert.ok(count(names, (n) => BASIC.includes(n)) >= 2, `match ${match}: two basic cards`);
+  }
+  assert.ok(SPEC.assumed.includes('independent draws (no slot structure)'), 'the independent draws are marked assumed');
   // the official header of the event
   for (const id of ['buff_select_1', 'hardbuff_select_1']) assert.equal(DATA.choices.events[id].desc, '进行协同调整，做好迎战准备。');
   assert.equal(DATA.choices.families.tactic.desc, '进行协同调整，做好迎战准备。');
