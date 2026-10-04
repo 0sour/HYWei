@@ -26,7 +26,8 @@
 //   operator-knocked-down sound; summons use the token sounds; a summon used up by its own effect (fx `consumed`,
 //   香槟炸弹) plays its impact sound instead of a death sound.
 // - A 'leak' (an enemy reached the objective) plays the official battle.ON_ENEMY_REACHED_EXIT alarm
-//   (b_ui_alarmenter, `sfx.battle.leak`) once per burst; skill casts play the equipped skill's own
+//   (b_ui_alarmenter, `sfx.battle.leak`) once per leaked enemy, like the official client — the overlaps are the
+//   urgency (only the 12-voice UI ceiling bounds a burst); skill casts play the equipped skill's own
 //   ON_SKILL_START bank or nothing — the official client posts no generic cast sound.
 // - Buffers are fetched once and cached (LRU); failed fetch/decode ⇒ silent (logged once as a warning).
 //
@@ -683,9 +684,9 @@ export class AudioManager {
         } else if (kind === 'bounty') {
           this.battle('killCoin', { unitKey: 'coin' });
         } else if (kind === 'leak') {
-          // an enemy reached the objective — the official ENTER_DANGER alarm; the one global unit key collapses a
-          // burst of simultaneous leaks into a single ring
-          this._playUnitUrl(leakSfxUrl(this.getManifest()), 'leak', 0.5);
+          // an enemy reached the objective: the official ON_ENEMY_REACHED_EXIT alarm rings for every leaked enemy,
+          // like the official client — the overlaps are the urgency. Only the 12-voice UI ceiling bounds a burst.
+          this._play(leakSfxUrl(this.getManifest()), { volume: 0.5 });
         }
       }
     } catch (err) { this._warn('events', err); }

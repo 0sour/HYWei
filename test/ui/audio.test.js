@@ -387,7 +387,7 @@ describe('leak alarm and per-skill cast sounds', () => {
     fw.fire('pointerdown');
     a.setFieldUnits(units);
     const settle = () => new Promise((r) => setTimeout(r, 5));
-    return { a, urls, settle, restore: () => { globalThis.fetch = origFetch; } };
+    return { a, urls, made: fw.made, settle, restore: () => { globalThis.fetch = origFetch; } };
   }
 
   test('leakSfxUrl resolves battle.leak (b_ui_alarmenter), ui.danger on older manifests', () => {
@@ -397,14 +397,15 @@ describe('leak alarm and per-skill cast sounds', () => {
     assert.equal(leakSfxUrl(null), null);
   });
 
-  test('a burst of leaks rings the alarm once', async () => {
+  test('every leaked enemy rings the alarm (no throttle, like the official client)', async () => {
     const leak = leakSfxUrl(manifest);
     assert.ok(leak, 'manifest has the alarm');
-    const { a, urls, settle, restore } = await rig2([]);
+    const { a, urls, made, settle, restore } = await rig2([]);
     try {
       a.handleBattleEvents([['leak', 3], ['leak', 4], ['leak', 5], ['leak', 6]]);
       await settle();
-      assert.equal(askedCount(urls, leak), 1, 'one alarm per burst');
+      assert.equal(made.started, 4, 'one ring per leak (the buffer itself is fetched once)');
+      assert.ok(urls.length >= 1, 'the alarm sound is fetched');
     } finally { restore(); }
   });
 
